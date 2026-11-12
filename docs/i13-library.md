@@ -44,8 +44,42 @@ both builds, and pinned formatting passes. Receipts are under
 `minimal-sanitized/{run,fail}`. Minimal runs use the native-only library root,
 not the complete library; full-library sanitizer and emitted-program Cell
 acceptance are not claimed. Cell constants still fail on generic static binding
-and raw-pointer evaluation, and guard projections/splits and unsafe unguarded
-borrowing remain open. No Cell records or complete area are promoted here.
+and raw-pointer evaluation at that revision; the subsequent candidate below
+addresses those gaps. No Cell records or complete area are promoted here.
+
+### Cell constant compiler acceptance (2026-11-12)
+
+The eight required-const exposures (Cell.from_mut, as_array_of_cells and
+as_slice_of_cells, including aliases; OnceCell.new and into_inner) now have
+normal debug/release acceptance. The generic static failure was independently
+reproduced without Cell: floating-owner probing discarded explicit owner
+arguments before resolving a non-floating generic owner. Probes now preserve
+those arguments. The evaluator represents Cell/UnsafeCell's offset-zero
+payload, implements the needed constructor/extraction and live Cell pointer
+projection, and validates raw casts through the existing machine cast contract.
+Casts preserve writable provenance independently of pointer mutability;
+storage construction/extraction consume owned values.
+
+Current normal candidates pass six positive profile units and four intended
+rejections. Coverage includes generic static constants, actual indexed payload
+reads through array/slice projections, empty arrays, zero-sized slice extents,
+non-Copy OnceCell payloads, mutable raw casts, shared-provenance rejection and
+rejection of reused consumed storage/payloads. Real runtime view conversions
+also pass emitted-program ASan in both profiles. The declaration CTest passes.
+The frozen compiler ASan/UBSan candidate also passes all ten profile units:
+four minimal positive units, four intended provenance/consumption rejections
+and both full-library Cell constant executions. There are no sanitizer reports.
+This qualifies the scoped compiler change, not the complete Cell area.
+
+Frozen compiler/test inputs and all 66 immutable V3 library source identities
+are recorded in `build/i13-cell-const-frozen-inputs.json`; they matched before
+and after the sanitizer build and acceptance. Candidate identities and scoped receipts are
+under `/home/nites/mettle-optimization-build/i13-cell-const-projections/`.
+That immutable library excludes the additional, unqualified guard projection
+methods now present in the worktree. The 97 other source-backed Cell records
+have an assertion reconciliation and focused normal acceptance; their remaining
+compiler-sanitizer acceptance is separate. Guard projection/split and unguarded-borrow
+qualification remain separate; none of the 119 Cell records is promoted.
 
 ### Atomic bitwise acceptance (2026-11-12)
 

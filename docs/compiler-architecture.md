@@ -114,6 +114,11 @@ slice extents, never host addresses. `semantics` supplies concrete target shapes
 generic bindings and selected interface implementations, including implicit
 receiver projections; the interpreter preserves parameter access, const/unsafe
 admission and storage lifetime. Views of expired locals cannot become statics.
+Raw-pointer casts use the existing machine cast contract and retain backing
+storage, offsets, extents and writable provenance independently of pointer
+mutability. Cell/UnsafeCell constants use their single offset-zero payload;
+Cell projection retypes the live address without creating replacement storage.
+Static constant-call owner probes retain explicit owner arguments.
 `types::StaticConstant` carries static-symbol interior relocations and
 address-only empty/zero-sized pointers. `ir` validates their target alignment,
 extent, metadata and mutability before `backend` lowers them. Library checked

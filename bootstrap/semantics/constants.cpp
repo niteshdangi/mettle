@@ -1,5 +1,6 @@
 #include "semantics/checker.h"
 #include "types/layout.h"
+#include "types/machine.h"
 #include <algorithm>
 #include <deque>
 #include <limits>
@@ -109,6 +110,10 @@ public:
     auto mode = exclusive ? ParameterMode::Mut : ParameterMode::Read;
     return pointer ? checker.typeStore().pointerType(type, mode)
                    : checker.typeStore().viewType(type, mode);
+  }
+  bool pointerCastAllowed(Type source, Type target) override {
+    return machineCastAllowed(checker.typeStore(), substitute(source),
+                              substitute(target));
   }
   Type valueType(const Value &value) override {
     if (value.type != Type::Unknown)
@@ -957,7 +962,9 @@ std::optional<evaluation::Shape> Checker::constantShape(Type type) {
     shape.elements.push_back(std::move(*element));
     return shape;
   }
-  if (record.kind == AggregateKind::Product) {
+  if (record.kind == AggregateKind::Product ||
+      record.kind == AggregateKind::Cell ||
+      record.kind == AggregateKind::UnsafeCell) {
     shape.kind = evaluation::Shape::Kind::Product;
     for (const auto &field : record.fields) {
       auto element = constantShape(field.type);

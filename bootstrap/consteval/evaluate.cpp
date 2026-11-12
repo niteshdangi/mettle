@@ -960,6 +960,16 @@ private:
     auto target = shape(node.annotation, node.span);
     if (!target)
       return std::nullopt;
+    if (target->kind == Shape::Kind::Pointer &&
+        (value.kind == Value::Kind::Pointer ||
+         value.kind == Value::Kind::Reference)) {
+      if (!host.pointerCastAllowed(value.type, target->type))
+        return fail("type", node.span, "invalid constant pointer cast");
+      value.kind = Value::Kind::Pointer;
+      value.type = target->type;
+      value.exclusive = target->exclusive;
+      return value;
+    }
     if (target->kind != Shape::Kind::Scalar)
       return fail("type", node.span, "casts apply to scalar types only");
     auto to = target->type;
@@ -2074,6 +2084,44 @@ private:
     const auto &callee = *node.children[0];
     auto argumentType = typeArgument(callee, operation);
     auto name = operation.name;
+    if (name == "storage.new" || name == "storage.into_inner") {
+      if (name == "storage.new") {
+        auto target = host.typeShape(operation.type);
+        if (!target || target->kind != Shape::Kind::Product ||
+            target->elements.size() != 1 || arguments.size() != 1)
+          return unsupported(node.span, "this constant storage constructor");
+        auto payload = arguments.front();
+        if (!initialized(payload, node.span) ||
+            !coerce(payload, target->elements.front(), node.span))
+          return std::nullopt;
+        Value value;
+        value.kind = Value::Kind::Product;
+        value.type = target->type;
+        value.elements.push_back(std::move(payload));
+        return value;
+      }
+      if (receiver && !initialized(*receiver, node.span))
+        return std::nullopt;
+      if (!receiver || receiver->kind != Value::Kind::Product ||
+          receiver->elements.size() != 1 || !arguments.empty())
+        return unsupported(node.span, "this constant storage extraction");
+      return receiver->elements.front();
+    }
+    if (name == "cell.as_ptr") {
+      if (!receiver || receiver->kind != Value::Kind::Reference ||
+          !arguments.empty())
+        return unsupported(node.span, "this constant Cell pointer projection");
+      auto storage = pointee(*receiver);
+      if (!storage || storage->kind != Shape::Kind::Product ||
+          storage->elements.size() != 1)
+        return unsupported(node.span, "this constant Cell storage");
+      auto value = *receiver;
+      value.kind = Value::Kind::Pointer;
+      value.type =
+          host.referenceType(storage->elements.front().type, true, true);
+      value.exclusive = true;
+      return value;
+    }
     if (name == "size_of" || name == "align_of" || name == "mem.size_of" ||
         name == "mem.align_of") {
       auto layout = argumentType ? host.layout(*argumentType) : std::nullopt;
@@ -2350,9 +2398,28 @@ private:
         return value;
       }
     }
-    if (!operation.name.empty())
-      return intrinsic(node, operation, receiver ? &*receiver : nullptr,
-                       arguments);
+    if (operation.name == "cell.as_ptr" && receiver &&
+        receiver->kind != Value::Kind::Reference) {
+      if (!receiverPlace.value && !receiverPlace.address) {
+        frame().locals.emplace_back("<temporary>", std::move(*receiver), false,
+                                    nullptr);
+        const auto &local = frame().locals.back();
+        receiverPlace = {local.value.get(), local.value.get(), {}, false,
+                         local.name,        local.value};
+      }
+      receiver = addressOf(receiverPlace, false);
+    }
+    if (!operation.name.empty()) {
+      auto value = intrinsic(node, operation, receiver ? &*receiver : nullptr,
+                             arguments);
+      if (value && operation.name == "storage.into_inner" &&
+          receiverPlace.value)
+        receiverPlace.value->kind = Value::Kind::Uninitialized;
+      if (value && operation.name == "storage.new" && !arguments.empty() &&
+          !host.copy(host.valueType(arguments.front())) && places.front().value)
+        places.front().value->kind = Value::Kind::Uninitialized;
+      return value;
+    }
     auto found =
         host.prepare(node, receiver ? &*receiver : nullptr, arguments, want);
     if (found.kind == Lookup::Kind::Missing && callee.kind == Kind::Name)
@@ -2564,6 +2631,7 @@ private:
         TypeSyntax syntax;
         syntax.name = callee.text.substr(0, separator);
         syntax.context = callee.context;
+        syntax.arguments = callee.ownerGenericArguments;
         floating = host.resolveType(syntax, callee.span);
       }
     }

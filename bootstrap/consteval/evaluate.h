@@ -133,6 +133,7 @@ public:
   virtual bool project(Type, std::size_t, const Node &) { return true; }
   virtual Type valueType(const Value &value) { return value.type; }
   virtual Type referenceType(Type, bool, bool) { return Type::Unknown; }
+  virtual bool pointerCastAllowed(Type, Type) { return false; }
   virtual std::optional<Layout> layout(Type) { return std::nullopt; }
   virtual bool needsDrop(Type) { return false; }
   virtual bool copy(Type) { return true; }
