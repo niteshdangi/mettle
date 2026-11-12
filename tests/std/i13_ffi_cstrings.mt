@@ -11,9 +11,11 @@ fn main(): i32 {
     }
     if value.count_bytes() != 3usize || value.is_empty() { return 2 }
     if !std.ffi.bytes_equal(value.as_bytes(), payload) { return 3 }
+    if !std.ffi.bytes_equal(value.to_bytes(), payload) { return 49 }
 
     let terminated: [u8; 4] = [255u8, 128u8, 65u8, 0u8]
     if !std.ffi.bytes_equal(value.as_bytes_with_nul(), terminated) { return 4 }
+    if !std.ffi.bytes_equal(value.to_bytes_with_nul(), terminated) { return 50 }
     if value.as_ptr().cast<u8>() != value.as_bytes_with_nul().as_ptr() { return 42 }
     if value.to_string_lossy().as_ref() != "\u{fffd}\u{fffd}A" { return 43 }
     let borrowed = value.as_c_str()
@@ -30,7 +32,8 @@ fn main(): i32 {
     }
     if borrowed.to_string_lossy().as_ref() != "\u{fffd}\u{fffd}A" { return 45 }
     let duplicate = value.clone()
-    if !duplicate.eq(borrowed) || !borrowed.eq(duplicate) { return 38 }
+    if !CString.(PartialEq<read CStr>).eq(duplicate, borrowed) ||
+        !CStr.(PartialEq<CString>).eq(borrowed, duplicate) { return 38 }
     if !duplicate.cmp(value).is_eq() { return 39 }
     if core.hash.hash_one(borrowed) != core.hash.hash_one(value) { return 40 }
     let checked = match take capture CStr.from_bytes_with_nul(terminated) {
@@ -124,6 +127,12 @@ fn main(): i32 {
         success(c_string) => c_string,
         failure(_) => { return 24 }
     }
+    match ascii_c_string.to_str() {
+        success(text) => if text != "met" { return 51 },
+        failure(_) => { return 52 }
+    }
+    let owned_bytes = ascii_c_string.clone().into_bytes()
+    if !std.ffi.bytes_equal(owned_bytes.as_slice(), ascii) { return 53 }
     match take capture ascii_c_string.into_string() {
         success(text) => {
             if !std.ffi.bytes_equal(text.as_bytes(), ascii) { return 25 }

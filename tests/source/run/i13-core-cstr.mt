@@ -1,9 +1,12 @@
 // profiles: debug release
 import core.cmp.{Ord, PartialEq}
+import core.default.Default
 import core.ffi.{CStr, FromBytesWithNulError}
 import core.fmt
 import core.iter.{range_from, RangeFrom}
 import core.ops.Index
+
+fn default_value<T: Default>(): T { T.(Default).default() }
 
 fn main(): i32 {
     let bytes = [65u8, 0xffu8, 0xe2u8, 0x82u8, 0u8]
@@ -13,6 +16,14 @@ fn main(): i32 {
     }
     if value.count_bytes() != 4usize || value.is_empty() { return 2 }
     if value.to_bytes_with_nul().len() != 5usize || value.to_bytes()[1usize] != 0xffu8 { return 3 }
+    let valid = match capture CStr.from_bytes_with_nul("OK\u{0}".as_bytes()) {
+        success(view) => view,
+        failure(_) => { return 18 }
+    }
+    match valid.to_str() {
+        success(text) => if text != "OK" { return 19 },
+        failure(_) => { return 20 }
+    }
     let pointer = value.as_ptr()
     let recovered = unsafe { CStr.from_ptr(pointer) }
     if !CStr.(PartialEq).eq(value, recovered) || !value.cmp(recovered).is_eq() { return 4 }
@@ -60,5 +71,8 @@ fn main(): i32 {
         failure(_) => {},
         success(_) => { return 16 }
     }
+    let empty: read CStr from static = default_value<read CStr from static>()
+    if !empty.is_empty() || empty.count_bytes() != 0usize ||
+        empty.to_bytes_with_nul().len() != 1usize { return 17 }
     0
 }

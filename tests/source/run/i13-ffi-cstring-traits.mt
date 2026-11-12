@@ -38,6 +38,8 @@ fn main(): i32 {
     let native: read core.ffi.CStr = checked
     let allocated: alloc.ffi.CString = native.to_owned()
     let owned: std.ffi.CString = allocated
+    let referenced = CStr.(AsRef<CStr>).as_ref(checked)
+    if !CStr.(PartialEq).eq(referenced, checked) { return 29 }
     if !CString.(PartialEq<CStr>).eq(owned, checked) || owned.cmp(owned).is_ne() { return 2 }
     if !checked.eq(owned) { return 25 }
     let static_cstr = match take capture CStr.from_bytes_with_nul("ABC\u{0}".as_bytes()) {
