@@ -348,3 +348,207 @@ extend<T> core.sync.atomic.AtomicPtr<T> {
         }
     }
 }
+
+extend core.sync.atomic.AtomicI8 {
+    pub static fn from_mut(mut value: i8): mut core.sync.atomic.AtomicI8 from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicI8>() }
+    }
+    pub static fn from_mut_slice(mut values: [i8]): mut [core.sync.atomic.AtomicI8] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicI8]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicI8]): mut [i8] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [i8]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut i8>): read core.sync.atomic.AtomicI8 from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicI8>() }
+    }
+}
+
+extend core.sync.atomic.AtomicI16 {
+    pub static fn from_mut(mut value: i16): mut core.sync.atomic.AtomicI16 from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicI16>() }
+    }
+    pub static fn from_mut_slice(mut values: [i16]): mut [core.sync.atomic.AtomicI16] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicI16]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicI16]): mut [i16] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [i16]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut i16>): read core.sync.atomic.AtomicI16 from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicI16>() }
+    }
+}
+
+extend core.sync.atomic.AtomicI32 {
+    pub static fn from_mut(mut value: i32): mut core.sync.atomic.AtomicI32 from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicI32>() }
+    }
+    pub static fn from_mut_slice(mut values: [i32]): mut [core.sync.atomic.AtomicI32] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicI32]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicI32]): mut [i32] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [i32]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut i32>): read core.sync.atomic.AtomicI32 from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicI32>() }
+    }
+}
+
+extend core.sync.atomic.AtomicI64 {
+    pub static fn from_mut(mut value: i64): mut core.sync.atomic.AtomicI64 from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicI64>() }
+    }
+    pub static fn from_mut_slice(mut values: [i64]): mut [core.sync.atomic.AtomicI64] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicI64]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicI64]): mut [i64] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [i64]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut i64>): read core.sync.atomic.AtomicI64 from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicI64>() }
+    }
+}
+
+extend core.sync.atomic.AtomicIsize {
+    pub static fn from_mut(mut value: isize): mut core.sync.atomic.AtomicIsize from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicIsize>() }
+    }
+    pub static fn from_mut_slice(mut values: [isize]): mut [core.sync.atomic.AtomicIsize] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicIsize]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicIsize]): mut [isize] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [isize]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut isize>): read core.sync.atomic.AtomicIsize from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicIsize>() }
+    }
+}
+
+extend core.sync.atomic.AtomicU8 {
+    pub static fn from_mut(mut value: u8): mut core.sync.atomic.AtomicU8 from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicU8>() }
+    }
+    pub static fn from_mut_slice(mut values: [u8]): mut [core.sync.atomic.AtomicU8] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicU8]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicU8]): mut [u8] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [u8]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut u8>): read core.sync.atomic.AtomicU8 from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicU8>() }
+    }
+}
+
+extend core.sync.atomic.AtomicU16 {
+    pub static fn from_mut(mut value: u16): mut core.sync.atomic.AtomicU16 from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicU16>() }
+    }
+    pub static fn from_mut_slice(mut values: [u16]): mut [core.sync.atomic.AtomicU16] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicU16]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicU16]): mut [u16] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [u16]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut u16>): read core.sync.atomic.AtomicU16 from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicU16>() }
+    }
+}
+
+extend core.sync.atomic.AtomicU32 {
+    pub static fn from_mut(mut value: u32): mut core.sync.atomic.AtomicU32 from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicU32>() }
+    }
+    pub static fn from_mut_slice(mut values: [u32]): mut [core.sync.atomic.AtomicU32] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicU32]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicU32]): mut [u32] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [u32]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut u32>): read core.sync.atomic.AtomicU32 from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicU32>() }
+    }
+}
+
+extend core.sync.atomic.AtomicU64 {
+    pub static fn from_mut(mut value: u64): mut core.sync.atomic.AtomicU64 from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicU64>() }
+    }
+    pub static fn from_mut_slice(mut values: [u64]): mut [core.sync.atomic.AtomicU64] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicU64]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicU64]): mut [u64] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [u64]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut u64>): read core.sync.atomic.AtomicU64 from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicU64>() }
+    }
+}
+
+extend core.sync.atomic.AtomicUsize {
+    pub static fn from_mut(mut value: usize): mut core.sync.atomic.AtomicUsize from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicUsize>() }
+    }
+    pub static fn from_mut_slice(mut values: [usize]): mut [core.sync.atomic.AtomicUsize] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicUsize]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicUsize]): mut [usize] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [usize]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut usize>): read core.sync.atomic.AtomicUsize from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicUsize>() }
+    }
+}
+
+extend core.sync.atomic.AtomicBool {
+    pub static fn from_mut(mut value: bool): mut core.sync.atomic.AtomicBool from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicBool>() }
+    }
+    pub static fn from_mut_slice(mut values: [bool]): mut [core.sync.atomic.AtomicBool] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicBool]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicBool]): mut [bool] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [bool]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut bool>): read core.sync.atomic.AtomicBool from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicBool>() }
+    }
+}
+
+extend<T> core.sync.atomic.AtomicPtr<T> {
+    pub static fn from_mut(mut value: ptr<mut T>): mut core.sync.atomic.AtomicPtr<T> from value {
+        unsafe { mut *core.ptr.from_mut(value).cast<core.sync.atomic.AtomicPtr<T>>() }
+    }
+    pub static fn from_mut_slice(mut values: [ptr<mut T>]): mut [core.sync.atomic.AtomicPtr<T>] from values {
+        let view = unsafe { core.mem.transmute<ptr<mut [core.sync.atomic.AtomicPtr<T>]>>(core.ptr.from_mut(values)) }
+        unsafe { mut *view }
+    }
+    pub static fn get_mut_slice(mut atomics: [core.sync.atomic.AtomicPtr<T>]): mut [ptr<mut T>] from atomics {
+        let view = unsafe { core.mem.transmute<ptr<mut [ptr<mut T>]>>(core.ptr.from_mut(atomics)) }
+        unsafe { mut *view }
+    }
+    pub static unsafe fn from_ptr<region r>(pointer: ptr<mut ptr<mut T>>): read core.sync.atomic.AtomicPtr<T> from r {
+        unsafe { read *pointer.cast<core.sync.atomic.AtomicPtr<T>>() }
+    }
+}

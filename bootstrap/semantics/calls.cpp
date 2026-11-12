@@ -19,7 +19,8 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
     owner.name = ownerSpelling;
     owner.arguments = n.children[0]->ownerGenericArguments;
     if (found == typeNames.end()) {
-      if (owner.arguments.empty())
+      if (owner.arguments.empty() &&
+          !ownerSpelling.starts_with("core::sync::atomic::Atomic"))
         return std::nullopt;
       auto native = machineAnnotation(owner, n.span, current->owner);
       if (!native)
