@@ -32,7 +32,7 @@ std::optional<int> Checker::genericCall(
         binding.argument = owner.argument;
   if (ownerBindings.empty() && !aliasConstructor)
     explicitGenericBindings(function, *n.children[0], environment, bindings,
-                            n.span);
+                            n.span, facts(n).interfaceSelf != Type::Unknown);
   genericEnvironment = &environment;
   annotationRegionScopes.push_back(functionRegions(function));
   std::vector<Type> signature;

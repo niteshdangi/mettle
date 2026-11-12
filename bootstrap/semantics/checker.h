@@ -298,7 +298,8 @@ private:
   Type genericArgument(const GenericArgument &argument, Type parameter);
   void explicitGenericBindings(const Function &function, const Node &callee,
                                const GenericEnvironment &environment,
-                               std::vector<TypeBinding> &bindings, Span span);
+                               std::vector<TypeBinding> &bindings, Span span,
+                               bool ownerResolved = false);
   Type constantType(const Node &node, Type expected = Type::Unknown);
   Type constantContext(const Node &node);
   struct GenericEnvironment {

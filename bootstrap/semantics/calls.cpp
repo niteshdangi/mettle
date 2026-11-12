@@ -15,24 +15,58 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
   if (self == Type::Unknown) {
     auto found =
         typeNames.find(typeName(ownerSpelling, n.span, current->owner));
-    if (found == typeNames.end())
-      return std::nullopt;
-    self = found->second;
+    TypeSyntax owner;
+    owner.name = ownerSpelling;
+    owner.arguments = n.children[0]->ownerGenericArguments;
+    if (found == typeNames.end()) {
+      if (owner.arguments.empty())
+        return std::nullopt;
+      auto native = machineAnnotation(owner, n.span, current->owner);
+      if (!native)
+        return std::nullopt;
+      self = *native;
+    } else
+      self = found->second;
     // A generic owner written with arguments (`Wrapping<i16>.default()`) is
     // the instance those arguments name.
-    if (!n.children[0]->ownerGenericArguments.empty()) {
-      TypeSyntax owner;
-      owner.name = ownerSpelling;
-      owner.arguments = n.children[0]->ownerGenericArguments;
+    if (found != typeNames.end() && !owner.arguments.empty())
       self = annotation(owner, n.span, current->owner);
-      if (self == Type::Unknown)
-        return std::nullopt;
-    }
+    if (self == Type::Unknown)
+      return std::nullopt;
   }
   // Static intrinsics of the numeric types keep their machine meaning.
   if (isNumeric(self) &&
       (member.starts_with("from_") || member == "MIN" || member == "MAX"))
     return std::nullopt;
+  std::optional<std::size_t> inherent;
+  std::vector<Type> implementationArguments;
+  interfaces::Solver inherentSolver(*checked.types, *checked.interfaceData,
+                                    diagnostics, interfaceAssumptions(),
+                                    regionEnvironment());
+  for (const auto &implementation : checked.interfaceData->implementations) {
+    if (implementation.interfaceType != Type::Unknown)
+      continue;
+    auto method = implementation.inherent.find(member);
+    if (method == implementation.inherent.end() ||
+        module.functions[method->second.function].receiver != "static")
+      continue;
+    auto bindings = inherentSolver.applicable(implementation, self, n.span);
+    if (!bindings)
+      continue;
+    if (inherent) {
+      error("type", n.span, "ambiguous inherent associated function");
+      return std::nullopt;
+    }
+    inherent = static_cast<std::size_t>(method->second.function);
+    for (auto parameter : method->second.arguments)
+      implementationArguments.push_back(
+          inherentSolver.normalize(parameter, *bindings, n.span));
+  }
+  if (inherent) {
+    facts(n).interfaceSelf = self;
+    facts(n).implementationArguments = std::move(implementationArguments);
+    return checked.functions[*inherent].canonicalName;
+  }
   // Arguments are checked once here; the call reuses their results.
   std::vector<Type> arguments;
   for (std::size_t i = 1; i < n.children.size(); ++i) {
@@ -85,8 +119,6 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
   const auto &chosen = candidates.front();
   const auto &definition =
       definitions[checked.types->erased(chosen.bound).declaration];
-  // The owner's arguments are part of `self` now, not arguments of the method.
-  n.children[0]->ownerGenericArguments.clear();
   facts(n).interfaceSelf = self;
   facts(n).interfaceType = chosen.bound;
   facts(n).interfaceMethod = static_cast<int>(chosen.method);

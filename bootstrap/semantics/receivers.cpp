@@ -1,5 +1,6 @@
 #include "semantics/checker.h"
 #include "support/limits.h"
+#include "types/machine.h"
 #include <algorithm>
 #include <map>
 #include <set>
@@ -577,6 +578,18 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
 }
 std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
                                                    bool reachable) {
+  auto native = source;
+  while (checked.types->isView(native))
+    native = checked.types->view(native).payload;
+  if (checked.types->isProduct(native) &&
+      (checked.types->product(native).kind == AggregateKind::Ref ||
+       checked.types->product(native).kind == AggregateKind::RefMut)) {
+    const Type operands[] = {
+        checked.types->viewType(native, ParameterMode::Mut)};
+    if (machineSignature(*checked.types, "cell." + call.children[0]->text,
+                         operands, native))
+      return std::nullopt;
+  }
   // Arguments are checked early only to resolve an otherwise ambiguous
   // choice; the call reuses their results.
   std::optional<std::vector<Type>> argumentTypes;

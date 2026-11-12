@@ -21,6 +21,32 @@ declared, beyond the previous 312, before qualifying their constant-callability.
 Manifest alias contexts are deduplicated by canonical ID, not counted as
 independent obligations. This correction is not a runtime regression.
 
+### Native static and guard compiler integration (2026-11-12)
+
+Explicitly instantiated native Cell owners now select applicable source static
+extensions, preserving builtin factory inference and method-generic arguments.
+Static dispatch retains parsed owner syntax: deleting those arguments freed
+array-count nodes still referenced by checked facts, producing a compiler
+heap-use-after-free. Separate resolved-owner binding state avoids duplicate
+binding without invalidating syntax. Native Ref/RefMut accessors also precede
+payload dereferencing, so a slice's indexed `get_mut` cannot shadow the guard's
+no-argument accessor; ordinary argument, mutability and ownership checks remain.
+
+The frozen normal candidate passes twelve full-library positive profile units
+covering static extension calls, guard access, Cell/RefCell and OnceCell behavior.
+Both corrected isolated static regressions pass four profile units.
+The rebuilt compiler ASan/UBSan candidate passes both static regression paths
+(four profile units) and three intended guard ownership rejections without
+reports; those negatives also pass normally. The declaration CTest passes in
+both builds, and pinned formatting passes. Receipts are under
+`/home/nites/mettle-optimization-build/i13-native-lookup-retained-syntax/`:
+`normal/run`, `minimal-normal/{run,fail}` and
+`minimal-sanitized/{run,fail}`. Minimal runs use the native-only library root,
+not the complete library; full-library sanitizer and emitted-program Cell
+acceptance are not claimed. Cell constants still fail on generic static binding
+and raw-pointer evaluation, and guard projections/splits and unsafe unguarded
+borrowing remain open. No Cell records or complete area are promoted here.
+
 ### Atomic bitwise acceptance (2026-11-12)
 
 Four canonical records now have Linux x86-64 evidence: AtomicBool.fetch_not and

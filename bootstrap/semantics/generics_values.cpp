@@ -39,7 +39,7 @@ void Checker::explicitGenericBindings(const Function &function,
                                       const Node &callee,
                                       const GenericEnvironment &environment,
                                       std::vector<TypeBinding> &bindings,
-                                      Span span) {
+                                      Span span, bool ownerResolved) {
   std::vector<const GenericParameter *> owner, selected;
   if (function.implementation < 0 && !function.owner.empty())
     for (const auto *product :
@@ -114,7 +114,8 @@ void Checker::explicitGenericBindings(const Function &function,
         binding->argument = genericArgument(argument, binding->parameter);
     }
   };
-  bind(callee.ownerGenericArguments, owner);
+  if (!ownerResolved)
+    bind(callee.ownerGenericArguments, owner);
   bind(callee.genericArguments, selected);
 }
 bool Checker::inferredArgument(const GenericArgument &argument) {

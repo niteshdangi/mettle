@@ -633,6 +633,8 @@ ordinary typed calls/borrows, and delegates slice/erased metadata formation to
 their existing ABI helpers. Region and loan checking therefore see the actual
 projection calls and their result-source contracts rather than an unchecked
 pointer reinterpretation.
+Native Ref/RefMut accessors are selected on the guard before dereferencing its
+payload; the actual machine call still checks arguments and access rights.
 
 Generic declarations use rigid, compilation-owned parameter identities. A
 parameter exposes only its declared Copy/Sized, interface and callable rights;
@@ -644,6 +646,12 @@ borrow layer, so an explicitly view-valued parameter retains its handle type.
 Interface-instance argument fitting normalizes associated types before checking
 symbolicity; unresolved fields must not make a concrete nominal argument accept
 an unrelated type. Multiple genuinely applicable instances remain ambiguous.
+Static source extensions on explicitly instantiated native storage owners use
+implementation applicability and substitutions before native dispatch. Builtin
+factories without owner arguments retain their existing inference path.
+Parsed owner arguments remain owned by the syntax tree while checked node facts
+refer to their array-count expressions; resolved owners suppress rebinding, not
+syntax retention.
 Checking publishes separate call substitutions without rewriting parsed names,
 spans or generic argument spellings. Bounds resolve in the callee declaration's
 namespace but are proved only from the caller's assumptions and coherent
