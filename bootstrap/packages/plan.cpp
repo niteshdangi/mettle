@@ -5,11 +5,14 @@
 #include "packages/sha256.h"
 #include "packages/solver.h"
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <set>
 #include <sstream>
+#include <unistd.h>
 
 namespace mettle::packages {
 namespace {
@@ -675,24 +678,52 @@ private:
   }
 
   bool write(const fs::path &path, const std::string &text) {
-    auto temporary = path;
-    temporary += ".tmp";
-    {
-      std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-      out << text;
-      if (!out) {
-        diagnostics.error("io", {},
-                          "cannot write " + temporary.generic_string());
-        return false;
+    struct Temporary {
+      std::string path;
+      int descriptor = -1;
+      ~Temporary() {
+        if (descriptor >= 0)
+          close(descriptor);
+        if (!path.empty()) {
+          std::error_code ignored;
+          fs::remove(path, ignored);
+        }
       }
-    }
-    std::error_code error;
-    fs::rename(temporary, path, error);
-    if (error)
+    } temporary{path.string() + ".tmp.XXXXXX"};
+    temporary.descriptor = mkstemp(temporary.path.data());
+    auto fail = [&](const std::string &action, std::error_code error) {
       diagnostics.error("io", {},
-                        "cannot update " + path.generic_string() + ": " +
+                        action + " " + path.generic_string() + ": " +
                             error.message());
-    return !error;
+      return false;
+    };
+    if (temporary.descriptor < 0) {
+      auto error = std::error_code(errno, std::generic_category());
+      temporary.path.clear();
+      return fail("cannot stage", error);
+    }
+    std::size_t offset = 0;
+    while (offset < text.size()) {
+      auto count = ::write(temporary.descriptor, text.data() + offset,
+                           text.size() - offset);
+      if (count < 0 && errno == EINTR)
+        continue;
+      if (count <= 0)
+        return fail("cannot write", std::error_code(count < 0 ? errno : EIO,
+                                                    std::generic_category()));
+      offset += static_cast<std::size_t>(count);
+    }
+    int status = close(temporary.descriptor);
+    temporary.descriptor = -1;
+    if (status != 0)
+      return fail("cannot close",
+                  std::error_code(errno, std::generic_category()));
+    std::error_code error;
+    fs::rename(temporary.path, path, error);
+    if (error)
+      return fail("cannot update", error);
+    temporary.path.clear();
+    return true;
   }
 };
 } // namespace

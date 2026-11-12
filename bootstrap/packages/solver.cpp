@@ -436,6 +436,8 @@ private:
     }
     if (fatal || !state.valid)
       return false;
+    if (!acyclic(state.chosen))
+      return false;
     solution = std::move(state.chosen);
     return true;
   }
@@ -458,62 +460,52 @@ private:
     for (const auto &[id, chosen] : solution)
       if (id != rootId)
         resolution.packages.push_back(convert(id, chosen));
-    if (!acyclic(resolution))
-      return std::nullopt;
     return resolution;
   }
 
-  bool acyclic(const Resolution &resolution) {
-    std::map<std::string, const ResolvedPackage *> byId;
-    for (const auto &package : resolution.packages)
-      byId[package.identity] = &package;
+  bool acyclic(const std::map<std::string, Chosen> &chosen) {
     std::set<std::string> done;
-    std::vector<const ResolvedPackage *> path;
+    std::vector<std::string> path;
     bool ok = true;
-    std::function<void(const ResolvedPackage &)> visit =
-        [&](const ResolvedPackage &package) {
-          path.push_back(&package);
-          for (const auto &[name, dependency] : package.dependencies) {
-            (void)name;
-            auto onPath = std::find_if(path.begin(), path.end(),
-                                       [&](const ResolvedPackage *entry) {
-                                         return entry->identity == dependency;
-                                       });
+    std::function<void(const std::string &)> visit =
+        [&](const std::string &id) {
+          const auto &package = chosen.at(id);
+          path.push_back(id);
+          for (const auto &[key, dependency] : package.dependencies) {
+            auto onPath = std::find(path.begin(), path.end(), dependency);
             if (onPath != path.end()) {
               std::string text;
               for (auto at = onPath; at != path.end(); ++at)
-                text += describe(*(*at)->candidate.manifest) + " -> ";
-              auto dependencyName = byId.at(dependency)->name();
+                text += describe(*chosen.at(*at).candidate.manifest) + " -> ";
               const auto *spec =
-                  package.candidate.manifest->dependency(dependencyName);
+                  package.candidate.manifest->dependency(key.first);
               if (!spec)
                 for (const auto &candidate :
                      package.candidate.manifest->buildDependencies)
-                  if (candidate.name == dependencyName) {
+                  if (candidate.name == key.first) {
                     spec = &candidate;
                     break;
                   }
-              diagnostics.error(
-                  "package",
+              conflict.emplace(
                   spec ? spec->span : package.candidate.manifest->nameSpan,
                   "dependency cycle: " + text +
-                      describe(*byId.at(dependency)->candidate.manifest) +
+                      describe(*chosen.at(dependency).candidate.manifest) +
                       "; cyclic package compilation is not "
                       "supported");
               ok = false;
               return;
             }
             if (done.insert(dependency).second) {
-              visit(*byId.at(dependency));
+              visit(dependency);
               if (!ok)
                 return;
             }
           }
           path.pop_back();
         };
-    auto root = resolution.packages.front().identity;
+    auto root = identity(request.root);
     done.insert(root);
-    visit(resolution.packages.front());
+    visit(root);
     return ok;
   }
 };

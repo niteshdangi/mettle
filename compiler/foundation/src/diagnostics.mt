@@ -11,6 +11,6 @@ extend Diagnostics {
 
     pub mut fn report(phase: Phase, span: Span, read message: Text from static): Unit {
         self.error_count += 1
-        if self.issues.len() < 100 { self.issues.push(Issue(phase, span, read message)) }
+        self.issues.push(Issue(phase, span, read message))
     }
 }

@@ -13,8 +13,6 @@ fn report(read diagnostics: Diagnostics): i32 {
         let message = issue.message
         io.eprint(f"error[{phase}] {begin}:{end} {message}\n")
     }
-    let omitted = diagnostics.error_count - diagnostics.issues.len()
-    if omitted != 0 { io.eprint(f"{omitted} additional diagnostics suppressed\n") }
     if diagnostics.error_count == 0 { 0 } else { 1 }
 }
 

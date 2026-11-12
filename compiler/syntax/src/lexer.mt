@@ -284,3 +284,17 @@ pub fn tokenize(read bytes: [u8], source: u32): Lexed {
     } else { scanner.scan() }
     scanner.result
 }
+
+@test
+fn retains_distinct_error_locations(): Unit {
+    let bytes = [b'#'; 101]
+    let lexed = tokenize(read bytes, 7u32)
+    assert(lexed.diagnostics.error_count == 101usize &&
+        lexed.diagnostics.issues.len() == 101usize, "distinct lexical errors lost")
+    var index = 0u32
+    for issue in lexed.diagnostics.issues.as_slice() {
+        assert(issue.span.source == 7u32 && issue.span.begin == index &&
+            issue.span.end == index + 1u32, "lexical error location changed")
+        index += 1u32
+    }
+}

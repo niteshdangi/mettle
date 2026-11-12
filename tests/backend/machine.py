@@ -1982,6 +1982,17 @@ def check_driver_outputs(run, args, directory, evidence):
             raise AssertionError(f"{emission}: failed publish left {leftovers}:\n{result.stderr}")
     evidence["cases"].append({"name": "driver-output-write-failures", "phase": "io"})
 
+    bundle = directory / "output-is-a-directory.dSYM"
+    bundle.mkdir(exist_ok=True)
+    sentinel = bundle / "preserve-debug-symbols"
+    sentinel.write_bytes(b"existing debug symbols")
+    result = run([args.compiler, "build", path, "-g", "-o", target], expected=1)
+    if ("error[io]" not in result.stderr or not target.is_dir() or
+            sentinel.read_bytes() != b"existing debug symbols"):
+        raise AssertionError("Failed debug output publication damaged existing artifacts:\n" +
+                             result.stderr)
+    evidence["cases"].append({"name": "debug-output-failure-preserves-bundle", "phase": "io"})
+
     # An executable for a target without the runtime fails before code generation
     # (this source would otherwise be rejected by the target assembler).
     rejected = directory / "early-link.mt"

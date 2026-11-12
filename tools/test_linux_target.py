@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -55,11 +56,17 @@ def execute(case):
     link = subprocess.run(command, text=True, capture_output=True, env=environment)
     if link.returncode:
         raise RuntimeError(str(command) + "\\n" + link.stdout + link.stderr)
-    result = subprocess.run([case["program"]], capture_output=True)
+    result = subprocess.run([case["program"]], text=True, capture_output=True)
     expected = case["expected"]
     if (expected == "trap" and result.returncode != -signal.SIGABRT) or (
             expected != "trap" and result.returncode != expected):
         raise RuntimeError(str(case) + ": got " + str(result.returncode))
+    for stream, wanted in case.get("output", {}).items():
+        actual = getattr(result, stream)
+        matches = actual == wanted if stream == "stdout" else wanted in actual
+        if not matches:
+            raise RuntimeError(case["program"] + ": expected " + stream + " " +
+                               repr(wanted) + ", got " + repr(actual))
     output = dict(case, exit_status=result.returncode, link_command=command,
                   program_sha256=hashlib.sha256(Path(case["program"]).read_bytes()).hexdigest())
     if undefined is not None:
@@ -122,6 +129,20 @@ if failures:
     sys.exit("\\n".join(failures))
 print(json.dumps(results))
 """
+
+
+def stage_source_inputs(case, directory):
+    from source import source_receipt
+    shutil.copyfile(case.path, directory / "source.mt")
+    dependencies = {}
+    for name in source_receipt(case.path)["helper_sha256"]:
+        helper = Path(name)
+        relative = helper.relative_to(case.path.parent)
+        destination = directory / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(helper, destination)
+        dependencies[relative.as_posix()] = sha256(destination)
+    return {"source_dependencies": dependencies, "output": case.output}
 
 
 def library_cases(output):
@@ -337,23 +358,28 @@ def main():
                     raise RuntimeError("Source compiler differs from passing build evidence")
                 cases = []
                 selected_sources = {case.name: (case.path.read_text(), case.exits["debug"],
-                                                case.exits["release"]) for case in run_cases}
+                                                case.exits["release"], case)
+                                    for case in run_cases}
                 selected_sources.update({
-                    "modules-" + name: (files["main.mt"], 0, 0)
+                    "modules-" + name: (files["main.mt"], 0, 0, None)
                     for name, files in TARGET_FILES.items()})
-                selected_sources.update({name: (text, 0, 0)
+                selected_sources.update({name: (text, 0, 0, None)
                                          for name, text in machine_sources.items()})
                 evidence["cases"][configuration]["source_selection"] = {
                     "run": sorted(case.name for case in run_cases),
                     "modules": sorted(TARGET_FILES), "machine": sorted(machine_sources),
                     "freestanding": ["no-hosted-runtime", "assembly-simd-no-services"]}
                 for profile in ("debug", "release"):
-                    for name, (text, debug, release) in selected_sources.items():
+                    for name, (text, debug, release, native_case) in selected_sources.items():
                         case_directory = output / "source" / profile / name
                         case_directory.mkdir(parents=True, exist_ok=True)
                         source = case_directory / "source.mt"
-                        source.write_text(text)
-                        dependencies = {}
+                        inputs = {"source_dependencies": {}, "output": {}}
+                        if native_case:
+                            inputs = stage_source_inputs(native_case, case_directory)
+                        else:
+                            source.write_text(text)
+                        dependencies = inputs["source_dependencies"]
                         if name.startswith("modules-"):
                             for relative, content in TARGET_FILES[name[len("modules-"):]].items():
                                 if relative == "main.mt":
@@ -369,7 +395,7 @@ def main():
                         cases.append({"name": name, "profile": profile, "object": str(obj),
                                       "program": str(executable), "source_sha256": sha256(source),
                                       "object_sha256": sha256(obj),
-                                      "source_dependencies": dependencies,
+                                      **inputs,
                                       "libraries": ([str(callbacks_archive)]
                                                     if name in machine_sources else []),
                                       "expected": debug if profile == "debug" else release})

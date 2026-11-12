@@ -518,6 +518,66 @@ class DebuggerTests(unittest.TestCase):
 
 
 class LinuxOracleTests(unittest.TestCase):
+    def test_source_inputs_preserve_transitive_helpers_and_output(self):
+        directory = OUTPUT / "linux-source-inputs"
+        original, staged = directory / "original", directory / "staged"
+        original.mkdir(parents=True, exist_ok=True)
+        staged.mkdir(parents=True, exist_ok=True)
+        source = original / "main.mt"
+        source.write_text('module source_helpers;\nfn main(): i32 { 0 }\n')
+        helpers = {
+            "source_helpers/module.mt": b"module nested;\r\n",
+            "source_helpers/nested/module.mt": b"pub fn answer(): i32 { 42 }\n",
+        }
+        for name, content in helpers.items():
+            path = original / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        case = SimpleNamespace(path=source, output={"stdout": "answer=42\n",
+                                                   "stderr": "diagnostic"})
+        inputs = linux.stage_source_inputs(case, staged)
+        self.assertEqual((staged / "source.mt").read_bytes(), source.read_bytes())
+        self.assertEqual(inputs["output"], case.output)
+        self.assertEqual(inputs["source_dependencies"], {
+            name: hashlib.sha256(content).hexdigest() for name, content in helpers.items()})
+        for name, content in helpers.items():
+            self.assertEqual((staged / name).read_bytes(), content)
+        nested = "source_helpers/nested/module.mt"
+        (original / nested).write_bytes(b"pub fn answer(): i32 { 43 }\n")
+        updated = linux.stage_source_inputs(case, staged)
+        self.assertNotEqual(updated["source_dependencies"][nested],
+                            inputs["source_dependencies"][nested])
+
+    def test_source_execution_enforces_native_output_expectations(self):
+        execute = next(node for node in ast.parse(linux.SOURCE_EXECUTION).body
+                       if isinstance(node, ast.FunctionDef) and node.name == "execute")
+        program = OUTPUT / "mock-source-program"
+        program.write_bytes(b"mock linked artifact")
+        case = source_runner.parse_case(
+            linux.ROOT / "tests" / "source" / "run" /
+            "i13-macro-equivalents-panic-print.mt", "run")
+        request = {"object": "source.o", "program": str(program), "expected": 0,
+                   "output": case.output}
+        for stdout, stderr, accepted in (
+                ("", "diagnostic=4\n", False),
+                ("plain count=3\nforwarded=5\nextra\n", "diagnostic=4\n", False),
+                ("plain count=3\nforwarded=5\n", "", False),
+                ("plain count=3\nforwarded=5\n",
+                 "extra diagnostic\ndiagnostic=4\n", True)):
+            with self.subTest(stdout=stdout, stderr=stderr):
+                process = SimpleNamespace(run=Mock(side_effect=[
+                    subprocess.CompletedProcess([], 0, "", ""),
+                    subprocess.CompletedProcess([], 0, stdout, stderr)]))
+                namespace = {"Path": Path, "os": os, "subprocess": process,
+                             "hashlib": hashlib, "cxx": "clang++", "runtime": "runtime.a"}
+                exec(compile(ast.Module(body=[execute], type_ignores=[]),
+                             "<linux-source-execution>", "exec"), namespace)
+                if accepted:
+                    self.assertEqual(namespace["execute"](request)["exit_status"], 0)
+                else:
+                    with self.assertRaises(RuntimeError):
+                        namespace["execute"](request)
+
     def test_unwrap_probe_requires_the_selected_panic(self):
         expectations = next(expectations for group, name, text, expectations
                             in linux.library_cases(OUTPUT) if name == "unwrap-none-aborts")

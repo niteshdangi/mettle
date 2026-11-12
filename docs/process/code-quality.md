@@ -213,6 +213,8 @@ bodies through ordinary Mettle macros in the adjacent `source_helpers/module.mt`
 keep specialized signatures and independent expectations in each case. Source receipts
 hash the case and every `.mt` input beneath that helper directory (including transitive
 helper modules), so changing a helper changes the receipt even when the case is unchanged.
+The Linux `--source` runner copies and hashes those same transitive helper inputs
+and enforces the native case's exact stdout and contained stderr expectations.
 CTest registers smaller single-worker shards for source, library,
 machine/ABI and package suites, each reserving one processor; `ctest -j N` bounds their
 combined concurrency. Choose N for both CPU and compiler memory use, especially under

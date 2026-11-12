@@ -559,16 +559,13 @@ static int emitOne(const Options &options, const Source &source,
             std::cerr << "mettle: warning[debug]: dsymutil not found; the "
                          "executable has no debug symbols\n";
           } else {
-            std::error_code absoluteError;
-            const auto bundle =
-                std::filesystem::absolute(options.output, absoluteError)
-                    .string() +
-                ".dSYM";
-            std::filesystem::remove_all(bundle, absoluteError);
+            const auto bundle = options.output + ".dSYM";
             std::vector<llvm::StringRef> symbolArguments{tool, linked, "-o",
                                                          bundle};
-            if (llvm::sys::ExecuteAndWait(tool, symbolArguments) != 0)
-              std::cerr << "mettle: warning[debug]: dsymutil failed\n";
+            if (llvm::sys::ExecuteAndWait(tool, symbolArguments) != 0) {
+              std::cerr << "mettle: error[debug]: dsymutil failed\n";
+              return 1;
+            }
           }
         }
         if (auto error = llvm::sys::fs::rename(linked, output.path))
@@ -607,7 +604,11 @@ int emit(const Options &options, const Source &source,
     std::cerr << "mettle: error[io]: output would overwrite the source\n";
     return 1;
   }
-  if (options.emits.size() <= 1)
+  const llvm::Triple target(options.target);
+  const bool debugBundle =
+      options.debugInfo && target.isOSDarwin() &&
+      (options.emit == "executable" || options.emit == "shared");
+  if (options.emits.size() <= 1 && !debugBundle)
     return emitOne(options, source, program, diagnostics, packageObjects,
                    store);
   namespace fs = std::filesystem;
@@ -626,9 +627,12 @@ int emit(const Options &options, const Source &source,
     bool existed = false, directory = false;
   };
   std::vector<Artifact> artifacts;
-  const llvm::Triple target(options.target);
-  for (const auto &format : options.emits) {
-    const auto suffix = artifactSuffix(format, target);
+  auto formats = options.emits;
+  if (formats.empty())
+    formats.push_back(options.emit);
+  for (const auto &format : formats) {
+    const auto suffix =
+        formats.size() > 1 ? artifactSuffix(format, target) : "";
     Artifact artifact;
     artifact.destination = options.output + suffix;
     artifact.staged = directory / "outputs" / artifact.destination.filename();

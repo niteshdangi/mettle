@@ -288,7 +288,11 @@ self-hosting capability). `--emit FORMAT` overrides the manifest for one build.
 One format writes exactly `-o OUTPUT`. Multiple formats treat OUTPUT as a prefix:
 `.a`, `.so` (Darwin `.dylib`), `.o`, `.ll`, `.ir`, or no suffix for an executable.
 Every format is staged before publication; a failed emission preserves existing
-outputs. Static libraries include the hosted runtime unless freestanding;
+outputs. Darwin debug executables/shared libraries and their generated `.dSYM`
+bundles use the same staged publication and rollback, including single-output
+builds. A failing `dsymutil` aborts publication rather than publishing a partial
+bundle; an unavailable tool remains a warning. Static libraries include the
+hosted runtime unless freestanding;
 native consumers use a compatible C++ linker and matching sanitizer runtime when
 instrumented. Shared output requires the installed runtime's target.
 
@@ -326,8 +330,10 @@ remain available; visibility and public reexports still control the package API.
 Locks contain the root followed by packages in deterministic identity order,
 with exact versions, source/commit identities, checksums, features and dependency
 IDs. The lock reader rejects unknown fields, duplicate package identities and
-references to absent identities. `--locked`, `--offline` and `--frozen` retain
-their existing meanings.
+references to absent identities. Lock updates use exclusively created sibling
+temporary files and atomic replacement, so concurrent planners cannot share or
+truncate another writer's staging file. `--locked`, `--offline` and `--frozen`
+retain their existing meanings.
 
 Dependency sources are local paths, configured registries, or Git identities.
 Git requirements resolve to an immutable commit in the lock, not a moving tag.
@@ -339,9 +345,10 @@ Version requirements support exact, caret, tilde, wildcard and comma-separated
 comparator intersections; arrays denote unions. Ordering follows SemVer;
 prereleases require explicit prerelease selection. Resolve deterministically to
 the highest compatible non-yanked candidate subject to the complete constraints,
-backtracking when needed. A locked yanked release remains usable unless policy
-explicitly forbids it. Dependency cycles that require cyclic compilation fail
-with the package path, not an arbitrary resolver cutoff.
+backtracking when needed, including when a candidate graph requires cyclic
+compilation. A locked yanked release remains usable unless policy explicitly
+forbids it. If no acyclic solution exists, dependency cycles fail with the
+package path, not an arbitrary resolver cutoff.
 
 Features are additive named sets enabling optional dependencies, dependency
 features and declared cfg facts. Unify features for the same package source/

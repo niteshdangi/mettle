@@ -364,6 +364,64 @@ def backtracking():
     assert 'name: "util"\n        version: "1.0.0"' in lock, lock
 
 
+def cycle_backtracking():
+    root = evidence / "cycle-backtracking"
+    app = root / "app"
+    (app / "src").mkdir(parents=True)
+    (app / "src/main.mt").write_text("fn main(): i32 { 0 }\n")
+    (app / "package.mettle").write_text(
+        'name: "app"\nversion: "0.1.0"\nregistry { path: "../registry" }\n'
+        'dependencies { alpha: "^1", beta: "^1" }\n')
+    for name, version, dependencies in (
+            ("alpha", "1.1.0", 'dependencies { beta: "^1" }\n'),
+            ("alpha", "1.0.0", ""),
+            ("beta", "1.0.0", 'dependencies { alpha: "^1" }\n')):
+        package = root / "registry" / name / version
+        (package / "src").mkdir(parents=True)
+        (package / "src/main.mt").write_text("pub fn value(): i32 { 0 }\n")
+        (package / "package.mettle").write_text(
+            f'name: "{name}"\nversion: "{version}"\nkind: "library"\n' + dependencies)
+    invoke(["check", app])
+    lock = lock_of(app)
+    assert 'name: "alpha"\n        version: "1.0.0"' in lock, lock
+    assert 'version: "1.1.0"' not in lock, lock
+    invoke(["check", app, "--locked"])
+    manifest = root / "registry" / "alpha" / "1.0.0" / "package.mettle"
+    manifest.write_text(manifest.read_text() + 'dependencies { beta: "^1" }\n')
+    (app / "lock.mettle").unlink()
+    invoke(["check", app], 1, [
+        "dependency cycle: alpha 1.0.0 -> beta 1.0.0 -> alpha 1.0.0",
+        "cyclic package compilation is not supported"])
+
+
+def lock_publication_isolated():
+    app = packages("path-dependency/app")
+    sentinel = evidence / "unrelated-output"
+    sentinel.write_bytes(b"preserve another writer's output")
+    shared = app / "lock.mettle.tmp"
+    shared.symlink_to(sentinel)
+    invoke(["check", app])
+    assert sentinel.read_bytes() == b"preserve another writer's output"
+    expected = lock_of(app)
+    (app / "lock.mettle").unlink()
+    environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
+    commands = [subprocess.Popen([str(mettle), "check", str(app)], env=environment,
+                                 text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE) for _ in range(8)]
+    try:
+        for command in commands:
+            stdout, stderr = command.communicate(timeout=90)
+            assert command.returncode == 0, stdout + stderr
+    finally:
+        for command in commands:
+            if command.poll() is None:
+                command.kill()
+                command.wait()
+    assert lock_of(app) == expected
+    assert sentinel.read_bytes() == b"preserve another writer's output"
+    invoke(["check", app, "--locked"])
+
+
 def offline():
     app = packages("registry-resolution/app")
     edit(app / "package.mettle", 'registry {\n    path: "../../registry"\n}\n', "")
@@ -3023,7 +3081,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          configured_entry, mettle_version, library_entries, development_dependencies,
          missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, wildcard_version_bounds,
-         backtracking, offline, features,
+         backtracking, cycle_backtracking, lock_publication_isolated, offline, features,
          coexisting_versions, git_source, git_concurrent_output, host_target_separation,
          manifest_diagnostics, data_format, lock_structure,
          package_options_need_package, incremental_reuse, checked_core_reuse,
