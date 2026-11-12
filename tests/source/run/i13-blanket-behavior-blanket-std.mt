@@ -57,6 +57,7 @@ fn main(): i32 {
     if *owned_value.get() != 43 { return 5 }
 
     let text_value = kept.to_string()
+    if text_value.as_text() != "43" { return 12 }
     if !text_is_render(text_value.as_text(), f"{kept}") { return 6 }
 
     // std.net.Ipv4Addr: Borrow, From<T>, Into<A>, ToString

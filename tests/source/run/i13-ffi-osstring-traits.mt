@@ -1,7 +1,7 @@
 // profiles: debug release
 module source_helpers;
 import core.borrow.{AsRef, Borrow, ToOwned}
-import core.cmp.{Ord, PartialEq, PartialOrd}
+import core.cmp.{Ord, Ordering, PartialEq, PartialOrd}
 import core.convert.From
 import core.default.Default
 import core.fmt.{Debug, Write}
@@ -21,10 +21,10 @@ fn debug_is<T: Debug + unsized>(read value: T, read expected: Text): bool {
 fn ord_equal<T: Ord + Copy>(left: T, right: T): bool { left.cmp(right).is_eq() }
 fn view_eq<A: PartialEq<B> + Copy, B: Copy>(left: A, right: B): bool { left.eq(right) }
 fn owned_partial<A: PartialOrd<B>, B: Copy>(read left: A, right: B): bool {
-    left.partial_cmp(right).is_present()
+    left.partial_cmp(right) == present(Ordering.Equal)
 }
 fn view_partial<A: PartialOrd<B> + Copy, B>(left: A, read right: B): bool {
-    left.partial_cmp(right).is_present()
+    left.partial_cmp(right) == present(Ordering.Equal)
 }
 
 fn main(): i32 {

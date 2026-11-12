@@ -255,8 +255,9 @@ fn main(): i32 {
 
     // Drain yields every entry and leaves the map empty.
     var drained = 0
-    for pair in map.drain() { drained += pair.1 }
-    if drained == 0 || !map.is_empty() { return 65 }
+    var drain_count = 0
+    for pair in map.drain() { drained += pair.1; drain_count += 1 }
+    if drained != 39 || drain_count != 2 || !map.is_empty() { return 65 }
     map.insert(9, 90)
     match map.get(9) {
         present(value) => { if *value != 90 { return 66 } },

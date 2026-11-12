@@ -749,7 +749,7 @@ fn format_to<W: Writer + unsized>(mut writer: W, message: format fmt.Message, ne
     if newline { try sink.inner.write_all("\n".as_bytes()) }
 }
 
-fn fd_read(fd: i32, mut buf: [u8]): usize throws Error {
+pub fn read_fd(fd: i32, mut buf: [u8]): usize throws Error {
     if buf.len() == 0usize { return 0usize }
     while true {
         let n = unsafe { sys.`read`(fd, sys.data_mut(buf), buf.len()) }
@@ -760,7 +760,7 @@ fn fd_read(fd: i32, mut buf: [u8]): usize throws Error {
     0usize
 }
 
-fn fd_write(fd: i32, read buf: [u8]): usize throws Error {
+pub fn write_fd(fd: i32, read buf: [u8]): usize throws Error {
     if buf.len() == 0usize { return 0usize }
     while true {
         let n = unsafe { sys.write(fd, slice.data(buf), buf.len()) }
@@ -770,9 +770,6 @@ fn fd_write(fd: i32, read buf: [u8]): usize throws Error {
     }
     0usize
 }
-
-pub fn read_fd(fd: i32, mut buf: [u8]): usize throws Error { try fd_read(fd, buf) }
-pub fn write_fd(fd: i32, read buf: [u8]): usize throws Error { try fd_write(fd, buf) }
 
 pub type PipeReader { descriptor: sys.OwnedFd }
 pub type PipeWriter { descriptor: sys.OwnedFd }
@@ -890,11 +887,11 @@ fn stream_state<T, F: fn(): T>(
 
 type RawStdin {}
 extend RawStdin implements Reader {
-    mut fn read_some(mut bytes: [u8]): usize throws Error { try fd_read(0i32, bytes) }
+    mut fn read_some(mut bytes: [u8]): usize throws Error { try read_fd(0i32, bytes) }
 }
 type RawOutput { fd: i32 }
 extend RawOutput implements Writer {
-    mut fn write_some(read bytes: [u8]): usize throws Error { try fd_write(self.fd, bytes) }
+    mut fn write_some(read bytes: [u8]): usize throws Error { try write_fd(self.fd, bytes) }
     mut fn flush(): Unit throws Error {}
 }
 
@@ -1017,7 +1014,7 @@ extend StdoutLock implements Writer {
     }
 }
 extend StderrLock implements Writer {
-    mut fn write_some(read bytes: [u8]): usize throws Error { try fd_write(2i32, bytes) }
+    mut fn write_some(read bytes: [u8]): usize throws Error { try write_fd(2i32, bytes) }
     mut fn flush(): Unit throws Error {}
 }
 

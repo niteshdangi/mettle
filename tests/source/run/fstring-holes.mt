@@ -10,9 +10,6 @@ fn emit(message: format Message, mut buffer: [u8]): usize {
     let ignored = capture message.write_to(mut out)
     out.len()
 }
-fn log(message: format Message, mut buffer: [u8]): usize { emit(message, mut buffer) }
-fn relay(message: format Message, mut buffer: [u8]): usize { log(message, mut buffer) }
-
 fn same(read buffer: [u8], length: usize, read expected: Text): bool {
     let want = expected.as_bytes()
     if length != want.len() { return false }

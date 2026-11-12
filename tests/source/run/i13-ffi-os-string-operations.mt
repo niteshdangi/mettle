@@ -59,10 +59,12 @@ fn checks_capacity(): i32 {
     s.reserve_exact(40usize)
     if s.capacity() < 40usize { return 21 }
     s.push(os_str_from_text("xyz"))
-    s.shrink_to_fit()
-    if s.capacity() < 3usize { return 22 }
     s.shrink_to(10usize)
-    if s.capacity() < 3usize { return 23 }
+    if s.capacity() != 10usize || !string_is(s, "xyz") { return 23 }
+    s.shrink_to_fit()
+    if s.capacity() != 3usize || !string_is(s, "xyz") { return 22 }
+    s.shrink_to(10usize)
+    if s.capacity() != 3usize || !string_is(s, "xyz") { return 23 }
     match capture s.try_reserve(8usize) {
         success(_) => {},
         failure(_) => { return 24 }

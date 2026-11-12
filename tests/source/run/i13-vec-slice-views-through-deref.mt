@@ -41,7 +41,6 @@ fn main(): i32 {
     let (left, right) = v.split_at(2usize)
     if left.len() != 2usize || right[0usize] != 4 { return 9 }
     if v.split_at_checked(9usize).is_present() { return 10 }
-    var fresh_m = sample()
     unsafe {
         let (a, b) = v.split_at_unchecked(3usize)
         if a.len() != 3usize || b.len() != 3usize { return 11 }
@@ -51,7 +50,6 @@ fn main(): i32 {
     mr2[0usize] = 40
     if v[0usize] != 70 || v[3usize] != 40 { return 12 }
     if v.split_at_mut_checked(10usize).is_present() { return 13 }
-    var fresh_m = sample()
     unsafe {
         let (a, b) = v.split_at_mut_unchecked(1usize)
         a[0usize] = 71
@@ -65,14 +63,17 @@ fn main(): i32 {
     w.fill_with(fn(): i32 { counter += 1; counter })
     if w[5usize] != 6 { return 16 }
     w.rotate_left(1usize)
+    if w[0usize] != 2 || w[5usize] != 1 { return 17 }
     w.rotate_right(1usize)
-    if w[0usize] != 1 { return 17 }
+    if w[0usize] != 1 || w[5usize] != 6 { return 17 }
     w.reverse()
+    if w[0usize] != 6 || w[5usize] != 1 { return 18 }
     w.swap(0usize, 5usize)
     if w[0usize] != 1 { return 18 }
-    w.copy_from_slice(read [9, 9, 9, 9, 9, 9])
+    w.copy_from_slice(read [9, 8, 7, 6, 5, 4])
+    if w[0usize] != 9 || w[5usize] != 4 { return 19 }
     w.copy_within(0usize, 2usize, 4usize)
-    if w[5usize] != 9 { return 19 }
+    if w[4usize] != 9 || w[5usize] != 8 { return 19 }
     w.clone_from_slice(read [1, 2, 3, 4, 5, 6])
     var swap_target = sample()
     w.swap_with_slice(mut swap_target)
@@ -120,11 +121,18 @@ fn main(): i32 {
     for win in base.windows(3usize) { windows += 1 }
     if windows != 4 { return 38 }
     var cm = sample()
-    for c in cm.chunks_mut(2usize) { c[0usize] = 0 }
-    for c in cm.chunks_exact_mut(2usize) { c[1usize] = 1 }
-    for c in cm.rchunks_mut(2usize) { c[0usize] = 2 }
-    for c in cm.rchunks_exact_mut(2usize) { c[1usize] = 3 }
-    if cm[0usize] != 2 || cm[1usize] != 3 || cm[5usize] != 3 { return 39 }
+    for c in cm.chunks_mut(2usize) { c[0usize] = 10 }
+    if cm[0usize] != 10 || cm[2usize] != 10 || cm[4usize] != 10 ||
+        cm[1usize] != 1 || cm[3usize] != 2 || cm[5usize] != 0 { return 39 }
+    for c in cm.chunks_exact_mut(2usize) { c[1usize] = 11 }
+    if cm[0usize] != 10 || cm[2usize] != 10 || cm[4usize] != 10 ||
+        cm[1usize] != 11 || cm[3usize] != 11 || cm[5usize] != 11 { return 39 }
+    for c in cm.rchunks_mut(2usize) { c[0usize] = 12 }
+    if cm[0usize] != 12 || cm[2usize] != 12 || cm[4usize] != 12 ||
+        cm[1usize] != 11 || cm[3usize] != 11 || cm[5usize] != 11 { return 39 }
+    for c in cm.rchunks_exact_mut(2usize) { c[1usize] = 13 }
+    if cm[0usize] != 12 || cm[2usize] != 12 || cm[4usize] != 12 ||
+        cm[1usize] != 13 || cm[3usize] != 13 || cm[5usize] != 13 { return 39 }
     if sample().chunk(0usize, 2usize).unwrap().len() != 2usize { return 40 }
     if sample().subslice(1usize, 3usize).unwrap().len() != 2usize { return 41 }
 

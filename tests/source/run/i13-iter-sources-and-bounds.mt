@@ -23,6 +23,7 @@ fn require_fused<I: FusedIterator>(take items: I): usize {
             none => { break }
         }
     }
+    if source.next().is_present() { panic("fused iterator resumed after exhaustion") }
     seen
 }
 

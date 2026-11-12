@@ -1,8 +1,7 @@
 // expect-exit: 0
 // profiles: debug release
 // Blanket and auto-property evidence for ffi, fs and io types. Each call instantiates the
-// blanket trait row for a hosted std type. Pairs the compiler cannot satisfy are
-// listed as gaps at the end of main; negative impls are evidenced in tests/source/fail.
+// blanket trait row for a hosted std type; negative impls are evidenced in tests/source/fail.
 fn any_ok<T: unsized + core.any.Any>(): Unit {}
 fn borrow_ok<T: unsized + core.borrow.Borrow<T>>(): Unit {}
 fn owned_ok<T: core.borrow.ToOwned>(): Unit {}
@@ -184,17 +183,5 @@ fn main(): i32 {
     into_ok<A_io_Stdout>()
     send_ok<A_io_Stdout>()
     sync_ok<A_io_Stdout>()
-    // gap ffi::OsString ToOwned: no Clone implementation (ToOwned blanket requires Clone)
-    // gap fs::FileType ToOwned: no Clone implementation
-    // gap fs::Metadata ToOwned: no Clone implementation
-    // gap fs::OpenOptions ToOwned: no Clone implementation
-    // gap fs::Permissions ToOwned: no Clone implementation
-    // gap fs::ReadDir Send: not Transferable; Rust auto-derives Send via Dir raw pointer unsafe impl
-    // gap fs::ReadDir Sync: not Shareable; Rust auto-derives Sync via Dir raw pointer unsafe impl
-    // gap io::Error ToString: no Display implementation
-    // gap io::ErrorKind ToOwned: no Clone implementation
-    // gap io::ErrorKind ToString: no Display implementation
-    // gap: io::Cursor absent from the Mettle library (no declaration found)
-    // gap: io::Lines absent from the Mettle library (no declaration found)
     0
 }

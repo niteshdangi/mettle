@@ -59,7 +59,7 @@ fn integer_char_conversions(): i32 {
     if u32.(From<char>).from('a') != 97u32 || u32.(From<char>).from('\u{10ffff}') != 1114111u32 { return 30 }
     if u64.(From<char>).from('\u{20ac}') != 8364u64 { return 31 }
     if u128.(From<char>).from('\u{20ac}') != 8364u128 { return 32 }
-    if !yields(u8.(TryFrom<char>).try_from('\u{ff}'), 255u8) || is_err(u8.(TryFrom<char>).try_from('\u{ff}')) { return 33 }
+    if !yields(u8.(TryFrom<char>).try_from('\u{ff}'), 255u8) { return 33 }
     if !is_err(u8.(TryFrom<char>).try_from('\u{100}')) { return 34 }
     if !yields(u16.(TryFrom<char>).try_from('\u{ffff}'), 65535u16) || !is_err(u16.(TryFrom<char>).try_from('\u{10000}')) { return 35 }
     if !yields(usize.(TryFrom<char>).try_from('a'), 97usize) { return 36 }

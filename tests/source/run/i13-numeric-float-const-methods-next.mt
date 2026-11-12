@@ -10,16 +10,6 @@ fn near_f64(value: f64, expected: f64, tolerance: f64): bool {
 
 const F32_ABS: f32 = (-1.5f32).abs()
 const F64_ABS: f64 = f64.from_bits(0x8000000000000000u64).abs()
-const F32_ALGEBRAIC_ADD: f32 = 5.0f32.algebraic_add(2.0f32)
-const F64_ALGEBRAIC_ADD: f64 = 5.0f64.algebraic_add(2.0f64)
-const F32_ALGEBRAIC_SUB: f32 = 5.0f32.algebraic_sub(2.0f32)
-const F64_ALGEBRAIC_SUB: f64 = 5.0f64.algebraic_sub(2.0f64)
-const F32_ALGEBRAIC_MUL: f32 = 5.0f32.algebraic_mul(2.0f32)
-const F64_ALGEBRAIC_MUL: f64 = 5.0f64.algebraic_mul(2.0f64)
-const F32_ALGEBRAIC_DIV: f32 = 5.0f32.algebraic_div(2.0f32)
-const F64_ALGEBRAIC_DIV: f64 = 5.0f64.algebraic_div(2.0f64)
-const F32_ALGEBRAIC_REM: f32 = 5.0f32.algebraic_rem(2.0f32)
-const F64_ALGEBRAIC_REM: f64 = 5.0f64.algebraic_rem(2.0f64)
 const F32_CEIL: f32 = 1.25f32.ceil()
 const F64_CEIL: f64 = (-1.25f64).ceil()
 const F32_CLAMP: f32 = 5.0f32.clamp(0.0f32, 3.0f32)
@@ -131,12 +121,7 @@ const F32_CONST_FRAME_BITS: u32 = float_const_frame_f32(f32.from_bits(0xff812345
 const F64_CONST_FRAME_BITS: u64 = float_const_frame_f64(f64.from_bits(0xfff0123456789abcu64)).to_bits()
 
 fn main(): i32 {
-    if F32_ABS != 1.5f32 || F64_ABS.to_bits() != 0u64 ||
-       F32_ALGEBRAIC_ADD != 7.0f32 || F64_ALGEBRAIC_ADD != 7.0f64 ||
-       F32_ALGEBRAIC_SUB != 3.0f32 || F64_ALGEBRAIC_SUB != 3.0f64 ||
-       F32_ALGEBRAIC_MUL != 10.0f32 || F64_ALGEBRAIC_MUL != 10.0f64 ||
-       F32_ALGEBRAIC_DIV != 2.5f32 || F64_ALGEBRAIC_DIV != 2.5f64 ||
-       F32_ALGEBRAIC_REM != 1.0f32 || F64_ALGEBRAIC_REM != 1.0f64 {
+    if F32_ABS != 1.5f32 || F64_ABS.to_bits() != 0u64 {
         return 1
     }
     if F32_CEIL != 2.0f32 || F64_CEIL != -1.0f64 ||

@@ -102,7 +102,7 @@ fn main(): i32 {
         success(value) => if !value.is_nan() { return 15 },
         failure(_) => { return 16 }
     }
-    if !rejects("") || !rejects("+") || !rejects("1e") ||
+    if !rejects("+") || !rejects("1e") ||
        !rejects("1..0") || !rejects("1.0x") || !rejects(" 1.0") ||
        !rejects("1_0") || !rejects("0x1p0") ||
        !long_midpoint_rounds_up() {

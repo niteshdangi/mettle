@@ -188,6 +188,47 @@ void floatingCarrierCases() {
   program.statics[0].initializer->type = Type::Char;
   rejected(program, "static initializer");
 }
+void staticConsumptionCases() {
+  auto types = std::make_shared<mettle::TypeStore>();
+  auto array = types->arrayType(Type::I32, types->constant(Type::Usize, 2));
+  for (auto storage :
+       {mettle::StorageDuration::Automatic, mettle::StorageDuration::Static})
+    for (auto op : {Op::Move, Op::DropPlace, Op::ArrayTake}) {
+      auto result = op == Op::Move        ? array
+                    : op == Op::ArrayTake ? Type::I32
+                                          : Type::Unit;
+      Instruction consume{op, {1, result}, {}, {}, "", {0, {}}, -1, 0, {}};
+      consume.unsafeAllowed = true;
+      if (op == Op::ArrayTake)
+        consume.operands = {{0, Type::Usize}};
+      Local local{"items", array, true, {}};
+      local.storage = storage;
+      Program program;
+      program.types = types;
+      program.requireEntry = false;
+      program.functions = {
+          {"consume",
+           result,
+           storage == mettle::StorageDuration::Static ? 0u : 1u,
+           {local},
+           {{{{Op::Constant, {0, Type::Usize}, {}, {}, "", {-1, {}}, -1, 0, {}},
+              consume},
+             {Exit::Return, {1, result}}}},
+           2}};
+      mettle::Diagnostics diagnostics;
+      mettle::analysis::initialization(program, diagnostics);
+      if (storage == mettle::StorageDuration::Automatic)
+        require(diagnostics.empty(), "local consumption was rejected");
+      else
+        require(std::any_of(diagnostics.items.begin(), diagnostics.items.end(),
+                            [](const auto &item) {
+                              return item.phase == "ownership" &&
+                                     item.message.find("static storage") !=
+                                         std::string::npos;
+                            }),
+                "static consumption bypassed initialization analysis");
+    }
+}
 void phaseOwnership() {
   mettle::Source source{"memory.mt", "fn main() { -(2147483648) }\n"};
   mettle::Diagnostics diagnostics;
@@ -914,6 +955,7 @@ int main() {
   try {
     verifierCases();
     floatingCarrierCases();
+    staticConsumptionCases();
     phaseOwnership();
     ownedValueCases();
     variantRefinementCases();

@@ -20,7 +20,6 @@ fn main(): i32 {
         if worker_initialized.get().load(core.sync.atomic.Ordering.Acquire) { 0 } else { 3 }
     })
     while !entered.get().load(core.sync.atomic.Ordering.Acquire) { thread.yield_now() }
-    thread.sleep_ms(20u64)
     gate.get().call_once_force(fn(state: once.OnceState): Unit {
         if !state.is_poisoned() { panic("poison lost") }
         initialized.get().store(true, core.sync.atomic.Ordering.Release)

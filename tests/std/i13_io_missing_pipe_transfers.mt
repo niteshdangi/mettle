@@ -7,6 +7,9 @@ extern "C" {
 }
 
 fn run(): i32 throws Error {
+    var empty: [u8; 0] = []
+    assert(try std.io.read_fd(-1i32, mut empty) == 0usize, "empty read does not access descriptor")
+    assert(try std.io.write_fd(-1i32, read empty) == 0usize, "empty write does not access descriptor")
     var descriptors = [-1i32; 2]
     if unsafe { pipe(core.ptr.from_mut(mut descriptors).cast<i32>()) } != 0i32 {
         throw std.io.last_os_error()

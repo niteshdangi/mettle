@@ -111,14 +111,5 @@ fn main(): i32 {
     send_ok<A_time_SystemTime>()
     sync_ok<A_time_SystemTime>()
     // gap task::Context Any: region-borrowing field makes Static fail even at region static
-    // gap task::Poll ToOwned: no Clone implementation
-    // gap task::Waker ToOwned: no Clone implementation
-    // gap thread::Scope Send: deliberately not Transferable (library thread.mt); Rust auto-derives Send
-    // gap thread::Scope Sync: deliberately not Shareable (library thread.mt); Rust auto-derives Sync
-    // gap thread::ScopedJoinHandle Send: explicit not Transferable (library thread.mt:407); Rust auto-derives Send
-    // gap thread::ScopedJoinHandle Sync: explicit not Shareable (library thread.mt:407); Rust auto-derives Sync
-    // gap time::Duration ToOwned: no Clone implementation
-    // gap time::Instant ToOwned: no Clone implementation
-    // gap time::SystemTime ToOwned: no Clone implementation
     0
 }

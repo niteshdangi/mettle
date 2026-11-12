@@ -30,25 +30,6 @@ fn main(): i32 {
     sync_ok<alloc.binary_heap.BinaryHeap<i32>>()
     owned_ok<alloc.binary_heap.BinaryHeap<i32>>()
 
-    // binary_heap::Drain = super.vec.Drain: Any Borrow From Into Send Sync
-    borrow_ok<alloc.vec.Drain<region static, i32, alloc.alloc.Global>>()
-    from_ok<alloc.vec.Drain<region static, i32, alloc.alloc.Global>>()
-    tryfrom_ok<alloc.vec.Drain<region static, i32, alloc.alloc.Global>>()
-    tryinto_ok<alloc.vec.Drain<region static, i32, alloc.alloc.Global>>()
-    into_ok<alloc.vec.Drain<region static, i32, alloc.alloc.Global>>()
-    send_ok<alloc.vec.Drain<region static, i32, alloc.alloc.Global>>()
-    sync_ok<alloc.vec.Drain<region static, i32, alloc.alloc.Global>>()
-
-    // binary_heap::IntoIter = vec.IntoIter: Any Borrow From Into Send Sync ToOwned
-    any_ok<alloc.vec.IntoIter<i32>>()
-    borrow_ok<alloc.vec.IntoIter<i32>>()
-    from_ok<alloc.vec.IntoIter<i32>>()
-    tryfrom_ok<alloc.vec.IntoIter<i32>>()
-    tryinto_ok<alloc.vec.IntoIter<i32>>()
-    into_ok<alloc.vec.IntoIter<i32>>()
-    send_ok<alloc.vec.IntoIter<i32>>()
-    sync_ok<alloc.vec.IntoIter<i32>>()
-
     // binary_heap::Iter = SliceIter: Any Borrow From Into Send Sync ToOwned
     borrow_ok<core.slice.SliceIter<region static, i32>>()
     from_ok<core.slice.SliceIter<region static, i32>>()
@@ -323,6 +304,8 @@ fn main(): i32 {
     tryfrom_ok<alloc.vec.IntoIter<i32>>()
     tryinto_ok<alloc.vec.IntoIter<i32>>()
     into_ok<alloc.vec.IntoIter<i32>>()
+    send_ok<alloc.vec.IntoIter<i32>>()
+    sync_ok<alloc.vec.IntoIter<i32>>()
 
     // vec::Vec = List: Any Borrow From Into Send Sync ToOwned
     any_ok<alloc.vec.List<i32>>()

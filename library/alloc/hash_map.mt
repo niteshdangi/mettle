@@ -48,26 +48,23 @@ pub type Map<K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> {
 
 pub type MapDrain<region r, K, V, A: Allocator> {
     inner: super.vec.Drain<region r, Bucket<K, V>, A>
-    remaining: usize
 }
 extend<region r, K, V, A: Allocator> MapDrain<region r, K, V, A> implements Iterator {
     type Item = (K, V)
     mut fn next(): (K, V)? {
         match take self.inner.next() {
             present(entry) => {
-                self.remaining -= 1usize
                 present((entry.key, entry.value))
             },
             none => none
         }
     }
-    fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
+    fn size_hint(): (usize, usize?) { self.inner.size_hint() }
 }
 extend<region r, K, V, A: Allocator> MapDrain<region r, K, V, A> implements BidirectionalIterator {
     mut fn next_back(): (K, V)? {
         match take self.inner.next_back() {
             present(entry) => {
-                self.remaining -= 1usize
                 present((entry.key, entry.value))
             },
             none => none
@@ -346,10 +343,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
                 failure(_) => ()
             }
         }
-        self.entries.shrink_to_fit()
-        if self.entries.capacity() < min_capacity {
-            self.entries.reserve(min_capacity - self.entries.len())
-        }
+        self.entries.shrink_to(min_capacity)
     }
 
     // Lookups take a borrowed query `Q` that the stored key views as (a
@@ -447,6 +441,11 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
             },
             none => {}
         }
+        let _ = try self.try_append(hash, key, value)
+        none
+    }
+
+    mut fn try_append(hash: u64, take key: K, take value: V): usize throws AllocError {
         try self.try_reserve(1usize)
         let at = self.entries.len()
         self.entries.push(Bucket(hash, key, value))
@@ -454,7 +453,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         var pos = (hash as usize) & mask
         while self.slot(pos) != empty() { pos = (pos + 1usize) & mask }
         self.set_slot(pos, at)
-        none
+        at
     }
     pub mut fn insert(take key: K, take value: V): V? {
         let outcome = capture self.try_insert(key, value)
@@ -466,12 +465,14 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
 
     // Returns the value for `key`, inserting `value` first when absent.
     pub mut fn or_insert(take key: K, take value: V): mut V from self {
-        let found = self.find_entry(key)
-        let s = match found {
-            present(s) => s,
+        let hash = self.builder.hash_one(key)
+        let s = match self.find_pos(hash, key) {
+            present(pos) => self.slot(pos),
             none => {
-                let r = self.insert(key, value)
-                self.entries.len() - 1usize
+                match capture self.try_append(hash, key, value) {
+                    success(index) => index,
+                    failure(_) => handle_alloc_error(layout_of<Bucket<K, V>>())
+                }
             }
         }
         unsafe { mut (*self.entries.as_mut_ptr().add(s)).value }
@@ -544,7 +545,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
             i += 1usize
         }
         let count = self.entries.len()
-        MapDrain(self.entries.drain(0usize..count), count)
+        MapDrain(self.entries.drain(0usize..count))
     }
 }
 
@@ -752,7 +753,7 @@ extend<region r, K: Hash + PartialEq, A: Allocator, S: BuildHasher> SetAlgebra<r
     type Item = read K from r
     mut fn next(): (read K from r)? {
         while self.side < 2u8 {
-            if self.mode == 1u8 && self.side == 1u8 { return none }
+            if (self.mode == 1u8 || self.mode == 2u8) && self.side == 1u8 { return none }
             if self.side == 0u8 {
                 if self.index >= self.left.map.entries.len() {
                     self.side = 1u8
@@ -762,12 +763,12 @@ extend<region r, K: Hash + PartialEq, A: Allocator, S: BuildHasher> SetAlgebra<r
                 let i = self.index
                 self.index += 1usize
                 let key = read self.left.map.entries[i].key
+                if self.mode == 0u8 { return present(key) }
                 let in_right = match self.right.map.find_entry(key) {
                     present(_) => true,
                     none => false
                 }
                 let include = match self.mode {
-                    0u8 => true,
                     1u8 => in_right,
                     2u8 => !in_right,
                     _ => !in_right
@@ -1370,13 +1371,7 @@ extend<K: Hash + PartialEq, V> Map<K, V> implements FromItems<(K, V)> {
 extend<K: Hash + PartialEq, V, const N: usize> Map<K, V> implements package.core.convert.From<[(K, V); N]> {
     static fn from(take items: [(K, V); N]): Map<K, V> {
         var out = new<K, V>()
-        var source = super.vec.List<(K, V)>.(package.core.convert.From<[(K, V); N]>).from(items).into_iter()
-        while true {
-            match take source.next() {
-                present(item) => { let _ = out.insert(item.0, item.1) },
-                none => { break }
-            }
-        }
+        for item in take items { let _ = out.insert(item.0, item.1) }
         out
     }
 }
@@ -1499,13 +1494,7 @@ extend<K: Hash + PartialEq> Set<K> implements FromItems<K> {
 extend<K: Hash + PartialEq, const N: usize> Set<K> implements package.core.convert.From<[K; N]> {
     static fn from(take items: [K; N]): Set<K> {
         var out = set_new<K>()
-        var source = super.vec.List<K>.(package.core.convert.From<[K; N]>).from(items).into_iter()
-        while true {
-            match take source.next() {
-                present(item) => { let _ = out.insert(item) },
-                none => { break }
-            }
-        }
+        for item in take items { let _ = out.insert(item) }
         out
     }
 }

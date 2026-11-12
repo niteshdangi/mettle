@@ -13,10 +13,6 @@ extend Wrapped implements DerefMut {
     mut fn deref_mut(): mut i32 from self { mut self.value }
 }
 
-fn expect_15(read value: i32): Unit {
-    if value != 15 { core.panic.panic("inspect did not receive the success value") }
-}
-
 fn borrowed_success<region r>(
     read value: i32 from r
 ): (Outcome<(read i32 from r), i32>) {
@@ -136,10 +132,15 @@ fn main(): i32 {
         return 24
     }
     let inspected_success: (Outcome<i32, i32>) = success(15i32)
-    match inspected_success.inspect(expect_15) {
+    var inspect_calls = 0
+    match inspected_success.inspect(fn(read value: i32): Unit {
+        inspect_calls += 1
+        if value != 15 { core.panic.panic("inspect did not receive the success value") }
+    }) {
         success(value) => { if value != 15 { return 25 } },
         failure(_) => { return 25 }
     }
+    if inspect_calls != 1 { return 29 }
     let unwrapped_failure: (Outcome<i32, i32>) = failure(16i32)
     if unwrapped_failure.unwrap_err() != 16 { return 26 }
     let expected_failure: (Outcome<i32, i32>) = failure(17i32)

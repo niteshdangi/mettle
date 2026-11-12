@@ -73,16 +73,20 @@ fn checks_transformations(): i32 {
     if ok(2).map_or_else(fn(error: i32): i32 { error * 4 }, fn(value: i32): i32 { value + 7 }) != 9 { return 66 }
     if err(2).map_or_default(fn(value: i32): i32 { value + 1 }) != 0 { return 67 }
     if ok(2).map_or_default(fn(value: i32): i32 { value + 1 }) != 3 { return 68 }
+    var inspect_calls = 0
     let inspected = ok(6).inspect(fn(read value: i32): Unit {
+        inspect_calls += 1
         if value != 6 { core.panic.panic("inspect saw the wrong payload") }
     })
-    if inspected.unwrap() != 6 { return 69 }
+    if inspected.unwrap() != 6 || inspect_calls != 1 { return 69 }
     let skipped = err(6).inspect(fn(read value: i32): Unit { core.panic.panic("inspect ran on failure") })
     if skipped.unwrap_err() != 6 { return 70 }
+    var inspect_err_calls = 0
     let inspected_error = err(7).inspect_err(fn(read error: i32): Unit {
+        inspect_err_calls += 1
         if error != 7 { core.panic.panic("inspect_err saw the wrong error") }
     })
-    if inspected_error.unwrap_err() != 7 { return 71 }
+    if inspected_error.unwrap_err() != 7 || inspect_err_calls != 1 { return 71 }
     let skipped_error = ok(7).inspect_err(fn(read error: i32): Unit { core.panic.panic("inspect_err ran on success") })
     if skipped_error.unwrap() != 7 { return 72 }
     let nested: (Outcome<(Outcome<i32, i32>), i32>) = success(success(3))

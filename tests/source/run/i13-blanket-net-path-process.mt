@@ -1,8 +1,7 @@
 // expect-exit: 0
 // profiles: debug release
 // Blanket and auto-property evidence for net, path and process types. Each call instantiates the
-// blanket trait row for a hosted std type. Pairs the compiler cannot satisfy are
-// listed as gaps at the end of main; negative impls are evidenced in tests/source/fail.
+// blanket trait row for a hosted std type; negative impls are evidenced in tests/source/fail.
 fn any_ok<T: unsized + core.any.Any>(): Unit {}
 fn borrow_ok<T: unsized + core.borrow.Borrow<T>>(): Unit {}
 fn owned_ok<T: core.borrow.ToOwned>(): Unit {}
@@ -154,13 +153,5 @@ fn main(): i32 {
     into_ok<A_process_Stdio>()
     send_ok<A_process_Stdio>()
     sync_ok<A_process_Stdio>()
-    // gap net::IpAddr ToOwned: no Clone implementation
-    // gap net::Ipv4Addr ToOwned: no Clone implementation
-    // gap net::Ipv6Addr ToOwned: no Clone implementation
-    // gap net::SocketAddr ToOwned: no Clone implementation
-    // gap path::PathBuf ToOwned: no Clone implementation
-    // gap process::ExitStatus ToOwned: no Clone implementation
-    // gap process::ExitStatus ToString: no Display implementation
-    // gap process::Output ToOwned: no Clone implementation
     0
 }

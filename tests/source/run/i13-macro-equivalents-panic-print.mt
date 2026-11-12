@@ -1,4 +1,6 @@
 // profiles: debug release
+// expect-stdout: "plain count=3\nforwarded=5\n"
+// expect-stderr: "diagnostic=4\n"
 // Mettle's native macro equivalents and the prelude assert/panic behavior.
 
 import core.panic.unreachable
@@ -8,11 +10,11 @@ import std.io
 import std.macros.{dbg, format_args, matches, todo, unimplemented}
 import std.panic.{catch_panic, CatchResult}
 
-fn panic_message(take outcome: CatchResult<i32>, length: usize): i32 {
+fn panic_message(take outcome: CatchResult<i32>, read expected: Text): i32 {
     match take outcome {
         CatchResult.Panicked(info) => {
             if info.code() != 101 { return 1 }
-            if info.message().len() != length { return 2 }
+            if info.message() != expected { return 2 }
             0
         },
         CatchResult.Returned(_) => { 3 }
@@ -54,31 +56,31 @@ fn main(): i32 {
         assert(false, "boom")
         0
     })
-    let assert_code = panic_message(failed_assert, 4usize)
+    let assert_code = panic_message(failed_assert, "boom")
     if assert_code != 0 { return 10 + assert_code }
 
     let explicit = catch_panic(fn(): i32 { panic("boom") })
-    let explicit_code = panic_message(explicit, 4usize)
+    let explicit_code = panic_message(explicit, "boom")
     if explicit_code != 0 { return 20 + explicit_code }
 
     let unreached = catch_panic(fn(): i32 {
         unreachable()
     })
-    let unreachable_code = panic_message(unreached, 24usize)
+    let unreachable_code = panic_message(unreached, "entered unreachable code")
     if unreachable_code != 0 { return 30 + unreachable_code }
 
     let todo_default = catch_panic(fn(): i32 { todo!(); 0 })
-    let todo_default_code = panic_message(todo_default, 19usize)
+    let todo_default_code = panic_message(todo_default, "not yet implemented")
     if todo_default_code != 0 { return 50 + todo_default_code }
     let todo_custom = catch_panic(fn(): i32 { todo!("later"); 0 })
-    let todo_custom_code = panic_message(todo_custom, 5usize)
+    let todo_custom_code = panic_message(todo_custom, "later")
     if todo_custom_code != 0 { return 60 + todo_custom_code }
 
     let unimplemented_default = catch_panic(fn(): i32 { unimplemented!(); 0 })
-    let unimplemented_default_code = panic_message(unimplemented_default, 15usize)
+    let unimplemented_default_code = panic_message(unimplemented_default, "not implemented")
     if unimplemented_default_code != 0 { return 70 + unimplemented_default_code }
     let unimplemented_custom = catch_panic(fn(): i32 { unimplemented!("missing"); 0 })
-    let unimplemented_custom_code = panic_message(unimplemented_custom, 7usize)
+    let unimplemented_custom_code = panic_message(unimplemented_custom, "missing")
     if unimplemented_custom_code != 0 { return 80 + unimplemented_custom_code }
     0
 }

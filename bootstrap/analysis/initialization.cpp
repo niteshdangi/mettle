@@ -273,13 +273,13 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
           type = *projectedType(types, function.locals[prefix.root].type,
                                 prefix.fields);
         }
-        if ((instruction.op == ir::Op::DropPlace ||
-             instruction.op == ir::Op::ArrayTake) &&
-            function.locals[instruction.place.root].storage ==
-                StorageDuration::Static)
-          diagnostics.error("ownership", instruction.span,
-                            "cannot consume static storage");
       }
+      if ((instruction.op == ir::Op::DropPlace ||
+           instruction.op == ir::Op::ArrayTake) &&
+          function.locals[instruction.place.root].storage ==
+              StorageDuration::Static)
+        diagnostics.error("ownership", instruction.span,
+                          "cannot consume static storage");
       if (instruction.op == ir::Op::Declare &&
           types.needsDrop(function.locals[instruction.place.root].type) &&
           tree.any(state.possible, tree.index(instruction.place)))

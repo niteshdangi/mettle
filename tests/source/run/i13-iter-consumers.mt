@@ -133,7 +133,6 @@ fn checks_sums_and_collection(): i32 {
 
 fn checks_by_ref(): i32 {
     var source = iter.range(0, 10)
-    let head: i32 = 0
     {
         var front = source.by_ref().take_n(3usize)
         if front.count() != 3usize { return 70 }
@@ -142,7 +141,6 @@ fn checks_by_ref(): i32 {
         present(value) => { if value != 3 { return 71 } },
         none => { return 71 }
     }
-    let _unused = head
     0
 }
 

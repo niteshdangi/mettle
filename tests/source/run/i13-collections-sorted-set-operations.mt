@@ -139,7 +139,7 @@ fn run(): i32 throws Error {
     if left.cmp(right) != Ordering.Less || !(left < right) { return 41 }
     let written = try render(read left, mut buffer)
     match written_text(read buffer, written) {
-        present(text) => { if text.len() == 0usize { return 42 } },
+        present(text) => { if text != "{1, 2, 3}" { return 42 } },
         none => { return 43 }
     }
     var keyed = vec.new<i32>()

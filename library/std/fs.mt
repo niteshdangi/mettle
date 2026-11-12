@@ -712,14 +712,13 @@ extend ReadDir implements package.core.fmt.Debug {
 extend ReadDir implements package.core.iter.Iterator {
     type Item = (Outcome<DirEntry, Error>);
     mut fn next(): (Outcome<DirEntry, Error>)? {
-        if self.finished { return none }
         let entry = capture self.next_entry()
         match take entry {
             success(found) => match take found {
                 present(value) => present(success(value)),
-                none => { self.finished = true; none }
+                none => none
             },
-            failure(error) => { self.finished = true; present(failure(error)) }
+            failure(error) => present(failure(error))
         }
     }
 }

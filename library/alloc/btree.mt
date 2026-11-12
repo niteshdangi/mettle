@@ -1876,13 +1876,7 @@ extend<K: Ord, V> SortedMap<K, V> implements FromItems<(K, V)> {
 extend<K: Ord, V, const N: usize> SortedMap<K, V> implements package.core.convert.From<[(K, V); N]> {
     static fn from(take items: [(K, V); N]): SortedMap<K, V> {
         var out = new<K, V>()
-        var source = super.vec.List<(K, V)>.(package.core.convert.From<[(K, V); N]>).from(items).into_iter()
-        while true {
-            match take source.next() {
-                present(item) => { let _ = out.insert(item.0, item.1) },
-                none => { break }
-            }
-        }
+        for item in take items { let _ = out.insert(item.0, item.1) }
         out
     }
 }
@@ -1941,13 +1935,7 @@ extend<K: Ord> SortedSet<K> implements FromItems<K> {
 extend<K: Ord, const N: usize> SortedSet<K> implements package.core.convert.From<[K; N]> {
     static fn from(take items: [K; N]): SortedSet<K> {
         var out = set_new<K>()
-        var source = super.vec.List<K>.(package.core.convert.From<[K; N]>).from(items).into_iter()
-        while true {
-            match take source.next() {
-                present(item) => { let _ = out.insert(item) },
-                none => { break }
-            }
-        }
+        for item in take items { let _ = out.insert(item) }
         out
     }
 }

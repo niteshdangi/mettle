@@ -1,15 +1,14 @@
-// expect-error: ownership 70:18 cannot write through a read parameter
+// expect-error: ownership 52:18 cannot write through a read parameter
 
 module core { pub module iter {
   pub interface Iterator { type Item; mut fn next(): Self.Item?; }
   pub interface Iterable { type Item; type Iter<region r>; fn iter<region r>(receiver read self: Self from r): Self.Iter<region r>; }
-  pub interface MutableIterable { type Item; type IterMut<region r>; fn iter_mut<region r>(receiver mut self: Self from r): Self.IterMut<region r>; }
 } }
 extern "C" {
     unsafe fn realloc(p: ptr<mut u8>, n: usize): ptr<mut u8>;
     unsafe fn free(p: ptr<mut u8>): Unit;
 }
-import core.iter.{Iterator, Iterable, MutableIterable}
+import core.iter.{Iterator, Iterable}
 type List<T> { ptr: ptr<mut T>; len: usize; cap: usize
     drop { unsafe {
         var i = 0usize
@@ -45,23 +44,6 @@ extend<T> List<T> implements Iterable {
     type Item = T
     type Iter<region r> = VecIter<T, region r>
     fn iter<region r>(receiver read self: Self from r): VecIter<T, region r> { VecIter(read self, 0usize) }
-}
-
-type VecIterMut<T, region r> { v: mut List<T> from r; i: usize }
-extend<T, region r> VecIterMut<T, region r> implements Iterator {
-    type Item = mut T from r
-    mut fn next(): (mut T from r)? {
-        if self.i < self.v.len {
-            let x = unsafe { mut *self.v.ptr.add(self.i) }
-            self.i += 1usize
-            present(x)
-        } else { none }
-    }
-}
-extend<T> List<T> implements MutableIterable {
-    type Item = T
-    type IterMut<region r> = VecIterMut<T, region r>
-    fn iter_mut<region r>(receiver mut self: Self from r): VecIterMut<T, region r> { VecIterMut(mut self, 0usize) }
 }
 
 fn main(): i32 {

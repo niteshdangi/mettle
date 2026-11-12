@@ -95,16 +95,23 @@ const fn mutable_views(): [i32; 8] {
     front.0[1usize][2usize] = 60
     front.1[0usize] = 70
     front.1[1usize] = 80
+    if slice[0usize] != 10 || slice[5usize] != 60 ||
+        slice[6usize] != 70 || slice[7usize] != 80 { return [0i32; 8] }
     let back = slice.as_rchunks_mut<3usize>()
     back.0[0usize] = 11
     back.1[0usize][1usize] = 41
     back.1[1usize][2usize] = 81
+    if slice[0usize] != 11 || slice[3usize] != 41 || slice[7usize] != 81 {
+        return [0i32; 8]
+    }
     let exact = unsafe { slice.as_chunks_unchecked_mut<2usize>() }
     exact[1usize][1usize] = 42
+    if slice[3usize] != 42 { return [0i32; 8] }
     match take slice.as_mut_array<8usize>() {
         present(array) => { array[2usize] = 32 },
         none => { return [0i32; 8] }
     }
+    if slice[2usize] != 32 { return [0i32; 8] }
     match take slice.first_chunk_mut<2usize>() {
         present(array) => { array[1usize] = 22 },
         none => { return [0i32; 8] }
@@ -113,6 +120,7 @@ const fn mutable_views(): [i32; 8] {
         present(array) => { array[1usize] = 82 },
         none => { return [0i32; 8] }
     }
+    if slice[1usize] != 22 || slice[7usize] != 82 { return [0i32; 8] }
     match take slice.split_first_chunk_mut<2usize>() {
         present(parts) => {
             parts.0[0usize] = 12
@@ -120,6 +128,7 @@ const fn mutable_views(): [i32; 8] {
         },
         none => { return [0i32; 8] }
     }
+    if slice[0usize] != 12 || slice[2usize] != 33 { return [0i32; 8] }
     match take slice.split_last_chunk_mut<2usize>() {
         present(parts) => {
             parts.0[0usize] = 13
@@ -127,6 +136,7 @@ const fn mutable_views(): [i32; 8] {
         },
         none => { return [0i32; 8] }
     }
+    if slice[0usize] != 13 || slice[6usize] != 71 { return [0i32; 8] }
     let range = slice.as_mut_ptr_range()
     unsafe {
         *range.start = 14

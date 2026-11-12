@@ -181,12 +181,10 @@ void check(const ir::Function &function, const ir::Program &program,
   std::vector<std::vector<Origins>> activeBefore(count);
   std::vector<std::vector<Origins>> pendingBefore(count);
   for (std::size_t b = 0; b < count; ++b) {
-    auto available = availableIn[b], active = activeIn[b],
-         pending = pendingIn[b];
+    auto active = activeIn[b], pending = pendingIn[b];
     for (std::size_t i = 0; i < info.points[b].size(); ++i) {
       activeBefore[b].push_back(active);
       pendingBefore[b].push_back(pending);
-      join(available, info.points[b][i].defines);
       const auto &instruction = function.blocks[b].instructions[i];
       if (instruction.op == ir::Op::ReserveMut)
         for (auto id : info.points[b][i].defines) {

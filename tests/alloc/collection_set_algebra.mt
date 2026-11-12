@@ -118,6 +118,7 @@ fn main(): i32 {
     if map.capacity() < 2usize { return 24 }
     {
         var drain = map.drain()
+        if drain.size_hint() != (3usize, present(3usize)) { return 59 }
         var drained_sum = 0
         match take drain.next() {
             present(pair) => {
@@ -137,6 +138,7 @@ fn main(): i32 {
             },
             none => { return 55 }
         }
+        if drain.size_hint() != (1usize, present(1usize)) { return 60 }
         if drained_sum != 209 && drained_sum != 107 && drained_sum != 162 {
             return 55
         }

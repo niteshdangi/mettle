@@ -133,7 +133,11 @@ fn run(): i32 throws Error {
     if left == right { return 41 }
     let written = try render(read left, mut buffer)
     match written_text(read buffer, written) {
-        present(text) => { if text.len() == 0usize { return 42 } },
+        present(text) => {
+            if text != "{1, 2, 3}" && text != "{1, 3, 2}" &&
+                text != "{2, 1, 3}" && text != "{2, 3, 1}" &&
+                text != "{3, 1, 2}" && text != "{3, 2, 1}" { return 42 }
+        },
         none => { return 43 }
     }
     var keyed = vec.new<i32>()

@@ -2,8 +2,8 @@
 // profiles: debug release
 // Evidence for the V1 Option operation subset on the native optional `T?`
 // (Rust Option -> `T?`, Some -> present, None -> none). Each operation is
-// called on present and absent inputs and its result checked. The pinned
-// views (as_pin_ref/as_pin_mut) are tracked separately as a compiler blocker.
+// called on present and absent inputs and its result checked. Pinned views
+// (as_pin_ref/as_pin_mut) are covered by i13-option-pin-projections.mt.
 
 import core.option
 import core.text.Text
@@ -75,10 +75,12 @@ fn checks_transformations(): i32 {
     if some(4).map_or_default(fn(value: i32): i32 { value + 1 }) != 5 { return 57 }
     if some(4).filter(fn(read value: i32): bool { value > 3 }) != present(4) { return 58 }
     if some(2).filter(fn(read value: i32): bool { value > 3 }).is_present() { return 59 }
+    var inspect_calls = 0
     let inspected = some(6).inspect(fn(read value: i32): Unit {
+        inspect_calls += 1
         if value != 6 { core.panic.panic("inspect saw the wrong payload") }
     })
-    if inspected != present(6) { return 60 }
+    if inspected != present(6) || inspect_calls != 1 { return 60 }
     if nothing().inspect(fn(read value: i32): Unit { core.panic.panic("inspect ran on none") }).is_present() { return 64 }
     let nested: (i32?)? = present(present(3))
     if nested.flatten() != present(3) { return 61 }

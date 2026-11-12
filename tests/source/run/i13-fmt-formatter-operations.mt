@@ -68,7 +68,7 @@ fn show_int(value: i32, options: Spec): String {
     var out = String("")
     match capture fmt.write_with(mut out, value, options) {
         success(_) => {},
-        failure(_) => {}
+        failure(_) => { panic("integer formatting failed") }
     }
     out
 }
@@ -77,7 +77,7 @@ fn show<T: Display>(read value: T, options: Spec): String {
     var out = String("")
     match capture fmt.write_with(mut out, value, options) {
         success(_) => {},
-        failure(_) => {}
+        failure(_) => { panic("formatting failed") }
     }
     out
 }

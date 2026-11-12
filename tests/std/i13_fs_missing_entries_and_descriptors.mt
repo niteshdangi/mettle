@@ -67,6 +67,8 @@ fn run(): i32 throws Error {
                 none => { break }
             }
         }
+        assert(entries.next().is_none() && entries.next().is_none(),
+            "directory iterator remains exhausted")
     }
     match take name {
         present(owned) => { assert(owned.as_bytes() == "link".as_bytes(), "file name outlives entry and iterator") },
@@ -83,6 +85,7 @@ fn run(): i32 throws Error {
                 none => { break }
             }
         }
+        assert(transferred.next().is_none(), "transferred directory remains exhausted")
         count
     })
     match take capture worker.join() {

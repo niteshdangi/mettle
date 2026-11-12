@@ -14,6 +14,8 @@ run cases are built and executed once per profile:
   expect-exit          exit status of the program, or `trap` for an abort (default 0)
   expect-exit-debug    overrides expect-exit under the debug profile
   expect-exit-release  overrides expect-exit under the release profile
+  expect-stdout        exact stdout as a JSON string (including escaped newlines)
+  expect-stderr        required stderr substring as a JSON string
   profiles             space-separated subset of `debug release` (default both)
   flags                extra `mettle build` arguments
   arch                 `aarch64` or `x86_64`: skipped on any other host
@@ -51,7 +53,8 @@ import scheduling
 ROOT = Path(__file__).resolve().parent / "source"
 PROFILES = ("debug", "release")
 COMMON_KEYS = {"profiles", "flags", "arch", "truncated"}
-KEYS = {"run": COMMON_KEYS | {"expect-exit", "expect-exit-debug", "expect-exit-release"},
+KEYS = {"run": COMMON_KEYS | {"expect-exit", "expect-exit-debug", "expect-exit-release",
+                              "expect-stdout", "expect-stderr"},
         "fail": COMMON_KEYS | {"expect-error", "expect-error-count", "expect-error-source",
                                "expect-note", "expect-help"}}
 ERROR = re.compile(r"(\w+) (\d+):(\d+) (.+)")
@@ -72,6 +75,7 @@ class Case:
     count: object = None
     header_lines: int = 0
     error_source: object = None
+    output: dict = field(default_factory=dict)
 
 
 def host_arch():
@@ -114,6 +118,16 @@ def parse_case(path, kind):
                 single(options, "arch", None, name),
                 header_lines=header_lines)
     if kind == "run":
+        for stream in ("stdout", "stderr"):
+            value = single(options, f"expect-{stream}", None, name)
+            if value is not None:
+                try:
+                    expected = json.loads(value)
+                except json.JSONDecodeError as error:
+                    raise ValueError(f"{name}: expect-{stream} requires a JSON string") from error
+                if not isinstance(expected, str):
+                    raise ValueError(f"{name}: expect-{stream} requires a JSON string")
+                case.output[stream] = expected
         default = parse_exit(single(options, "expect-exit", "0", name), name)
         for profile in PROFILES:
             case.exits[profile] = parse_exit(
@@ -188,7 +202,13 @@ class Runner:
             inputs = source_receipt(case.path)
             self.run([self.executable, "build", case.path, "-o", program,
                       "--profile", profile, *case.flags])
-            self.run([program], case.exits[profile])
+            result = self.run([program], case.exits[profile])
+            for stream, expected in case.output.items():
+                actual = getattr(result, stream)
+                matches = actual == expected if stream == "stdout" else expected in actual
+                if not matches:
+                    raise AssertionError(f"{case.name}: expected {stream} {expected!r}, "
+                                         f"got {actual!r}")
             self.records.append({"file": str(case.path), **inputs,
                                  "profile": profile, "expected": case.exits[profile],
                                  "program_sha256": digest(program)})
