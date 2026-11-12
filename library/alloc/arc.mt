@@ -3,6 +3,7 @@ import package.core.iter.{FromItems, OwnedIterable}
 // the handles themselves thread-safe, not the payload: an `Arc<T>` crosses or
 // is shared between threads only when `T` is both Transferable and Shareable.
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_array, extend_layout, handle_alloc_error, layout_unchecked}
+import package.core.any.Any
 import package.core.borrow.{AsRef, Borrow}
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.clone.Clone
@@ -501,6 +502,14 @@ extend<T: unsized, A: Allocator> Arc<T, A> {
 }
 pub unsafe fn from_raw<T: unsized, A: Allocator>(take raw: RawArc<T, A>): Arc<T, A> {
     Arc(raw.p, raw.h, raw.a)
+}
+extend<A: Allocator> Arc<any Any, A> {
+    pub take fn downcast<T: Static>(): Outcome<Arc<T, A>, Arc<any Any, A>> {
+        if !core.any.is<T>(self.get()) { return failure(self) }
+        let raw = self.into_raw()
+        // A matching TypeId guarantees the erased payload has T's layout.
+        success(unsafe { from_raw(RawArc(raw.p.cast<T>(), raw.h, raw.a)) })
+    }
 }
 // Creates a second raw ownership token; consume both tokens exactly once.
 pub unsafe fn increment_strong_count<T: unsized, A: Allocator + Clone>(
