@@ -7996,7 +7996,7 @@ Bb2af5c8f836468a598458ab7,operation:env::temp_dir,https://doc.rust-lang.org/1.99
 Bc7484f5684392afc6fc8c444,operation:env::var,https://doc.rust-lang.org/1.99.1/std/env/fn.var.html,std.env,evidenced,tests/std/i13_env_var_temp.mt
 Bcfe7af08ffe1c18d1e8103fa,operation:env::vars,https://doc.rust-lang.org/1.99.1/std/env/fn.vars.html,std.env,evidenced,tests/std/i13_env_var_temp.mt
 B209dbbb942715ff0c8294807,operation:eprint,https://doc.rust-lang.org/1.99.1/std/macro.eprint.html,,evidenced,tests/source/run/i13-macro-equivalents-panic-print.mt
-B62ca9d66ae5f49d2029e8493,operation:eprintln,https://doc.rust-lang.org/1.99.1/std/macro.eprintln.html,,missing,
+B62ca9d66ae5f49d2029e8493,operation:eprintln,https://doc.rust-lang.org/1.99.1/std/macro.eprintln.html,library/std/macros.mt,declared,tests/source/run/i13-macro-format-output.mt
 Be8cb019f1b06f53633cf0752,operation:error::Error,https://doc.rust-lang.org/1.99.1/core/error/trait.Error.html,,missing,
 Ba3c15b9bc0a9d9bdb754e29e,operation:error::Error::source,https://doc.rust-lang.org/1.99.1/core/error/trait.Error.html#method.source,,evidenced,tests/source/run/i13-coremisc-convert-error-panic.mt
 Bb3144268101be5b130e07d5d,operation:ffi::CStr,https://doc.rust-lang.org/1.99.1/core/ffi/struct.CStr.html,,evidenced,tests/alloc/i13_ffi_cstrings.mt;tests/source/run/i13-core-cstr.mt;tests/source/run/i13-ffi-cstring-traits.mt;tests/std/i13_ffi_cstrings.mt
@@ -8131,8 +8131,8 @@ B484fe28b1d3c566f3da2648a,operation:fmt::Write::write_fmt,https://doc.rust-lang.
 B7483f18b151477976e1a0290,operation:fmt::Write::write_fmt,https://doc.rust-lang.org/1.99.1/core/fmt/trait.Write.html#method.write_fmt,,evidenced,tests/source/run/i13-fmt-formatter-operations.mt;tests/source/run/i13-fmt-write-default.mt
 B3a3bbbf9526c9d0bec292b8d,operation:fmt::Write::write_str,https://doc.rust-lang.org/1.99.1/alloc/fmt/trait.Write.html#tymethod.write_str,,evidenced,tests/source/run/i13-string-operations.mt;tests/source/run/i13-fmt-formatter-operations.mt
 Bbe38006f580ac05974056629,operation:fmt::Write::write_str,https://doc.rust-lang.org/1.99.1/core/fmt/trait.Write.html#tymethod.write_str,,evidenced,tests/source/run/i13-string-operations.mt;tests/source/run/i13-fmt-formatter-operations.mt
-B80856c96acc80a3f54081bb7,operation:format,https://doc.rust-lang.org/1.99.1/alloc/macro.format.html,,missing,
-Bc0699c9fb1bfb74fe33c7917,operation:format_args,https://doc.rust-lang.org/1.99.1/core/macro.format_args.html,,missing,
+B80856c96acc80a3f54081bb7,operation:format,https://doc.rust-lang.org/1.99.1/alloc/macro.format.html,library/std/macros.mt,evidenced,tests/source/run/i13-macro-format-output.mt
+Bc0699c9fb1bfb74fe33c7917,operation:format_args,https://doc.rust-lang.org/1.99.1/core/macro.format_args.html,library/std/macros.mt,declared,tests/source/run/i13-macro-format-output.mt
 B62eecb5006f1abc92a7f68bf,operation:fs::DirEntry,https://doc.rust-lang.org/1.99.1/std/fs/struct.DirEntry.html,,missing,
 B1575e0b652a68755aa6a12a7,operation:fs::DirEntry::file_name,https://doc.rust-lang.org/1.99.1/std/fs/struct.DirEntry.html#method.file_name,,missing,
 B1481b5648304dc464fb47f74,operation:fs::DirEntry::file_type,https://doc.rust-lang.org/1.99.1/std/fs/struct.DirEntry.html#method.file_type,,missing,
@@ -12126,7 +12126,7 @@ Be61023205871db11a7876877,operation:primitive::str::trim_start_matches,https://d
 B1a570b73596d2cd2d644c6ef,operation:primitive::tuple,https://doc.rust-lang.org/1.99.1/core/primitive.tuple.html,,missing,
 B8a8d788f6cb516db956ef2eb,operation:primitive::unit,https://doc.rust-lang.org/1.99.1/core/primitive.unit.html,,missing,
 Ba30faed030841b7a442e8417,operation:print,https://doc.rust-lang.org/1.99.1/std/macro.print.html,,evidenced,tests/source/run/i13-macro-equivalents-panic-print.mt
-B3ff5accfc18011c25fb5089f,operation:println,https://doc.rust-lang.org/1.99.1/std/macro.println.html,,missing,
+B3ff5accfc18011c25fb5089f,operation:println,https://doc.rust-lang.org/1.99.1/std/macro.println.html,library/std/macros.mt,evidenced,tests/source/run/i13-macro-format-output.mt;tests/probes.py
 Bd6430d3ae10d5da93aec5daa,operation:process::Child,https://doc.rust-lang.org/1.99.1/std/process/struct.Child.html,,missing,
 Be23fc23aea50bfb88f6792b4,operation:process::Child::id,https://doc.rust-lang.org/1.99.1/std/process/struct.Child.html#method.id,,evidenced,tests/std/process-command.mt
 B42188efaa015041d45a40694,operation:process::Child::kill,https://doc.rust-lang.org/1.99.1/std/process/struct.Child.html#method.kill,,missing,

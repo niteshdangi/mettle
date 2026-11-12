@@ -217,7 +217,44 @@ pub macro matches {
 }
 
 pub macro format_args {
-    ($message:expr) => { $message };
+    ($message:expr $(,)?) => { $message };
+}
+
+pub fn format_message(message: format fmt.Message): String {
+    var output = string.new()
+    match capture output.write_fmt(message) {
+        success(_) => {},
+        failure(_) => { package.core.panic.panic("formatting failed") }
+    }
+    output
+}
+
+pub macro format {
+    ($message:expr $(,)?) => { format_message($message) };
+}
+
+pub fn print_line(message: format fmt.Message): Unit {
+    let guard = io.stdout().lock()
+    io.print(message)
+    io.print("\n")
+    core.mem.drop(take guard)
+}
+
+pub fn eprint_line(message: format fmt.Message): Unit {
+    let guard = io.stderr().lock()
+    io.eprint(message)
+    io.eprint("\n")
+    core.mem.drop(take guard)
+}
+
+pub macro println {
+    () => { io.print("\n") };
+    ($message:expr $(,)?) => { print_line($message) };
+}
+
+pub macro eprintln {
+    () => { io.eprint("\n") };
+    ($message:expr $(,)?) => { eprint_line($message) };
 }
 
 pub macro todo {

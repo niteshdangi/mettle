@@ -858,27 +858,31 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
         evidence["cases"].append({"file": str(path), "source_sha256": digest(path),
                                   "profile": profile, "llvm_sha256": digest(output)})
     def broken_pipe():
-        program = source("print-to-closed-pipe",
-                         "import std.io;\nfn main(): i32 {\n"
-                         "    var i = 0\n"
-                         "    while i < 1000000 { io.print(f\"line {i}\\n\"); i += 1 }\n"
-                         "    0\n}\n")
-        binary = directory / "print-to-closed-pipe"
-        run([executable, "build", str(program), "-o", str(binary)])
-        for ignored, expected in ((False, -signal.SIGPIPE), (True, 141)):
-            def disposition(ignored=ignored):
-                signal.signal(signal.SIGPIPE, signal.SIG_IGN if ignored else signal.SIG_DFL)
-            child = subprocess.Popen([str(binary)], stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, preexec_fn=disposition)
-            child.stdout.read(16)
-            child.stdout.close()
-            stderr = child.stderr.read()
-            status = child.wait()
-            evidence["cases"].append({"sigpipe_ignored": ignored, "exit_status": status,
-                                      "stderr": stderr.decode(errors="replace")})
-            if status != expected or stderr:
-                raise AssertionError(f"closed stdout (SIGPIPE ignored={ignored}): expected "
-                                     f"{expected} and no output, got {status}: {stderr!r}")
+        programs = (
+            ("print-to-closed-pipe", "import std.io;", 'io.print(f"line {i}\\n")'),
+            ("println-to-closed-pipe", "import std.macros.println;", 'println!(f"line {i}")'),
+        )
+        for name, imports, output in programs:
+            program = source(name, f"{imports}\nfn main(): i32 {{\n"
+                             "    var i = 0\n"
+                             f"    while i < 1000000 {{ {output}; i += 1 }}\n"
+                             "    0\n}\n")
+            binary = directory / name
+            run([executable, "build", str(program), "-o", str(binary)])
+            for ignored, expected in ((False, -signal.SIGPIPE), (True, 141)):
+                def disposition(ignored=ignored):
+                    signal.signal(signal.SIGPIPE, signal.SIG_IGN if ignored else signal.SIG_DFL)
+                child = subprocess.Popen([str(binary)], stdout=subprocess.PIPE,
+                                         stderr=subprocess.PIPE, preexec_fn=disposition)
+                child.stdout.read(16)
+                child.stdout.close()
+                stderr = child.stderr.read()
+                status = child.wait()
+                evidence["cases"].append({"file": str(program), "sigpipe_ignored": ignored,
+                                          "exit_status": status, "stderr": stderr.decode(errors="replace")})
+                if status != expected or stderr:
+                    raise AssertionError(f"{name}, closed stdout (SIGPIPE ignored={ignored}): expected "
+                                         f"{expected} and no output, got {status}: {stderr!r}")
 
     def sanitizer_probes():
         address = source(
