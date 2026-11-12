@@ -36,6 +36,11 @@ fn main(): i32 {
     if !debug_is(view, "\"alpha\"") { return 24 }
     let owned = view.to_owned()
     if !debug_is(owned, "\"alpha\"") { return 25 }
+    let self_reference: read OsStr = OsStr.(AsRef<OsStr>).as_ref(view)
+    if !view_eq(self_reference, view) || !view_eq(view, "alpha") ||
+        !OsString.(PartialOrd<read Text>).partial_cmp(owned, "alpha").unwrap().is_eq() {
+        return 30
+    }
     if !view.same(owned.as_os_str()) { return 1 }
     if !view.same(OsStr.new("alpha".as_bytes())) { return 21 }
     if !(owned >= view) { return 22 }

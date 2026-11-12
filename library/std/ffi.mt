@@ -51,7 +51,10 @@ pub fn os_str_mut(mut bytes: [u8]): mut OsStr from bytes {
 }
 
 pub fn os_str_from_text(read text: Text): read OsStr from text { os_str(text.as_bytes()) }
-pub fn os_str_from_encoded_bytes_unchecked(read bytes: [u8]): read OsStr from bytes {
+// Safety: bytes must be a valid OS string in this target and library version's encoding.
+pub unsafe fn os_str_from_encoded_bytes_unchecked(
+    read bytes: [u8]
+): read OsStr from bytes {
     os_str(bytes)
 }
 
@@ -68,8 +71,11 @@ fn lossy_view<region r>(read bytes: [u8] from r): BorrowedOrOwned<region r, Text
 
 extend OsStr {
     pub static fn new(read bytes: [u8]): read OsStr from bytes { os_str(bytes) }
-    pub static fn from_encoded_bytes_unchecked(read bytes: [u8]): read OsStr from bytes {
-        os_str_from_encoded_bytes_unchecked(bytes)
+    // Safety: bytes must be a valid OS string and start and end at encoding boundaries.
+    pub static unsafe fn from_encoded_bytes_unchecked(
+        read bytes: [u8]
+    ): read OsStr from bytes {
+        unsafe { os_str_from_encoded_bytes_unchecked(bytes) }
     }
     pub fn as_bytes(): read [u8] from self { read self.bytes }
     pub fn as_encoded_bytes(): read [u8] from self { read self.bytes }
@@ -163,7 +169,10 @@ pub fn new_os_string(): OsString { OsString(vec.new<u8>()) }
 pub fn os_string_with_capacity(capacity: usize): OsString {
     OsString(vec.with_capacity<u8>(capacity))
 }
-pub fn os_string_from_encoded_bytes_unchecked(take bytes: List<u8>): OsString {
+// Safety: bytes must be a valid OS string in this target and library version's encoding.
+pub unsafe fn os_string_from_encoded_bytes_unchecked(
+    take bytes: List<u8>
+): OsString {
     OsString(bytes)
 }
 
@@ -180,8 +189,11 @@ pub fn os_string_from_vec(take bytes: List<u8>): OsString { OsString(bytes) }
 extend OsString {
     pub static fn new(): OsString { new_os_string() }
     pub static fn with_capacity(capacity: usize): OsString { os_string_with_capacity(capacity) }
-    pub static fn from_encoded_bytes_unchecked(take bytes: List<u8>): OsString {
-        os_string_from_encoded_bytes_unchecked(bytes)
+    // Safety: bytes must be a valid OS string in this target and library version's encoding.
+    pub static unsafe fn from_encoded_bytes_unchecked(
+        take bytes: List<u8>
+    ): OsString {
+        unsafe { os_string_from_encoded_bytes_unchecked(take bytes) }
     }
     pub fn as_os_str(): read OsStr from self { os_str(self.v.as_slice()) }
     pub mut fn as_mut_os_str(): mut OsStr from self { os_str_mut(self.v.as_mut_slice()) }

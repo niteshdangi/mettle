@@ -56,12 +56,18 @@ fn os_cows(): Unit {
         BorrowedOrOwned.Owned(OsString.(From<read Text from static>).from("/a/b"))
     let path = path_from_text("/a/b")
     let buf = path_buf_from_text("/a/b")
+    let path_cow: BorrowedOrOwned<region static, Path> =
+        BorrowedOrOwned.Borrowed(path_from_text("/a/b"))
     compares(path, borrowed, Ordering.Equal)
     compares(buf, owned, Ordering.Equal)
     compares(OsStr.new("/a/b".as_bytes()), borrowed, Ordering.Greater)
     compares(OsString.(From<read Text from static>).from("/a/b"), owned, Ordering.Equal)
     compares(OsStr.new("/a/b".as_bytes()), owned, Ordering.Equal)
     compares(OsString.(From<read Text from static>).from("/a/a"), owned, Ordering.Less)
+    compares<OsStr, BorrowedOrOwned<region static, Path>>(
+        OsStr.new("/a/b".as_bytes()), path_cow, Ordering.Equal)
+    compares<OsString, BorrowedOrOwned<region static, Path>>(
+        OsString.(From<read Text from static>).from("/a/b"), path_cow, Ordering.Equal)
     var mutable = path_buf_from_text("base")
     {
         let native = mutable.as_mut_os_string()

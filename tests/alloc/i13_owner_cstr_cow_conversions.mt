@@ -20,7 +20,7 @@ extend Item implements Clone {
 }
 
 fn copy_items<region r>(read items: [Item] from r): arc.Arc<[Item]> {
-    let cow: BorrowedOrOwned<region r, [Item]> = BorrowedOrOwned.Borrowed(items)
+    let cow: BorrowedOrOwned<region r, [Item]> = BorrowedOrOwned.Borrowed(read items)
     arc.Arc<[Item]>.(From<BorrowedOrOwned<region r, [Item]>>).from(cow)
 }
 
@@ -46,14 +46,14 @@ fn copy_mut_text<region r>(mut value: Text from r): rc.Rc<Text> {
 
 fn main(): i32 {
     let cstr = unsafe { CStr.from_bytes_with_nul_unchecked("a\u{0}".as_bytes()) }
-    let boxed = Box<CStr>.(From<read CStr from static>).from(cstr)
-    let local = rc.Rc<CStr>.(From<read CStr from static>).from(cstr)
-    let shared = arc.Arc<CStr>.(From<read CStr from static>).from(cstr)
+    let boxed = Box<CStr>.(From<read CStr from static>).from(read *cstr)
+    let local_owner = rc.Rc<CStr>.(From<read CStr from static>).from(read *cstr)
+    let shared_owner = arc.Arc<CStr>.(From<read CStr from static>).from(read *cstr)
     assert(boxed.get().to_bytes_with_nul() == cstr.to_bytes_with_nul() &&
-        local.get().to_bytes_with_nul() == cstr.to_bytes_with_nul() &&
-        shared.get().to_bytes_with_nul() == cstr.to_bytes_with_nul(), "borrowed C strings preserve NUL metadata")
-    assert(boxed.get().as_ptr() != cstr.as_ptr() && local.get().as_ptr() != cstr.as_ptr() &&
-        shared.get().as_ptr() != cstr.as_ptr(), "borrowed conversions allocate independent storage")
+        local_owner.get().to_bytes_with_nul() == cstr.to_bytes_with_nul() &&
+        shared_owner.get().to_bytes_with_nul() == cstr.to_bytes_with_nul(), "borrowed C strings preserve NUL metadata")
+    assert(boxed.get().as_ptr() != cstr.as_ptr() && local_owner.get().as_ptr() != cstr.as_ptr() &&
+        shared_owner.get().as_ptr() != cstr.as_ptr(), "borrowed conversions allocate independent storage")
     var mutable = cstr.to_owned().into_boxed_c_str()
     let copied_box = copy_mut_boxed_cstr(mutable.get_mut())
     let copied_local = copy_mut_local_cstr(mutable.get_mut())
@@ -97,7 +97,7 @@ fn main(): i32 {
     let bytes = rc.Rc<[u8]>.(From<rc.Rc<Text>>).from(local_owned)
     assert(bytes.as_ptr().cast<u8>() == local_pointer &&
         bytes.strong_count() == 2usize && sibling.get() == "local", "Rc text to bytes preserves allocation and sibling counts")
-    let borrowed_cstr: BorrowedOrOwned<region static, CStr> = BorrowedOrOwned.Borrowed(cstr)
+    let borrowed_cstr: BorrowedOrOwned<region static, CStr> = BorrowedOrOwned.Borrowed(read *cstr)
     let boxed_cstr = Box<CStr>.(From<BorrowedOrOwned<region static, CStr>>).from(borrowed_cstr.clone())
     let local_cstr = rc.Rc<CStr>.(From<BorrowedOrOwned<region static, CStr>>).from(borrowed_cstr.clone())
     let shared_cstr = arc.Arc<CStr>.(From<BorrowedOrOwned<region static, CStr>>).from(borrowed_cstr)

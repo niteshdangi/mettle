@@ -20,19 +20,19 @@ fn main(): i32 {
     unsafe { *raw = 98i8 }
     let restored = unsafe { CString.from_raw(raw) }
     if restored.to_str().unwrap() != "b\u{e9}" { return 3 }
-    let text = match capture restored.into_string() {
+    let text = match take capture restored.into_string() {
         success(value) => value,
         failure(_) => { return 4 }
     }
     if text.as_text() != "b\u{e9}" || text.as_ptr() != raw.cast_const().cast<u8>() { return 5 }
     var invalid = vec.new<u8>()
     invalid.push(0xffu8)
-    let invalid_owner = match capture CString.new(take invalid) {
+    let invalid_owner = match take capture CString.new(take invalid) {
         success(value) => value,
         failure(_) => { return 6 }
     }
     let original = invalid_owner.as_ptr()
-    match capture invalid_owner.into_string() {
+    match take capture invalid_owner.into_string() {
         success(_) => { return 7 },
         failure(error) => {
             if error.utf8_error().valid_up_to() != 0usize { return 8 }
@@ -45,7 +45,7 @@ fn main(): i32 {
     if !lossless.is_borrowed() || lossless.as_ref() != "a\u{e9}" { return 10 }
     let core_view: read core.ffi.CStr = copied.as_c_str()
     if core_view.count_bytes() != 3usize { return 11 }
-    let nul_error = match capture CString.new(vec.from_array([65u8, 0u8, 66u8])) {
+    let nul_error = match take capture CString.new(vec.from_array([65u8, 0u8, 66u8])) {
         failure(error) => error,
         success(_) => { return 12 }
     }
@@ -67,5 +67,12 @@ fn main(): i32 {
     let recovered = nul_error.into_vec()
     if recovered.len() != 3usize || recovered[0usize] != 65u8 ||
         recovered[1usize] != 0u8 || recovered[2usize] != 66u8 { return 18 }
+    let terminated = match take capture CString.new(vec.from_array([65u8])) {
+        success(value) => value,
+        failure(_) => { return 19 }
+    }
+    let terminated_bytes = terminated.into_bytes_with_nul()
+    if terminated_bytes.len() != 2usize || terminated_bytes[0usize] != 65u8 ||
+        terminated_bytes[1usize] != 0u8 { return 20 }
     0
 }

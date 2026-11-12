@@ -4,7 +4,14 @@
 
 import core.iter.Iterator
 import alloc.string.ToString
-import std.ffi.{OsStr, OsString, os_str_from_text, os_string_from_text, os_string_from_bytes}
+import std.ffi.{
+    OsStr,
+    OsString,
+    os_str_from_text,
+    os_str_mut,
+    os_string_from_text,
+    os_string_from_bytes
+}
 
 fn str_is(read s: OsStr, read want: Text): bool {
     match s.to_str() { present(t) => t == want, none => false }
@@ -23,11 +30,15 @@ fn checks_construction(): i32 {
     if borrowed.len() != 1usize { return 3 }
     let slice = os_str_from_text("hello")
     if slice.len() != 5usize || slice.as_bytes()[1usize] != 0x65u8 { return 4 }
-    if !str_is(slice, "hello") || slice.display().to_string().as_text() != "hello" { return 5 }
+    if !str_is(slice, "hello") || slice.display().to_string().as_text() != "hello" ||
+        !std.ffi.bytes_equal(slice.as_encoded_bytes(), "hello".as_bytes()) { return 5 }
     let owned = slice.to_os_string()
-    if !owned.as_os_str().same(slice) { return 6 }
+    if !owned.as_os_str().same(slice) ||
+        owned.display().to_string().as_text() != "hello" { return 6 }
     let copied = slice.into_os_string()
     if !copied.same(read owned) || copied.len() != 5usize { return 7 }
+    let boxed = os_string_from_text("boxed").into_boxed_os_str()
+    if !boxed.get().same(os_str_from_text("boxed")) { return 8 }
     0
 }
 
@@ -49,6 +60,34 @@ fn checks_mutation(): i32 {
     if !os_string_from_text("ABC").eq_ignore_ascii_case(read os_string_from_text("abc")) { return 16 }
     if os_string_from_text("ABC").eq_ignore_ascii_case(read os_string_from_text("abd")) { return 17 }
     if !s.is_ascii() || os_string_from_bytes([0xffu8]).is_ascii() { return 18 }
+    let mixed_bytes: [u8; 4] = [65u8, 98u8, 0xffu8, 90u8]
+    let mixed = OsStr.new(mixed_bytes)
+    let folded_bytes: [u8; 4] = [97u8, 66u8, 0xffu8, 122u8]
+    let folded = OsStr.new(folded_bytes)
+    if !std.ffi.bytes_equal(mixed.as_encoded_bytes(), mixed_bytes) ||
+        mixed.is_ascii() || !mixed.eq_ignore_ascii_case(folded) { return 19 }
+    let mismatch_bytes: [u8; 4] = [97u8, 66u8, 0xfeu8, 122u8]
+    if mixed.eq_ignore_ascii_case(OsStr.new(mismatch_bytes)) { return 20 }
+    let owned_copy_source = os_string_from_text("copy")
+    let copied = owned_copy_source.to_os_string()
+    var changed = owned_copy_source
+    changed.make_ascii_uppercase()
+    if !string_is(copied, "copy") || !string_is(changed, "COPY") { return 21 }
+    let view_lower = mixed.to_ascii_lowercase()
+    let lower_bytes: [u8; 4] = [97u8, 98u8, 0xffu8, 122u8]
+    if !std.ffi.bytes_equal(view_lower.as_bytes(), lower_bytes) { return 22 }
+    let view_upper = mixed.to_ascii_uppercase()
+    let upper_bytes: [u8; 4] = [65u8, 66u8, 0xffu8, 90u8]
+    if !std.ffi.bytes_equal(view_upper.as_bytes(), upper_bytes) { return 23 }
+    let lossy = mixed.to_string_lossy()
+    if !lossy.is_owned() || lossy.as_ref() != "Ab\u{fffd}Z" { return 24 }
+    if mixed.display().to_string().as_text() != "Ab\u{fffd}Z" { return 27 }
+    var mutable_bytes: [u8; 4] = [65u8, 98u8, 0xffu8, 90u8]
+    var mutable_view = os_str_mut(mut mutable_bytes)
+    mutable_view.make_ascii_lowercase()
+    if !std.ffi.bytes_equal(mutable_view.as_bytes(), lower_bytes) { return 25 }
+    mutable_view.make_ascii_uppercase()
+    if !std.ffi.bytes_equal(mutable_view.as_bytes(), upper_bytes) { return 26 }
     0
 }
 

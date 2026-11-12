@@ -35,13 +35,15 @@ fn main(): i32 {
     let reflexive: read Path = Path.(AsRef<Path>).as_ref(second)
     if reflexive != second { return 59 }
     if first != second || first.cmp(second) != Ordering.Equal { return 1 }
-    if first.partial_cmp(second) != present(Ordering.Equal) { return 2 }
+    if !Path.(PartialOrd).partial_cmp(first, second).unwrap().is_eq() { return 2 }
     if hash_one(first) != hash_one(second) { return 3 }
     if first.to_owned() != second { return 5 }
     let path_os: read OsStr = Path.(AsRef<OsStr>).as_ref(first)
     if path_os.as_bytes().len() != 7usize { return 20 }
     if first != std.ffi.os_str_from_text("/a/b") { return 21 }
-    if first.partial_cmp(std.ffi.os_str_from_text("/a/b")) != present(Ordering.Equal) {
+    if !Path.(PartialOrd<OsStr>).partial_cmp(
+        first, std.ffi.os_str_from_text("/a/b")
+    ).unwrap().is_eq() {
         return 22
     }
     let os_value = std.ffi.os_string_from_text("/a/b")
