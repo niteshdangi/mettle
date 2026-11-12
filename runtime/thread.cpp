@@ -202,6 +202,56 @@ template <typename T, typename Init> void *create(Init init) {
   return object;
 }
 
+struct RwLockState {
+  pthread_mutex_t mutex{};
+  pthread_cond_t condition{};
+  std::size_t readers = 0;
+  pthread_t writer{};
+  bool writing = false;
+  bool mutexInitialized = false;
+  bool conditionInitialized = false;
+
+  ~RwLockState() {
+    if (conditionInitialized)
+      pthread_cond_destroy(&condition);
+    if (mutexInitialized)
+      pthread_mutex_destroy(&mutex);
+  }
+};
+
+int acquireRwLock(RwLockState &lock, bool exclusive, bool nonblocking) {
+  int status = nonblocking ? pthread_mutex_trylock(&lock.mutex)
+                           : pthread_mutex_lock(&lock.mutex);
+  if (status != 0)
+    return status;
+  if (lock.writing && pthread_equal(lock.writer, pthread_self())) {
+    status = EDEADLK;
+  } else {
+    while (lock.writing || (exclusive && lock.readers != 0)) {
+      if (nonblocking) {
+        status = EBUSY;
+        break;
+      }
+      status = pthread_cond_wait(&lock.condition, &lock.mutex);
+      if (status != 0)
+        break;
+    }
+    if (status == 0) {
+      if (exclusive) {
+        lock.writing = true;
+        lock.writer = pthread_self();
+      } else if (lock.readers == std::numeric_limits<std::size_t>::max()) {
+        status = EAGAIN;
+      } else {
+        ++lock.readers;
+      }
+    }
+  }
+  if (pthread_mutex_unlock(&lock.mutex) != 0)
+    std::abort();
+  return status;
+}
+
 struct TlsKeyInfo {
   std::uintptr_t handle;
   pthread_key_t key;
@@ -610,6 +660,19 @@ void *mettle_rt_mutex_new() {
     return status;
   });
 }
+void *mettle_rt_reentrant_mutex_new() {
+  return create<pthread_mutex_t>([](pthread_mutex_t *mutex) {
+    pthread_mutexattr_t attributes;
+    int status = pthread_mutexattr_init(&attributes);
+    if (status != 0)
+      return status;
+    status = pthread_mutexattr_settype(&attributes, PTHREAD_MUTEX_RECURSIVE);
+    if (status == 0)
+      status = pthread_mutex_init(mutex, &attributes);
+    pthread_mutexattr_destroy(&attributes);
+    return status;
+  });
+}
 void mettle_rt_mutex_free(void *mutex) {
   auto *object = static_cast<pthread_mutex_t *>(mutex);
   pthread_mutex_destroy(object);
@@ -658,37 +721,88 @@ std::int32_t mettle_rt_cond_notify_all(void *cond) {
 }
 
 void *mettle_rt_rwlock_new() {
-  return create<pthread_rwlock_t>([](pthread_rwlock_t *lock) {
-    return pthread_rwlock_init(lock, nullptr);
-  });
+  std::unique_ptr<RwLockState> lock(new (std::nothrow) RwLockState);
+  if (!lock || pthread_mutex_init(&lock->mutex, nullptr) != 0)
+    return nullptr;
+  lock->mutexInitialized = true;
+  if (initializeCondition(&lock->condition) != 0)
+    return nullptr;
+  lock->conditionInitialized = true;
+  return lock.release();
 }
 void mettle_rt_rwlock_free(void *lock) {
-  auto *object = static_cast<pthread_rwlock_t *>(lock);
-  pthread_rwlock_destroy(object);
-  delete object;
+  delete static_cast<RwLockState *>(lock);
 }
 std::int32_t mettle_rt_rwlock_read(void *lock) {
-  return pthread_rwlock_rdlock(static_cast<pthread_rwlock_t *>(lock));
+  return acquireRwLock(*static_cast<RwLockState *>(lock), false, false);
 }
 std::int32_t mettle_rt_rwlock_try_read(void *lock) {
   const int status =
-      pthread_rwlock_tryrdlock(static_cast<pthread_rwlock_t *>(lock));
+      acquireRwLock(*static_cast<RwLockState *>(lock), false, true);
   if (status == EBUSY || status == EAGAIN || status == EDEADLK)
     return 1;
   return status == 0 ? 0 : -1;
 }
 std::int32_t mettle_rt_rwlock_write(void *lock) {
-  return pthread_rwlock_wrlock(static_cast<pthread_rwlock_t *>(lock));
+  return acquireRwLock(*static_cast<RwLockState *>(lock), true, false);
 }
 std::int32_t mettle_rt_rwlock_try_write(void *lock) {
   const int status =
-      pthread_rwlock_trywrlock(static_cast<pthread_rwlock_t *>(lock));
+      acquireRwLock(*static_cast<RwLockState *>(lock), true, true);
   if (status == EBUSY || status == EAGAIN || status == EDEADLK)
     return 1;
   return status == 0 ? 0 : -1;
 }
 std::int32_t mettle_rt_rwlock_unlock(void *lock) {
-  return pthread_rwlock_unlock(static_cast<pthread_rwlock_t *>(lock));
+  auto &state = *static_cast<RwLockState *>(lock);
+  int status = pthread_mutex_lock(&state.mutex);
+  if (status != 0)
+    return status;
+  const bool wasWriting = state.writing;
+  if ((wasWriting && !pthread_equal(state.writer, pthread_self())) ||
+      (!wasWriting && state.readers == 0)) {
+    status = EPERM;
+  } else {
+    if (wasWriting)
+      state.writing = false;
+    else
+      --state.readers;
+    if (state.readers == 0) {
+      status = pthread_cond_broadcast(&state.condition);
+      if (status != 0) {
+        if (wasWriting)
+          state.writing = true;
+        else
+          ++state.readers;
+      }
+    }
+  }
+  if (pthread_mutex_unlock(&state.mutex) != 0)
+    std::abort();
+  return status;
+}
+std::int32_t mettle_rt_rwlock_downgrade(void *lock) {
+  if (!lock)
+    return -EINVAL;
+  auto &state = *static_cast<RwLockState *>(lock);
+  int status = pthread_mutex_lock(&state.mutex);
+  if (status != 0)
+    return -status;
+  if (!state.writing || !pthread_equal(state.writer, pthread_self())) {
+    status = EPERM;
+  } else {
+    // The state mutex hides the conversion and any rollback from all acquirers.
+    state.readers = 1;
+    state.writing = false;
+    status = pthread_cond_broadcast(&state.condition);
+    if (status != 0) {
+      state.writing = true;
+      state.readers = 0;
+    }
+  }
+  if (pthread_mutex_unlock(&state.mutex) != 0)
+    std::abort();
+  return -status;
 }
 
 std::uintptr_t mettle_rt_tls_key_new(MettleTlsDestructor destructor) {

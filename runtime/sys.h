@@ -29,6 +29,17 @@ std::int32_t mettle_rt_open(const char *path, std::int32_t flags,
 std::int32_t mettle_rt_stat(const char *path, std::int32_t fd,
                             std::int32_t follow,                             // Writable outputs borrow caller storage; peek leaves the datagram queued.
                             std::int64_t *out);
+// The first five slots match stat; then accessed and created seconds/nanos,
+// and availability bits (accessed=1, modified=2, created=4), in one snapshot.
+std::int32_t mettle_rt_stat_full(const char *path, std::int32_t fd,
+                                 std::int32_t follow, std::int64_t *out);
+// Signed Unix seconds and normalized nanos; mask 1 accessed, 2 modified.
+// Unselected timestamps are omitted atomically, not read and written back.
+std::int32_t mettle_rt_file_set_times(std::int32_t fd, std::uint32_t mask,
+                                      std::int64_t accessedSeconds,
+                                      std::uint32_t accessedNanoseconds,
+                                      std::int64_t modifiedSeconds,
+                                      std::uint32_t modifiedNanoseconds);
 // Next entry name of an open directory, skipping `.` and `..`; null at the end
 // (with `errno` zero) or on failure.
 const char *mettle_rt_readdir(void *directory);
@@ -100,6 +111,24 @@ std::int64_t mettle_rt_sock_recvfrom(
 // Receive (send == 0) or send timeout in microseconds; zero disables it.
 std::int32_t mettle_rt_sock_timeout(std::int32_t fd, std::int32_t send,
                                     std::uint64_t micros);
+std::int32_t mettle_rt_sock_get_timeout(std::int32_t fd, std::int32_t send,
+                                        std::uint64_t *seconds,
+                                        std::uint32_t *nanos);
+// Internal selectors: 0 TTL/hops, 1 broadcast, 2/3 multicast loop v4/v6, 4 v4
+// multicast TTL.
+std::int32_t mettle_rt_sock_set_option(std::int32_t fd, std::int32_t option,
+                                       std::uint32_t value);
+std::int32_t mettle_rt_sock_get_option(std::int32_t fd, std::int32_t option,
+                                       std::uint32_t *value);
+// Address inputs lend four network-order bytes (v4), or sixteen (v6).
+std::int32_t mettle_rt_sock_membership_v4(std::int32_t fd,
+                                          const std::uint8_t *group,
+                                          const std::uint8_t *interfaceAddress,
+                                          std::int32_t join);
+std::int32_t mettle_rt_sock_membership_v6(std::int32_t fd,
+                                          const std::uint8_t *group,
+                                          std::uint32_t interfaceIndex,
+                                          std::int32_t join);
 std::int32_t mettle_rt_sock_set_nodelay(std::int32_t fd, std::int32_t enabled);
 std::int32_t mettle_rt_sock_get_nodelay(std::int32_t fd, std::int32_t *enabled);
 std::int32_t mettle_rt_sock_error(std::int32_t fd, std::int32_t *error);

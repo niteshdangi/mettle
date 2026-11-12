@@ -1,6 +1,7 @@
 #include "sys.h"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <chrono>
 #include <climits>
@@ -710,6 +711,119 @@ extern "C" std::int32_t mettle_rt_stat(const char *path, std::int32_t fd,
   return 0;
 }
 
+extern "C" std::int32_t mettle_rt_stat_full(const char *path, std::int32_t fd,
+                                            std::int32_t follow,
+                                            std::int64_t *out) {
+  if (!out) {
+    errno = EINVAL;
+    return -1;
+  }
+  std::array<std::int64_t, 10> snapshot{};
+  const auto storeTime = [&](std::size_t slot, auto seconds, auto nanos) {
+    if (!std::in_range<std::int64_t>(seconds) ||
+        !std::in_range<std::uint32_t>(nanos) || nanos >= 1000000000) {
+      errno = EOVERFLOW;
+      return false;
+    }
+    snapshot[slot] = static_cast<std::int64_t>(seconds);
+    snapshot[slot + 1] = static_cast<std::int64_t>(nanos);
+    return true;
+  };
+  std::uint32_t mode;
+#ifdef __linux__
+  struct statx extended{};
+  const int flags = fd >= 0       ? AT_EMPTY_PATH
+                    : follow != 0 ? 0
+                                  : AT_SYMLINK_NOFOLLOW;
+  if (statx(fd >= 0 ? fd : AT_FDCWD, fd >= 0 ? "" : path, flags,
+            STATX_BASIC_STATS | STATX_BTIME, &extended) == 0) {
+    constexpr auto required =
+        STATX_SIZE | STATX_TYPE | STATX_MODE | STATX_MTIME;
+    if ((extended.stx_mask & required) != required) {
+      errno = EOPNOTSUPP;
+      return -1;
+    }
+    if (!std::in_range<std::int64_t>(extended.stx_size)) {
+      errno = EOVERFLOW;
+      return -1;
+    }
+    snapshot[0] = static_cast<std::int64_t>(extended.stx_size);
+    mode = extended.stx_mode;
+    if (!storeTime(3, extended.stx_mtime.tv_sec, extended.stx_mtime.tv_nsec))
+      return -1;
+    snapshot[9] = 2;
+    if (extended.stx_mask & STATX_ATIME) {
+      if (!storeTime(5, extended.stx_atime.tv_sec, extended.stx_atime.tv_nsec))
+        return -1;
+      snapshot[9] |= 1;
+    }
+    if (extended.stx_mask & STATX_BTIME) {
+      if (!storeTime(7, extended.stx_btime.tv_sec, extended.stx_btime.tv_nsec))
+        return -1;
+      snapshot[9] |= 4;
+    }
+  } else if (errno != ENOSYS) {
+    return -1;
+  } else
+#endif
+  {
+    struct stat info;
+    const int result = fd >= 0       ? fstat(fd, &info)
+                       : follow != 0 ? stat(path, &info)
+                                     : lstat(path, &info);
+    if (result != 0)
+      return -1;
+    if (!std::in_range<std::int64_t>(info.st_size) || info.st_size < 0) {
+      errno = EOVERFLOW;
+      return -1;
+    }
+    snapshot[0] = static_cast<std::int64_t>(info.st_size);
+    mode = info.st_mode;
+#ifdef __APPLE__
+    if (!storeTime(3, info.st_mtimespec.tv_sec, info.st_mtimespec.tv_nsec) ||
+        !storeTime(5, info.st_atimespec.tv_sec, info.st_atimespec.tv_nsec) ||
+        !storeTime(7, info.st_birthtimespec.tv_sec,
+                   info.st_birthtimespec.tv_nsec))
+      return -1;
+    snapshot[9] = 7;
+#else
+    if (!storeTime(3, info.st_mtim.tv_sec, info.st_mtim.tv_nsec) ||
+        !storeTime(5, info.st_atim.tv_sec, info.st_atim.tv_nsec))
+      return -1;
+    snapshot[9] = 3;
+#endif
+  }
+  snapshot[1] = S_ISREG(mode) ? 0 : S_ISDIR(mode) ? 1 : S_ISLNK(mode) ? 2 : 3;
+  snapshot[2] = mode & 07777;
+  std::copy(snapshot.begin(), snapshot.end(), out);
+  return 0;
+}
+
+extern "C" std::int32_t mettle_rt_file_set_times(
+    std::int32_t fd, std::uint32_t mask, std::int64_t accessedSeconds,
+    std::uint32_t accessedNanoseconds, std::int64_t modifiedSeconds,
+    std::uint32_t modifiedNanoseconds) {
+  if ((mask & ~3u) != 0 ||
+      ((mask & 1u) != 0 && accessedNanoseconds >= 1000000000u) ||
+      ((mask & 2u) != 0 && modifiedNanoseconds >= 1000000000u)) {
+    errno = EINVAL;
+    return -1;
+  }
+  timespec times[2] = {{0, UTIME_OMIT}, {0, UTIME_OMIT}};
+  const std::int64_t seconds[] = {accessedSeconds, modifiedSeconds};
+  const std::uint32_t nanos[] = {accessedNanoseconds, modifiedNanoseconds};
+  for (std::size_t i = 0; i < 2; ++i) {
+    if ((mask & (1u << i)) == 0)
+      continue;
+    if (!std::in_range<time_t>(seconds[i])) {
+      errno = EOVERFLOW;
+      return -1;
+    }
+    times[i] = {static_cast<time_t>(seconds[i]), static_cast<long>(nanos[i])};
+  }
+  return futimens(fd, times);
+}
+
 extern "C" const char *mettle_rt_readdir(void *directory) {
   errno = 0;
   while (dirent *entry = readdir(static_cast<DIR *>(directory))) {
@@ -1124,6 +1238,185 @@ extern "C" std::int32_t mettle_rt_sock_set_nodelay(std::int32_t fd,
   const int value = enabled != 0;
   return retry([&] {
     return setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &value, sizeof(value));
+  });
+}
+
+extern "C" std::int32_t mettle_rt_sock_get_timeout(std::int32_t fd,
+                                                   std::int32_t send,
+                                                   std::uint64_t *seconds,
+                                                   std::uint32_t *nanos) {
+  if (!seconds || !nanos) {
+    errno = EINVAL;
+    return -1;
+  }
+  timeval value{};
+  socklen_t size = sizeof value;
+  if (retry([&] {
+        return getsockopt(fd, SOL_SOCKET, send ? SO_SNDTIMEO : SO_RCVTIMEO,
+                          &value, &size);
+      }) != 0)
+    return -1;
+  if (size != sizeof value || value.tv_sec < 0 || value.tv_usec < 0 ||
+      value.tv_usec >= 1000000) {
+    errno = EIO;
+    return -1;
+  }
+  *seconds = static_cast<std::uint64_t>(value.tv_sec);
+  *nanos = static_cast<std::uint32_t>(value.tv_usec) * 1000;
+  return 0;
+}
+
+namespace {
+enum class SocketOption : std::int32_t {
+  Ttl = 0,
+  Broadcast = 1,
+  MulticastLoopV4 = 2,
+  MulticastLoopV6 = 3,
+  MulticastTtlV4 = 4,
+};
+
+struct SocketOptionInfo {
+  int level;
+  int name;
+  bool byte = false;
+};
+
+bool socketOption(std::int32_t fd, std::int32_t option,
+                  SocketOptionInfo &info) {
+  switch (static_cast<SocketOption>(option)) {
+  case SocketOption::Ttl: {
+    sockaddr_storage address{};
+    socklen_t size = sizeof address;
+    if (getsockname(fd, reinterpret_cast<sockaddr *>(&address), &size) != 0)
+      return false;
+    if (address.ss_family == AF_INET)
+      info = {IPPROTO_IP, IP_TTL};
+    else if (address.ss_family == AF_INET6)
+      info = {IPPROTO_IPV6, IPV6_UNICAST_HOPS};
+    else {
+      errno = EAFNOSUPPORT;
+      return false;
+    }
+    return true;
+  }
+  case SocketOption::Broadcast:
+    info = {SOL_SOCKET, SO_BROADCAST};
+    return true;
+  case SocketOption::MulticastLoopV4:
+  case SocketOption::MulticastTtlV4:
+    info = {IPPROTO_IP,
+            option == static_cast<std::int32_t>(SocketOption::MulticastLoopV4)
+                ? IP_MULTICAST_LOOP
+                : IP_MULTICAST_TTL};
+#ifdef __APPLE__
+    // Darwin's IPv4 multicast options use bytes, unlike Linux's integers.
+    info.byte = true;
+#endif
+    return true;
+  case SocketOption::MulticastLoopV6:
+    info = {IPPROTO_IPV6, IPV6_MULTICAST_LOOP};
+    return true;
+  }
+  errno = EINVAL;
+  return false;
+}
+} // namespace
+
+extern "C" std::int32_t mettle_rt_sock_set_option(std::int32_t fd,
+                                                  std::int32_t option,
+                                                  std::uint32_t value) {
+  SocketOptionInfo info{};
+  if (!socketOption(fd, option, info))
+    return -1;
+  if (value > static_cast<std::uint32_t>(INT_MAX) ||
+      (info.byte && value > UCHAR_MAX)) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (info.byte) {
+    const auto byte = static_cast<unsigned char>(value);
+    return retry([&] {
+      return setsockopt(fd, info.level, info.name, &byte, sizeof byte);
+    });
+  }
+  const auto integer = static_cast<int>(value);
+  return retry([&] {
+    return setsockopt(fd, info.level, info.name, &integer, sizeof integer);
+  });
+}
+
+extern "C" std::int32_t mettle_rt_sock_get_option(std::int32_t fd,
+                                                  std::int32_t option,
+                                                  std::uint32_t *value) {
+  if (!value) {
+    errno = EINVAL;
+    return -1;
+  }
+  SocketOptionInfo info{};
+  if (!socketOption(fd, option, info))
+    return -1;
+  if (info.byte) {
+    unsigned char byte = 0;
+    socklen_t size = sizeof byte;
+    if (retry([&] {
+          return getsockopt(fd, info.level, info.name, &byte, &size);
+        }) != 0)
+      return -1;
+    if (size != sizeof byte) {
+      errno = EIO;
+      return -1;
+    }
+    *value = byte;
+    return 0;
+  }
+  int integer = 0;
+  socklen_t size = sizeof integer;
+  if (retry([&] {
+        return getsockopt(fd, info.level, info.name, &integer, &size);
+      }) != 0)
+    return -1;
+  if (size != sizeof integer || integer < 0) {
+    errno = EIO;
+    return -1;
+  }
+  *value = static_cast<std::uint32_t>(integer);
+  return 0;
+}
+
+extern "C" std::int32_t
+mettle_rt_sock_membership_v4(std::int32_t fd, const std::uint8_t *group,
+                             const std::uint8_t *interfaceAddress,
+                             std::int32_t join) {
+  if (!group || !interfaceAddress) {
+    errno = EINVAL;
+    return -1;
+  }
+  ip_mreq request{};
+  std::memcpy(&request.imr_multiaddr, group, sizeof request.imr_multiaddr);
+  std::memcpy(&request.imr_interface, interfaceAddress,
+              sizeof request.imr_interface);
+  return retry([&] {
+    return setsockopt(fd, IPPROTO_IP,
+                      join ? IP_ADD_MEMBERSHIP : IP_DROP_MEMBERSHIP, &request,
+                      sizeof request);
+  });
+}
+
+extern "C" std::int32_t
+mettle_rt_sock_membership_v6(std::int32_t fd, const std::uint8_t *group,
+                             std::uint32_t interfaceIndex, std::int32_t join) {
+  if (!group) {
+    errno = EINVAL;
+    return -1;
+  }
+  ipv6_mreq request{};
+  std::memcpy(&request.ipv6mr_multiaddr, group,
+              sizeof request.ipv6mr_multiaddr);
+  request.ipv6mr_interface = interfaceIndex;
+  return retry([&] {
+    return setsockopt(fd, IPPROTO_IPV6,
+                      join ? IPV6_JOIN_GROUP : IPV6_LEAVE_GROUP, &request,
+                      sizeof request);
   });
 }
 

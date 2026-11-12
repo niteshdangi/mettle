@@ -1,6 +1,7 @@
 #include "../../runtime/thread.h"
 #include "../../runtime/sys.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -18,10 +19,12 @@
 #include <poll.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <thread>
 #include <unistd.h>
+#include <utility>
 
 namespace {
 void require(bool condition, const char *message) {
@@ -29,6 +32,269 @@ void require(bool condition, const char *message) {
     std::fprintf(stderr, "%s\n", message);
     std::exit(1);
   }
+}
+
+void reentrantMutexCases(bool checkOwnershipErrors = true) {
+  void *mutex = mettle_rt_reentrant_mutex_new();
+  require(mutex != nullptr, "recursive mutex allocation failed");
+  require(mettle_rt_mutex_lock(mutex) == 0 && mettle_rt_mutex_lock(mutex) == 0,
+          "recursive mutex did not allow same-thread nesting");
+  const auto excluded = [&] {
+    std::thread worker([&] {
+      require(mettle_rt_mutex_try_lock(mutex) == 1,
+              "recursive mutex admitted a different thread while owned");
+      if (checkOwnershipErrors)
+        require(mettle_rt_mutex_unlock(mutex) != 0,
+                "recursive mutex admitted a non-owner unlock");
+    });
+    worker.join();
+  };
+  excluded();
+  std::atomic<bool> attempting{false}, acquired{false};
+  std::thread waiter([&] {
+    require(mettle_rt_mutex_try_lock(mutex) == 1,
+            "recursive waiter was not initially excluded");
+    attempting.store(true, std::memory_order_release);
+    require(mettle_rt_mutex_lock(mutex) == 0, "recursive waiter lock failed");
+    acquired.store(true, std::memory_order_release);
+    require(mettle_rt_mutex_unlock(mutex) == 0,
+            "recursive waiter unlock failed");
+  });
+  while (!attempting.load(std::memory_order_acquire))
+    std::this_thread::yield();
+  require(!acquired.load(std::memory_order_acquire),
+          "recursive waiter acquired at depth two");
+  require(mettle_rt_mutex_unlock(mutex) == 0, "recursive inner unlock failed");
+  excluded();
+  require(!acquired.load(std::memory_order_acquire),
+          "recursive waiter acquired before the outermost unlock");
+  require(mettle_rt_mutex_unlock(mutex) == 0, "recursive outer unlock failed");
+  waiter.join();
+  require(acquired.load(std::memory_order_acquire),
+          "recursive waiter did not acquire after the outermost unlock");
+  int protectedValue = 0;
+  std::array<std::thread, 2> workers;
+  for (auto &worker : workers)
+    worker = std::thread([&] {
+      for (int i = 0; i < 1000; ++i) {
+        require(mettle_rt_mutex_lock(mutex) == 0 &&
+                    mettle_rt_mutex_lock(mutex) == 0,
+                "recursive worker lock failed");
+        ++protectedValue;
+        require(mettle_rt_mutex_unlock(mutex) == 0 &&
+                    mettle_rt_mutex_unlock(mutex) == 0,
+                "recursive worker unlock failed");
+      }
+    });
+  for (auto &worker : workers)
+    worker.join();
+  require(protectedValue == 2000, "recursive mutex lost a protected update");
+  mettle_rt_mutex_free(mutex);
+}
+
+void rwlockDowngradeCases() {
+  void *lock = mettle_rt_rwlock_new();
+  require(lock != nullptr, "rwlock allocation failed");
+  require(mettle_rt_rwlock_downgrade(nullptr) == -EINVAL &&
+              mettle_rt_rwlock_downgrade(lock) == -EPERM,
+          "downgrade without a writer hold did not report failure");
+  require(mettle_rt_rwlock_write(lock) == 0, "downgrade writer lock failed");
+  require(mettle_rt_rwlock_read(lock) == EDEADLK &&
+              mettle_rt_rwlock_write(lock) == EDEADLK &&
+              mettle_rt_rwlock_try_read(lock) == 1 &&
+              mettle_rt_rwlock_try_write(lock) == 1,
+          "writer relock lost its error or busy result");
+  std::thread nonOwner([&] {
+    require(mettle_rt_rwlock_downgrade(lock) == -EPERM &&
+                mettle_rt_rwlock_unlock(lock) == EPERM &&
+                mettle_rt_rwlock_try_read(lock) == 1,
+            "non-owner conversion or unlock released the writer");
+  });
+  nonOwner.join();
+  require(mettle_rt_rwlock_downgrade(lock) == 0, "writer downgrade failed");
+  require(mettle_rt_rwlock_downgrade(lock) == -EPERM &&
+              mettle_rt_rwlock_try_read(lock) == 0 &&
+              mettle_rt_rwlock_try_write(lock) == 1,
+          "failed second downgrade changed the shared hold");
+  require(mettle_rt_rwlock_unlock(lock) == 0 &&
+              mettle_rt_rwlock_try_write(lock) == 1 &&
+              mettle_rt_rwlock_unlock(lock) == 0 &&
+              mettle_rt_rwlock_try_write(lock) == 0 &&
+              mettle_rt_rwlock_unlock(lock) == 0,
+          "downgrade did not retain exactly one read hold");
+  mettle_rt_rwlock_free(lock);
+
+  lock = mettle_rt_rwlock_new();
+  require(lock && mettle_rt_rwlock_write(lock) == 0,
+          "contended downgrade setup failed");
+  int value = 0;
+  std::atomic<bool> writerContended{false}, writerAcquired{false};
+  std::atomic<bool> readerContended{false}, readerGo{false},
+      readerAcquired{false};
+  std::atomic<bool> finalRead{false}, finalReadChecked{false},
+      releaseRead{false};
+  std::thread writer([&] {
+    require(mettle_rt_rwlock_try_write(lock) == 1,
+            "pending writer did not observe exclusive contention");
+    writerContended.store(true, std::memory_order_release);
+    require(mettle_rt_rwlock_write(lock) == 0, "pending writer lock failed");
+    writerAcquired.store(true, std::memory_order_release);
+    require(value == 42, "downgrade did not publish to the next writer");
+    value = 84;
+    require(mettle_rt_rwlock_unlock(lock) == 0, "pending writer unlock failed");
+  });
+  std::thread reader([&] {
+    require(mettle_rt_rwlock_try_read(lock) == 1,
+            "pending reader did not observe exclusive contention");
+    readerContended.store(true, std::memory_order_release);
+    // This gate schedules acquisition; only the rwlock publishes the payload.
+    while (!readerGo.load(std::memory_order_relaxed))
+      std::this_thread::yield();
+    require(mettle_rt_rwlock_read(lock) == 0, "downgraded reader lock failed");
+    require(value == 42, "downgrade did not publish to another reader");
+    readerAcquired.store(true, std::memory_order_release);
+    while (!finalRead.load(std::memory_order_acquire))
+      std::this_thread::yield();
+    require(mettle_rt_rwlock_try_write(lock) == 1 && value == 42,
+            "writer acquired before the final reader released");
+    finalReadChecked.store(true, std::memory_order_release);
+    while (!releaseRead.load(std::memory_order_acquire))
+      std::this_thread::yield();
+    require(mettle_rt_rwlock_unlock(lock) == 0, "final reader unlock failed");
+  });
+  while (!writerContended.load(std::memory_order_acquire) ||
+         !readerContended.load(std::memory_order_acquire))
+    std::this_thread::yield();
+  value = 42;
+  require(mettle_rt_rwlock_downgrade(lock) == 0, "contended downgrade failed");
+  require(!writerAcquired.load(std::memory_order_acquire) && value == 42 &&
+              mettle_rt_rwlock_try_write(lock) == 1,
+          "writer intervened during downgrade");
+  readerGo.store(true, std::memory_order_relaxed);
+  while (!readerAcquired.load(std::memory_order_acquire))
+    std::this_thread::yield();
+  require(!writerAcquired.load(std::memory_order_acquire),
+          "writer acquired through the downgraded read hold");
+  require(mettle_rt_rwlock_unlock(lock) == 0,
+          "downgraded reader unlock failed");
+  finalRead.store(true, std::memory_order_release);
+  while (!finalReadChecked.load(std::memory_order_acquire))
+    std::this_thread::yield();
+  require(!writerAcquired.load(std::memory_order_acquire),
+          "writer acquired with another reader still holding");
+  releaseRead.store(true, std::memory_order_release);
+  reader.join();
+  writer.join();
+  require(writerAcquired.load(std::memory_order_acquire) && value == 84,
+          "writer did not acquire after the final read release");
+  mettle_rt_rwlock_free(lock);
+}
+
+void filesystemTimeCases() {
+  struct File {
+    char path[40] = "mettle-runtime-times-XXXXXX";
+    char link[48]{};
+    int fd = mkstemp(path);
+    ~File() {
+      if (fd >= 0)
+        close(fd);
+      if (link[0])
+        unlink(link);
+      unlink(path);
+    }
+  } file;
+  require(file.fd >= 0 && write(file.fd, "abc", 3) == 3,
+          "timestamp fixture creation failed");
+  require(mettle_rt_file_set_times(file.fd, 3, 10, 123456700, 20, 987654300) ==
+              0,
+          "setting both descriptor timestamps failed");
+  std::array<std::int64_t, 10> initial{}, updated{};
+  const auto snapshot = [&](auto &out) {
+    require(mettle_rt_stat_full(nullptr, file.fd, 1, out.data()) == 0,
+            "descriptor full metadata failed");
+    require((out[9] & 3) == 3 && out[4] >= 0 && out[4] < 1000000000 &&
+                out[6] >= 0 && out[6] < 1000000000,
+            "full metadata omitted or denormalized a POSIX timestamp");
+  };
+  snapshot(initial);
+  require(initial[0] == 3 && initial[1] == 0 && initial[3] == 20 &&
+              initial[4] == 987654300 && initial[5] == 10 &&
+              initial[6] == 123456700,
+          "full metadata lost size, kind or timestamp precision");
+  require(mettle_rt_file_set_times(file.fd, 2, 0, UINT_MAX, -1, 999999900) == 0,
+          "modified-only pre-epoch timestamp failed");
+  snapshot(updated);
+  require(updated[3] == -1 && updated[4] == 999999900 &&
+              updated[5] == initial[5] && updated[6] == initial[6],
+          "modified-only update changed access time or lost pre-epoch sign");
+  require(mettle_rt_file_set_times(file.fd, 1, 30, 456789100, 0, UINT_MAX) == 0,
+          "accessed-only timestamp failed");
+  snapshot(initial);
+  require(initial[5] == 30 && initial[6] == 456789100 &&
+              initial[3] == updated[3] && initial[4] == updated[4],
+          "accessed-only update changed modification time");
+  require(mettle_rt_file_set_times(file.fd, 0, INT64_MIN, UINT_MAX, INT64_MAX,
+                                   UINT_MAX) == 0,
+          "omitted timestamps were validated or written");
+  snapshot(updated);
+  require(initial == updated, "empty timestamp update changed metadata");
+  for (auto mask : {1u, 2u, 4u}) {
+    errno = 0;
+    require(mettle_rt_file_set_times(file.fd, mask, 0, 1000000000, 0,
+                                     1000000000) == -1 &&
+                errno == EINVAL,
+            "invalid timestamp fields or mask did not report EINVAL");
+  }
+  snapshot(updated);
+  require(initial == updated, "invalid timestamp request partially updated");
+  if (!std::in_range<time_t>(INT64_MIN)) {
+    require(mettle_rt_file_set_times(file.fd, 1, INT64_MIN, 0, 0, 0) == -1 &&
+                errno == EOVERFLOW,
+            "timestamp outside time_t silently narrowed");
+  }
+  errno = 0;
+  require(mettle_rt_file_set_times(-1, 1, 0, 0, 0, 0) == -1 && errno == EBADF,
+          "descriptor timestamp failure lost errno");
+  std::array<std::int64_t, 5> legacy{};
+  require(mettle_rt_stat(file.path, -1, 1, legacy.data()) == 0 &&
+              std::equal(legacy.begin(), legacy.end(), initial.begin()),
+          "full metadata changed the legacy five-slot ABI");
+  std::snprintf(file.link, sizeof file.link, "%s-link", file.path);
+  require(symlink(file.path, file.link) == 0, "timestamp symlink setup failed");
+  require(mettle_rt_stat_full(file.link, -1, 0, updated.data()) == 0 &&
+              updated[1] == 2,
+          "full metadata followed a no-follow symlink");
+  require(mettle_rt_stat_full(file.link, -1, 1, updated.data()) == 0 &&
+              updated == initial,
+          "full metadata did not follow a symlink coherently");
+#ifdef __linux__
+  struct statx native{};
+  if (statx(file.fd, "", AT_EMPTY_PATH, STATX_BASIC_STATS | STATX_BTIME,
+            &native) == 0) {
+    require(((initial[9] & 4) != 0) == ((native.stx_mask & STATX_BTIME) != 0),
+            "birth time availability did not match the filesystem");
+    if (native.stx_mask & STATX_BTIME)
+      require(initial[7] == native.stx_btime.tv_sec &&
+                  initial[8] == native.stx_btime.tv_nsec,
+              "birth time did not come from the metadata snapshot");
+  } else {
+    require(errno == ENOSYS && (initial[9] & 4) == 0,
+            "stat fallback invented a birth time");
+  }
+#endif
+  errno = 0;
+  require(mettle_rt_stat_full(file.path, -1, 1, nullptr) == -1 &&
+              errno == EINVAL,
+          "null metadata output was accepted");
+  require(unlink(file.path) == 0, "timestamp fixture unlink failed");
+  updated.fill(-17);
+  const auto unchanged = updated;
+  errno = 0;
+  require(mettle_rt_stat_full(file.path, -1, 1, updated.data()) == -1 &&
+              errno == ENOENT && updated == unchanged,
+          "failed metadata lookup lost errno or published a partial snapshot");
+  snapshot(updated);
+  require(updated == initial, "unlinked descriptor metadata changed");
 }
 
 #ifdef __linux__
@@ -222,6 +488,39 @@ void conditionCases() {
               script.mutexInits == 1 && script.mutexDestroys == 1,
           "condition deadline normalization or resource cleanup changed");
 }
+void rwlockInitializationCases() {
+  for (auto failure : {InitFailure::Mutex, InitFailure::Attributes,
+                       InitFailure::Clock, InitFailure::Condition}) {
+    Script script;
+    script.failure = failure;
+    ScriptScope scope(script);
+    require(mettle_rt_rwlock_new() == nullptr,
+            "rwlock initialization failure published a handle");
+    require(
+        script.mutexInits == 1 &&
+            script.mutexDestroys == (failure == InitFailure::Mutex ? 0 : 1) &&
+            script.attributeInits == (failure == InitFailure::Mutex ? 0 : 1) &&
+            script.attributeDestroys ==
+                (failure == InitFailure::Clock ||
+                         failure == InitFailure::Condition
+                     ? 1
+                     : 0) &&
+            script.conditionInits ==
+                (failure == InitFailure::Condition ? 1 : 0) &&
+            script.conditionDestroys == 0,
+        "failed rwlock initialization leaked or destroyed partial state");
+  }
+  Script script;
+  ScriptScope scope(script);
+  void *lock = mettle_rt_rwlock_new();
+  require(lock != nullptr, "rwlock monitor initialization failed");
+  mettle_rt_rwlock_free(lock);
+  require(script.mutexInits == 1 && script.mutexDestroys == 1 &&
+              script.conditionInits == 1 && script.conditionDestroys == 1 &&
+              script.attributeInits == 1 && script.attributeDestroys == 1,
+          "rwlock destruction did not release its monitor exactly once");
+}
+
 void parkingCases() {
   for (auto failure : {InitFailure::Mutex, InitFailure::Attributes,
                        InitFailure::Clock, InitFailure::Condition}) {
@@ -850,6 +1149,13 @@ int __wrap_pthread_cond_timedwait(pthread_cond_t *condition,
 #endif
 
 int main(int argc, char **argv) {
+  if (argc == 2 && std::strcmp(argv[1], "--rwlock-downgrade") == 0) {
+#ifdef __linux__
+    rwlockInitializationCases();
+#endif
+    rwlockDowngradeCases();
+    return 0;
+  }
 #ifdef __linux__
   if (argc == 3 && std::strcmp(argv[1], "--fd-probe") == 0) {
     const int fd = std::atoi(argv[2]);
@@ -857,17 +1163,35 @@ int main(int argc, char **argv) {
   }
   if (argc == 3 && std::strcmp(argv[1], "--stdio-probe") == 0)
     return stdioProbe(argv[2]);
+  // TSan diagnoses wrong-owner unlocks even when pthread rejects them.
+  if (argc == 2 && std::strcmp(argv[1], "--recursive-contention") == 0) {
+    reentrantMutexCases(false);
+    return 0;
+  }
+
   descriptorCases();
   for (int mask = 0; mask < 8; ++mask)
     require(isolatedStdio(mask), "spawn lost a stream or child failure report");
   sleepCases();
+  {
+    Script script;
+    script.failure = InitFailure::Mutex;
+    ScriptScope scope(script);
+    require(mettle_rt_reentrant_mutex_new() == nullptr &&
+                script.mutexInits == 1 && script.mutexDestroys == 0,
+            "recursive mutex initialization failure published invalid state");
+  }
   conditionCases();
+  rwlockInitializationCases();
   parkingCases();
   acceptCases();
 #else
   (void)argc;
   (void)argv;
 #endif
+  reentrantMutexCases();
+  rwlockDowngradeCases();
+  filesystemTimeCases();
   std::uintptr_t previous = mettle_rt_thread_current();
   require(previous == mettle_rt_thread_current(), "current identity is stable");
   for (int i = 0; i < 128; ++i) {

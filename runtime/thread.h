@@ -38,6 +38,8 @@ std::uint64_t mettle_rt_thread_parallelism();
 // Non-recursive, error-checking mutex: relocking on the owning thread and
 // unlocking from another thread are reported instead of being undefined.
 void *mettle_rt_mutex_new();
+// Recursive ownership; each successful lock requires its own unlock.
+void *mettle_rt_reentrant_mutex_new();
 void mettle_rt_mutex_free(void *mutex);
 std::int32_t mettle_rt_mutex_lock(void *mutex);
 std::int32_t mettle_rt_mutex_try_lock(void *mutex);
@@ -52,12 +54,15 @@ std::int32_t mettle_rt_cond_wait_timeout(void *cond, void *mutex,
 std::int32_t mettle_rt_cond_notify_one(void *cond);
 std::int32_t mettle_rt_cond_notify_all(void *cond);
 
+// Free requires no holders or waiters; unlock requires a calling-thread hold.
 void *mettle_rt_rwlock_new();
 void mettle_rt_rwlock_free(void *lock);
 std::int32_t mettle_rt_rwlock_read(void *lock);
 std::int32_t mettle_rt_rwlock_try_read(void *lock);
 std::int32_t mettle_rt_rwlock_write(void *lock);
 std::int32_t mettle_rt_rwlock_try_write(void *lock);
+// Consumes the calling thread's writer hold only on success (0; else -errno).
+std::int32_t mettle_rt_rwlock_downgrade(void *lock);
 std::int32_t mettle_rt_rwlock_unlock(void *lock);
 
 // Thread-local storage keys; the destructor runs at thread exit for each
