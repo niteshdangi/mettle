@@ -13,7 +13,7 @@ import core.hash.hash_one
 import core.iter.{ExtendItems, FromItems, Iterator, OwnedIterable}
 import core.text.FromStr
 import std.ffi.{OsStr, OsString}
-import std.path.{Path, PathBuf, path_from_text, path_buf_from_text}
+import std.path.{Path, PathBuf, path, path_from_text, path_buf_from_bytes, path_buf_from_text}
 
 fn debug_text<T: Debug>(read value: T): String {
     var output = String("")
@@ -27,6 +27,31 @@ fn debug_text<T: Debug>(read value: T): String {
 
 fn copy_path_buf<region r>(read value: PathBuf from r): PathBuf {
     PathBuf.(From<read PathBuf from r>).from(read value)
+}
+
+fn compare_path<T: PartialEq<Path> + PartialOrd<Path>>(
+    read value: T, read other: Path
+): Ordering? {
+    let order = T.(PartialOrd<Path>).partial_cmp(value, other)
+    if T.(PartialEq<Path>).eq(value, other) != (order == present(Ordering.Equal)) {
+        return none
+    }
+    if T.(PartialEq<Path>).ne(value, other) != (order != present(Ordering.Equal)) {
+        return none
+    }
+    if T.(PartialOrd<Path>).lt(value, other) != (order == present(Ordering.Less)) {
+        return none
+    }
+    if T.(PartialOrd<Path>).le(value, other) != (order != present(Ordering.Greater)) {
+        return none
+    }
+    if T.(PartialOrd<Path>).gt(value, other) != (order == present(Ordering.Greater)) {
+        return none
+    }
+    if T.(PartialOrd<Path>).ge(value, other) != (order != present(Ordering.Less)) {
+        return none
+    }
+    order
 }
 
 fn main(): i32 {
@@ -88,6 +113,25 @@ fn main(): i32 {
     if !PathBuf.(PartialEq<Text>).eq(owned, "/a/b") { return 57 }
     if PathBuf.(PartialOrd<Text>).partial_cmp(owned, "/a/b") !=
         present(Ordering.Equal) { return 58 }
+    if compare_path(owned, path_from_text("/a/./b")) != present(Ordering.Equal) {
+        return 61
+    }
+    if compare_path(owned, path_from_text("/a/c")) != present(Ordering.Less) {
+        return 62
+    }
+    if compare_path(owned, path_from_text("/a/a")) != present(Ordering.Greater) {
+        return 63
+    }
+    let raw_owned: [u8; 6] = [47u8, 97u8, 47u8, 255u8, 47u8, 46u8]
+    let raw_equal: [u8; 4] = [47u8, 97u8, 47u8, 255u8]
+    let raw_less: [u8; 4] = [47u8, 97u8, 47u8, 254u8]
+    let nonunicode = path_buf_from_bytes(read raw_owned)
+    if compare_path(nonunicode, path(read raw_equal)) != present(Ordering.Equal) {
+        return 64
+    }
+    if compare_path(nonunicode, path(read raw_less)) != present(Ordering.Greater) {
+        return 65
+    }
     if String.(PartialOrd<PathBuf>).partial_cmp(
         String("/a/b"),
         owned

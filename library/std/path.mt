@@ -950,6 +950,9 @@ extend PathBuf implements package.core.borrow.AsMut<Path> {
 extend PathBuf implements PartialEq {
     fn eq(read other: PathBuf): bool { self.as_path() == other.as_path() }
 }
+extend PathBuf implements PartialEq<Path> {
+    fn eq(read other: Path): bool { self.as_path() == other }
+}
 extend<region r> PathBuf implements PartialEq<read Path from r> {
     fn eq(read other: read Path from r): bool { self.as_path() == other }
 }
@@ -967,6 +970,11 @@ extend PathBuf implements Eq {}
 extend PathBuf implements PartialOrd {
     fn partial_cmp(read other: PathBuf): Ordering? {
         present(self.as_path().cmp(other.as_path()))
+    }
+}
+extend PathBuf implements PartialOrd<Path> {
+    fn partial_cmp(read other: Path): Ordering? {
+        present(self.as_path().cmp(other))
     }
 }
 extend<region r> PathBuf implements PartialOrd<read Path from r> {
