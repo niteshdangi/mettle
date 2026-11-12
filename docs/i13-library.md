@@ -142,8 +142,8 @@ Origin analysis now traverses only aggregate payloads, not the extent metadata
 carried by address constants.
 
 Current source-only reconciliation: cells 97 implemented/eight partial/14
-missing of 119; sync/thread 227/28/82 of 337; deduplicated owners 165/two/13
-of 180; core operations 247/45/five of 297; pointer/pinning 114/12/33 of 159;
+missing of 119; sync/thread 228/27/82 of 337; deduplicated owners 165/two/13
+of 180; core operations 260/32/five of 297; pointer/pinning 114/12/33 of 159;
 shared traits 42/ten partial of 52. All 207 IO/filesystem records have source
 candidates, with 56 profile units prepared. These overlapping inventories are
 not additive or qualification receipts. Processes/time has source candidates
@@ -164,10 +164,20 @@ owned and generic-region inputs; the negative rejects a local Item supplied to
 an explicitly static interface argument at its intended region diagnostic.
 Receipts: `i13-qualified-interface/source/run/evidence.json` and
 `source/fail/evidence.json`.
-The actual owned `List<Cow>` bound now passes. Ordinary text integration instead
-stops at invalid CFG in `alloc.ffi.lossy_view`: refreshing generic product
-instances overwrites an already-normalized associated-owner field. That separate
-representation repair and full text qualification remain open.
+The actual owned `List<Cow>` bound now passes. The subsequent
+`alloc.ffi.lossy_view` CFG failure is repaired: generic-instance refresh preserves
+derived fields instead of overwriting normalized associated owners or field
+regions, while still propagating layout/variant/destructor metadata.
+The focused regression fails before the fix; all three affected CTests pass
+normal and ASan/UBSan. Four focused region profile units pass on the new compiler,
+and mixed Cow String/OsString ownership smoke executes both normal profiles.
+The reduced mixed Cow collection also executes both profiles with emitted ASan
+and native ASan/UBSan, without reports; emitted UBSan is not claimed.
+Receipts: `i13-regional-refresh/source`; retained next-fixture diagnostics:
+`i13-text-path-cow-v10/run/evidence.json`.
+Ordinary text acceptance now reaches generic Display-to-string method lookup
+and explicit reference-valued comparison argument inference; those failures,
+required-constant obligations and full text qualification remain open.
 
 ### Collection/vector reconciliation (2026-11-11)
 

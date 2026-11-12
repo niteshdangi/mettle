@@ -490,6 +490,8 @@ not across independent compilations. Name binding and constructor lookup stay
 in semantics; the type store holds identities, descriptors and display names,
 not the source namespace resolver. Generic/region identities must extend that
 ownership model; serialization/query identities are separate from in-memory IDs.
+Refreshing generic instances preserves regional/normalized fields while
+propagating declaration layout, variant and cleanup metadata.
 
 Diagnostics format `TypeId`s through the types component's source-oriented
 display function rather than `TypeStore::name`, which remains an internal

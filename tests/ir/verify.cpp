@@ -602,6 +602,38 @@ void packageOwnershipPropagation() {
   types.setProductPackage(root, 0);
   requirePackages(0);
 }
+void regionalProductRefresh() {
+  mettle::TypeStore types;
+  auto parameter = types.declareParameter("T", false);
+  auto family = types.erasedType({"Family", 0});
+  auto root = types.declareProduct("Carrier", false);
+  types.setGenericParameters(root, {parameter});
+  types.defineProduct(
+      root,
+      {{"borrowed", types.viewType(parameter, mettle::ParameterMode::Read)},
+       {"owned", types.projection(parameter, family, 0)}});
+  auto instance = types.instantiateProduct(root, {Type::I32});
+  auto fields = types.product(instance).fields;
+  auto view = types.viewType(Type::I32, mettle::ParameterMode::Read,
+                             mettle::RegionId::Static);
+  fields[0].type = view;
+  auto decorated =
+      types.regionalProduct(instance, fields, {mettle::RegionId::Static});
+  fields[1].type = Type::I64;
+  auto normalized =
+      types.regionalProduct(instance, fields, {mettle::RegionId::Static}, true);
+  types.setDestructor(root, 0);
+  types.refreshProductInstances();
+  require(types.product(decorated).fields[0].type == view &&
+              types.product(normalized).fields[0].type == view,
+          "generic refresh erased derived field regions");
+  require(types.product(normalized).fields[1].type == Type::I64,
+          "generic refresh discarded normalized associated fields");
+  require(types.product(decorated).hasDestructor &&
+              types.product(normalized).hasDestructor &&
+              types.product(normalized).destructor == 0,
+          "preserving derived fields lost refreshed cleanup metadata");
+}
 void loopSiblingViewCases() {
   auto inspect = [](const std::string &body, int linked, int unlinked) {
     mettle::Diagnostics diagnostics;
@@ -889,6 +921,7 @@ int main() {
     indirectContractCases();
     rawDropTypeCases();
     packageOwnershipPropagation();
+    regionalProductRefresh();
     loopSiblingViewCases();
     contentsOnlyResultPathCases();
     preparedAnalysisReuse();

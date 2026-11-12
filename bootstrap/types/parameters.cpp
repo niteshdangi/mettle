@@ -422,10 +422,12 @@ void TypeStore::refreshProductInstances() {
     for (std::size_t j = 0; j < source.genericParameters.size(); ++j)
       bindings.push_back(
           {source.genericParameters[j], instance.genericArguments[j]});
-    std::vector<TypeField> fields;
-    for (const auto &field : source.fields)
-      fields.push_back({field.name, substitute(field.type, bindings)});
-    products[index].fields = std::move(fields);
+    if (instance.regionOrigin == Type::Unknown) {
+      std::vector<TypeField> fields;
+      for (const auto &field : source.fields)
+        fields.push_back({field.name, substitute(field.type, bindings)});
+      products[index].fields = std::move(fields);
+    }
     products[index].kind = source.kind;
     products[index].layout = source.layout;
     products[index].variants = source.variants;
