@@ -196,8 +196,20 @@ These binaries also include the separate, not-yet-qualified atomic bitwise
 candidate; these receipts do not qualify those operations.
 The unchanged ordinary Path/Cow fixture now executes both profiles against the
 frozen V15 library (`i13-text-path-cow-v16/run/evidence.json`). The next CString
-fixture stops on unqualified equality-method ambiguity; its intended comparison
-selection and remaining text acceptance are not yet qualified.
+fixture exposed argument fitting that only substituted generic bindings:
+associated owner fields left otherwise concrete nominal candidates symbolic,
+admitting unrelated arguments. Fitting now reuses call-type normalization.
+The reduced scalar/associated-product regression executes both profiles with
+normal and ASan/UBSan compilers; the existing genuinely ambiguous-call rejection
+also passes with ASan/UBSan. The affected declaration CTest passes.
+The unchanged CString fixture's thirteen ambiguity sites reduce to
+four genuinely applicable CStr/view-RHS comparisons, which require explicit
+interface selection under semantic-rules sections 11 and 13.2 rather than a new
+overload priority. Neither profile executes yet.
+Receipts: `i13-associated-argument-fitting/{normal,sanitized}/run/evidence.json`,
+`i13-associated-argument-fitting/sanitized/fail/evidence.json` and
+`i13-text-ffi-cstring-traits-v17/run/evidence.json`. Remaining text acceptance is
+not yet qualified.
 Required-constant obligations and full text qualification remain open.
 
 ### Collection/vector reconciliation (2026-11-11)

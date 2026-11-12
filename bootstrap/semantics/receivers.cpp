@@ -482,9 +482,9 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
     for (const auto &binding : bindings)
       if (binding.argument != Type::Unknown)
         solved.push_back(binding);
-    auto pattern = checked.types->substitute(
+    auto pattern = normalizeCallType(
         annotation(parameter.annotation, parameter.span, function.owner),
-        solved);
+        solved, function, span);
     if (checked.types->isView(actual) && !checked.types->isView(pattern))
       actual = checked.types->view(actual).payload;
     auto open = std::find_if(bindings.begin(), bindings.end(), [&](auto &b) {

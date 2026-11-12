@@ -641,6 +641,9 @@ Bound candidates do not suppress visible blanket implementations proven from
 those rights; multiple applicable interfaces still require explicit selection.
 Read-argument inference substitutes known generic bindings before stripping a
 borrow layer, so an explicitly view-valued parameter retains its handle type.
+Interface-instance argument fitting normalizes associated types before checking
+symbolicity; unresolved fields must not make a concrete nominal argument accept
+an unrelated type. Multiple genuinely applicable instances remain ambiguous.
 Checking publishes separate call substitutions without rewriting parsed names,
 spans or generic argument spellings. Bounds resolve in the callee declaration's
 namespace but are proved only from the caller's assumptions and coherent
