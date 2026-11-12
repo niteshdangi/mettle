@@ -102,6 +102,14 @@ it; those intentional misuse calls alone are excluded from positive selectors.
 Receipt: `build/i13-io-runtime-monitor-validation.json`. These native results
 do not qualify Mettle stdio/filesystem/synchronization APIs or prove race freedom.
 
+Borrowed process descriptors use a separate `mettle_rt_spawn_with_sources`
+entry; the original spawn ABI is unchanged. Sources are validated and
+close-on-exec snapshots taken before pipes can reuse descriptor numbers.
+Swap/repeated-source, parent-ownership/flags and child exec-failure cleanup
+regressions pass the default `runtime.thread` test in normal Release and
+ASan/UBSan Debug. Receipt: `build/i13-process-runtime-validation/receipt.json`.
+This qualifies the native prerequisite, not the 71 process/time source candidates.
+
 Literal-backed const views are built (IR format 3, checked-library contracts 6).
 The codec preserves complete immutable backing, interior offsets and extents;
 its focused regression and literal mutation/end/escape negatives pass.

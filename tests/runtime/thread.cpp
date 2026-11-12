@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <dirent.h>
 #include <fcntl.h>
 #include <initializer_list>
 #include <limits>
@@ -721,6 +722,13 @@ struct Child {
   }
 };
 int stdioProbe(const char *mode) {
+  if (mode[0] == 'b') {
+    int input = -1, output = -1;
+    if (std::sscanf(mode + 1, "%d,%d", &input, &output) != 2 ||
+        fcntl(input, F_GETFD) != -1 || errno != EBADF ||
+        fcntl(output, F_GETFD) != -1 || errno != EBADF)
+      return 1;
+  }
   if (mode[0] == 'i') {
     const auto mask = mode[1] - '0';
     for (int fd = 0; fd < 3; ++fd)
@@ -766,6 +774,137 @@ bool spawnModes(const char *executable, int mask,
   }
   return child.finish();
 }
+int openDescriptorCount() {
+  DIR *directory = opendir("/proc/self/fd");
+  if (!directory)
+    return -1;
+  int count = 0;
+  while (const auto *entry = readdir(directory))
+    if (entry->d_name[0] != '.')
+      ++count;
+  closedir(directory);
+  return count;
+}
+bool borrowedStdio(const char *executable) {
+  int inputEnds[2], outputEnds[2];
+  if (pipe(inputEnds) != 0)
+    return false;
+  Descriptor input(inputEnds[0]), feed(inputEnds[1]);
+  if (pipe(outputEnds) != 0)
+    return false;
+  Descriptor output(outputEnds[0]), sink(outputEnds[1]);
+  const std::int32_t modes[] = {3, 3, 3};
+  const std::int32_t sources[] = {input.value, sink.value, sink.value};
+  char probe[64];
+  std::snprintf(probe, sizeof probe, "b%d,%d", input.value, sink.value);
+  const char *arguments[] = {executable, "--stdio-probe", probe, nullptr};
+  const int initialCount = openDescriptorCount();
+  if (initialCount < 0)
+    return false;
+  for (int flags : {0, FD_CLOEXEC}) {
+    if (fcntl(input.value, F_SETFD, flags) != 0 ||
+        fcntl(sink.value, F_SETFD, flags) != 0)
+      return false;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (write(feed.value, "q", 1) != 1)
+        return false;
+      std::int32_t fds[3]{-2, -2, -2};
+      Child child{mettle_rt_spawn_with_sources(executable, arguments, nullptr,
+                                               nullptr, modes, sources, fds)};
+      if (child.pid <= 0 || !child.finish() || fds[0] != -1 || fds[1] != -1 ||
+          fds[2] != -1 || fcntl(input.value, F_GETFD) != flags ||
+          fcntl(sink.value, F_GETFD) != flags)
+        return false;
+      char bytes[2]{};
+      if (read(output.value, bytes, 2) != 2 || bytes[0] != 'q' ||
+          bytes[1] != 'e' || openDescriptorCount() != initialCount)
+        return false;
+    }
+  }
+  Descriptor hole(mettle_rt_dup(input.value));
+  const int invalid = hole.value;
+  if (invalid < 0)
+    return false;
+  hole.close();
+  for (const auto failureModes : {std::array<std::int32_t, 3>{1, 3, 1},
+                                  std::array<std::int32_t, 3>{3, 3, 1}}) {
+    const std::int32_t invalidSources[] = {input.value, invalid, -1};
+    std::int32_t fds[3]{-2, -2, -2};
+    Child child{mettle_rt_spawn_with_sources(executable, arguments, nullptr,
+                                             nullptr, failureModes.data(),
+                                             invalidSources, fds)};
+    const int failure = errno;
+    if (child.pid != -1 || failure != EBADF || fds[0] != -1 || fds[1] != -1 ||
+        fds[2] != -1 || openDescriptorCount() != initialCount ||
+        fcntl(invalid, F_GETFD) != -1 || errno != EBADF)
+      return false;
+  }
+  for (bool badDirectory : {false, true}) {
+    const char *program =
+        badDirectory ? executable : "/proc/self/mettle-test-missing";
+    const char *cwd = badDirectory ? "/proc/self/mettle-test-missing" : nullptr;
+    const std::int32_t failureModes[] = {1, 3, 1};
+    std::int32_t fds[3]{-2, -2, -2};
+    Child child{mettle_rt_spawn_with_sources(program, arguments, nullptr, cwd,
+                                             failureModes, sources, fds)};
+    const int failure = errno;
+    if (child.pid != -1 || failure != ENOENT || fds[0] != -1 || fds[1] != -1 ||
+        fds[2] != -1 || openDescriptorCount() != initialCount ||
+        fcntl(input.value, F_GETFD) != FD_CLOEXEC ||
+        fcntl(sink.value, F_GETFD) != FD_CLOEXEC)
+      return false;
+    int status = 0;
+    if (waitpid(-1, &status, WNOHANG) != -1 || errno != ECHILD)
+      return false;
+  }
+  int errorEnds[2];
+  if (pipe(errorEnds) != 0)
+    return false;
+  Descriptor error(errorEnds[0]), errorSink(errorEnds[1]);
+  Descriptor savedInput(mettle_rt_dup(0)), savedOutput(mettle_rt_dup(1)),
+      savedError(mettle_rt_dup(2));
+  if (savedInput.value < 0 || savedOutput.value < 0 || savedError.value < 0 ||
+      dup2(input.value, 0) < 0 || dup2(sink.value, 1) < 0 ||
+      dup2(errorSink.value, 2) < 0)
+    return false;
+  for (const auto standardSources : {std::array<std::int32_t, 3>{0, 1, 2},
+                                     std::array<std::int32_t, 3>{0, 2, 1},
+                                     std::array<std::int32_t, 3>{0, 1, 1},
+                                     std::array<std::int32_t, 3>{0, 2, 2}}) {
+    if (write(feed.value, "q", 1) != 1)
+      return false;
+    const char *standardArguments[] = {executable, "--stdio-probe", "p",
+                                       nullptr};
+    std::int32_t fds[3]{-2, -2, -2};
+    Child child{mettle_rt_spawn_with_sources(executable, standardArguments,
+                                             nullptr, nullptr, modes,
+                                             standardSources.data(), fds)};
+    if (child.pid <= 0 || !child.finish() || fds[0] != -1 || fds[1] != -1 ||
+        fds[2] != -1)
+      return false;
+    char byte = 0;
+    if (standardSources[1] != standardSources[2]) {
+      const int out = standardSources[1] == 1 ? output.value : error.value;
+      const int err = standardSources[2] == 1 ? output.value : error.value;
+      if (read(out, &byte, 1) != 1 || byte != 'q' || read(err, &byte, 1) != 1 ||
+          byte != 'e')
+        return false;
+    } else {
+      char bytes[2]{};
+      const int combined = standardSources[1] == 1 ? output.value : error.value;
+      if (read(combined, bytes, 2) != 2 || bytes[0] != 'q' || bytes[1] != 'e')
+        return false;
+    }
+    if (write(1, "o", 1) != 1 || write(2, "e", 1) != 1 ||
+        read(output.value, &byte, 1) != 1 || byte != 'o' ||
+        read(error.value, &byte, 1) != 1 || byte != 'e' ||
+        fcntl(0, F_GETFD) != 0 || fcntl(1, F_GETFD) != 0 ||
+        fcntl(2, F_GETFD) != 0)
+      return false;
+  }
+  return dup2(savedInput.value, 0) == 0 && dup2(savedOutput.value, 1) == 1 &&
+         dup2(savedError.value, 2) == 2;
+}
 bool closedStdio(const char *executable, int mask) {
   struct sigaction action{};
   action.sa_handler = SIG_IGN;
@@ -784,6 +923,8 @@ bool closedStdio(const char *executable, int mask) {
     if (flags < 0 || fcntl(fd, F_SETFD, flags & ~FD_CLOEXEC) < 0)
       return false;
   }
+  if (mask == 0 && !borrowedStdio(executable))
+    return false;
   for (int fd = 0; fd < 3; ++fd)
     if (mask & (1 << fd))
       ::close(fd);
@@ -1163,6 +1304,10 @@ int main(int argc, char **argv) {
   }
   if (argc == 3 && std::strcmp(argv[1], "--stdio-probe") == 0)
     return stdioProbe(argv[2]);
+  if (argc == 2 && std::strcmp(argv[1], "--spawn-sources") == 0) {
+    require(isolatedStdio(0), "borrowed spawn descriptor ownership failed");
+    return 0;
+  }
   // TSan diagnoses wrong-owner unlocks even when pthread rejects them.
   if (argc == 2 && std::strcmp(argv[1], "--recursive-contention") == 0) {
     reentrantMutexCases(false);

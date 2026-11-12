@@ -303,11 +303,13 @@ struct Pipe {
     return true;
   }
   void close() {
+    const int saved = errno;
     for (int &end : ends)
       if (end >= 0) {
         ::close(end);
         end = -1;
       }
+    errno = saved;
   }
   Pipe() = default;
   Pipe(const Pipe &) = delete;
@@ -325,8 +327,9 @@ struct Pipe {
 // Runs in the forked child: only async-signal-safe calls.
 [[noreturn]] void runChild(const char *program, const char *const *argv,
                            const char *const *envp, const char *cwd,
-                           const std::int32_t *modes, const Pipe *standard,
-                           int report) {
+                           const std::int32_t *modes,
+                           const std::int32_t *sources, const Pipe *snapshots,
+                           const Pipe *standard, int report) {
   for (int i = 0; i < 3; ++i) {
     if (modes[i] == 0)
       continue;
@@ -335,6 +338,8 @@ struct Pipe {
       source = i == 0 ? standard[i].ends[0] : standard[i].ends[1];
     else if (modes[i] == 2)
       source = open("/dev/null", (i == 0 ? O_RDONLY : O_WRONLY) | O_CLOEXEC);
+    else if (modes[i] == 3)
+      source = snapshots[i].ends[0];
     if (source < 0)
       childFailure(report);
     if (source == i) {
@@ -348,6 +353,9 @@ struct Pipe {
         ::close(source);
     }
   }
+  for (int i = 0; i < 3; ++i)
+    if (modes[i] == 3 && sources[i] > 2)
+      ::close(sources[i]);
   if (cwd && chdir(cwd) != 0)
     childFailure(report);
   if (envp)
@@ -909,20 +917,47 @@ extern "C" std::int32_t
 mettle_rt_spawn(const char *program, const char *const *argv,
                 const char *const *envp, const char *cwd,
                 const std::int32_t *modes, std::int32_t *fds) {
+  return mettle_rt_spawn_with_sources(program, argv, envp, cwd, modes, nullptr,
+                                      fds);
+}
+
+extern "C" std::int32_t
+mettle_rt_spawn_with_sources(const char *program, const char *const *argv,
+                             const char *const *envp, const char *cwd,
+                             const std::int32_t *modes,
+                             const std::int32_t *sources, std::int32_t *fds) {
+  for (int i = 0; i < 3; ++i)
+    fds[i] = -1;
+  // Validate all originals before even a snapshot can reuse a closed source.
+  for (int i = 0; i < 3; ++i)
+    if (modes[i] == 3) {
+      if (!sources) {
+        errno = EINVAL;
+        return -1;
+      }
+      if (retry([&] { return fcntl(sources[i], F_GETFD); }) < 0)
+        return -1;
+    }
+  Pipe snapshots[3];
+  for (int i = 0; i < 3; ++i)
+    if (modes[i] == 3) {
+      snapshots[i].ends[0] = mettle_rt_dup(sources[i]);
+      if (snapshots[i].ends[0] < 0)
+        return -1;
+    }
   Pipe standard[3];
   Pipe report;
-  for (int i = 0; i < 3; ++i) {
-    fds[i] = -1;
+  for (int i = 0; i < 3; ++i)
     if (modes[i] == 1 && !standard[i].open())
       return -1;
-  }
   if (!report.open())
     return -1;
   pid_t child = fork();
   if (child < 0)
     return -1;
   if (child == 0)
-    runChild(program, argv, envp, cwd, modes, standard, report.ends[1]);
+    runChild(program, argv, envp, cwd, modes, sources, snapshots, standard,
+             report.ends[1]);
   ::close(report.ends[1]);
   report.ends[1] = -1;
   int code = 0;

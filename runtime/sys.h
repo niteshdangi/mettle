@@ -57,6 +57,13 @@ const char *const *mettle_rt_environ();
 std::int32_t mettle_rt_spawn(const char *program, const char *const *argv,
                              const char *const *envp, const char *cwd,
                              const std::int32_t *modes, std::int32_t *fds);
+// Mode 3 borrows sources[i]; caller retains descriptor ownership and flags.
+// Arrays have three entries ordered stdin/stdout/stderr; other sources ignored.
+std::int32_t
+mettle_rt_spawn_with_sources(const char *program, const char *const *argv,
+                             const char *const *envp, const char *cwd,
+                             const std::int32_t *modes,
+                             const std::int32_t *sources, std::int32_t *fds);
 // Waits until `fd` is readable (or writable when `write` is nonzero) or the
 // timeout in milliseconds (negative: none) expires. 1 ready, 0 timeout.
 std::int32_t mettle_rt_poll(std::int32_t fd, std::int32_t write,
