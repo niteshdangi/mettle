@@ -2201,23 +2201,34 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
        ++i)
     typeBindings.push_back(
         {functions[callee].genericParameters[i], facts(node).typeArguments[i]});
+  std::set<Type> inferredParameters;
+  std::set<Type> fixedParameters;
   if (!receiverCall && !declaration.interfaceOwner.empty() &&
       !typeBindings.empty() && !node.children.empty()) {
     const auto &callee = *node.children[0];
     if (callee.annotation.form == TypeForm::Projection &&
-        callee.annotation.elements.size() == 2)
+        callee.annotation.elements.size() == 2) {
       typeBindings[0].argument =
           decorate(typeBindings[0].argument, callee.annotation.elements[0],
                    current->context, node.span);
-    else if (!callee.ownerGenericArguments.empty()) {
+      if (types.isErased(facts(node).interfaceType)) {
+        auto interface =
+            decorate(facts(node).interfaceType, callee.annotation.elements[1],
+                     current->context, node.span);
+        const auto arguments = types.erased(interface).arguments;
+        for (std::size_t i = 0;
+             i < arguments.size() && i + 1 < typeBindings.size(); ++i) {
+          typeBindings[i + 1].argument = arguments[i];
+          fixedParameters.insert(typeBindings[i + 1].parameter);
+        }
+      }
+    } else if (!callee.ownerGenericArguments.empty()) {
       TypeSyntax owner;
       owner.arguments = callee.ownerGenericArguments;
       typeBindings[0].argument = decorate(typeBindings[0].argument, owner,
                                           current->context, node.span);
     }
   }
-  std::set<Type> inferredParameters;
-  std::set<Type> fixedParameters;
   std::vector<const GenericParameter *> explicitParameters;
   for (std::size_t i = declaration.implicitGenericParameters;
        i < declaration.genericParameters.size(); ++i)

@@ -150,10 +150,24 @@ not additive or qualification receipts. Processes/time has source candidates
 for all 71 records, all unverified. Only the 109 frozen-qualified
 networking records are promoted; source-only candidates are not.
 Tasks/futures has 47 source candidates and two conditional-Copy blockers of
-49 records; none are verified. On that frozen baseline, ordinary text/Cow integration still fails
-deferred call-site associated-region obligations for owned `List<Cow>` inputs.
-A separate reduced control exposes invalid CFG in `alloc.ffi.lossy_view`.
-Neither blocker is closed by the implementation-associated-bound repair above.
+49 records; none are verified. The two Poll and two Reverse Copy exposures
+are selected V1 mapping conflicts with the declaration-bound named-type Copy
+rule, not authorization for a new compiler feature. No owner amendment is
+approved; unrestricted owning payloads and the current Copy rule are preserved.
+
+Qualified static interface calls now decorate their implicit interface type
+arguments as well as Self, retaining explicit nominal regions through deferred
+associated-bound inference. Ten positive and three negative normal profile units
+pass; the affected declaration CTest passes normal and ASan/UBSan, and sanitized
+core-only associated-owner accept/reject checks pass. The positive covers static,
+owned and generic-region inputs; the negative rejects a local Item supplied to
+an explicitly static interface argument at its intended region diagnostic.
+Receipts: `i13-qualified-interface/source/run/evidence.json` and
+`source/fail/evidence.json`.
+The actual owned `List<Cow>` bound now passes. Ordinary text integration instead
+stops at invalid CFG in `alloc.ffi.lossy_view`: refreshing generic product
+instances overwrites an already-normalized associated-owner field. That separate
+representation repair and full text qualification remain open.
 
 ### Collection/vector reconciliation (2026-11-11)
 
