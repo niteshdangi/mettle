@@ -734,8 +734,11 @@ has `fn as_path(): read Path from self` and is implemented for Path/PathBuf and
 OsStr/OsString, preserving the platform-native representation (bytes on POSIX,
 the selected native Windows encoding on Windows) without allocation or lossy
 conversion. The borrow never outlives its source, and NUL validation stays in
-the OS operations. Hosted path-taking convenience APIs accept independently
-generic `PathInput` read parameters whose desugared bounds permit unsized
+the OS operations. On POSIX, `Path` has a single unsized byte-slice field whose
+address and length metadata match the borrowed bytes. `PathBuf` owns an
+`OsString`; its mutable views remain tied to that owner, and conversion between
+the owners transfers the allocation. Hosted path-taking convenience APIs accept
+independently generic `PathInput` read parameters whose desugared bounds permit unsized
 implementors as well as owned OS strings (language-grammar section 3); the
 underlying read-Path entry points remain. `env.args()` keeps returning owned OS
 strings, so `count(args[1], args[2])` needs no adapter. This is a library

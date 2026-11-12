@@ -3121,7 +3121,7 @@ B0e252a1f2e0803903b7ba5fe,impl:path::PathBuf:iter::IntoIterator,https://doc.rust
 Bdd429d78b741c17891231ca8,impl:path::PathBuf:marker::Send,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#impl-Send-for-PathBuf,,evidenced,tests/source/run/i13-blanket-ffi-fs-io.mt;tests/source/run/i13-blanket-sync.mt;tests/source/run/i13-blanket-thread-task-time.mt;tests/source/run/i13-blanket-net-path-process.mt;tests/source/run/i13-blanket-behavior-blanket-std.mt
 Bee350bdd364a05e1fffea3b4,impl:path::PathBuf:marker::Sync,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#impl-Sync-for-PathBuf,,evidenced,tests/source/run/i13-blanket-ffi-fs-io.mt;tests/source/run/i13-blanket-sync.mt;tests/source/run/i13-blanket-thread-task-time.mt;tests/source/run/i13-blanket-net-path-process.mt;tests/source/run/i13-blanket-behavior-blanket-std.mt
 B6c9cef85bce40674ef581569,impl:path::PathBuf:ops::Deref,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#impl-Deref-for-PathBuf,,missing,
-Bb31d560744648ea04d65309a,impl:path::PathBuf:ops::DerefMut,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#impl-DerefMut-for-PathBuf,,missing,
+Bb31d560744648ea04d65309a,impl:path::PathBuf:ops::DerefMut,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#impl-DerefMut-for-PathBuf,std.path.PathBuf implements DerefMut,evidenced,tests/source/run/i13-path-mutable-views.mt;tests/source/fail/i13-path-derefmut-view-blocks-owner-mutation.mt
 B45b4593d79cc661639cae009,impl:path::PathBuf:str::FromStr,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#impl-FromStr-for-PathBuf,,missing,
 B5edb07d0966ca99bf180735c,impl:pin::Pin:any::Any,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-Any-for-T,,missing,
 B047438f667c24db581819dc3,impl:pin::Pin:borrow::Borrow,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-Borrow%3CT%3E-for-T,,missing,
@@ -8833,7 +8833,7 @@ B0144a81b0b98c702efcee6cd,operation:panic,https://doc.rust-lang.org/1.99.1/std/m
 B44280ec45822ebbc7180c9da,operation:panic,https://doc.rust-lang.org/1.99.1/core/macro.panic.html,,evidenced,tests/source/run/i13-macro-equivalents-panic-print.mt
 B4f487108838f84de475f8a34,operation:path::Path,https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html,,missing,
 B2ea1a940dccefbca1d973f27,operation:path::Path::ancestors,https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html#method.ancestors,std.path,evidenced,tests/std/i13_path_methods.mt
-Be9539087a2b3da94a839f0af,operation:path::Path::as_mut_os_str,https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html#method.as_mut_os_str,,missing,
+Be9539087a2b3da94a839f0af,operation:path::Path::as_mut_os_str,https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html#method.as_mut_os_str,std.path.Path.as_mut_os_str,evidenced,tests/source/run/i13-path-mutable-views.mt;tests/source/fail/i13-path-nested-os-view-blocks-owner-mutation.mt
 Ba7b472a308e3c1b6a806baca,operation:path::Path::as_os_str,https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html#method.as_os_str,,missing,
 Bb8c2e0ba8f2048b4580ad108,operation:path::Path::canonicalize,https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html#method.canonicalize,,missing,
 B44a3d513f9f55ad9b8bcb89d,operation:path::Path::components,https://doc.rust-lang.org/1.99.1/std/path/struct.Path.html#method.components,,evidenced,tests/source/run/i13-path-components-and-prefixes.mt
@@ -8872,8 +8872,8 @@ B7520120b67afb5b58e2b5cd0,operation:path::Path::with_file_name,https://doc.rust-
 B0974212bd498290a9a7504ba,operation:path::PathBuf,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html,,missing,
 B94866a9bafd81579a14e91af,operation:path::PathBuf::add_extension,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#method.add_extension,std.path,evidenced,tests/std/i13_path_methods.mt
 Baf617726b7dc178d41946ba3,operation:path::PathBuf::ancestors,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#method.ancestors,,evidenced,tests/source/run/i13-path-components-and-prefixes.mt
-B53591476db7a57e2e73f7bea,operation:path::PathBuf::as_mut_os_str,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#method.as_mut_os_str,,missing,
-B63fdcae9f9a06ce6415d6732,operation:path::PathBuf::as_mut_os_string,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#method.as_mut_os_string,,missing,
+B53591476db7a57e2e73f7bea,operation:path::PathBuf::as_mut_os_str,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#method.as_mut_os_str,std.path.PathBuf.as_mut_os_str,evidenced,tests/source/run/i13-path-mutable-views.mt;tests/source/fail/i13-path-os-view-blocks-owner-mutation.mt;tests/source/fail/i13-path-os-view-blocks-owner-read.mt
+B63fdcae9f9a06ce6415d6732,operation:path::PathBuf::as_mut_os_string,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#method.as_mut_os_string,std.path.PathBuf.as_mut_os_string,evidenced,tests/source/run/i13-path-os-owner.mt;tests/source/fail/i13-path-os-owner-view-blocks-mutation.mt;tests/source/fail/i13-path-os-storage-remains-private.mt
 B3e560493f1df2d0c7a412281,operation:path::PathBuf::as_os_str,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#method.as_os_str,,evidenced,tests/source/run/i13-path-components-and-prefixes.mt
 B1de2a3c0f4606105293d2c21,operation:path::PathBuf::as_path,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#method.as_path,std.path,evidenced,tests/std/i13_path_methods.mt
 B359ef933f29bffd25e5a5fd5,operation:path::PathBuf::canonicalize,https://doc.rust-lang.org/1.99.1/std/path/struct.PathBuf.html#method.canonicalize,,missing,

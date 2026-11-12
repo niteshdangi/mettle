@@ -725,17 +725,17 @@ fn last_dot(read name: [u8]): usize? {
     none
 }
 
-pub type PathBuf { v: List<u8> }
+pub type PathBuf { v: OsString }
 
-pub const fn new_path_buf(): PathBuf { PathBuf(vec.new<u8>()) }
+pub const fn new_path_buf(): PathBuf { PathBuf(OsString(vec.new<u8>())) }
 pub fn path_buf_with_capacity(capacity: usize): PathBuf {
-    PathBuf(vec.with_capacity<u8>(capacity))
+    PathBuf(OsString(vec.with_capacity<u8>(capacity)))
 }
 
 pub fn path_buf_from_bytes(read bytes: [u8]): PathBuf {
     var v = vec.with_capacity<u8>(bytes.len())
     v.extend_from_slice(bytes)
-    PathBuf(v)
+    PathBuf(OsString(v))
 }
 
 pub fn path_buf_from_text(read text: Text): PathBuf { path_buf_from_bytes(text.as_bytes()) }
@@ -745,20 +745,16 @@ extend PathBuf {
     pub static fn with_capacity(capacity: usize): PathBuf {
         path_buf_with_capacity(capacity)
     }
-    pub fn as_path(): read Path from self { path(self.v.as_slice()) }
+    pub fn as_path(): read Path from self { path(self.v.as_bytes()) }
     pub mut fn as_mut_path(): mut Path from self {
-        let fat = core.ptr.from_mut(self.v.as_mut_slice())
+        let fat = core.ptr.from_mut(self.v.v.as_mut_slice())
         let view = unsafe { core.mem.transmute<ptr<mut Path>>(fat) }
         unsafe { mut *view }
     }
-    pub fn as_os_str(): read OsStr from self { ffi.os_str(self.v.as_slice()) }
-    pub mut fn as_mut_os_str(): mut OsStr from self { ffi.os_str_mut(self.v.as_mut_slice()) }
-    pub mut fn as_mut_os_string(): mut OsString from self {
-        // OsString is a single List<u8> field with no additional validity invariant.
-        let pointer = core.ptr.from_mut(self.v).cast<OsString>()
-        unsafe { mut *pointer }
-    }
-    pub fn as_bytes(): read [u8] from self { self.v.as_slice() }
+    pub fn as_os_str(): read OsStr from self { self.v.as_os_str() }
+    pub mut fn as_mut_os_str(): mut OsStr from self { self.v.as_mut_os_str() }
+    pub mut fn as_mut_os_string(): mut OsString from self { mut self.v }
+    pub fn as_bytes(): read [u8] from self { self.v.as_bytes() }
     pub fn capacity(): usize { self.v.capacity() }
     pub fn is_empty(): bool { self.v.is_empty() }
     pub fn is_absolute(): bool { self.as_path().is_absolute() }
@@ -782,9 +778,9 @@ extend PathBuf {
     pub fn display<region r>(receiver read self: PathBuf from r): ffi.Display<region r> {
         self.as_path().display()
     }
-    pub fn to_path_buf(): PathBuf { path_buf_from_bytes(self.v.as_slice()) }
+    pub fn to_path_buf(): PathBuf { path_buf_from_bytes(self.v.as_bytes()) }
     pub take fn into_boxed_path(): Box<Path> {
-        let bytes = self.v.into_boxed_slice()
+        let bytes = self.v.into_encoded_bytes().into_boxed_slice()
         let raw = bytes.into_raw()
         // Path is a single unsized byte-slice field, preserving the allocation
         // and length metadata used by Box<[u8]>.
@@ -794,14 +790,14 @@ extend PathBuf {
         unsafe { package.alloc.boxed.from_raw_in(path_pointer, raw.1) }
     }
     pub take fn leak(): mut Path from static {
-        let bytes = self.v.leak()
+        let bytes = self.v.into_encoded_bytes().leak()
         let fat = core.ptr.from_mut(bytes)
         let view = unsafe { core.mem.transmute<ptr<mut Path>>(fat) }
         unsafe { mut *view }
     }
-    pub take fn into_os_string(): OsString { ffi.os_string_from_vec(self.v) }
+    pub take fn into_os_string(): OsString { self.v }
     pub take fn into_string(): String throws FromUtf8Error {
-        try package.alloc.string.from_utf8(self.v)
+        try self.v.into_string()
     }
     pub mut fn clear(): Unit { self.v.clear() }
     pub mut fn reserve(additional: usize): Unit { self.v.reserve(additional) }
@@ -822,10 +818,10 @@ extend PathBuf {
     pub mut fn push(read p: Path): Unit {
         if p.is_absolute() {
             self.v.clear()
-        } else if self.v.len() > 0usize && !is_sep(self.v[self.v.len() - 1usize]) {
-            self.v.push(47u8)
+        } else if self.v.len() > 0usize && !is_sep(self.v.v[self.v.len() - 1usize]) {
+            self.v.v.push(47u8)
         }
-        self.v.extend_from_slice(p.as_bytes())
+        self.v.v.extend_from_slice(p.as_bytes())
     }
 
     // Removes the final component; false when there was none to remove.
@@ -835,7 +831,7 @@ extend PathBuf {
             none => none
         }
         match keep {
-            present(n) => { self.v.truncate(n); true },
+            present(n) => { self.v.v.truncate(n); true },
             none => false
         }
     }
@@ -848,7 +844,7 @@ extend PathBuf {
 
     pub mut fn set_extension(read extension: OsStr): bool {
         validate_extension(extension)
-        let bytes = self.v.as_slice()
+        let bytes = self.v.as_bytes()
         let end = match final_name_end(bytes) {
             present(end) => end,
             none => { return false }
@@ -856,13 +852,13 @@ extend PathBuf {
         let name_start = last_start(bytes, end)
         let name = unsafe { slice.subslice_unchecked(bytes, name_start, end) }
         match last_dot(name) {
-            present(dot) => self.v.truncate(name_start + dot),
-            none => self.v.truncate(end)
+            present(dot) => self.v.v.truncate(name_start + dot),
+            none => self.v.v.truncate(end)
         }
         let ext = extension.as_bytes()
         if ext.len() > 0usize {
-            self.v.push(46u8)
-            self.v.extend_from_slice(ext)
+            self.v.v.push(46u8)
+            self.v.v.extend_from_slice(ext)
         }
         true
     }
@@ -871,17 +867,17 @@ extend PathBuf {
         validate_extension(extension)
         let ext = extension.as_bytes()
         if ext.len() > 0usize {
-            let end = match final_name_end(self.v.as_slice()) {
+            let end = match final_name_end(self.v.as_bytes()) {
                 present(end) => end,
                 none => { return }
             }
-            self.v.truncate(end)
-            self.v.push(46u8)
-            self.v.extend_from_slice(ext)
+            self.v.v.truncate(end)
+            self.v.v.push(46u8)
+            self.v.v.extend_from_slice(ext)
         }
     }
 
-    pub fn same(read other: PathBuf): bool { ffi.bytes_equal(self.v.as_slice(), other.as_bytes()) }
+    pub fn same(read other: PathBuf): bool { ffi.bytes_equal(self.v.as_bytes(), other.as_bytes()) }
     pub fn file_name(): (read OsStr from self)? { self.as_path().file_name() }
     pub fn file_stem(): (read OsStr from self)? { self.as_path().file_stem() }
     pub fn file_prefix(): (read OsStr from self)? { self.as_path().file_prefix() }
@@ -905,7 +901,7 @@ extend Text implements PathInput {
     fn as_path(): read Path from self { path(self.as_bytes()) }
 }
 extend PathBuf implements PathInput {
-    fn as_path(): read Path from self { path(self.v.as_slice()) }
+    fn as_path(): read Path from self { path(self.v.as_bytes()) }
 }
 extend OsStr implements PathInput {
     fn as_path(): read Path from self { path(self.as_bytes()) }
@@ -1063,12 +1059,12 @@ extend PathBuf implements Default {
 }
 extend PathBuf implements From<OsString> {
     static fn from(take value: OsString): PathBuf {
-        PathBuf(value.into_encoded_bytes())
+        PathBuf(value)
     }
 }
 extend PathBuf implements From<String> {
     static fn from(take value: String): PathBuf {
-        PathBuf(value.into_bytes())
+        PathBuf(ffi.os_string_from_vec(value.into_bytes()))
     }
 }
 extend PathBuf implements From<Box<Path>> {
@@ -1081,7 +1077,7 @@ extend PathBuf implements From<Box<Path>> {
         let byte_box: Box<[u8]> = unsafe {
             package.alloc.boxed.from_raw_in(bytes_pointer, raw.1)
         }
-        PathBuf(List<u8>.(From<Box<[u8]>>).from(take byte_box))
+        PathBuf(ffi.os_string_from_vec(List<u8>.(From<Box<[u8]>>).from(take byte_box)))
     }
 }
 extend<region r> read Path from r implements OwnedIterable {
