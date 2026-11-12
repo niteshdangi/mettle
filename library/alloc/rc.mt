@@ -858,12 +858,12 @@ extend<region r, T: Clone> Rc<[T]> implements From<read [T] from r> {
             copies.push(values[index].clone())
             index += 1usize
         }
-        extend<region r, T: Clone> Rc<[T]> implements From<mut [T] from r> {
-            static fn from(take values: mut [T] from r): Rc<[T]> {
-                Rc<[T]>.(From<read [T] from r>).from(read values)
-            }
-        }
         Rc<[T]>.from(copies)
+    }
+}
+extend<region r, T: Clone> Rc<[T]> implements From<mut [T] from r> {
+    static fn from(take values: mut [T] from r): Rc<[T]> {
+        Rc<[T]>.from(values.to_vec())
     }
 }
 extend<T> Rc<[T]> implements FromItems<T> {

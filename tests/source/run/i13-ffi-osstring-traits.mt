@@ -15,6 +15,10 @@ import alloc.vec.List
 import std.ffi.{OsStr, OsString, os_string_from_text}
 
 fn default_value<T: Default>(): T { T.(Default).default() }
+fn copy_os<region r, T: unsized>(take value: read T from r): OsString
+where OsString: From<read T from r> {
+    OsString.(From<read T from r>).from(value)
+}
 fn debug_is<T: Debug + unsized>(read value: T, read expected: Text): bool {
     source_helpers.debug_is!(T, value, expected)
 }
@@ -41,10 +45,10 @@ fn main(): i32 {
     if !owned.cmp(os_string_from_text("alpha")).is_eq() { return 2 }
     let from_text = OsString.(From<read Text from static>).from("alpha")
     let string_input = package.alloc.string.from_text("alpha")
-    let from_string_view = OsString.(From<read String from static>).from(read string_input)
+    let from_string_view = copy_os(read string_input)
     let from_string = OsString.(From<String>).from(string_input)
     let from_view = OsString.(From<read OsStr from static>).from(OsStr.new("alpha".as_bytes()))
-    let from_osstring_view = OsString.(From<read OsString from static>).from(read owned)
+    let from_osstring_view = copy_os(read owned)
     if !from_text.eq(owned) || !from_string.eq(owned) || !from_view.eq(owned) ||
         !from_string_view.eq(owned) || !from_osstring_view.eq(owned) { return 23 }
 

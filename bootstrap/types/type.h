@@ -424,7 +424,7 @@ public:
   std::optional<NumericLiteral> scalarConstantValue(Type type) const;
   bool isParameter(Type type) const;
   bool isConstant(Type type) const;
-  bool isSized(Type type) const;
+  bool isSized(Type type, std::span<const Type> assumptions = {}) const;
   PointerMetadata pointerMetadata(Type type) const;
   std::optional<Type> unsizedArray(Type source, Type target) const;
   std::optional<std::pair<Type, Type>> erasedTail(Type source,

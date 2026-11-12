@@ -340,11 +340,16 @@ void crossPackageReexportsPreserveOwnership() {
     std::vector<mettle::Source> sources{
         {"memory/root.mt",
          std::string("import remote.relay.{Foreign, Remote};\n") +
-             (foreign ? "alias Alias = Remote;\n"
-                        "extend Alias implements Foreign {}\n"
-                      : "interface Local {}\ntype Owned {}\n"
-                        "extend Remote implements Local {}\n"
-                        "extend Owned implements Foreign {}\n") +
+             (foreign
+                  ? "alias Alias = Remote;\n"
+                    "extend Alias implements Foreign {}\n"
+                    "extend<region r> read Alias from r implements Foreign {}\n"
+                  : "interface Local {}\ntype Owned {}\n"
+                    "extend Remote implements Local {}\n"
+                    "extend Owned implements Foreign {}\n"
+                    "extend<region r> read Owned from r implements Foreign {}\n"
+                    "extend<region r> mut Owned from r implements Foreign "
+                    "{}\n") +
              "fn main(): i32 { 0 }\n"},
         {"memory/foreign/main.mt",
          "pub interface Foreign {}\npub type Remote {}\n"
@@ -976,6 +981,36 @@ void recursiveRegionCoercionKeepsTypeDescriptors() {
     mettle::RegionTypeSolver solver(types, regions);
     require(solver.coerce(source, target, {}) == mettle::RegionAnswer::Proven,
             "recursive callable coercion lost its type descriptors");
+  }
+  {
+    mettle::TypeStore types;
+    auto callable = [&](bool staticPayload) {
+      auto scope = types.regions().binder();
+      auto borrow = types.regions().bound(scope, "borrow");
+      auto element = staticPayload ? mettle::RegionId::Static
+                                   : types.regions().bound(scope, "element");
+      mettle::CallableType descriptor;
+      descriptor.parameters.push_back(
+          {types.sliceType(types.viewType(
+               mettle::Type::I32, mettle::ParameterMode::Read, element)),
+           mettle::ParameterMode::Mut, "input"});
+      descriptor.parameterRegions.push_back(borrow);
+      descriptor.regionParameters.push_back(borrow);
+      if (!staticPayload)
+        descriptor.regionParameters.push_back(element);
+      descriptor.result = mettle::Type::Unit;
+      descriptor.abiResult = mettle::Type::Unit;
+      return types.callableType(std::move(descriptor));
+    };
+    mettle::RegionSolver regions(types.regions());
+    mettle::RegionTypeSolver solver(types, regions);
+    auto target = callable(false);
+    require(solver.coerce(callable(false), target, {}) ==
+                mettle::RegionAnswer::Proven,
+            "callable region inference did not descend into slice elements");
+    require(solver.coerce(callable(true), target, {}) ==
+                mettle::RegionAnswer::Rejected,
+            "higher-ranked slice coercion accepted a static-only payload");
   }
 }
 } // namespace

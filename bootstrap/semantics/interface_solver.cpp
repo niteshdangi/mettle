@@ -530,9 +530,12 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
   for (const auto &assumption : available)
     if (assumption.property == obligation.property) {
       if (assumption.subject != obligation.subject) {
-        if (obligation.property != Property::Unpin ||
-            !types.isProduct(assumption.subject) ||
-            !types.isProduct(obligation.subject))
+        if (!((obligation.property == Property::Unpin &&
+               types.isProduct(assumption.subject) &&
+               types.isProduct(obligation.subject)) ||
+              (obligation.property == Property::Interface &&
+               types.isView(assumption.subject) &&
+               types.isView(obligation.subject))))
           continue;
         auto environment = regionEnvironment;
         auto equivalent =

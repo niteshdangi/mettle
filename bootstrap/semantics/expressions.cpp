@@ -16,12 +16,18 @@ void Checker::function(Function &f) {
   guardedFeatures.clear();
   unsafeDepth = f.unsafeFunction ? 1 : 0;
   genericBindings(f);
+  annotationRegionScopes.push_back(functionRegions(f));
   for (const auto &obligation : interfaceAssumptions())
     if (obligation.property == interfaces::Property::Interface)
       facts(f).interfaceBounds.emplace_back(obligation.subject,
                                             obligation.interfaceType);
     else if (obligation.property == interfaces::Property::Unpin)
       facts(f).unpinBounds.push_back(obligation.subject);
+    else if (obligation.property == interfaces::Property::Sized &&
+             checked.types->isParameter(obligation.subject) &&
+             !checked.types->isSized(obligation.subject))
+      facts(f).sizedBounds.push_back(obligation.subject);
+  annotationRegionScopes.pop_back();
   if (genericEnvironment)
     facts(f).genericEqualities = genericEnvironment->equalities;
   scopes.clear();

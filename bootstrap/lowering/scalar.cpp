@@ -42,6 +42,7 @@ ir::Function Builder::run(const mettle::Function &source, std::size_t index) {
   function.genericResultSources = module.function(index).genericResultSources;
   function.interfaceBounds = module.function(index).interfaceBounds;
   function.unpinBounds = module.function(index).unpinBounds;
+  function.sizedBounds = module.function(index).sizedBounds;
   function.regionSignature = module.function(index).regionSignature;
   function.genericEqualities = module.function(index).genericEqualities;
   function.resultSources = module.function(index).resultSources;

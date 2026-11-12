@@ -112,6 +112,7 @@ ir::Function Builder::runClosure(std::size_t index) {
   function.targetFeatures = checked.targetFeatures;
   function.interfaceBounds = checked.interfaceBounds;
   function.unpinBounds = checked.unpinBounds;
+  function.sizedBounds = checked.sizedBounds;
   function.regionSignature = checked.regionSignature;
   function.genericEqualities = checked.genericEqualities;
   function.floatingPolicy = checked.floatingPolicy;

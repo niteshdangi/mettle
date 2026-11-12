@@ -502,6 +502,8 @@ RegionTypeSolver::callable(Type source, Type target,
     if (types.isView(pattern) && types.isView(actual)) {
       inferRegion(types.view(pattern).region, types.view(actual).region);
       self(self, types.view(pattern).payload, types.view(actual).payload);
+    } else if (types.isSlice(pattern) && types.isSlice(actual)) {
+      self(self, types.slice(pattern).element, types.slice(actual).element);
     } else if (types.isProduct(pattern) && types.isProduct(actual)) {
       auto p = types.product(pattern), a = types.product(actual);
       if (p.kind == AggregateKind::Array && a.kind == AggregateKind::Array &&

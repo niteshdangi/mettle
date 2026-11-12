@@ -179,6 +179,7 @@ Fixture encodeFixture(bool addressOnly = false) {
   generic.genericResultSources = {0};
   generic.interfaceBounds = {{parameter, bound}};
   generic.unpinBounds = {parameter};
+  generic.sizedBounds = {parameter};
   generic.genericEqualities = {{parameter, parameter}};
   generic.blocks[0].instructions = {
       {Op::Load, {0, parameter}, {}, {}, "", {0, {}}, -1, 0, {}}};
@@ -325,6 +326,7 @@ void verifiedRemapping() {
   require(types->erased(generic.interfaceBounds[0].second).declaration == 91 &&
               generic.genericEqualities[0].parameter == generic.result &&
               generic.unpinBounds[0] == generic.result &&
+              generic.sizedBounds == std::vector<Type>{generic.result} &&
               generic.genericResultSources == std::vector<std::size_t>{0},
           "generic interface contract changed");
   Program assembled;

@@ -222,7 +222,10 @@ extend Waker {
 fn noop_clone(data: ptr<mut u8>): RawWaker { RawWaker(data, noop_table()) }
 fn noop_call(data: ptr<mut u8>): Unit {}
 const fn noop_table(): RawWakerVTable { RawWakerVTable(noop_clone, noop_call, noop_call, noop_call) }
-static NOOP_WAKER: Waker = noop_waker()
+static NOOP_WAKER: Waker = Waker(RawWaker(
+    core.ptr.null_mut<u8>(),
+    RawWakerVTable(noop_clone, noop_call, noop_call, noop_call)
+))
 
 // Safety: the data and all vtable operations must remain valid and thread-safe
 // for concurrent clone, wake, wake_by_ref and release calls. Each clone owns

@@ -523,8 +523,9 @@ public:
       std::function<Type(Type, Type, std::size_t, Span,
                          const RegionEnvironment &)>
           eraseContract,
-      std::function<bool(Type, std::size_t, Span, const RegionEnvironment &)>
-          unpinContract)
+      std::function<bool(Type, interfaces::Property, std::size_t, Span,
+                         const RegionEnvironment &)>
+          propertyContract)
       : module(module), functions(functions), nodes(nodes), patterns(patterns),
         iterations(iterations), closures(closures), types(types),
         store(types.regions()), solver(store), relations(types, solver),
@@ -534,7 +535,7 @@ public:
         seeds(std::move(seeds)),
         normalizeContract(std::move(normalizeContract)),
         eraseContract(std::move(eraseContract)),
-        unpinContract(std::move(unpinContract)) {}
+        propertyContract(std::move(propertyContract)) {}
   void run();
 
 private:
@@ -568,8 +569,9 @@ private:
       normalizeContract;
   std::function<Type(Type, Type, std::size_t, Span, const RegionEnvironment &)>
       eraseContract;
-  std::function<bool(Type, std::size_t, Span, const RegionEnvironment &)>
-      unpinContract;
+  std::function<bool(Type, interfaces::Property, std::size_t, Span,
+                     const RegionEnvironment &)>
+      propertyContract;
   std::vector<RegionSignature> signatures;
   RegionSignature *current = nullptr;
   const FunctionFacts *currentFacts = nullptr;
@@ -1737,8 +1739,9 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     auto validate = [&](Type subject) {
       if (types.isUnpin(subject))
         return;
-      if (!unpinContract(subject, currentFunction, node.span,
-                         current->context.environment))
+      if (!propertyContract(subject, interfaces::Property::Unpin,
+                            currentFunction, node.span,
+                            current->context.environment))
         diagnostics.error("type", node.span,
                           "unsatisfied Unpin condition after region checking");
       nodes.at(&node).unpinRequirements = {subject};
@@ -3255,8 +3258,6 @@ void RegionPass::resultSources(std::size_t index) {
   auto &facts = functions[index];
   const auto &syntax = module.functions[index];
   auto carriesBorrow = [&](Type type) {
-    if (types.containsViews(type))
-      return true;
     auto regions = contained(type);
     return std::any_of(regions.begin(), regions.end(), [](auto region) {
       return region != RegionId::Static && region != RegionId::Unspecified;
@@ -3266,6 +3267,7 @@ void RegionPass::resultSources(std::size_t index) {
   for (std::size_t i = 0; i < syntax.parameters.size(); ++i)
     if (facts.locals[i].mode == ParameterMode::Read ||
         facts.locals[i].mode == ParameterMode::Mut ||
+        types.containsViews(signatures[index].parameters[i]) ||
         carriesBorrow(signatures[index].parameters[i]))
       eligible.push_back(i);
   // An async call's future holds its borrowed inputs until it is dropped.
@@ -3518,7 +3520,10 @@ void RegionPass::wellformed(Type type, Span span, bool indirect, bool tail,
     error(span, "unsized well-formedness nesting limit exceeded", true);
     return;
   }
-  if (!types.isSized(type) && !indirect && !tail)
+  if (!types.isSized(type) && !indirect && !tail &&
+      !(current &&
+        propertyContract(type, interfaces::Property::Sized, currentFunction,
+                         span, current->context.environment)))
     diagnostics.error(
         "type", span,
         types.isParameter(type)
@@ -3551,6 +3556,8 @@ void RegionPass::wellformed(Type type, Span span, bool indirect, bool tail,
   for (std::size_t i = 0; i < record.fields.size(); ++i) {
     auto allowedTail = (record.kind == AggregateKind::Product ||
                         record.kind == AggregateKind::Tuple ||
+                        record.kind == AggregateKind::ManualDrop ||
+                        record.kind == AggregateKind::UnsafeCell ||
                         record.kind == AggregateKind::Cell ||
                         record.kind == AggregateKind::RefCell) &&
                        i + 1 == record.fields.size();
@@ -4150,6 +4157,8 @@ void RegionPass::run() {
     context.environment = seeds[i].environment;
     context.names = seeds[i].names;
     signature.quantified = seeds[i].parameters;
+    current = &signature;
+    currentFunction = i;
     wellformed(functions[i].result, syntax.span);
     signature.obligations = context.environment.assumptions;
     for (std::size_t p = 0; p < syntax.parameters.size(); ++p) {
@@ -4171,10 +4180,12 @@ void RegionPass::run() {
       auto type = functions[i].locals[p].type;
       if (syntax.parameters[p].name == "self" && syntax.implementation >= 0) {
         annotation = &module.implementations[syntax.implementation].target;
-        // A pinned receiver's target annotation describes the pinned view's
-        // payload, not the structural `Pin` wrapper, unless the target is
-        // itself the pin (`extend pinned read T`).
-        if (annotation->form != TypeForm::Pinned && types.isProduct(type) &&
+        // An explicit pinned receiver adds a borrow even when its target is
+        // already pinned.
+        if ((annotation->form != TypeForm::Pinned ||
+             (syntax.explicitReceiver &&
+              syntax.parameters[p].annotation.form == TypeForm::Pinned)) &&
+            types.isProduct(type) &&
             types.product(type).kind == AggregateKind::Pin &&
             types.isView(types.product(type).fields[0].type)) {
           auto view = types.view(types.product(type).fields[0].type);
@@ -4405,6 +4416,8 @@ void RegionPass::run() {
       continue;
     }
     current = &signatures[contract.implementation];
+    currentFunction = contract.implementation;
+    currentFacts = &functions[contract.implementation];
     auto actual = types.callable(signatureType(contract.implementation));
     auto expected = types.callable(signatureType(contract.declaration));
     auto fixedOwnerRegions = [&](std::size_t index, CallableType &descriptor) {
@@ -4777,20 +4790,22 @@ void Checker::checkRegions() {
               "erased receiver does not satisfy its declared region contract");
         return target;
       },
-      [&](Type subject, std::size_t function, Span span,
-          const RegionEnvironment &regions) {
-        std::vector<interfaces::Obligation> assumptions;
+      [&](Type subject, interfaces::Property property, std::size_t function,
+          Span span, const RegionEnvironment &regions) {
+        auto *saved = current;
+        auto *savedEnvironment = genericEnvironment;
+        current = &module.functions.at(function);
+        genericBindings(*current);
+        annotationRegionScopes.push_back(functionRegions(*current));
+        auto assumptions = interfaceAssumptions();
+        annotationRegionScopes.pop_back();
+        current = saved;
+        genericEnvironment = savedEnvironment;
         const auto &context = checked.functions.at(function);
-        for (auto [type, bound] : context.interfaceBounds)
-          assumptions.push_back({type, bound});
-        for (auto type : context.unpinBounds)
-          assumptions.push_back(
-              {type, Type::Unknown, interfaces::Property::Unpin});
         interfaces::Solver solver(*checked.types, *checked.interfaceData,
                                   diagnostics, std::move(assumptions), regions);
         solver.setEqualities(context.genericEqualities);
-        return solver.prove(
-            {subject, Type::Unknown, interfaces::Property::Unpin}, span, false);
+        return solver.prove({subject, Type::Unknown, property}, span, false);
       })
       .run();
 }

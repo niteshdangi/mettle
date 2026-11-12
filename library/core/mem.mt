@@ -99,7 +99,8 @@ extend<T> [core.mem.MaybeUninit<T>] {
         if source.len() > self.len() { super.panic.panic("destination slice is too short") }
         var index = 0usize
         while index < source.len() {
-            self[index].write(source[index])
+            let value = source[index]
+            self[index].write(value)
             index += 1usize
         }
         let prefix = mut self[..source.len()]

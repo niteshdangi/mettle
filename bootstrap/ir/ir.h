@@ -159,6 +159,7 @@ struct Function {
   std::vector<std::size_t> genericResultSources{};
   std::vector<std::pair<Type, Type>> interfaceBounds{};
   std::vector<Type> unpinBounds{};
+  std::vector<Type> sizedBounds{};
   Type regionSignature = Type::Unknown;
   // Declared interface signature result when the body's concrete result
   // differs (an async default with an inferred future); calls not yet

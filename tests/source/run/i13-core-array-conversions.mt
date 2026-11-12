@@ -12,6 +12,8 @@ type Owned {
 
 alias ReadPair<region r> = read [i32; 2] from r
 alias MutPair<region r> = mut [i32; 2] from r
+alias OwnedPair = (Owned, Owned)
+alias Twelve = (i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32)
 
 fn borrowed<region r>(take values: read [i32] from r): (Outcome<ReadPair<region r>, array.TryFromSliceError>) {
     ReadPair<region r>.(TryFrom<read [i32] from r>).try_from(values)
@@ -28,7 +30,7 @@ fn main(): i32 {
         let pair = (Owned(4, counter), Owned(7, counter))
         let values = [Owned; 2].(From<(Owned, Owned)>).from(pair)
         if values[0usize].value != 4 || values[1usize].value != 7 { return 1 }
-        let restored = (Owned, Owned).(From<[Owned; 2]>).from(values)
+        let restored = OwnedPair.(From<[Owned; 2]>).from(values)
         if restored.0.value != 4 || restored.1.value != 7 || drops != 0 { return 2 }
     }
     if drops != 2 { return 3 }
@@ -37,7 +39,7 @@ fn main(): i32 {
     let twelve = [i32; 12].(From<(i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32)>).from(
         (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
     )
-    let restored = (i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32, i32).(From<[i32; 12]>).from(twelve)
+    let restored = Twelve.(From<[i32; 12]>).from(twelve)
     if restored.0 != 0 || restored.11 != 11 { return 5 }
     var values = [3i32, 8i32]
     match borrowed(read values) {

@@ -864,6 +864,8 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
   bool scalar = isInteger(type) || type == Type::Bool || type == Type::Char;
   bool aggregate =
       checked.types->isProduct(type) && !checked.types->isSum(type) && !scalar;
+  if (node.kind == Kind::Call && checked.types->isPointer(type))
+    return evaluatedStatic(node, type);
   switch (node.kind) {
   case Kind::Cast:
   case Kind::If:

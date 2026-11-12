@@ -10,9 +10,9 @@ static SHARED: Immovable = Immovable(17i32, core.marker.PhantomPinned)
 static mut EXCLUSIVE: Immovable = Immovable(19i32, core.marker.PhantomPinned)
 
 fn main(): i32 {
-    let shared = core.pin.Pin.static_ref(read SHARED)
-    if shared.get_ref().value != 17i32 { return 1 }
-    if core.ptr.from_ref(shared.get_ref()) != core.ptr.from_ref(read SHARED) {
+    let shared_pin = core.pin.Pin.static_ref(read SHARED)
+    if shared_pin.get_ref().value != 17i32 { return 1 }
+    if core.ptr.from_ref(shared_pin.get_ref()) != core.ptr.from_ref(read SHARED) {
         return 2
     }
     {

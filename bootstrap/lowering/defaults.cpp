@@ -35,6 +35,7 @@ ir::Function Builder::runDefault(const mettle::Function &source,
   function.floatingPolicy = checked.floatingPolicy;
   function.interfaceBounds = checked.interfaceBounds;
   function.unpinBounds = checked.unpinBounds;
+  function.sizedBounds = checked.sizedBounds;
   function.regionSignature = checked.regionSignature;
   function.genericEqualities = checked.genericEqualities;
   function.targetFeatures = checked.targetFeatures;

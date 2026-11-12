@@ -50,6 +50,10 @@ pub module core {
     pub fn identity<T>(take value: T): T { value }
     pub const fn constIdentity<T: Copy>(value: T): T { value }
     pub fn add(x: i32 = hidden(3)): i32 { x + 1 }
+    pub fn rangeShapes(read values: [i32]): usize {
+        values[..].len() + values[1usize..].len() +
+            values[..2usize].len() + values[0usize..=1usize].len()
+    }
     pub interface Family {
         type Item<T: Copy>: Copy;
         const FLAG: bool;
@@ -472,7 +476,7 @@ fn main(): i32 {
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
       sizeof(std::uint64_t) +
-      std::string_view("mettle.checked-contracts.6").size();
+      std::string_view("mettle.checked-contracts.7").size();
   std::fill_n(oversized.begin() + inventoryOffset, sizeof(std::uint64_t), 0xff);
   expect(!importLibraryDeclarations(oversized, types, decode),
          "oversized function inventories fail before allocation");

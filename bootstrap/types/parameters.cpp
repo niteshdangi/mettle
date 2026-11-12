@@ -208,14 +208,16 @@ std::optional<NumericLiteral> TypeStore::scalarConstantValue(Type type) const {
     return parameter(type).numeric;
   return std::nullopt;
 }
-bool TypeStore::isSized(Type type) const {
+bool TypeStore::isSized(Type type, std::span<const Type> assumptions) const {
   std::set<Type> active;
   std::map<Type, bool> known;
   std::function<bool(Type)> visit = [&](Type current) {
     if (isSlice(current) || isErased(current))
       return false;
     if (isParameter(current))
-      return parameter(current).sized;
+      return parameter(current).sized ||
+             std::find(assumptions.begin(), assumptions.end(), current) !=
+                 assumptions.end();
     if (!isProduct(current))
       return contains(current);
     const auto &record = product(current);

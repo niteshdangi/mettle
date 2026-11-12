@@ -18,15 +18,18 @@ extend<region r> EmptyRefs<region r> implements Debug {
 
 fn emits<T: Debug>(read value: T, read expected: Text): bool {
     var storage = [0u8; 256]
-    var sink = fmt.buffer_writer(mut storage)
-    {
-        var f = formatter(mut sink, spec())
-        match capture T.(Debug).fmt(value, mut f) {
-            success(_) => {},
-            failure(_) => { return false }
+    let used = {
+        var sink = fmt.buffer_writer(mut storage)
+        {
+            var f = formatter(mut sink, spec())
+            match capture T.(Debug).fmt(value, mut f) {
+                success(_) => {},
+                failure(_) => { return false }
+            }
         }
+        sink.len()
     }
-    match fmt.written_text(read storage, sink.len()) {
+    match fmt.written_text(read storage, used) {
         present(actual) => actual == expected,
         none => false
     }

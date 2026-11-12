@@ -695,6 +695,9 @@ bidirectional and fused, and drops remaining elements on iterator destruction.
 Checked slice-to-array conversion tests length; borrowed conversion lends,
 owned conversion requires the declared Copy/Clone bound or returns the
 original owner on length failure. No implicit per-element duplication occurs.
+Converting `MaybeUninit<[T; N]>` to `[MaybeUninit<T>; N]` preserves the same
+size, alignment and per-slot initialization state. It reads no T value and
+neither wrapper automatically drops a hidden T payload.
 
 ## 6. Iterator protocols and constructors
 

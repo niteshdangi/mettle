@@ -1,3 +1,4 @@
+// file: entry=present
 import core.iter.Iterator
 import std.io
 import std.path.path_from_text

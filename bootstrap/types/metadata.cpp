@@ -40,7 +40,9 @@ tailConversion(const TypeStore &types, Type source, Type target, bool erased) {
       auto originA = a.genericOrigin == Type::Unknown ? from : a.genericOrigin;
       auto originB = b.genericOrigin == Type::Unknown ? to : b.genericOrigin;
       bool cell =
-          (a.kind == AggregateKind::Cell || a.kind == AggregateKind::RefCell) &&
+          (a.kind == AggregateKind::Cell || a.kind == AggregateKind::RefCell ||
+           a.kind == AggregateKind::ManualDrop ||
+           a.kind == AggregateKind::UnsafeCell) &&
           a.kind == b.kind;
       bool valid = (originA == originB || cell) && !a.fields.empty() &&
                    a.fields.size() == b.fields.size() &&

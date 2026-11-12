@@ -1,5 +1,5 @@
 // profiles: debug release
-// expect-error: ownership 10:17 moved
+// expect-error: ownership 10:16 moved
 // expect-error-count: 1
 import core.pin
 static mut VALUE: i32 = 7i32

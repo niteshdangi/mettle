@@ -170,6 +170,7 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
     auto state = *inputs[b];
     for (const auto &instruction : function.blocks[b].instructions) {
       bool reference = false, writable = false, readOnly = false;
+      bool invalidHandle = false;
       if (instruction.place.root >= 0) {
         const auto &local = function.locals[instruction.place.root];
         reference = local.mode == ParameterMode::Read ||
@@ -201,9 +202,15 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
                     "variant payload accessed without a valid tag refinement");
           }
           if (projection.kind == Projection::Kind::Dereference) {
-            if (!tree.all(state.definite, tree.index(prefix)))
-              diagnostics.error("type", instruction.span,
-                                "view handle may be uninitialized");
+            auto index = tree.index(prefix);
+            if (!invalidHandle && !tree.all(state.definite, index)) {
+              bool moved = tree.any(state.moved, index);
+              diagnostics.error(moved ? "ownership" : "type", instruction.span,
+                                moved ? "binding '" + tree.name(index) +
+                                            "' may have been moved"
+                                      : "view handle may be uninitialized");
+              invalidHandle = true;
+            }
             reference = true;
             readOnly = (types.isPointer(type) ? false : readOnly) ||
                        types.view(type).mode == ParameterMode::Read;
@@ -234,7 +241,7 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
           instruction.op == ir::Op::SliceBorrowMut ||
           instruction.op == ir::Op::ViewMut) {
         auto index = tree.index(instruction.place);
-        if (!tree.all(state.definite, index)) {
+        if (!invalidHandle && !tree.all(state.definite, index)) {
           bool moved = tree.any(state.moved, index);
           diagnostics.error(
               moved ? "ownership" : "type", instruction.span,

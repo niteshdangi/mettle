@@ -9,6 +9,15 @@ type Counted {
     drop { unsafe { *self.drops += self.value } }
 }
 
+fn tail(mut value: core.mem.ManuallyDrop<[i32]>): usize {
+    value.deref_mut()[1usize] = 9i32
+    value.deref().len()
+}
+
+fn cell_tail(read value: core.cell.UnsafeCell<[i32]>): usize {
+    unsafe { (read *value.get()).len() }
+}
+
 fn main(): i32 {
     var drops = 0i32
     {
@@ -29,5 +38,9 @@ fn main(): i32 {
         present(order) => { if order != Ordering.Equal { return 5 } },
         none => { return 6 }
     }
+    var array = core.mem.ManuallyDrop.new([3i32, 4i32])
+    if tail(mut array) != 2usize || array.deref()[1usize] != 9i32 { return 7 }
+    let cell = core.cell.UnsafeCell.new([5i32, 6i32, 7i32])
+    if cell_tail(read cell) != 3usize { return 8 }
     0
 }

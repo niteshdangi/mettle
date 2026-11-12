@@ -1652,6 +1652,13 @@ private:
     }
     case Kind::Index: {
       auto base = place(*node.children[0]);
+      if (!base.value && !base.address) {
+        auto value = eval(*node.children[0], nullptr);
+        if (!value)
+          return {};
+        auto root = std::make_shared<Value>(std::move(*value));
+        base = {root.get(), root.get(), {}, false, {}, root};
+      }
       if (base.value && base.value->kind == Value::Kind::Reference) {
         base.address = *base.value;
         base.mutableBinding = base.address->exclusive;
@@ -1662,8 +1669,10 @@ private:
               ? pointee(*base.address)
               : (base.value ? host.typeShape(host.valueType(*base.value))
                             : std::nullopt);
-      if (!type || type->kind != Shape::Kind::Array || type->elements.empty())
+      if (!type || type->kind != Shape::Kind::Array || type->elements.empty()) {
+        fail("type", node.span, "cannot index this value in a constant");
         return {};
+      }
       auto usize = scalarShape(Type::Usize);
       auto index = eval(*node.children[1], &usize);
       if (!index)

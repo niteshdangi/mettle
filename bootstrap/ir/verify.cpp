@@ -103,10 +103,13 @@ bool function(const Function &f, const Program &program,
        program.types->product(f.locals[f.variadicCursor].type).kind !=
            AggregateKind::VarArgs))
     fail({}, "invalid hidden variadic invocation context");
-  if (!program.types->isSized(f.result))
+  for (auto bound : f.sizedBounds)
+    if (!program.types->isParameter(bound))
+      fail({}, "invalid contextual Sized bound");
+  if (!program.types->isSized(f.result, f.sizedBounds))
     fail({}, "unsized function result requires a view or owner");
   for (std::size_t p = 0; p < f.locals.size(); ++p)
-    if (!program.types->isSized(f.locals[p].type) &&
+    if (!program.types->isSized(f.locals[p].type, f.sizedBounds) &&
         !(p < f.parameters && (f.locals[p].mode == ParameterMode::Read ||
                                f.locals[p].mode == ParameterMode::Mut)))
       fail(f.locals[p].span, "unsized owned storage");
@@ -192,7 +195,7 @@ bool function(const Function &f, const Program &program,
         continue;
       }
       if (n.result.access == Access::Owned && n.result.type != Type::Never &&
-          !program.types->isSized(n.result.type))
+          !program.types->isSized(n.result.type, f.sizedBounds))
         fail(n.span, "unsized owned SSA value");
       auto &definition = definitions[n.result.id];
       if (definition.block >= 0)

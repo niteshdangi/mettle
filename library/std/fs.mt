@@ -70,7 +70,10 @@ extend TryLockError implements fmt.Debug {
 extend TryLockError implements CoreError {
     fn source<region r>(receiver read self: TryLockError from r): (read any CoreError from r)? {
         match self {
-            TryLockError.Error(error) => present(read error),
+            TryLockError.Error(error) => {
+                let source: read any CoreError from r = read error
+                present(source)
+            },
             TryLockError.WouldBlock => none
         }
     }

@@ -210,7 +210,10 @@ conservatively; failed or incomplete analyses never become successful artifacts.
 
 **Compilation and optimization.** Check generic bodies once under declared
 contracts, retain symbolic verified IR, then instantiate and reverify concrete
-forms. Canonical instance ownership includes definition, substitutions, target
+forms. Contextual `Sized` bounds travel with checked declarations and symbolic
+IR; verification must not turn them into global type capabilities. Concrete
+instances discard these assumptions and reverify their substituted storage.
+Canonical instance ownership includes definition, substitutions, target
 and codegen policy; consumers share identical instances. Check mutually dependent
 declarations as strongly connected groups. Schedule independent queries with
 bounded workers and memory, using compact stores and releasing temporary phase

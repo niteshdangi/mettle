@@ -4,6 +4,14 @@
 #include <utility>
 
 namespace mettle {
+namespace {
+bool specializesBounds(const GenericParameter &parameter) {
+  return std::any_of(parameter.bounds.begin(), parameter.bounds.end(),
+                     [](const auto &bound) {
+                       return bound.name != "unsized" && bound.name != "?Sized";
+                     });
+}
+} // namespace
 // Manual declarations of the structural cross-thread properties: a negative
 // `extend T not Transferable;` or an `unsafe extend ... implements
 // Transferable {}` whose bounds state the conditions the implementer has
@@ -62,8 +70,7 @@ void Checker::concurrencyDeclaration(
   if (syntax.negative &&
       (!syntax.constraints.empty() ||
        std::any_of(syntax.genericParameters.begin(),
-                   syntax.genericParameters.end(),
-                   [](const auto &p) { return !p.bounds.empty(); })))
+                   syntax.genericParameters.end(), specializesBounds)))
     error("type", syntax.span,
           "negative " + name + " declarations cannot specialize bounds");
   implementation.requirements = interfaceAssumptions();
@@ -194,8 +201,7 @@ void Checker::interfaceImplementations() {
         if (syntax.negative &&
             (!syntax.constraints.empty() ||
              std::any_of(syntax.genericParameters.begin(),
-                         syntax.genericParameters.end(),
-                         [](const auto &p) { return !p.bounds.empty(); })))
+                         syntax.genericParameters.end(), specializesBounds)))
           error("type", syntax.span,
                 "negative Unpin declarations cannot specialize bounds");
         if (!syntax.negative)
@@ -809,22 +815,32 @@ void Checker::checkInterfaceContracts() {
       allowed.insert(allowed.end(), implementation.requirements.begin(),
                      implementation.requirements.end());
       genericEnvironment = &functionGenerics.at(&provided);
+      annotationRegionScopes.push_back(regionScope);
       auto requirements = interfaceAssumptions();
+      annotationRegionScopes.pop_back();
       std::vector<TypeBinding> publicParameters;
+      std::vector<RegionBinding> publicRegions;
       for (std::size_t p = 0; p < ownerBindings.size(); ++p)
         publicParameters.push_back(
             {ownerBindings[p].argument, ownerBindings[p].parameter});
+      for (const auto &binding : ownerRegions)
+        publicRegions.push_back({binding.argument, binding.parameter});
       for (std::size_t p = 0; p < ownExpected && p < ownActual; ++p)
         publicParameters.push_back(
             {actual.genericParameters[implementation.parameters.size() + p],
              expected.genericParameters[required.implicitParameters + p]});
       interfaces::Solver contracts(*checked.types, *checked.interfaceData,
-                                   diagnostics, allowed);
+                                   diagnostics, allowed,
+                                   regionScope.environment);
       for (auto obligation : requirements) {
         obligation.subject =
             checked.types->substitute(obligation.subject, publicParameters);
         obligation.interfaceType = checked.types->substitute(
             obligation.interfaceType, publicParameters);
+        obligation.subject =
+            checked.types->substituteRegions(obligation.subject, publicRegions);
+        obligation.interfaceType = checked.types->substituteRegions(
+            obligation.interfaceType, publicRegions);
         if (!contracts.prove(obligation, provided.span, false) &&
             !std::exchange(contractReported, true))
           error("type", provided.span,

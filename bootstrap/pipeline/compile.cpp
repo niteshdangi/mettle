@@ -79,6 +79,8 @@ public:
       assumptions.push_back({type, bound});
     for (auto type : function.unpinBounds)
       assumptions.push_back({type, Type::Unknown, interfaces::Property::Unpin});
+    for (auto type : function.sizedBounds)
+      assumptions.push_back({type, Type::Unknown, interfaces::Property::Sized});
     RegionEnvironment regions;
     if (store.isFunctionPointer(function.regionSignature)) {
       const auto &signature = store.callable(function.regionSignature);

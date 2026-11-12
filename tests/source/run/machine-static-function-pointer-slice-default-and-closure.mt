@@ -2,6 +2,8 @@
 static VALUES: [i32;2] = [21;2];
 static SLICE: read [i32] from static = read VALUES
 static ADDRESS: ptr<read i32> = core.ptr.from_ref(ANSWER)
+static NULL_READ: ptr<read i32> = core.ptr.null<i32>()
+static NULL_MUT: ptr<mut i32> = core.ptr.null_mut<i32>()
 static ANSWER: i32 = 42
 fn identity(value: i32): i32 { value }
 static CALLBACK: fn(i32): i32 = identity
@@ -12,5 +14,6 @@ fn main() {
     var total = 0
     for value in SLICE { total += value }
     if CALLBACK(total) == 42 && with_default() == 42 &&
-       callback() == 42 && *reader() == 42 && unsafe { *ADDRESS } == 42 { 0 } else { 1 }
+       callback() == 42 && *reader() == 42 && unsafe { *ADDRESS } == 42 &&
+       NULL_READ.is_null() && NULL_MUT.is_null() { 0 } else { 1 }
 }

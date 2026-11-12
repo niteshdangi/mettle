@@ -49,15 +49,13 @@ extend<region r, T: unsized> pinned mut T from r {
     }
 }
 
-extend<region r, region s, T: PartialEq<U> + unsized, U: unsized>
-pinned read T from r implements PartialEq<pinned read U from s> {
+extend<region r, region s, T: PartialEq<U> + unsized, U: unsized> pinned read T from r implements PartialEq<pinned read U from s> {
     fn eq(read other: pinned read U from s): bool { self.get_ref().eq(other.get_ref()) }
 }
 
 extend<region r, T: Eq + unsized> pinned read T from r implements Eq {}
 
-extend<region r, region s, T: PartialOrd<U> + unsized, U: unsized>
-pinned read T from r implements PartialOrd<pinned read U from s> {
+extend<region r, region s, T: PartialOrd<U> + unsized, U: unsized> pinned read T from r implements PartialOrd<pinned read U from s> {
     fn partial_cmp(read other: pinned read U from s): Ordering? {
         self.get_ref().partial_cmp(other.get_ref())
     }
@@ -83,39 +81,33 @@ extend<region r, T: Display + unsized> pinned read T from r implements Display {
     fn fmt(mut f: Formatter): Unit throws Error { try T.(Display).fmt(self.get_ref(), mut f) }
 }
 
-extend<region r, region s, T: PartialEq<U> + unsized, U: unsized>
-pinned mut T from r implements PartialEq<pinned mut U from s> {
+extend<region r, region s, T: PartialEq<U> + unsized, U: unsized> pinned mut T from r implements PartialEq<pinned mut U from s> {
     fn eq(read other: pinned mut U from s): bool { self.get_ref().eq(other.get_ref()) }
 }
 
-extend<region r, region s, T: PartialEq<U> + unsized, U: unsized>
-pinned mut T from r implements PartialEq<pinned read U from s> {
+extend<region r, region s, T: PartialEq<U> + unsized, U: unsized> pinned mut T from r implements PartialEq<pinned read U from s> {
     fn eq(read other: pinned read U from s): bool { self.get_ref().eq(other.get_ref()) }
 }
 
-extend<region r, region s, T: PartialEq<U> + unsized, U: unsized>
-pinned read T from r implements PartialEq<pinned mut U from s> {
+extend<region r, region s, T: PartialEq<U> + unsized, U: unsized> pinned read T from r implements PartialEq<pinned mut U from s> {
     fn eq(read other: pinned mut U from s): bool { self.get_ref().eq(other.get_ref()) }
 }
 
 extend<region r, T: Eq + unsized> pinned mut T from r implements Eq {}
 
-extend<region r, region s, T: PartialOrd<U> + unsized, U: unsized>
-pinned mut T from r implements PartialOrd<pinned mut U from s> {
+extend<region r, region s, T: PartialOrd<U> + unsized, U: unsized> pinned mut T from r implements PartialOrd<pinned mut U from s> {
     fn partial_cmp(read other: pinned mut U from s): Ordering? {
         self.get_ref().partial_cmp(other.get_ref())
     }
 }
 
-extend<region r, region s, T: PartialOrd<U> + unsized, U: unsized>
-pinned mut T from r implements PartialOrd<pinned read U from s> {
+extend<region r, region s, T: PartialOrd<U> + unsized, U: unsized> pinned mut T from r implements PartialOrd<pinned read U from s> {
     fn partial_cmp(read other: pinned read U from s): Ordering? {
         self.get_ref().partial_cmp(other.get_ref())
     }
 }
 
-extend<region r, region s, T: PartialOrd<U> + unsized, U: unsized>
-pinned read T from r implements PartialOrd<pinned mut U from s> {
+extend<region r, region s, T: PartialOrd<U> + unsized, U: unsized> pinned read T from r implements PartialOrd<pinned mut U from s> {
     fn partial_cmp(read other: pinned mut U from s): Ordering? {
         self.get_ref().partial_cmp(other.get_ref())
     }

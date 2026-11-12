@@ -501,8 +501,8 @@ WIRE(FunctionFacts, v.result, v.asyncDefaultBodyResult, v.diverges, v.locals,
      v.defaultBorrowOperand, v.parameterBindings, v.parameterViewTypes,
      v.constructorSelfSlot, v.canonicalName, v.opaqueResult, v.regionSignature,
      v.genericParameters, v.genericResultSources, v.interfaceBounds,
-     v.unpinBounds, v.genericEqualities, v.externalName, v.floatingPolicy,
-     v.library, v.variadicCursor, v.targetFeatures, v.naked)
+     v.unpinBounds, v.sizedBounds, v.genericEqualities, v.externalName,
+     v.floatingPolicy, v.library, v.variadicCursor, v.targetFeatures, v.naked)
 WIRE(StaticFacts, v.name, v.externalName, v.library, v.type, v.initializer)
 WIRE(DeclarationEnvironment, v.names, v.bounds, v.parameters, v.defaults,
      v.equalities, v.declarationSpan)
@@ -662,8 +662,14 @@ template <typename T> void Archive::record(T &item) {
     case Kind::Index:
     case Kind::While:
     case Kind::For:
-    case Kind::Range:
       valid = count == 2;
+      break;
+    case Kind::Range:
+      valid = (item.text == ".." || item.text == "..=") &&
+              ((item.name.empty() && count == 2) ||
+               (item.name == "full" && item.text == ".." && count == 0) ||
+               (item.name == "from" && item.text == ".." && count == 1) ||
+               (item.name == "to" && count == 1));
       break;
     case Kind::Call:
     case Kind::Match:
@@ -1000,7 +1006,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   }
   result.header = std::move(header.output);
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.6");
+  contracts.tag("mettle.checked-contracts.7");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size();
   contracts(count);
@@ -1072,7 +1078,7 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
     return result;
   }
   Archive archive(bytes, references, types.get());
-  archive.tag("mettle.checked-contracts.6");
+  archive.tag("mettle.checked-contracts.7");
   auto value = std::make_shared<ImportedDeclarations>();
   value->types = std::move(types);
   std::uint64_t count = 0;

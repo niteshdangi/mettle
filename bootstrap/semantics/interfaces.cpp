@@ -337,6 +337,18 @@ std::vector<interfaces::Obligation> Checker::interfaceAssumptions(
   } restore{collectingInterfaceAssumptions, collectingInterfaceAssumptions};
   collectingInterfaceAssumptions = true;
   for (const auto &[subject, bounds] : genericEnvironment->bounds) {
+    auto scopedSubject = subject;
+    if (!annotationRegionScopes.empty() && checked.types->isView(subject))
+      for (const auto *constraint : genericEnvironment->boundConstraints) {
+        if (constraint->region || constraint->bounds.empty())
+          continue;
+        auto candidate = annotation(constraint->subject, constraint->span);
+        if (checked.types->eraseRegions(candidate) ==
+            checked.types->eraseRegions(subject)) {
+          scopedSubject = candidate;
+          break;
+        }
+      }
     std::size_t first = 0;
     if (inherited)
       if (auto outer = inherited->bounds.find(subject);
@@ -355,13 +367,13 @@ std::vector<interfaces::Obligation> Checker::interfaceAssumptions(
           !elaboratingBounds.insert(&bound).second)
         continue;
       auto type = property == interfaces::Property::Interface
-                      ? interfaceBound(bound, context, {}, subject)
+                      ? interfaceBound(bound, context, {}, scopedSubject)
                       : Type::Unknown;
       if (decorate && property == interfaces::Property::Interface)
         type = decorate(type, bound, context);
       if (property == interfaces::Property::Interface)
         elaboratingBounds.erase(&bound);
-      result.push_back({subject, type, property});
+      result.push_back({scopedSubject, type, property});
     }
   }
   expandSuperinterfaces(result);
@@ -709,6 +721,8 @@ void Checker::interfaceSignatures() {
   for (std::size_t index = 0; index < states.size(); ++index)
     visit(index, 0);
   for (auto &function : module.functions) {
+    if (imported(function.span))
+      continue;
     auto &environment = functionGenerics.at(&function);
     genericEnvironment = &environment;
     if (function.implementation >= 0)

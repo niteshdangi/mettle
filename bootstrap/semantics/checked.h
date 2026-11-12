@@ -156,6 +156,7 @@ struct FunctionFacts {
   std::vector<std::size_t> genericResultSources{};
   std::vector<std::pair<Type, Type>> interfaceBounds{};
   std::vector<Type> unpinBounds{};
+  std::vector<Type> sizedBounds{};
   std::vector<TypeBinding> genericEqualities{};
   std::string externalName{};
   FloatingPolicy floatingPolicy{};

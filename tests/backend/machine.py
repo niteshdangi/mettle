@@ -2028,6 +2028,8 @@ SOURCES["c-thread-atomic-bool-not-pointer-masks"] = (
 if platform.system() == "Linux":
     SOURCES["heap-sorted-no-global-allocation"] = (
         Path(__file__).with_name("heap_sorted_no_global_allocation.mt").read_text())
+    SOURCES["once-force-waits-through-poison"] = (
+        Path(__file__).with_name("once_force_wait.mt").read_text())
 
 
 def run_scheduled(args):
@@ -2203,11 +2205,17 @@ def main(argv=None):
                     command.append("-fsanitize=address,undefined")
                 run(command)
                 libraries.insert(0, storage_object)
-            if name == "heap-sorted-no-global-allocation":
-                allocation_object = directory / "heap_sorted_no_global_allocation.o"
-                command = [args.cxx.with_name("clang"), "-std=c11",
+            if name in ("heap-sorted-no-global-allocation",
+                        "once-force-waits-through-poison"):
+                fixture = Path(__file__).with_name(
+                    "once_force_wait.cpp" if name == "once-force-waits-through-poison"
+                    else "heap_sorted_no_global_allocation.c")
+                allocation_object = directory / (fixture.stem + ".o")
+                cpp = fixture.suffix == ".cpp"
+                command = [args.cxx if cpp else args.cxx.with_name("clang"),
+                           "-std=c++20" if cpp else "-std=c11",
                            "-Wall", "-Wextra", "-Wpedantic", "-Werror",
-                           "-c", Path(__file__).with_name("heap_sorted_no_global_allocation.c"),
+                           "-c", fixture,
                            "-o", allocation_object]
                 if args.sysroot:
                     command.append("--sysroot=" + args.sysroot)
@@ -2268,6 +2276,8 @@ def main(argv=None):
                 if name == "heap-sorted-no-global-allocation":
                     command.extend(["-Wl,--wrap=mettle_rt_alloc",
                                     "-Wl,--wrap=mettle_rt_realloc"])
+                if name == "once-force-waits-through-poison":
+                    command.append("-Wl,--wrap=mettle_rt_thread_yield")
                 command.extend(args.link_arg)
                 if args.sysroot:
                     command.append("--sysroot=" + args.sysroot)
@@ -2290,9 +2300,9 @@ def main(argv=None):
                     case["c_fixture_sha256"] = digest(
                         Path(__file__).with_name("foreign_storage.c"))
                     case["c_object_sha256"] = digest(storage_object)
-                if name == "heap-sorted-no-global-allocation":
-                    case["c_fixture_sha256"] = digest(
-                        Path(__file__).with_name("heap_sorted_no_global_allocation.c"))
+                if name in ("heap-sorted-no-global-allocation",
+                            "once-force-waits-through-poison"):
+                    case["c_fixture_sha256"] = digest(fixture)
                     case["c_object_sha256"] = digest(allocation_object)
                 evidence["cases"].append(case)
         for name, source in MACHINE_REJECTIONS.items():

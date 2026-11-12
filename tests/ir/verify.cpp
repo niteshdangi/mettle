@@ -187,6 +187,27 @@ void floatingCarrierCases() {
   program.statics[0].type = Type::Char;
   program.statics[0].initializer->type = Type::Char;
   rejected(program, "static initializer");
+
+  program = simple();
+  auto types = std::make_shared<mettle::TypeStore>();
+  auto parameter = types->declareParameter("T", false, false);
+  program.types = types;
+  auto function = program.functions[0];
+  function.name = "scoped";
+  function.genericParameters = {parameter};
+  function.parameters = 1;
+  function.locals.push_back(
+      {"value", parameter, false, {}, mettle::ParameterMode::Take});
+  program.functions.push_back(std::move(function));
+  rejected(program, "unsized owned storage");
+  program.functions[1].sizedBounds = {parameter};
+  mettle::Diagnostics scoped;
+  auto valid = verify(program, scoped);
+  require(valid, scoped.empty() ? "contextual Sized storage rejected"
+                                : scoped.items.front().message.c_str());
+  require(!program.types->isSized(parameter), "contextual Sized bound leaked");
+  program.functions[1].sizedBounds.clear();
+  rejected(program, "unsized owned storage");
 }
 void staticConsumptionCases() {
   auto types = std::make_shared<mettle::TypeStore>();

@@ -6,10 +6,11 @@ import super.fmt.{Debug, Display, Error, Formatter}
 import super.iter.OwnedIterable
 
 pub fn from_fn<T, const N: usize, F: mut fn(usize): T>(take f: F): [T; N] {
+    var callback = f
     var result = ArrayInit<T, N>.new()
     var index = 0usize
     while index < N {
-        result.push(f(index))
+        result.push(callback(index))
         index += 1usize
     }
     result.finish()
@@ -17,8 +18,9 @@ pub fn from_fn<T, const N: usize, F: mut fn(usize): T>(take f: F): [T; N] {
 
 extend<T, const N: usize> [T; N] {
     pub take fn map<U, F: mut fn(take T): U>(take f: F): [U; N] {
+        var callback = f
         var result = ArrayInit<U, N>.new()
-        for value in take self { result.push(f(value)) }
+        for value in take self { result.push(callback(value)) }
         result.finish()
     }
 }
@@ -79,19 +81,19 @@ extend<T, const N: usize> [core.mem.MaybeUninit<T>; N]
     implements From<core.mem.MaybeUninit<[T; N]>> {
     static fn from(take value: core.mem.MaybeUninit<[T; N]>): [core.mem.MaybeUninit<T>; N] {
         // MaybeUninit preserves element layout without requiring initialized payloads.
-        unsafe { core.mem.transmute<[core.mem.MaybeUninit<T>; N]>(value) }
+        unsafe { core.ptr.`read`(core.ptr.from_ref(value).cast<[core.mem.MaybeUninit<T>; N]>()) }
     }
 }
 
 macro tuple_array_conversion {
-    ($count:literal; $($element:ty => $field:literal => $name:ident),*) => {
-        extend<T> [T; $count] implements From<($($element,)*)> {
-            static fn from(take value: ($($element,)*)): [T; $count] {
+    ($type:ident; $count:literal; $($element:ty => $field:literal => $name:ident),*) => {
+        extend<$type> [$type; $count] implements From<($($element,)*)> {
+            static fn from(take value: ($($element,)*)): [$type; $count] {
                 [$(value.$field,)*]
             }
         }
-        extend<T> ($($element,)*) implements From<[T; $count]> {
-            static fn from(take value: [T; $count]): ($($element,)*) {
+        extend<$type> ($($element,)*) implements From<[$type; $count]> {
+            static fn from(take value: [$type; $count]): ($($element,)*) {
                 let [$($name,)*] = value
                 ($($name,)*)
             }
@@ -99,15 +101,15 @@ macro tuple_array_conversion {
     };
 }
 
-tuple_array_conversion!(1; T => 0 => a)
-tuple_array_conversion!(2; T => 0 => a, T => 1 => b)
-tuple_array_conversion!(3; T => 0 => a, T => 1 => b, T => 2 => c)
-tuple_array_conversion!(4; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d)
-tuple_array_conversion!(5; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e)
-tuple_array_conversion!(6; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f)
-tuple_array_conversion!(7; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g)
-tuple_array_conversion!(8; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g, T => 7 => h)
-tuple_array_conversion!(9; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g, T => 7 => h, T => 8 => i)
-tuple_array_conversion!(10; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g, T => 7 => h, T => 8 => i, T => 9 => j)
-tuple_array_conversion!(11; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g, T => 7 => h, T => 8 => i, T => 9 => j, T => 10 => k)
-tuple_array_conversion!(12; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g, T => 7 => h, T => 8 => i, T => 9 => j, T => 10 => k, T => 11 => l)
+tuple_array_conversion!(T; 1; T => 0 => a)
+tuple_array_conversion!(T; 2; T => 0 => a, T => 1 => b)
+tuple_array_conversion!(T; 3; T => 0 => a, T => 1 => b, T => 2 => c)
+tuple_array_conversion!(T; 4; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d)
+tuple_array_conversion!(T; 5; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e)
+tuple_array_conversion!(T; 6; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f)
+tuple_array_conversion!(T; 7; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g)
+tuple_array_conversion!(T; 8; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g, T => 7 => h)
+tuple_array_conversion!(T; 9; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g, T => 7 => h, T => 8 => i)
+tuple_array_conversion!(T; 10; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g, T => 7 => h, T => 8 => i, T => 9 => j)
+tuple_array_conversion!(T; 11; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g, T => 7 => h, T => 8 => i, T => 9 => j, T => 10 => k)
+tuple_array_conversion!(T; 12; T => 0 => a, T => 1 => b, T => 2 => c, T => 3 => d, T => 4 => e, T => 5 => f, T => 6 => g, T => 7 => h, T => 8 => i, T => 9 => j, T => 10 => k, T => 11 => l)

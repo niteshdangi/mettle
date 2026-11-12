@@ -264,6 +264,9 @@ bool Solver::constraints(const Implementation &implementation,
   }
   std::vector<Obligation> requirements;
   for (auto requirement : implementation.requirements) {
+    auto elided = types.isView(requirement.subject)
+                      ? types.view(requirement.subject).region
+                      : RegionId::Unspecified;
     requirement.subject = normalize(substituted(requirement.subject), {}, span);
     requirement.interfaceType =
         normalize(substituted(requirement.interfaceType), {}, span);
@@ -288,8 +291,24 @@ bool Solver::constraints(const Implementation &implementation,
           !someImplementationCouldApply(requirement.subject,
                                         requirement.interfaceType))
         return false;
-    } else if (!prove(requirement, span, false))
-      return false;
+    } else {
+      auto saved = regionEnvironment;
+      if (types.regions().get(elided).kind == RegionKind::Inference) {
+        auto scope = types.regions().binder(regionEnvironment.universe, true);
+        regionEnvironment.universe = scope.universe;
+        // An elided borrowed subject must work for any caller borrow.
+        RegionBinding fresh{elided,
+                            types.regions().rigid(scope, "<elided-bound>")};
+        requirement.subject =
+            types.substituteRegions(requirement.subject, {&fresh, 1});
+        requirement.interfaceType =
+            types.substituteRegions(requirement.interfaceType, {&fresh, 1});
+      }
+      bool holds = prove(requirement, span, false);
+      regionEnvironment = std::move(saved);
+      if (!holds)
+        return false;
+    }
   }
   if (potential)
     for (std::size_t i = 0; i < requirements.size(); ++i)
@@ -480,6 +499,8 @@ bool Solver::coherent() {
       const auto &definition =
           database.definitions[types.erased(left.interfaceType).declaration];
       auto nominal = left.target;
+      while (types.isView(nominal))
+        nominal = types.view(nominal).payload;
       if (types.isProduct(nominal) &&
           types.product(nominal).genericOrigin != Type::Unknown)
         nominal = types.product(nominal).genericOrigin;

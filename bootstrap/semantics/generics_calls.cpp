@@ -143,17 +143,17 @@ std::optional<int> Checker::genericCall(
     if (modes[target] == ParameterMode::Mut)
       requireMutablePlace(argument);
     auto actual = inference.value(variable);
-    auto expected = signature[target];
-    if (modes[target] == ParameterMode::Read ||
-        modes[target] == ParameterMode::Mut) {
-      std::vector<TypeBinding> solved;
-      for (const auto &binding : bindings)
-        if (binding.argument != Type::Unknown)
-          solved.push_back(binding);
-      expected = checked.types->eraseRegions(
-          checked.types->substitute(expected, solved));
-      if (expected != Type::Unknown && !checked.types->isSymbolic(expected) &&
-          borrowCoercion(argument, variable, expected, modes[target]))
+    std::vector<TypeBinding> solved;
+    for (const auto &binding : bindings)
+      if (binding.argument != Type::Unknown)
+        solved.push_back(binding);
+    auto expected = checked.types->eraseRegions(
+        checked.types->substitute(signature[target], solved));
+    if (expected != Type::Unknown && !checked.types->isSymbolic(expected)) {
+      if (unsizeCoercion(argument, actual, expected, argument.span) ||
+          ((modes[target] == ParameterMode::Read ||
+            modes[target] == ParameterMode::Mut) &&
+           borrowCoercion(argument, variable, expected, modes[target])))
         actual = expected;
     }
     auto *written = &argument;
@@ -252,7 +252,9 @@ std::optional<int> Checker::genericCall(
       continue;
     auto [argument, variable] = actuals[i];
     auto expected = facts(n).callParameterTypes[target];
-    auto actual = inference.value(variable);
+    auto actual =
+        normalizeGenericType(inference.value(variable), {}, argument->span);
+    inference.set(variable, actual);
     if ((modes[target] == ParameterMode::Read ||
          modes[target] == ParameterMode::Mut) &&
         borrowCoercion(*argument, variable, expected, modes[target]))
@@ -323,6 +325,17 @@ void Checker::inferFromExpected(Type pattern, Type expected,
   const auto &right = checked.types->product(expected);
   if (left.kind != right.kind || left.genericOrigin != right.genericOrigin)
     return;
+  if (left.kind == AggregateKind::Array && left.arrayCount != Type::Unknown) {
+    auto count = right.arrayCount;
+    if (auto length = checked.types->arrayLength(expected)) {
+      auto type = checked.types->parameter(left.arrayCount).valueType;
+      NumericLiteral value;
+      value.magnitude[0] = *length;
+      if (integerLiteralFits(value, type, pointerBits()))
+        count = checked.types->constant(type, value);
+    }
+    inferFromExpected(left.arrayCount, count, bindings);
+  }
   const auto &a = left.genericOrigin != Type::Unknown ? left.genericArguments
                                                       : left.components;
   const auto &b = right.genericOrigin != Type::Unknown ? right.genericArguments

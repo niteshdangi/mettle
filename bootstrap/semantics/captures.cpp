@@ -41,6 +41,7 @@ int Checker::closure(Node &syntax, bool reachable) {
   closure.function.genericParameters = facts(*outer).genericParameters;
   closure.function.interfaceBounds = facts(*outer).interfaceBounds;
   closure.function.unpinBounds = facts(*outer).unpinBounds;
+  closure.function.sizedBounds = facts(*outer).sizedBounds;
   closure.function.genericEqualities = facts(*outer).genericEqualities;
   auto savedScopes = scopes;
   auto savedLoops = std::move(loopResults);

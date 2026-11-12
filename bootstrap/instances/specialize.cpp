@@ -446,6 +446,7 @@ private:
       substitute(local.type);
     function.interfaceBounds.clear();
     function.unpinBounds.clear();
+    function.sizedBounds.clear();
     function.regionSignature =
         types->substitute(function.regionSignature, bindings);
     if (hooks.normalizeRegionSignature)
