@@ -211,6 +211,34 @@ class LibraryRunnerTests(unittest.TestCase):
 
 
 class SchedulingTests(unittest.TestCase):
+    def test_source_imported_diagnostics_keep_exact_error_contract(self):
+        root = OUTPUT / "source-imported-diagnostics"
+        root.mkdir(parents=True, exist_ok=True)
+        source = root / "case.mt"
+        source.write_text(
+            "// expect-error-source: core\\num.mt\n"
+            "// expect-error: constant 2840:23 panic during constant evaluation\n"
+            "// expect-error-count: 1\ninvalid\n")
+        case = source_runner.parse_case(source, "fail")
+        for path, phase, message, accepted in (
+                ("/frozen/library/core/num.mt", "constant", "panic during constant evaluation", True),
+                (r"C:\frozen\library\core\num.mt", "constant", "panic during constant evaluation", True),
+                ("/frozen/library/notcore/num.mt", "constant", "panic during constant evaluation", False),
+                ("/frozen/library/core/num.mt", "type", "panic during constant evaluation", False),
+                ("/frozen/library/core/num.mt", "constant", "different failure", False)):
+            with self.subTest(path=path, phase=phase, message=message):
+                result = subprocess.CompletedProcess(
+                    [], 1, "", f"{path}:2840:23: error[{phase}]: {message}\n")
+                runner = source_runner.Runner("compiler", case)
+                with patch.object(source_runner.processes, "run", return_value=result):
+                    if accepted:
+                        runner.execute_fail(root)
+                        self.assertEqual(len(runner.records), 1)
+                    else:
+                        with self.assertRaisesRegex(AssertionError, "expected error"):
+                            runner.execute_fail(root)
+                self.assertEqual((root / "case.out").read_bytes(), source_runner.PRESERVED)
+
     def test_source_receipts_track_shared_helper_changes(self):
         with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
             root = Path(temporary)

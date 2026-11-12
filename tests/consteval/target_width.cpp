@@ -180,6 +180,35 @@ void integerMethods() {
 
 int main() {
   integerMethods();
+  std::uint64_t indexed = 0;
+  expect(accepted("enum Tag { First, Last }\n"
+                  "const N: u8 = Tag.Last as u8;\n",
+                  64, nullptr, &indexed) &&
+             indexed == 1,
+         "fieldless enum constant casts preserve variant ordinal");
+  expect(accepted("enum Tag { First = 7, Last = 42 }\n"
+                  "const N: u8 = Tag.Last as u8;\n",
+                  64, nullptr, &indexed) &&
+             indexed == 42,
+         "fieldless enum constant casts preserve explicit discriminants");
+  expect(accepted("const fn at(i: i32): i32 { "
+                  "let values = [11, 23]; values[i] }\n"
+                  "const N: i32 = at(1);\n",
+                  64, nullptr, &indexed) &&
+             indexed == 23,
+         "checked i32 indexing executes in required constants");
+  expect(accepted("const fn at(): i32 { [11, 23][1i32] }\n"
+                  "const N: i32 = at();\n",
+                  64, nullptr, &indexed) &&
+             indexed == 23,
+         "checked i32 indexing executes on constant array temporaries");
+  std::string indexError;
+  expect(!accepted("const fn at(i: i32): i32 { "
+                   "let values = [11, 23]; values[i] }\n"
+                   "const N: i32 = at(-1);\n",
+                   64, &indexError) &&
+             indexError.find("out of bounds") != std::string::npos,
+         "negative checked i32 constant index remains out of bounds");
   const std::string literal = "const N: usize = 4294967296;\n";
   expect(accepted(literal, 64), "2^32 fits usize on a 64-bit target");
   expect(!accepted(literal, 32), "2^32 exceeds usize on a 32-bit target");

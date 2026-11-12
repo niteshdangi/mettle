@@ -9,12 +9,21 @@ using evaluation::Lookup;
 using evaluation::Value;
 
 namespace {
+NumericLiteral enumDiscriminant(const TypeStore &types, Type type,
+                                std::size_t selection) {
+  const auto &values = types.product(type).layout.discriminants;
+  return values.empty() ? integerLiteral(selection) : values.at(selection);
+}
 bool chargeConstant(const TypeStore &types, const StaticConstant &constant,
                     std::size_t &budget) {
   if (!budget)
     return false;
   --budget;
-  if (constant.kind == StaticConstant::Kind::Repeat) {
+  if (constant.kind == StaticConstant::Kind::Text) {
+    if (constant.text.size() > budget)
+      return false;
+    budget -= constant.text.size();
+  } else if (constant.kind == StaticConstant::Kind::Repeat) {
     auto length = types.arrayLength(constant.type);
     if (!length || constant.fields.empty())
       return true;
@@ -132,9 +141,78 @@ public:
   bool copy(Type type) override {
     return checker.typeStore().isCopy(substitute(type));
   }
-  std::optional<Value> storage(int symbol) override {
+  Lookup storage(int symbol, std::size_t &remaining) override {
+    Lookup result;
     auto value = checker.staticValue(symbol);
-    return value ? checker.constantValueOf(*value) : std::nullopt;
+    if (!value) {
+      result.kind = Lookup::Kind::Failed;
+      return result;
+    }
+    auto budget = remaining;
+    if (!chargeConstant(checker.typeStore(), *value, budget)) {
+      checker.error("limit", checker.module.statics.at(symbol).span,
+                    "constant evaluation exceeded the aggregate size limit");
+      result.kind = Lookup::Kind::Failed;
+      return result;
+    }
+    if (auto converted = checker.constantValueOf(*value, *this)) {
+      remaining = budget;
+      result.kind = Lookup::Kind::Constant;
+      result.value = std::move(*converted);
+    }
+    return result;
+  }
+  std::shared_ptr<Value> literalStorage(std::string_view bytes) override {
+    auto [found, inserted] = literalRoots.try_emplace(std::string(bytes));
+    if (inserted) {
+      auto root = std::make_shared<Value>();
+      root->kind = Value::Kind::Array;
+      root->type = checker.typeStore().arrayType(
+          Type::U8, checker.typeStore().constant(Type::Usize,
+                                                 integerLiteral(bytes.size())));
+      root->immutableLiteral = true;
+      root->elements.reserve(bytes.size());
+      for (unsigned char byte : bytes) {
+        Value element;
+        element.kind = Value::Kind::Integer;
+        element.type = Type::U8;
+        element.number = integerLiteral(byte);
+        root->elements.push_back(std::move(element));
+      }
+      found->second = std::move(root);
+    }
+    return found->second;
+  }
+  Lookup literal(const Node &node, std::size_t &remaining) override {
+    Lookup result;
+    auto errors = checker.diagnostics.count();
+    auto type = checker.textLiteralType(node);
+    if (type == Type::Unknown || checker.diagnostics.count() != errors) {
+      result.kind = Lookup::Kind::Failed;
+      return result;
+    }
+    StaticConstant constant;
+    constant.kind = StaticConstant::Kind::Text;
+    constant.type = type;
+    constant.text = checker.facts(node).text;
+    if (constant.text.size() >
+        integerMaximum(Type::Isize, checker.pointerBits()).magnitude[0]) {
+      checker.error("limit", node.span,
+                    "literal backing exceeds target address space");
+      result.kind = Lookup::Kind::Failed;
+      return result;
+    }
+    auto budget = remaining;
+    if (!chargeConstant(checker.typeStore(), constant, budget)) {
+      checker.error("limit", node.span,
+                    "constant evaluation exceeded the aggregate size limit");
+      result.kind = Lookup::Kind::Failed;
+    } else if (auto value = checker.constantValueOf(constant, *this)) {
+      remaining = budget;
+      result.kind = Lookup::Kind::Constant;
+      result.value = std::move(*value);
+    }
+    return result;
   }
   Operation operation(const Node &node) override {
     if (auto facts = nodeFacts(node)) {
@@ -188,6 +266,25 @@ public:
     const Function *declaration = nullptr;
     auto facts = nodeFacts(node);
     auto typeArguments = facts ? facts->typeArguments : std::vector<Type>{};
+    if (facts && facts->variant >= 0) {
+      auto type = substitute(facts->type);
+      if (types.isSum(type)) {
+        const auto &record = types.product(type);
+        if (std::size_t(facts->variant) >= record.variants.size()) {
+          checker.error("metadata", node.span,
+                        "checked constant contains an invalid enum variant");
+          result.kind = Lookup::Kind::Failed;
+          return result;
+        }
+        result.kind = Lookup::Kind::Constant;
+        result.value.kind =
+            enumeration(type) ? Value::Kind::Enum : Value::Kind::Variant;
+        result.value.type = type;
+        result.value.selection = facts->variant;
+        result.value.number = enumDiscriminant(types, type, facts->variant);
+        return result;
+      }
+    }
     if (facts && facts->interfaceMethod >= 0) {
       const auto &database = checker.checked.interfaceDatabase();
       interfaces::Solver solver(types, database, checker.diagnostics, {}, {},
@@ -436,16 +533,18 @@ public:
   }
   Lookup variant(Type type, std::string_view name, Span) override {
     Lookup result;
-    if (!enumeration(type))
+    if (!checker.typeStore().isSum(type))
       return result;
     const auto &record = checker.typeStore().product(type);
     for (std::size_t i = 0; i < record.variants.size(); ++i) {
       if (record.variants[i].name != name)
         continue;
       result.kind = Lookup::Kind::Constant;
-      result.value.kind = Value::Kind::Enum;
+      result.value.kind =
+          enumeration(type) ? Value::Kind::Enum : Value::Kind::Variant;
       result.value.type = type;
-      result.value.number.magnitude[0] = i;
+      result.value.selection = i;
+      result.value.number = enumDiscriminant(checker.typeStore(), type, i);
       return result;
     }
     return result;
@@ -512,7 +611,7 @@ public:
         found.kind = Lookup::Kind::Failed;
         return found;
       }
-      if (auto value = checker.constantValueOf(constant)) {
+      if (auto value = checker.constantValueOf(constant, *this)) {
         remaining = budget;
         found.kind = Lookup::Kind::Constant;
         found.value = std::move(*value);
@@ -545,8 +644,10 @@ public:
       }
       if (facts.constantParameter != Type::Unknown)
         return carrier(facts.constantParameter);
-      if (facts.variant >= 0 && enumeration(facts.type)) {
-        const auto &variants = checker.typeStore().product(facts.type).variants;
+      if (facts.variant >= 0 &&
+          checker.typeStore().isSum(substitute(facts.type))) {
+        auto type = substitute(facts.type);
+        const auto &variants = checker.typeStore().product(type).variants;
         if (std::size_t(facts.variant) >= variants.size()) {
           checker.error("metadata", name.span,
                         "checked constant contains an invalid enum variant");
@@ -554,9 +655,12 @@ public:
           return result;
         }
         result.kind = Lookup::Kind::Constant;
-        result.value.kind = Value::Kind::Enum;
-        result.value.type = facts.type;
-        result.value.number.magnitude[0] = facts.variant;
+        result.value.kind =
+            enumeration(type) ? Value::Kind::Enum : Value::Kind::Variant;
+        result.value.type = type;
+        result.value.selection = facts.variant;
+        result.value.number =
+            enumDiscriminant(checker.typeStore(), type, facts.variant);
         return result;
       }
       if (facts.numeric) {
@@ -580,7 +684,7 @@ public:
       syntax.name = name.text.substr(0, separator);
       syntax.context = name.context;
       auto type = resolveType(syntax, name.span);
-      if (enumeration(type))
+      if (checker.typeStore().isSum(type))
         return variant(type, name.text.substr(separator + 2), name.span);
       if (isFloating(type))
         return floatingValue(type, name.text.substr(separator + 2), name.span);
@@ -612,7 +716,7 @@ public:
         result.kind = Lookup::Kind::Failed;
         return result;
       }
-      auto converted = checker.constantValueOf(*value);
+      auto converted = checker.constantValueOf(*value, *this);
       if (!converted)
         return failure("storage of this type cannot be read in a constant "
                        "expression");
@@ -670,6 +774,8 @@ private:
   std::deque<Context> contexts;
   std::map<const Node *, NodeFacts> syntheticFacts;
   std::deque<NodeOwner> receiverExpressions;
+  // Host ownership keeps literal roots live through checked serialization.
+  std::map<std::string, std::shared_ptr<Value>, std::less<>> literalRoots;
   // A constant parameter or associated constant is concrete once its generic
   // arguments are bound.
   Lookup carrier(Type identity) {
@@ -865,8 +971,28 @@ std::optional<evaluation::Shape> Checker::constantShape(Type type) {
   return std::nullopt;
 }
 
-std::optional<Value> Checker::constantValueOf(const StaticConstant &constant) {
+std::optional<Value> Checker::constantValueOf(const StaticConstant &constant,
+                                              evaluation::Host &host) {
   Value value;
+  if (constant.kind == StaticConstant::Kind::Text) {
+    auto count = textConstantCount(*checked.types, constant);
+    if (!count)
+      return std::nullopt;
+    auto root = host.literalStorage(constant.text);
+    if (!root)
+      return std::nullopt;
+    value.kind = checked.types->isPointer(constant.type)
+                     ? Value::Kind::Pointer
+                     : Value::Kind::Reference;
+    value.type = constant.type;
+    value.exclusive =
+        checked.types->view(constant.type).mode == ParameterMode::Mut;
+    value.storage = root;
+    value.storageType = root->type;
+    value.offset = constant.byteOffset;
+    value.count = *count;
+    return value;
+  }
   if (constant.kind == StaticConstant::Kind::Address ||
       constant.kind == StaticConstant::Kind::Pointer) {
     if (!checked.types->isView(constant.type) &&
@@ -917,20 +1043,20 @@ std::optional<Value> Checker::constantValueOf(const StaticConstant &constant) {
   }
   if (constant.kind == StaticConstant::Kind::Aggregate &&
       checked.types->isSum(constant.type)) {
-    ConstantHost host(*this);
     if (constant.selection < 0)
       return std::nullopt;
     value.kind = host.enumeration(constant.type) ? Value::Kind::Enum
                                                  : Value::Kind::Variant;
     value.type = constant.type;
-    value.number.magnitude[0] = constant.selection;
+    value.number =
+        enumDiscriminant(*checked.types, constant.type, constant.selection);
     value.selection = constant.selection;
     const auto &record = checked.types->product(constant.type);
     auto start = record.layout.kind == LayoutKind::Transparent ? 0 : 1;
     for (std::size_t i = start;
          value.kind == Value::Kind::Variant && i < constant.fields.size();
          ++i) {
-      auto field = constantValueOf(constant.fields[i]);
+      auto field = constantValueOf(constant.fields[i], host);
       if (!field)
         return std::nullopt;
       value.elements.push_back(std::move(*field));
@@ -958,14 +1084,14 @@ std::optional<Value> Checker::constantValueOf(const StaticConstant &constant) {
       return std::nullopt;
     if (!*length)
       return value;
-    auto element = constantValueOf(constant.fields.front());
+    auto element = constantValueOf(constant.fields.front(), host);
     if (!element)
       return std::nullopt;
     value.elements.assign(static_cast<std::size_t>(*length), *element);
     return value;
   }
   for (const auto &field : constant.fields) {
-    auto element = constantValueOf(field);
+    auto element = constantValueOf(field, host);
     if (!element)
       return std::nullopt;
     value.elements.push_back(std::move(*element));
@@ -993,6 +1119,30 @@ std::optional<StaticConstant> Checker::staticFromValue(const Value &value,
         (value.addressOnly && value.kind == Value::Kind::Reference &&
          value.offset == 0))
       return mismatch();
+    if (auto root = value.storage.lock(); root && root->immutableLiteral) {
+      if (value.addressOnly || value.symbol >= 0 || value.writable ||
+          (value.kind == Value::Kind::Reference && value.exclusive))
+        return mismatch();
+      result.kind = StaticConstant::Kind::Text;
+      result.byteOffset = value.offset;
+      result.text.reserve(root->elements.size());
+      for (const auto &element : root->elements) {
+        if (element.kind != Value::Kind::Integer || element.type != Type::U8 ||
+            !integerLiteralFits(element.number, Type::U8))
+          return mismatch();
+        result.text.push_back(static_cast<char>(element.number.magnitude[0]));
+      }
+      if (checked.types->pointerMetadata(checked.types->view(type).payload) ==
+          PointerMetadata::ElementCount) {
+        StaticConstant count;
+        count.type = Type::Usize;
+        count.scalar = integerLiteral(value.count);
+        result.fields.push_back(std::move(count));
+      }
+      if (!textConstantCount(*checked.types, result))
+        return mismatch();
+      return result;
+    }
     result.kind = value.addressOnly ? StaticConstant::Kind::Pointer
                                     : StaticConstant::Kind::Address;
     result.symbol = value.symbol;

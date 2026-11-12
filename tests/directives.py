@@ -31,8 +31,13 @@ def parse_error(entry):
     return match.groups()
 
 
-def matches_error(source, expectation, stderr):
+def matches_error(source, expectation, stderr, *, source_suffix=None):
     phase, line, column, message = expectation
-    intended = (re.escape(f"{source}:{line}:{column}: error[{phase}]:") +
+    if source_suffix is None:
+        path = re.escape(str(source))
+    else:
+        path = r"(?:^|[/\\])" + r"[/\\]".join(
+            re.escape(part) for part in source_suffix.replace("\\", "/").split("/"))
+    intended = (path + re.escape(f":{line}:{column}: error[{phase}]:") +
                 r"[^\n]*" + re.escape(message))
     return re.search(intended, stderr) is not None

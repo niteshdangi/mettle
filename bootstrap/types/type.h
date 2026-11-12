@@ -97,7 +97,8 @@ struct StaticConstant {
   int symbol = -1;
   std::vector<std::uint32_t> projections{};
   int selection = -1;
-  // Bytes of a Text or byte-text literal; `type` is its static read view.
+  // Full immutable literal backing; byteOffset and optional fields[0] usize
+  // extent describe its view/pointer without changing the backing identity.
   std::string text{};
   std::uint64_t byteOffset = 0;
 };

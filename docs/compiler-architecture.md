@@ -93,6 +93,8 @@ machine signatures; `consteval` owns aggregate results, target byte order and
 provenance-checked mutable writeback. Typed throws propagate as interpreter
 control flow through calls and loops. Capture handles only typed errors, never
 evaluation faults; checked semantic facts distinguish Outcome propagation.
+Nominal error construction and patterns select the active variant's fields,
+including named payloads and empty variants in payload-bearing enums.
 
 The evaluator's host supplies checked expression shapes and inferred function
 results; evaluation does not independently re-infer integer locals.
@@ -117,10 +119,26 @@ address-only empty/zero-sized pointers. `ir` validates their target alignment,
 extent, metadata and mutability before `backend` lowers them. Library checked
 expression descriptors preserve symbolic shapes for concrete call preparation.
 
+Literal byte roots are owned by the evaluation host; interpreter references stay
+non-owning and retain immutable provenance even through mutable pointer casts.
+Literal-backed static views preserve the complete backing bytes, interior offset
+and explicit extent rather than copying a substring. `types::textConstantCount`
+shares their shape/extent validation between checked archives and IR admission;
+LLVM materializes interior addresses into the complete interned literal.
+This representation uses IR format 3 and checked-library contracts 6; older
+archives must be rebuilt.
+Checked expressions retain interface dispatch identities and Outcome propagation
+so imported const bodies select concrete implementations and typed effects.
+
 Concrete nominal associated constants retain typed `StaticConstant` payloads
 through checked library contracts. Each expression constructs a fresh value
 with its own cleanup ownership, rather than moving from shared static storage.
 Required projections preserve field visibility and evaluator storage lifetime.
+Region normalization decorates nominal arguments and associated bindings in
+source interface bounds before expanding their inherited obligations.
+Associated implementation bounds are proved after nominal region decoration,
+inside the implementation/family region environment; method contracts are
+prepared earlier so the region pass can validate them.
 
 ### 1.1. Self-hosted compiler: package and incremental compilation contract
 
@@ -270,6 +288,8 @@ source-body requirement from constant calls. `semantics/library` owns the
 portable checked-expression arenas, resolved facts, declaration contracts and
 header codec. Imported calls retain the source path's declaration eligibility
 checks; importing a runtime-only declaration does not make it const-callable.
+Const eligibility precedes body availability, since runtime-only imported
+declarations intentionally have no constant-expression body.
 
 Expansion can export and import complete indexed macro inventories with private
 support rules, imports/reexports, hygiene and token provenance. Logically equal

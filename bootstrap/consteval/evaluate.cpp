@@ -978,7 +978,8 @@ private:
     if (value.kind == Value::Kind::Integer && isInteger(to))
       return integerValue(to,
                           castInteger(value.number, to, options.pointerBits));
-    if ((value.kind == Value::Kind::Bool || value.kind == Value::Kind::Char) &&
+    if ((value.kind == Value::Kind::Bool || value.kind == Value::Kind::Char ||
+         value.kind == Value::Kind::Enum) &&
         isInteger(to))
       return integerValue(to,
                           castInteger(value.number, to, options.pointerBits));
@@ -1042,9 +1043,15 @@ private:
     if (address.symbol < 0)
       return {};
     auto &root = staticRoots[address.symbol];
-    if (!root)
-      if (auto value = host.storage(address.symbol))
-        root = std::make_shared<Value>(std::move(*value));
+    if (!root) {
+      auto remaining = options.stepBudget - steps;
+      auto found = host.storage(address.symbol, remaining);
+      steps = options.stepBudget - remaining;
+      if (found.kind == Lookup::Kind::Failed)
+        failed = reported = true;
+      else if (found.kind == Lookup::Kind::Constant)
+        root = std::make_shared<Value>(std::move(found.value));
+    }
     return root;
   }
   bool addressBounds(const Value &address, Type type, std::uint64_t size,
@@ -1058,6 +1065,7 @@ private:
     if (!root || address.addressOnly || !backing || !target ||
         address.offset > backing->size ||
         size > backing->size - address.offset ||
+        target->alignment > backing->alignment ||
         address.offset % target->alignment)
       return fail("constant", span,
                   "constant pointer is dangling, misaligned or out of bounds"),
@@ -1068,6 +1076,24 @@ private:
     auto target = pointee(address);
     if (!target)
       return false;
+    if (auto root = rootOf(address);
+        root && root->immutableLiteral && address.exclusive)
+      return fail("constant", span,
+                  "constant exclusive borrow requires writable provenance"),
+             false;
+    while (target->kind == Shape::Kind::Product &&
+           target->elements.size() == 1) {
+      auto layout = host.layout(target->type);
+      if (!layout || layout->size || layout->fields.size() != 1 ||
+          layout->fields.front() != 0)
+        break;
+      if (!addressBounds(address, target->type, 0, span))
+        return false;
+      auto tail = host.typeShape(target->elements.front().type);
+      if (!tail)
+        break;
+      target = std::move(tail);
+    }
     if (target->kind == Shape::Kind::Array && target->count == UINT64_MAX) {
       auto element = host.layout(target->elements.front().type);
       if (!element ||
@@ -1141,6 +1167,10 @@ private:
     auto root = rootOf(address);
     if (!root && address.addressOnly && layout->size == 0)
       return true;
+    if (root && root->immutableLiteral) {
+      fail("constant", span, "constant write requires writable provenance");
+      return false;
+    }
     if (auto target =
             locate(*root, address.storageType, address.offset, type)) {
       *target = value;
@@ -1224,6 +1254,15 @@ private:
     switch (node.kind) {
     case Kind::Group:
       return place(*node.children[0]);
+    case Kind::Text: {
+      auto value = eval(node, nullptr);
+      if (!value)
+        return {};
+      Place result;
+      result.address = std::move(*value);
+      result.root = "text literal";
+      return result;
+    }
     case Kind::Unary:
       if (node.text == "*") {
         auto pointer = eval(*node.children[0], nullptr);
@@ -1354,9 +1393,10 @@ private:
         return {};
       }
       if (index->kind != Value::Kind::Integer ||
-          (index->type != Type::Unknown && index->type != Type::Usize)) {
+          (index->type != Type::Unknown && index->type != Type::Usize &&
+           index->type != Type::I32)) {
         fail("type", node.children[1]->span,
-             "array index must be usize, found " + describe(*index));
+             "array index must be i32 or usize, found " + describe(*index));
         return {};
       }
       auto count = base.address && type->count == UINT64_MAX
@@ -1499,19 +1539,69 @@ private:
       return true;
     }
     case PatternKind::Variant: {
-      if (value.kind != Value::Kind::Variant)
+      if (value.kind != Value::Kind::Variant && value.kind != Value::Kind::Enum)
         return false;
       auto name = pattern.text;
       auto separator = name.rfind("::");
       if (separator != std::string::npos)
         name = name.substr(separator + 2);
       auto selection = name == "present" || name == "failure" ? 1 : 0;
-      if (value.selection != selection ||
+      auto found = host.variant(value.type, name, pattern.span);
+      if (found.kind == Lookup::Kind::Constant)
+        selection = found.value.selection;
+      else if (name != "present" && name != "none" && name != "success" &&
+               name != "failure")
+        return unsupported(pattern.span, "this constant variant pattern");
+      auto active = value.kind == Value::Kind::Enum
+                        ? int(value.number.magnitude[0])
+                        : value.selection;
+      if (active != selection ||
           value.elements.size() != pattern.children.size())
         return false;
       for (std::size_t i = 0; i < pattern.children.size(); ++i) {
         auto matched = matches(pattern.children[i], value.elements[i], binds,
                                mutableBinding);
+        if (!matched || !*matched)
+          return matched;
+      }
+      return true;
+    }
+    case PatternKind::Product: {
+      if (value.kind != Value::Kind::Product &&
+          value.kind != Value::Kind::Variant)
+        return false;
+      auto shape = host.typeShape(value.type);
+      if (!shape)
+        return unsupported(pattern.span, "this constant product pattern");
+      std::vector<std::size_t> fields;
+      if (value.kind == Value::Kind::Variant) {
+        auto name = std::string_view(pattern.text);
+        if (auto separator = name.rfind("::");
+            separator != std::string_view::npos)
+          name.remove_prefix(separator + 2);
+        auto found = host.variant(value.type, name, pattern.span);
+        if (found.kind != Lookup::Kind::Constant)
+          return unsupported(pattern.span, "this constant variant pattern");
+        if (found.value.selection != value.selection)
+          return false;
+        if (value.selection < 0 ||
+            std::size_t(value.selection) >= shape->variants.size())
+          return fail("type", pattern.span, "invalid constant enum variant");
+        fields = shape->variants[value.selection];
+      } else
+        for (std::size_t i = 0; i < shape->elements.size(); ++i)
+          fields.push_back(i);
+      for (const auto &child : pattern.children) {
+        auto field =
+            std::find_if(fields.begin(), fields.end(), [&](std::size_t index) {
+              return index < shape->names.size() &&
+                     shape->names[index] == child.field;
+            });
+        if (field == fields.end() ||
+            std::size_t(field - fields.begin()) >= value.elements.size())
+          return fail("type", child.span, "unknown constant pattern field");
+        auto matched = matches(child, value.elements[field - fields.begin()],
+                               binds, mutableBinding);
         if (!matched || !*matched)
           return matched;
       }
@@ -1955,9 +2045,11 @@ private:
     return true;
   }
   bool exportable(const Value &value, Span span) {
+    auto root = value.storage.lock();
     if ((value.kind == Value::Kind::Reference ||
          value.kind == Value::Kind::Pointer) &&
-        !value.addressOnly && value.symbol < 0) {
+        !value.addressOnly && value.symbol < 0 &&
+        !(root && root->immutableLiteral)) {
       fail("constant", span,
            "constant result cannot retain a pointer or view of local storage");
       return false;
@@ -2274,11 +2366,34 @@ private:
       return std::nullopt;
     }
     if (found.kind == Lookup::Kind::Constant &&
-        found.value.kind == Value::Kind::Product) {
+        found.value.kind == Value::Kind::Enum && arguments.empty())
+      return found.value;
+    if (found.kind == Lookup::Kind::Constant &&
+        (found.value.kind == Value::Kind::Product ||
+         found.value.kind == Value::Kind::Variant)) {
       auto shape = host.typeShape(found.value.type);
       if (!shape)
         return unsupported(node.span, "this constant constructor");
+      if (found.value.kind == Value::Kind::Variant) {
+        auto selection = found.value.selection;
+        if (selection < 0 || std::size_t(selection) >= shape->variants.size())
+          return fail("type", callee.span, "invalid constant enum variant");
+        auto fields = shape->variants[selection];
+        std::vector<Shape> elements;
+        std::vector<std::string> names;
+        for (auto field : fields) {
+          if (field >= shape->elements.size() || field >= shape->names.size())
+            return fail("type", callee.span, "invalid constant variant field");
+          elements.push_back(shape->elements[field]);
+          names.push_back(shape->names[field]);
+        }
+        shape->kind = Shape::Kind::Product;
+        shape->elements = std::move(elements);
+        shape->names = std::move(names);
+      }
       auto value = uninitialized(*shape);
+      value.kind = found.value.kind;
+      value.selection = found.value.selection;
       std::vector<bool> used(shape->elements.size());
       for (std::size_t i = 0; i < arguments.size(); ++i) {
         std::size_t slot = i;
@@ -2301,12 +2416,12 @@ private:
     }
     auto declaration = found.declaration;
     auto function = found.checkedFunction;
-    if (!function || !function->body)
-      return unsupported(node.span, "this constant call");
     if (declaration && !declaration->constFunction)
       return fail("constant", node.span,
                   "call to non-const function '" + displayPath(callee.text) +
                       "' in a constant expression");
+    if (!function || !function->body)
+      return unsupported(node.span, "this constant call");
     if (declaration && (declaration->variadic || declaration->destructor ||
                         declaration->foreignDeclaration))
       return unsupported(node.span, "this constant function effect");
@@ -2687,6 +2802,18 @@ private:
       return node.flag ? integerValue(Type::U8, integerLiteral(*code))
                        : charValue(*code);
     }
+    case Kind::Text: {
+      auto remaining = options.stepBudget - steps;
+      auto found = host.literal(node, remaining);
+      steps = options.stepBudget - remaining;
+      if (found.kind == Lookup::Kind::Constant)
+        return std::move(found.value);
+      if (found.kind == Lookup::Kind::Failed) {
+        failed = reported = true;
+        return std::nullopt;
+      }
+      return unsupported(node.span, "this text literal");
+    }
     case Kind::Unit:
       return unitValue();
     case Kind::None:
@@ -3046,9 +3173,11 @@ private:
       if (!index)
         return std::nullopt;
       if (index->kind != Value::Kind::Integer ||
-          (index->type != Type::Unknown && index->type != Type::Usize))
+          (index->type != Type::Unknown && index->type != Type::Usize &&
+           index->type != Type::I32))
         return fail("type", node.children[1]->span,
-                    "array index must be usize, found " + describe(*index));
+                    "array index must be i32 or usize, found " +
+                        describe(*index));
       if (index->number.negative || index->number.magnitude[1] ||
           index->number.magnitude[0] >= base->elements.size())
         return fail("constant", node.span,

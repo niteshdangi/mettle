@@ -348,7 +348,7 @@ pub fn from_utf8_mut(mut bytes: [u8]): (Outcome<mut Text from bytes, Utf8Error>)
 }
 
 // Safety: `bytes` is well-formed UTF-8.
-pub unsafe fn from_utf8_unchecked(read bytes: [u8]): read Text from bytes {
+pub unsafe const fn from_utf8_unchecked(read bytes: [u8]): read Text from bytes {
     let fat = core.ptr.from_ref(bytes)
     let view = unsafe { core.mem.transmute<ptr<read Text>>(fat) }
     unsafe { read *view }
@@ -1086,8 +1086,8 @@ extend<region r> TextUtf16<region r> implements BidirectionalIterator {
 }
 
 extend Text {
-    pub fn len(): usize { self.bytes.len() }
-    pub fn is_empty(): bool { self.bytes.len() == 0usize }
+    pub const fn len(): usize { self.bytes.len() }
+    pub const fn is_empty(): bool { self.bytes.len() == 0usize }
     pub fn is_ascii(): bool {
         var i = 0usize
         while i < self.bytes.len() {
@@ -1096,8 +1096,8 @@ extend Text {
         }
         true
     }
-    pub fn as_bytes(): read [u8] from self { read self.bytes }
-    pub fn is_char_boundary(index: usize): bool {
+    pub const fn as_bytes(): read [u8] from self { read self.bytes }
+    pub const fn is_char_boundary(index: usize): bool {
         if index == 0usize || index == self.bytes.len() { return true }
         if index > self.bytes.len() { return false }
         (self.bytes[index] & 0xc0u8) != 0x80u8
@@ -1112,7 +1112,7 @@ extend Text {
         while !self.is_char_boundary(boundary) { boundary += 1usize }
         boundary
     }
-    pub fn get(start: usize, end: usize): (read Text from self)? {
+    pub const fn get(start: usize, end: usize): (read Text from self)? {
         if start > end || !self.is_char_boundary(start) || !self.is_char_boundary(end) {
             return none
         }

@@ -31,20 +31,20 @@ pub unsafe fn drop_values<T>(p: ptr<mut T>, n: usize): Unit {
     guard.run()
 }
 
-pub fn data(read bytes: [u8]): ptr<read u8> {
+pub const fn data(read bytes: [u8]): ptr<read u8> {
     let fat = core.ptr.from_ref(bytes)
     let raw = unsafe { core.mem.transmute<Raw>(fat) }
     raw.data
 }
 
 // Safety: start <= end <= bytes.len().
-pub unsafe fn subslice_unchecked(read bytes: [u8], start: usize, end: usize): read [u8] from bytes {
+pub unsafe const fn subslice_unchecked(read bytes: [u8], start: usize, end: usize): read [u8] from bytes {
     let raw = Raw(data(bytes).add(start), end - start)
     let fat = unsafe { core.mem.transmute<ptr<read [u8]>>(raw) }
     unsafe { read *fat }
 }
 
-pub fn subslice(read bytes: [u8], start: usize, end: usize): (read [u8] from bytes)? {
+pub const fn subslice(read bytes: [u8], start: usize, end: usize): (read [u8] from bytes)? {
     if start <= end && end <= bytes.len() {
         present(unsafe { subslice_unchecked(bytes, start, end) })
     } else {
@@ -100,7 +100,7 @@ fn alignment_partition<T, U>(
 
 // Safety: `data` is valid for reads of `len` initialized elements for all of
 // region `r`, is aligned, and no exclusive access overlaps it during `r`.
-pub unsafe fn from_raw_parts<region r, T>(data: ptr<read T>, len: usize): read [T] from r {
+pub unsafe const fn from_raw_parts<region r, T>(data: ptr<read T>, len: usize): read [T] from r {
     let raw = RawParts(data, len)
     let fat = unsafe { core.mem.transmute<ptr<read [T]>>(raw) }
     unsafe { read *fat }
@@ -271,7 +271,7 @@ extend<T> [T] {
     pub mut fn last_mut(): (mut T from self)? {
         if self.len() == 0usize { none } else { self.get_mut(self.len() - 1usize) }
     }
-    pub fn as_ptr(): ptr<read T> {
+    pub const fn as_ptr(): ptr<read T> {
         let raw = unsafe {
             core.mem.transmute<RawParts<T>>(core.ptr.from_ref(self))
         }
@@ -1253,7 +1253,7 @@ extend<T> [T] {
         (unsafe { mut *left }, unsafe { mut *right })
     }
 
-    pub mut fn split_at_mut_checked(mid: usize): (mut [T] from self, mut [T] from self)? {
+    pub mut const fn split_at_mut_checked(mid: usize): (mut [T] from self, mut [T] from self)? {
         if mid > self.len() { return none }
         let n = self.len()
         let base = mutable_data_pointer(mut self)

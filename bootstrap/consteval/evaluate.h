@@ -41,6 +41,7 @@ struct Value {
   std::uint64_t offset = 0, count = 0;
   int symbol = -1, selection = -1;
   bool exclusive = false, writable = false, addressOnly = false;
+  bool immutableLiteral = false;
 };
 
 struct Shape {
@@ -135,7 +136,9 @@ public:
   virtual std::optional<Layout> layout(Type) { return std::nullopt; }
   virtual bool needsDrop(Type) { return false; }
   virtual bool copy(Type) { return true; }
-  virtual std::optional<Value> storage(int) { return std::nullopt; }
+  virtual Lookup storage(int, std::size_t &) { return {}; }
+  virtual std::shared_ptr<Value> literalStorage(std::string_view) { return {}; }
+  virtual Lookup literal(const Node &, std::size_t &) { return {}; }
   virtual Operation operation(const Node &) { return {}; }
   virtual const Node *receiver(const Node &) { return nullptr; }
   virtual Lookup prepare(const Node &, const Value *, std::span<const Value>,

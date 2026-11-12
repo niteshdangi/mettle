@@ -9,6 +9,8 @@ struct ObjectLayout {
   bool unaligned = false;
 };
 std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type);
+std::optional<std::uint64_t> textConstantCount(const TypeStore &types,
+                                               const StaticConstant &value);
 // True when the layout depends on a coroutine state, which the backend sizes
 // from its body's frame; such layouts are unknown before code generation.
 bool coroutineDependent(const TypeStore &types, Type type);

@@ -324,8 +324,9 @@ Type Checker::interfaceBound(const TypeSyntax &bound, Span span,
   return identity;
 }
 
-std::vector<interfaces::Obligation>
-Checker::interfaceAssumptions(const GenericEnvironment *inherited) {
+std::vector<interfaces::Obligation> Checker::interfaceAssumptions(
+    const GenericEnvironment *inherited,
+    const std::function<Type(Type, const TypeSyntax &, Span)> &decorate) {
   std::vector<interfaces::Obligation> result;
   if (!genericEnvironment)
     return result;
@@ -356,6 +357,8 @@ Checker::interfaceAssumptions(const GenericEnvironment *inherited) {
       auto type = property == interfaces::Property::Interface
                       ? interfaceBound(bound, context, {}, subject)
                       : Type::Unknown;
+      if (decorate && property == interfaces::Property::Interface)
+        type = decorate(type, bound, context);
       if (property == interfaces::Property::Interface)
         elaboratingBounds.erase(&bound);
       result.push_back({subject, type, property});

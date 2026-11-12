@@ -515,9 +515,10 @@ public:
       const std::unordered_map<const TypeSyntax *, Type> &annotations,
       const std::map<Type, LexicalName> &genericNames,
       std::vector<RegionSeed> seeds,
-      std::function<Type(Type, std::span<const TypeBinding>, std::size_t, Span,
-                         const RegionEnvironment &,
-                         const std::function<Type(Type, Span)> &)>
+      std::function<Type(
+          Type, std::span<const TypeBinding>, std::size_t, Span,
+          const RegionEnvironment &, const std::function<Type(Type, Span)> &,
+          const std::function<Type(Type, const TypeSyntax &, Span)> &)>
           normalizeContract,
       std::function<Type(Type, Type, std::size_t, Span,
                          const RegionEnvironment &)>
@@ -560,9 +561,10 @@ private:
            found->second == lexicalName(name, context);
   }
   std::vector<RegionSeed> seeds;
-  std::function<Type(Type, std::span<const TypeBinding>, std::size_t, Span,
-                     const RegionEnvironment &,
-                     const std::function<Type(Type, Span)> &)>
+  std::function<Type(
+      Type, std::span<const TypeBinding>, std::size_t, Span,
+      const RegionEnvironment &, const std::function<Type(Type, Span)> &,
+      const std::function<Type(Type, const TypeSyntax &, Span)> &)>
       normalizeContract;
   std::function<Type(Type, Type, std::size_t, Span, const RegionEnvironment &)>
       eraseContract;
@@ -771,6 +773,37 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
     auto found = context.types.find(lexicalName(syntax.name, syntax.context));
     if (found != context.types.end() && !syntax.nested)
       return found->second;
+  }
+  if (types.isErased(type)) {
+    auto descriptor = types.erased(type);
+    auto nested = context;
+    for (std::size_t i = 0;
+         i < syntax.binders.size() && i < descriptor.regionParameters.size();
+         ++i)
+      nested.names[lexicalName(syntax.binders[i])] =
+          descriptor.regionParameters[i];
+    const auto &definition = interfaceData.definitions[descriptor.declaration];
+    std::size_t position = 0;
+    for (const auto &argument : syntax.arguments) {
+      if (!argument.region.empty())
+        continue;
+      if (argument.binding.empty()) {
+        if (argument.type && position < descriptor.arguments.size())
+          descriptor.arguments[position] =
+              decorate(descriptor.arguments[position], *argument.type, nested,
+                       argument.span, fallback, stored);
+        ++position;
+      } else if (argument.type) {
+        for (auto &binding : descriptor.associated)
+          for (const auto &item : definition.associated)
+            if (binding.parameter == item.parameter &&
+                item.name == argument.binding)
+              binding.argument =
+                  decorate(binding.argument, *argument.type, nested,
+                           argument.span, fallback, stored);
+      }
+    }
+    return types.erasedType(std::move(descriptor));
   }
   if (types.isPointer(type)) {
     auto record = types.pointer(type);
@@ -3824,15 +3857,21 @@ Type RegionPass::normalizeValue(Type type, Span span) {
 Type RegionPass::normalize(Type type, std::span<const TypeBinding> bindings,
                            std::size_t function, Span span,
                            const RegionEnvironment &environment) {
-  return normalizeContract(type, bindings, function, span, environment,
-                           [&](Type parameter, Span location) {
-                             if (auto found = callableContracts.find(parameter);
-                                 found != callableContracts.end())
-                               return found->second;
-                             auto context = signatures[function].context;
-                             context.environment = environment;
-                             return callableBound(parameter, context, location);
-                           });
+  return normalizeContract(
+      type, bindings, function, span, environment,
+      [&](Type parameter, Span location) {
+        if (auto found = callableContracts.find(parameter);
+            found != callableContracts.end())
+          return found->second;
+        auto context = signatures[function].context;
+        context.environment = environment;
+        return callableBound(parameter, context, location);
+      },
+      [&](Type value, const TypeSyntax &syntax, Span location) {
+        auto context = signatures[function].context;
+        context.environment = environment;
+        return decorate(value, syntax, context, location);
+      });
 }
 Type RegionPass::callableBound(Type type, RegionContext &context, Span span) {
   if (auto found = closureDescriptors.find(type.index());
@@ -4566,7 +4605,9 @@ void Checker::checkRegions() {
       [&](Type signature, std::span<const TypeBinding> bindings,
           std::size_t implementation, Span span,
           const RegionEnvironment &environment,
-          const std::function<Type(Type, Span)> &callableContract) {
+          const std::function<Type(Type, Span)> &callableContract,
+          const std::function<Type(Type, const TypeSyntax &, Span)>
+              &decorateBound) {
         auto *saved = current;
         auto *savedEnvironment = genericEnvironment;
         current = &module.functions[implementation];
@@ -4638,7 +4679,7 @@ void Checker::checkRegions() {
             assumptions.push_back(requirement);
           }
         }
-        for (auto &assumption : interfaceAssumptions())
+        for (auto &assumption : interfaceAssumptions(nullptr, decorateBound))
           assumptions.push_back(assumption);
         auto descriptor = checked.types->callable(
             checked.types->substitute(signature, substitutions));

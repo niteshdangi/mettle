@@ -386,7 +386,7 @@ void verifiedRemapping() {
   bad.push_back(0);
   rejected(bad, refs);
   bad = fixture.irBytes;
-  bad[4] = 3;
+  ++bad[4];
   rejected(bad, refs);
   bad = fixture.irBytes;
   std::fill_n(bad.begin() + 8, 4, 255);
@@ -421,6 +421,83 @@ void verifiedRemapping() {
   }
   require(imported.roots == rootsBefore,
           "decode mutated shared caller type roots");
+}
+void literalBacking() {
+  auto types = std::make_shared<TypeStore>();
+  auto bytes = types->viewType(types->sliceType(Type::U8), ParameterMode::Read,
+                               RegionId::Static);
+  StaticConstant extent;
+  extent.type = Type::Usize;
+  extent.scalar = integerLiteral(2);
+  StaticConstant literal;
+  literal.kind = StaticConstant::Kind::Text;
+  literal.type = bytes;
+  literal.text = std::string("abc\0d", 5);
+  literal.byteOffset = 2;
+  literal.fields = {extent};
+  Program program;
+  program.types = types;
+  program.requireEntry = false;
+  program.statics = {{"LITERAL", {}, {}, bytes, false, false, {}, literal}};
+  metadata::EncodeReferences encode;
+  encode.type = [&](Type type) -> std::optional<std::uint32_t> {
+    if (type == bytes)
+      return 0;
+    if (type == Type::Usize)
+      return 1;
+    return std::nullopt;
+  };
+  encode.symbol = symbolName;
+  encode.source = [](Span span) {
+    return std::optional{metadata::SourceReference{
+        "literal-source", static_cast<std::uint32_t>(span.begin),
+        static_cast<std::uint32_t>(span.end)}};
+  };
+  auto encoded = encodeProgram(program, encode);
+  require(bool(encoded), encoded.error.c_str());
+  metadata::DecodeReferences decode;
+  decode.type = [&](std::uint32_t id) -> std::optional<Type> {
+    if (id == 0)
+      return bytes;
+    if (id == 1)
+      return Type::Usize;
+    return std::nullopt;
+  };
+  decode.symbol = [](SymbolKind kind,
+                     std::string_view name) -> std::optional<std::uint32_t> {
+    return name == *symbolName(kind, 0) ? std::optional<std::uint32_t>{0}
+                                        : std::nullopt;
+  };
+  decode.source =
+      [](const metadata::SourceReference &source) -> std::optional<Span> {
+    if (source.revision == "literal-source")
+      return Span{source.begin, source.end, 7};
+    return std::nullopt;
+  };
+  auto decoded = decodeProgram(encoded.bytes, decode);
+  require(bool(decoded), decoded.error.c_str());
+  decoded.program.types = types;
+  auto &value = *decoded.program.statics[0].initializer;
+  require(value.text == literal.text && value.byteOffset == 2 &&
+              value.fields.size() == 1 &&
+              value.fields[0].scalar == extent.scalar,
+          "literal backing, interior offset or extent lost in codec");
+  Diagnostics valid;
+  require(verify(decoded.program, valid),
+          "valid literal interior view was rejected");
+  value.fields[0].scalar = integerLiteral(4);
+  Diagnostics excessive;
+  require(!verify(decoded.program, excessive),
+          "literal extent beyond backing was accepted");
+  value.byteOffset = value.text.size();
+  value.fields[0].scalar = integerLiteral(0);
+  Diagnostics empty;
+  require(verify(decoded.program, empty),
+          "empty one-past literal view was rejected");
+  value.fields[0].scalar = integerLiteral(1);
+  Diagnostics pastEnd;
+  require(!verify(decoded.program, pastEnd),
+          "nonempty one-past literal view was accepted");
 }
 void rawFieldCoverage() {
   Program p;
@@ -634,6 +711,7 @@ void rawFieldCoverage() {
 int main() {
   try {
     verifiedRemapping();
+    literalBacking();
     rawFieldCoverage();
     std::cout << "IR codec tests passed\n";
     return 0;

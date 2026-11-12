@@ -1,5 +1,6 @@
 #include "semantics/library.h"
 #include "support/limits.h"
+#include "types/layout.h"
 #include <algorithm>
 #include <limits>
 #include <type_traits>
@@ -557,6 +558,8 @@ void wire(Archive &a, StaticConstant &v) {
   if ((v.kind == StaticConstant::Kind::Repeat && v.fields.size() != 1) ||
       v.selection < -1)
     a.fail("invalid checked static constant inventory");
+  if (v.kind == StaticConstant::Kind::Text && !textConstantCount(*a.types, v))
+    a.fail("invalid checked literal-backed static constant");
 }
 void wire(Archive &a, interfaces::Method &v) {
   a(v.name);
@@ -619,6 +622,7 @@ void wire(Archive &a, NodeFacts &v) {
     v.machineType, v.constantParameter, v.constantValue, v.constantCount,
     v.callResult, v.typeArguments, v.lexicallyBound, v.unsafeContext,
     v.receiverPlan);
+  a(v.interfaceSelf, v.interfaceType, v.interfaceMethod, v.outcomePropagation);
 }
 template <typename T> void Archive::record(T &item) {
   constexpr bool recursive =
@@ -996,7 +1000,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   }
   result.header = std::move(header.output);
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.4");
+  contracts.tag("mettle.checked-contracts.6");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size();
   contracts(count);
@@ -1068,7 +1072,7 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
     return result;
   }
   Archive archive(bytes, references, types.get());
-  archive.tag("mettle.checked-contracts.4");
+  archive.tag("mettle.checked-contracts.6");
   auto value = std::make_shared<ImportedDeclarations>();
   value->types = std::move(types);
   std::uint64_t count = 0;
@@ -1212,6 +1216,28 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
           !parameter(projection.parameter) ||
           !value->types->contains(projection.subject))
         archive.fail("invalid checked associated projection");
+    }
+    auto expression = [&](const std::shared_ptr<CheckedExpression> &body) {
+      if (!body)
+        return;
+      for (const auto &[node, facts] : body->facts) {
+        (void)node;
+        if (facts.interfaceMethod == -1)
+          continue;
+        const auto *owner = definition(facts.interfaceType);
+        if (facts.interfaceMethod < 0 || !owner ||
+            static_cast<std::size_t>(facts.interfaceMethod) >=
+                owner->methods.size() ||
+            facts.interfaceSelf == Type::Unknown ||
+            !value->types->contains(facts.interfaceSelf))
+          archive.fail("invalid checked expression interface dispatch");
+      }
+    };
+    for (const auto &[index, function] : value->functions) {
+      (void)index;
+      expression(function.body);
+      for (const auto &argument : function.defaults)
+        expression(argument);
     }
   }
   if (!archive.good()) {

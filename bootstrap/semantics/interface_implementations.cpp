@@ -605,8 +605,7 @@ Checker::interfaceMethod(Type self, std::string_view name, Node &call) {
   return function;
 }
 
-void Checker::checkInterfaceContracts() {
-  auto *saved = genericEnvironment;
+void Checker::checkAssociatedContracts() {
   for (const auto &implementation : checked.interfaceData->implementations) {
     if (imported(implementation.span))
       continue;
@@ -645,8 +644,21 @@ void Checker::checkInterfaceContracts() {
             checked.types->substitute(obligation.interfaceType, bindings);
         allowed.push_back(obligation);
       }
+      RegionEnvironment associatedRegions;
+      associatedRegions.assumptions = implementation.regionRequirements;
+      if (!implementation.regions.empty())
+        associatedRegions.universe = checked.types->regions()
+                                         .get(implementation.regions.front())
+                                         .universe;
+      if (!provided.regions.empty())
+        associatedRegions.universe =
+            checked.types->regions().get(provided.regions.front()).universe;
+      associatedRegions.assumptions.insert(associatedRegions.assumptions.end(),
+                                           provided.regionRequirements.begin(),
+                                           provided.regionRequirements.end());
       interfaces::Solver associated(*checked.types, *checked.interfaceData,
-                                    diagnostics, allowed);
+                                    diagnostics, allowed,
+                                    std::move(associatedRegions));
       if (!(provided.fromDefault && required.asyncFutureDefaultInferred))
         for (auto obligation : provided.requirements) {
           obligation.subject =
@@ -688,6 +700,19 @@ void Checker::checkInterfaceContracts() {
           error("type", implementation.span,
                 "associated family strengthens parameter capabilities");
     }
+  }
+}
+
+void Checker::checkInterfaceContracts() {
+  auto *saved = genericEnvironment;
+  for (const auto &implementation : checked.interfaceData->implementations) {
+    if (imported(implementation.span))
+      continue;
+    if (!checked.types->isErased(implementation.interfaceType))
+      continue;
+    const auto descriptor = checked.types->erased(implementation.interfaceType);
+    const auto &definition =
+        checked.interfaceData->definitions[descriptor.declaration];
     for (const auto &[slot, binding] : implementation.methods) {
       if (binding.defaultMethod)
         continue;

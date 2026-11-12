@@ -33,7 +33,19 @@ int main() {
   const std::string source = R"(
 pub module core {
     const BASE: i32 = 4;
-    const fn hidden(x: i32): i32 { x + BASE }
+    interface ConstValue { static fn value(x: i32): i32; }
+    extend i32 implements ConstValue {
+        static const fn value(x: i32): i32 { x }
+    }
+    const fn dispatched<T: ConstValue>(x: i32): i32 {
+        T.(ConstValue).value(x)
+    }
+    type RuntimeProvider {}
+    extend RuntimeProvider implements ConstValue {
+        static fn value(x: i32): i32 { x }
+    }
+    pub const fn runtimeValue(): i32 { dispatched<RuntimeProvider>(7) }
+    const fn hidden(x: i32): i32 { dispatched<i32>(x) + BASE }
     pub const fn answer(x: i32 = hidden(2)): i32 { hidden(x) }
     pub fn identity<T>(take value: T): T { value }
     pub const fn constIdentity<T: Copy>(value: T): T { value }
@@ -460,7 +472,7 @@ fn main(): i32 {
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
       sizeof(std::uint64_t) +
-      std::string_view("mettle.checked-contracts.4").size();
+      std::string_view("mettle.checked-contracts.6").size();
   std::fill_n(oversized.begin() + inventoryOffset, sizeof(std::uint64_t), 0xff);
   expect(!importLibraryDeclarations(oversized, types, decode),
          "oversized function inventories fail before allocation");
@@ -510,6 +522,30 @@ fn main(): i32 {
                     "fn main(): i32 { 0 }\n",
                     11),
       "imported const records execute with their concrete shapes");
+  Diagnostics nonConstDiagnostics;
+  auto nonConstSource = resolution::load(
+      {"non-const-interface.mt",
+       "static VALUE: i32 = core.runtimeValue();\nfn main(): i32 { 0 }\n"},
+      provider, nonConstDiagnostics, library);
+  expect(bool(nonConstSource), "non-const interface consumer loads");
+  if (nonConstSource) {
+    auto names = resolution::resolve(*nonConstSource, nonConstDiagnostics,
+                                     library.compiledSourcePackages);
+    auto rejected = check(std::move(*nonConstSource), nonConstDiagnostics,
+                          names, true, {}, nullptr, imported);
+    const bool rejectsNonConst =
+        !rejected &&
+        std::any_of(nonConstDiagnostics.items.begin(),
+                    nonConstDiagnostics.items.end(), [](const auto &item) {
+                      return item.phase == "constant" &&
+                             item.message.find("non-const function") !=
+                                 std::string::npos;
+                    });
+    if (!rejectsNonConst)
+      errors(nonConstDiagnostics);
+    expect(rejectsNonConst,
+           "imported interface dispatch rejects non-const implementations");
+  }
   std::cout << failures << " failures\n";
   return failures ? 1 : 0;
 }

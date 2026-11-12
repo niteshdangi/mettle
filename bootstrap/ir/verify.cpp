@@ -1472,17 +1472,7 @@ bool verify(const Program &program, Diagnostics &diagnostics,
                  extent->size <= remaining;
         }
         if (value.kind == StaticConstant::Kind::Text) {
-          if (!program.types->isView(expected) ||
-              program.types->view(expected).mode != ParameterMode::Read)
-            return false;
-          auto payload = program.types->view(expected).payload;
-          return program.types->pointerMetadata(payload) ==
-                     PointerMetadata::ElementCount ||
-                 (program.types->isProduct(payload) &&
-                  program.types->product(payload).kind ==
-                      AggregateKind::Array &&
-                  program.types->product(payload).fields.size() ==
-                      value.text.size());
+          return textConstantCount(*program.types, value).has_value();
         }
         if (value.kind == StaticConstant::Kind::Function)
           return program.types->isFunctionPointer(expected) &&

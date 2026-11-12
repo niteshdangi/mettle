@@ -6,6 +6,69 @@
 #include <set>
 
 namespace mettle {
+std::optional<std::uint64_t> textConstantCount(const TypeStore &types,
+                                               const StaticConstant &value) {
+  if (value.kind != StaticConstant::Kind::Text || !types.contains(value.type) ||
+      (!types.isView(value.type) && !types.isPointer(value.type)) ||
+      value.symbol != -1 || !value.projections.empty() ||
+      value.selection != -1 || value.scalar != NumericLiteral{} ||
+      value.text.size() >
+          integerMaximum(Type::Isize, types.targetPointerBits()).magnitude[0] ||
+      value.byteOffset > value.text.size() || value.fields.size() > 1)
+    return std::nullopt;
+  const auto &view = types.view(value.type);
+  if (types.isView(value.type) && view.mode != ParameterMode::Read)
+    return std::nullopt;
+  auto count = static_cast<std::uint64_t>(value.text.size());
+  if (!value.fields.empty()) {
+    const auto &extent = value.fields.front();
+    if (extent.kind != StaticConstant::Kind::Scalar ||
+        extent.type != Type::Usize || !extent.fields.empty() ||
+        extent.scalar.floatingBits || !extent.scalar.floating.empty() ||
+        extent.scalar.negative || extent.scalar.magnitude[1] ||
+        !integerLiteralFits(extent.scalar, Type::Usize,
+                            types.targetPointerBits()))
+      return std::nullopt;
+    count = extent.scalar.magnitude[0];
+  }
+  auto target = view.payload;
+  auto metadata = types.pointerMetadata(target);
+  if (metadata == PointerMetadata::None && types.isPointer(value.type))
+    return value.fields.empty() ? std::optional(count) : std::nullopt;
+  if (metadata == PointerMetadata::ElementCount) {
+    while (types.isProduct(target) &&
+           types.product(target).kind == AggregateKind::Product &&
+           types.product(target).fields.size() == 1) {
+      auto layout = objectLayout(types, target);
+      if (!layout || layout->alignment != 1 || layout->fields.size() != 1 ||
+          layout->fields.front() != 0)
+        return std::nullopt;
+      target = types.product(target).fields.front().type;
+    }
+    if (!types.isSlice(target))
+      return std::nullopt;
+    target = types.slice(target).element;
+  } else if (metadata != PointerMetadata::None || !value.fields.empty())
+    return std::nullopt;
+  auto leaf = target;
+  while (types.isProduct(leaf) &&
+         types.product(leaf).kind == AggregateKind::Array) {
+    if (types.product(leaf).components.empty())
+      return std::nullopt;
+    leaf = types.product(leaf).components.front();
+  }
+  auto layout = objectLayout(types, target);
+  if (leaf != Type::U8 || !layout || layout->alignment != 1)
+    return std::nullopt;
+  auto remaining = value.text.size() - value.byteOffset;
+  if (metadata == PointerMetadata::ElementCount) {
+    if (layout->size && count > remaining / layout->size)
+      return std::nullopt;
+  } else if (layout->size > remaining)
+    return std::nullopt;
+  return count;
+}
+
 std::optional<ObjectLayout> objectLayout(const TypeStore &types, Type type) {
   std::set<Type> active;
   std::map<Type, ObjectLayout> summaries;

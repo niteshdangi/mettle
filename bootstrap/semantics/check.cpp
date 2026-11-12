@@ -993,6 +993,8 @@ std::optional<CheckedModule> Checker::run() {
     checkInterfaceContracts();
   if (diagnostics.empty())
     checkRegions();
+  if (diagnostics.empty())
+    checkAssociatedContracts();
   if (!diagnostics.empty())
     return std::nullopt;
   machineDeclarations();

@@ -23,6 +23,8 @@ run cases are built and executed once per profile:
 fail cases must be rejected with exit status 1, leave a pre-existing output
 file untouched, and report every expected diagnostic:
   expect-error         `PHASE LINE:COL MESSAGE`; one diagnostic must carry all three
+  expect-error-source  optional relative imported path (for example core/num.mt);
+                       matches a complete path suffix, with either slash style
   expect-error-count   exact number of diagnostics (optional)
   expect-note/help     expected related diagnostic text (optional)
   profiles, flags, arch as above (default profile: debug)
@@ -50,7 +52,7 @@ ROOT = Path(__file__).resolve().parent / "source"
 PROFILES = ("debug", "release")
 COMMON_KEYS = {"profiles", "flags", "arch", "truncated"}
 KEYS = {"run": COMMON_KEYS | {"expect-exit", "expect-exit-debug", "expect-exit-release"},
-        "fail": COMMON_KEYS | {"expect-error", "expect-error-count",
+        "fail": COMMON_KEYS | {"expect-error", "expect-error-count", "expect-error-source",
                                "expect-note", "expect-help"}}
 ERROR = re.compile(r"(\w+) (\d+):(\d+) (.+)")
 PRESERVED = b"preserve existing artifact"
@@ -69,6 +71,7 @@ class Case:
     related: list = field(default_factory=list)
     count: object = None
     header_lines: int = 0
+    error_source: object = None
 
 
 def host_arch():
@@ -116,6 +119,12 @@ def parse_case(path, kind):
             case.exits[profile] = parse_exit(
                 single(options, f"expect-exit-{profile}", str(default), name), name)
     else:
+        source = single(options, "expect-error-source", None, name)
+        if source is not None:
+            source = source.replace("\\", "/")
+            if ":" in source or any(part in ("", ".", "..") for part in source.split("/")):
+                raise ValueError(f"{name}: expect-error-source must be a relative file path")
+            case.error_source = source
         if "expect-error" not in options:
             raise ValueError(f"{name}: fail case requires an expect-error directive")
         for entry in options["expect-error"]:
@@ -195,10 +204,9 @@ class Runner:
             if program.read_bytes() != PRESERVED:
                 raise AssertionError(f"{case.name}: failed compilation damaged existing output")
             for phase, line, column, message in case.errors:
-                # The phase, message and location must belong to one diagnostic.
-                intended = (re.escape(str(case.path)) + f":{line}:{column}: error\\[" +
-                            re.escape(phase) + r"\]:[^\n]*" + re.escape(message))
-                if not re.search(intended, result.stderr):
+                if not directives.matches_error(
+                        case.path, (phase, line, column, message), result.stderr,
+                        source_suffix=case.error_source):
                     raise AssertionError(f"{case.name}: expected error[{phase}] containing "
                                          f"{message!r} at {line}:{column}:\n{result.stderr}")
             for kind, message in case.related:

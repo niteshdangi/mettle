@@ -29,6 +29,27 @@ const fn nested(): i32 throws i32 {
     }
 }
 
+copy enum ParseFault {
+    Missing,
+    Context { code: i32 },
+    Interior { position: usize, code: i32 }
+}
+
+const fn nominal_error(empty: bool): i32 throws ParseFault {
+    if empty { throw ParseFault.Missing }
+    throw ParseFault.Interior(code: 41, position: 17usize)
+}
+
+const POSITION: usize = match capture nominal_error(false) {
+    failure(ParseFault.Interior { code, position }) =>
+        if code == 41 { position } else { 99usize },
+    _ => 99usize
+}
+const MISSING: bool = match capture nominal_error(true) {
+    failure(ParseFault.Missing) => true,
+    _ => false
+}
+
 static GOOD: Outcome<i32, i32> = capture forward(3)
 static BAD: Outcome<i32, i32> = capture forward(-5)
 static LOOP_GOOD: Outcome<i32, i32> = capture through_loop(1)
@@ -39,6 +60,7 @@ static OUTCOME_BAD: Outcome<i32, i32> = capture from_outcome(true)
 static NESTED: Outcome<i32, i32> = capture nested()
 
 fn main(): i32 {
+    if POSITION != 17usize || !MISSING { return 17 }
     match GOOD { success(value) => { if value != 7 { return 1 } }, failure(_) => { return 2 } }
     match BAD { failure(error) => { if error != 5 { return 3 } }, success(_) => { return 4 } }
     match LOOP_GOOD { success(value) => { if value != 19 { return 5 } }, failure(_) => { return 6 } }

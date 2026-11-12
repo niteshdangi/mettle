@@ -4,6 +4,7 @@
 #include "backend/llvm/object.h"
 #include "backend/llvm/target.h"
 #include "support/path.h"
+#include "types/layout.h"
 #include "llvm/IR/InlineAsm.h"
 
 #include "llvm/ADT/APFloat.h"
@@ -475,10 +476,16 @@ private:
     }
     if (value.kind == StaticConstant::Kind::Text) {
       auto *global = textGlobal(value.text);
+      auto *integerType = module->getDataLayout().getIntPtrType(context);
+      auto *address = llvm::ConstantExpr::getGetElementPtr(
+          builder.getInt8Ty(), global,
+          llvm::ConstantInt::get(integerType, value.byteOffset));
       if (auto *fat = llvm::dyn_cast<llvm::StructType>(staticType(value.type)))
         return llvm::ConstantStruct::get(
-            fat, {global, builder.getInt64(value.text.size())});
-      return global;
+            fat, {address,
+                  llvm::ConstantInt::get(
+                      integerType, *textConstantCount(*program.types, value))});
+      return address;
     }
     if (value.kind == StaticConstant::Kind::Function)
       return externals.at(value.symbol) ? externals[value.symbol]

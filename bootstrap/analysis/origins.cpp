@@ -749,6 +749,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           constantOrigins(constant.fields[0], std::move(child));
           return;
         }
+        if (constant.kind != StaticConstant::Kind::Aggregate)
+          return;
         auto fields = staticConstantFields(types, constant);
         for (std::size_t i = 0; i < constant.fields.size(); ++i) {
           auto child = destination;

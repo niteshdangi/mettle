@@ -61,7 +61,8 @@ private:
   bool needsEvaluator(const Node &node) const;
   bool constFunctionCall(const Node &node);
   std::optional<evaluation::Shape> constantShape(Type type);
-  std::optional<evaluation::Value> constantValueOf(const StaticConstant &value);
+  std::optional<evaluation::Value> constantValueOf(const StaticConstant &value,
+                                                   evaluation::Host &host);
   std::optional<StaticConstant> staticFromValue(const evaluation::Value &value,
                                                 Type type, Span span);
   struct Binding {
@@ -398,6 +399,7 @@ private:
   void interfaceSignatures();
   void interfaceImplementations();
   void checkInterfaceContracts();
+  void checkAssociatedContracts();
   std::optional<Type> interfaceAnnotation(const TypeSyntax &syntax, Span span,
                                           std::string_view owner = {});
   Type interfaceBound(const TypeSyntax &bound, Span span,
@@ -412,8 +414,9 @@ private:
                               interfaces::Implementation &implementation);
   std::optional<interfaces::Property> propertyBound(const TypeSyntax &bound,
                                                     Span span) const;
-  std::vector<interfaces::Obligation>
-  interfaceAssumptions(const GenericEnvironment *inherited = nullptr);
+  std::vector<interfaces::Obligation> interfaceAssumptions(
+      const GenericEnvironment *inherited = nullptr,
+      const std::function<Type(Type, const TypeSyntax &, Span)> &decorate = {});
   void expandSuperinterfaces(std::vector<interfaces::Obligation> &result);
   std::vector<interfaces::Obligation> resolveSuperinterfaces(std::size_t index);
   const std::vector<interfaces::Obligation> &

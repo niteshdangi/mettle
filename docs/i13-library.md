@@ -9,8 +9,8 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-12): **8,723 evidenced, 2,583 declared,
-1,984 missing, 5 not applicable** of 13,295 records. Declared means implemented
+Latest operation ledger (2026-11-12): **8,832 evidenced, 2,583 declared,
+1,875 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
 The declared records comprise the previous 20 conversion-blanket records,
@@ -35,7 +35,7 @@ Required evaluation also propagates typed errors through calls, loops, `try`
 and `capture`; capture does not catch arithmetic faults. Concrete nominal
 associated constants retain typed checked payloads, privacy and cycle checks,
 and freshly materialize independently owned runtime values. Checked-library
-contracts advance to version 4; version-3 archives require rebuilding. Generic
+contracts advance to version 6; older archives require rebuilding. Generic
 nominal definitions and required projections that discard non-Copy remainders
 remain explicitly unsupported. Associated product coercions normalize interface
 projections before comparison without relaxing region or payload invariance.
@@ -60,10 +60,92 @@ logs in the native validation build. Normal compiler SHA-256:
 sanitized compiler:
 `005761f8672f9bdd7be15eee0804bb9a410857ea3288dbbaeeac3e844bb77c1b`.
 These receipts do not promote ledger rows or close an area, LNX or I13.
-Networking acceptance is resuming against this compiler. Text/FFI still needs
-checked-constructor metadata and native Cow-extension region reconciliation.
-The IO/filesystem group has 181 source-implemented, 17 partial and nine missing
-records out of 207; all remain unverified at this snapshot.
+Networking acceptance against this compiler now passes all 18 normal and all
+18 emitted-ASan/native-ASan+UBSan profile units with stable frozen compiler,
+library, runtime and tool identities. The scope covers the 109-record mapping
+and 22 socket options, including IPv4/IPv6 multicast membership. Receipts:
+`i13-network-options-integration/post-nominal-20261112/results.json`,
+`sanitizer-freeze.json` and `freeze-stability.json`. This supersedes an earlier
+18-unit pass that did not retain stable runtime archive identity. Emitted UBSan
+is unsupported; Apple/Windows qualification remains open.
+All 207 IO/filesystem source records are now implemented but remain unverified;
+their prepared acceptance batch contains 56 profile units.
+
+The next integration compiler (`3ee24a2f25ffcffd697ba04cbb0cb1cf3d7ba8e9875e184f2e0cff0492f0ca3a`)
+also accepts nominal typed-error payload construction and named-field/variant
+patterns. Mixed enums retain their empty variants. Nested nominal associated
+bindings in function bounds now retain their declared regions during
+normalization; the fix does not infer a lifetime from erased fields.
+The extended typed-effects and associated-enum fixtures, the integer kernel,
+and the focused nominal-associated-region fixture pass both profiles (eight
+units across `i13-enum-regional-freeze-source` and
+`i13-associated-bound-source`). Both affected CTests pass.
+The new source fixtures required correcting their own explicit-dereference
+syntax; failed attempts remain in the receipts, not counted as passes.
+All three core CStr fixtures pass both profiles, including nominal interior-NUL
+errors. The borrowed implementation-associated-bound blocker is repaired:
+method contracts are prepared before region checking; associated contracts are
+proved after nominal region decoration in the implementation/family universe.
+Both focused positives pass debug/release, and a static-versus-borrowed negative
+rejects at its intended type diagnostic. Ordinary text/FFI integration and new
+compiler sanitizer acceptance remain separate gates.
+
+The recursive mutex factory, coherent metadata/masked timestamps and atomic
+RwLock downgrade pass the strengthened default `runtime.thread` test in normal
+and ASan/UBSan builds. RwLock uses a mutex/condition monitor: the writer becomes
+one reader under the same mutex, without releasing ownership between modes.
+Partial initialization unwinds through RAII; fairness remains unspecified.
+Fresh TSan startup and intentional-race detection pass, as do the named
+recursive-contention and downgrade selectors. The default retains deliberate
+wrong-owner unlock rejection, which TSan diagnoses even though pthread rejects
+it; those intentional misuse calls alone are excluded from positive selectors.
+Receipt: `build/i13-io-runtime-monitor-validation.json`. These native results
+do not qualify Mettle stdio/filesystem/synchronization APIs or prove race freedom.
+
+Literal-backed const views are built (IR format 3, checked-library contracts 6).
+The codec preserves complete immutable backing, interior offsets and extents;
+its focused regression and literal mutation/end/escape negatives pass.
+Checked expressions now retain interface dispatch identities and Outcome
+propagation. An imported generic const-interface regression passes, as do
+constant i32 array indexing and fieldless-enum ordinal/explicit-discriminant
+cast regressions. The inverse imported runtime-only interface call rejects in
+the constant phase: declaration const eligibility is checked before body
+availability, since runtime-only imported bodies are intentionally absent.
+The four literal/parser/associated-bound positives pass all eight frozen
+debug/release profile units on compiler
+`071489b089a0aa9f8a3bb2d5b4802b9967369d7432b556230e193063fe2c5e19`.
+All nine selected negative profile units pass, including three invalid-radix
+constant panics per profile. The existing runner's optional
+`expect-error-source` directive retains exact phase, coordinates, message,
+error count, exit and output-preservation assertions for imported diagnostics;
+its default still requires the fixture's own path. Two targeted tooling tests
+pass. All 17 units use the exact staged library, including only six const
+qualifiers in core Text rather than the richer unverified text candidate.
+Receipts beneath `i13-const-qualified/eligibility`:
+`integer-source/run/run/evidence.json` and
+`integer-source/fail/fail/evidence.json`.
+All four affected CTests pass normal and ASan/UBSan. Actual sanitized compiler
+checks of the complete literal and twelve-integer parser fixtures also pass
+without reports, on compiler
+`372c409c508077c5e661acf1069558791ad7752dacb161710035a91711e6212c`.
+Those checks also use the exact staged library. Earlier compiler receipts
+remain historical, not evidence for the final eligibility ordering.
+Origin analysis now traverses only aggregate payloads, not the extent metadata
+carried by address constants.
+
+Current source-only reconciliation: cells 97 implemented/eight partial/14
+missing of 119; sync/thread 227/28/82 of 337; deduplicated owners 165/two/13
+of 180; core operations 247/45/five of 297; pointer/pinning 114/12/33 of 159;
+shared traits 42/ten partial of 52. All 207 IO/filesystem records have source
+candidates, with 56 profile units prepared. These overlapping inventories are
+not additive or qualification receipts. Processes/time has source candidates
+for all 71 records, all unverified. Only the 109 frozen-qualified
+networking records are promoted; source-only candidates are not.
+Tasks/futures has 47 source candidates and two conditional-Copy blockers of
+49 records; none are verified. On that frozen baseline, ordinary text/Cow integration still fails
+deferred call-site associated-region obligations for owned `List<Cow>` inputs.
+A separate reduced control exposes invalid CFG in `alloc.ffi.lossy_view`.
+Neither blocker is closed by the implementation-associated-bound repair above.
 
 ### Collection/vector reconciliation (2026-11-11)
 
