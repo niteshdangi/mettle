@@ -316,12 +316,85 @@ private:
                 what + " is not supported in constant evaluation");
   }
   Frame &frame() { return frames.back(); }
-  void discard(const Value &value, Span span) {
-    if (!failed && value.kind != Value::Kind::Uninitialized &&
-        value.kind != Value::Kind::Reference &&
-        host.needsDrop(host.valueType(value)))
+  // Runs a value's destructor and then drops its fields in declaration order,
+  // as at runtime. A type whose destructor cannot be evaluated stays an error.
+  void discard(Value &value, Span span) {
+    if (failed || value.kind == Value::Kind::Uninitialized ||
+        value.kind == Value::Kind::Reference)
+      return;
+    auto type = host.valueType(value);
+    if (!host.needsDrop(type))
+      return;
+    auto found = host.destructor(type, span);
+    const bool aggregate = value.kind == Value::Kind::Product ||
+                           value.kind == Value::Kind::Tuple ||
+                           value.kind == Value::Kind::Array ||
+                           value.kind == Value::Kind::Variant;
+    if (found.kind == Lookup::Kind::Function && found.checkedFunction) {
+      runDestructor(value, type, *found.checkedFunction, span);
+      if (failed)
+        return;
+    } else if (found.kind != Lookup::Kind::Missing || !aggregate) {
       fail("constant", span,
            "destruction is not permitted during constant evaluation");
+      return;
+    }
+    for (auto &element : value.elements)
+      discard(element, span);
+    value.kind = Value::Kind::Uninitialized;
+  }
+  void runDestructor(Value &value, Type type, const CheckedFunction &function,
+                     Span span) {
+    if (frames.size() > options.callDepth) {
+      fail("limit", span,
+           "const function call depth exceeded the limit of " +
+               std::to_string(options.callDepth));
+      return;
+    }
+    auto storage = std::make_shared<Value>(std::move(value));
+    Value self;
+    self.kind = Value::Kind::Reference;
+    self.type = host.referenceType(type, true, false);
+    self.storage = storage;
+    self.storageType = type;
+    self.count = storage->elements.size();
+    self.exclusive = true;
+    self.writable = true;
+    const auto parameterContext = function.parameters.front().context;
+    // The destructor may run while a `return` or `break` is unwinding.
+    auto savedSignal = signal;
+    auto savedLabel = std::move(signalLabel);
+    auto savedValue = std::move(signalValue);
+    signal = Signal::None;
+    frames.emplace_back();
+    host.enter(function);
+    {
+      struct Restore {
+        Interpreter &interpreter;
+        unsigned unsafeDepth;
+        Span span;
+        ~Restore() {
+          for (const auto &local : interpreter.frame().locals)
+            interpreter.discard(*local.value, span);
+          interpreter.unsafeDepth = unsafeDepth;
+          interpreter.host.leave();
+          interpreter.frames.pop_back();
+        }
+      } restore{*this, unsafeDepth, span};
+      unsafeDepth = 0;
+      frame().inFunction = true;
+      frame().callSpan = span;
+      frame().result = function.result;
+      frame().locals.emplace_back("self", std::move(self), false,
+                                  parameterContext);
+      eval(*function.body, &function.result);
+      if (signal == Signal::Return)
+        signal = Signal::None;
+    }
+    signal = savedSignal;
+    signalLabel = std::move(savedLabel);
+    signalValue = std::move(savedValue);
+    value = std::move(*storage);
   }
 
   Opt numericOperation(std::string_view operation, Type owner,

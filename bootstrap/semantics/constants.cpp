@@ -146,6 +146,77 @@ public:
   bool needsDrop(Type type) override {
     return checker.typeStore().needsDrop(substitute(type));
   }
+  // A type's stored destructor index is local to the module that declared it,
+  // so the declaration is found through its owner type.
+  const Function *destructorOf(Type origin) {
+    if (auto cached = destructorCache.find(origin);
+        cached != destructorCache.end())
+      return cached->second;
+    const Function *found = nullptr;
+    for (const auto &function : checker.module.functions) {
+      if (!function.destructor)
+        continue;
+      auto name = checker.typeName(function.owner, function.span);
+      if (auto type = checker.typeNames.find(name);
+          type != checker.typeNames.end() && type->second == origin) {
+        found = &function;
+        break;
+      }
+    }
+    return destructorCache.emplace(origin, found).first->second;
+  }
+  Lookup destructor(Type type, Span) override {
+    Lookup result;
+    auto &types = checker.typeStore();
+    type = substitute(type);
+    if (!types.isProduct(type))
+      return result;
+    auto origin = types.product(type).genericOrigin;
+    if (origin == Type::Unknown)
+      origin = type;
+    if (!types.product(origin).hasDestructor)
+      return result;
+    result.kind = Lookup::Kind::Failed;
+    const Function *declaration = destructorOf(origin);
+    if (!declaration)
+      return result;
+    auto foundEnvironment = checker.functionGenerics.find(declaration);
+    if (foundEnvironment == checker.functionGenerics.end())
+      return result;
+    auto prepared = std::make_shared<evaluation::CheckedFunction>();
+    prepared->declaration = declaration;
+    const auto &arguments = types.product(type).genericArguments;
+    if (foundEnvironment->second.parameters.size() != arguments.size())
+      return result;
+    for (std::size_t i = 0; i < arguments.size(); ++i)
+      prepared->bindings.push_back(
+          {foundEnvironment->second.parameters[i], arguments[i]});
+    auto shape = typeShape(type);
+    auto unit = typeShape(Type::Unit);
+    if (!shape || !unit)
+      return result;
+    prepared->result = std::move(*unit);
+    prepared->body = declaration->body.get();
+    if (checker.checked.importedDeclarations) {
+      auto imported = checker.checked.importedDeclarations->functions.find(
+          static_cast<std::size_t>(declaration -
+                                   checker.module.functions.data()));
+      if (imported != checker.checked.importedDeclarations->functions.end() &&
+          imported->second.body)
+        prepared->body = imported->second.body->syntax.get();
+    }
+    if (!prepared->body)
+      return result;
+    prepared->parameters.push_back({"self", std::move(*shape),
+                                    declaration->span, nullptr,
+                                    declaration->lexicalContext,
+                                    ParameterMode::Mut});
+    result.kind = Lookup::Kind::Function;
+    result.declaration = declaration;
+    result.prepared = std::move(prepared);
+    result.checkedFunction = result.prepared.get();
+    return result;
+  }
   bool copy(Type type) override {
     return checker.typeStore().isCopy(substitute(type));
   }
@@ -807,6 +878,7 @@ private:
   std::map<const Node *, NodeFacts> syntheticFacts;
   std::deque<NodeOwner> receiverExpressions;
   // Host ownership keeps literal roots live through checked serialization.
+  std::map<Type, const Function *> destructorCache;
   std::map<std::string, std::shared_ptr<Value>, std::less<>> literalRoots;
   Value functionValue(std::size_t index) {
     Value value;

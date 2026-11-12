@@ -58,7 +58,7 @@ type DropRun<T> {
 }
 
 extend<T> DropRun<T> {
-    mut fn run(): Unit {
+    mut const fn run(): Unit {
         while self.n != 0usize {
             let current = self.p
             self.p = unsafe { self.p.add(1usize) }

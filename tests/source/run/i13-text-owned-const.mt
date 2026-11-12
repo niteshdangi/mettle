@@ -3,7 +3,8 @@ import alloc.string
 import std.path.PathBuf
 
 const fn empty_string(): bool {
-    let empty = match core.text.from_utf8([0u8; 0]) {
+    let no_bytes: [u8; 0] = []
+    let empty = match core.text.from_utf8(no_bytes) {
         success(text) => text,
         failure(_) => { return false }
     }

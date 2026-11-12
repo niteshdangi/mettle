@@ -257,7 +257,8 @@ void Checker::retainDeclarations() {
     const auto &regions = functionRegions(source);
     contract.regions = {regions.names, regions.parameters,
                         regions.environment.assumptions};
-    if (source.constFunction)
+    // Destructors are retained so constant evaluation can drop owners.
+    if (source.constFunction || source.destructor)
       contract.body = expression(source.body.get());
     for (const auto &parameter : source.parameters)
       contract.defaults.push_back(expression(parameter.defaultValue.get()));

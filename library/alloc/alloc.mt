@@ -34,7 +34,7 @@ pub fn layout_from_size_align(size: usize, align: usize): Layout throws LayoutEr
 }
 
 // Safety: as for `layout_from_size_align`.
-pub unsafe fn layout_unchecked(size: usize, align: usize): Layout { Layout(size, align) }
+pub unsafe const fn layout_unchecked(size: usize, align: usize): Layout { Layout(size, align) }
 
 pub fn layout_of<T>(): Layout {
     Layout(core.mem.size_of<T>(), core.mem.align_of<T>())
@@ -173,7 +173,7 @@ pub type FreeBlock<A: Allocator> {
 }
 
 // Safety: `a` outlives the guard and `p` is a live block of `layout` from it.
-pub unsafe fn free_block<A: Allocator>(p: ptr<mut u8>, layout: Layout, a: ptr<mut A>): FreeBlock<A> {
+pub unsafe const fn free_block<A: Allocator>(p: ptr<mut u8>, layout: Layout, a: ptr<mut A>): FreeBlock<A> {
     FreeBlock(p, layout, a)
 }
 

@@ -147,6 +147,10 @@ public:
   }
   virtual std::optional<Layout> layout(Type) { return std::nullopt; }
   virtual bool needsDrop(Type) { return false; }
+  // The destructor of a type: Function (prepared with a single exclusive
+  // `self`), Missing when the type only drops its fields, Failed when the
+  // destructor exists but cannot be prepared.
+  virtual Lookup destructor(Type, Span) { return {}; }
   virtual bool copy(Type) { return true; }
   virtual Lookup storage(int, std::size_t &) { return {}; }
   virtual std::shared_ptr<Value> literalStorage(std::string_view) { return {}; }
