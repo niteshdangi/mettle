@@ -27,7 +27,8 @@ const VALUES: [i32; 3] = initialize()
 const fn empty(): usize {
     var storage: [core.mem.MaybeUninit<i32>; 0] = []
     let slots: mut [core.mem.MaybeUninit<i32>] = mut storage
-    slots.write_copy_of_slice(read []).len()
+    let nothing: [i32; 0] = []
+    slots.write_copy_of_slice(read nothing).len()
 }
 
 const EMPTY: usize = empty()

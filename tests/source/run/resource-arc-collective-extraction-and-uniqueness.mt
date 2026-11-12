@@ -42,16 +42,16 @@ fn unique(): i32 {
         while worker_phase.get().load(Ordering.SeqCst) == 0usize {
             thread.yield_now()
         }
-        let weak = sibling.downgrade()
+        let observer = sibling.downgrade()
         core.mem.drop(take sibling)
         var attempt = 0usize
         while attempt < 64usize {
-            match take weak.upgrade() {
-                present(shared) => {
+            match take observer.upgrade() {
+                present(strong) => {
                     if worker_exclusive.get().load(Ordering.SeqCst) != 0usize {
                         return 1
                     }
-                    let _ = shared.strong_count()
+                    let _ = strong.strong_count()
                 },
                 none => { return 2 }
             }

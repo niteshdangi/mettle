@@ -11,7 +11,7 @@ fn main() {
         core.ptr.`copy`(pointer,pointer.add(1),3)
         core.ptr.swap(pointer,pointer.add(3))
     }
-    copy_values(pointer.cast_const(),target,4)
+    copy_values(pointer.cast_const(),target,4usize)
     let copied = output[0] == 3u32 && output[1] == 1u32 &&
                  output[2] == 2u32 && output[3] == 1u32
     output = [5u32,6u32,7u32,8u32]

@@ -21,6 +21,6 @@ fn main(): i32 {
     {
         let _ = modify_slot(Slot(mut store, 0), take fn(mut value: i32): Unit { value += 1 })
     }
-    if *store.entries.get(0).unwrap() != 42 { return 1 }
+    if *store.entries.get(0usize).unwrap() != 42 { return 1 }
     0
 }
