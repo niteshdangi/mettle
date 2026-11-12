@@ -205,10 +205,12 @@ also passes with ASan/UBSan. The affected declaration CTest passes.
 The unchanged CString fixture's thirteen ambiguity sites reduce to
 four genuinely applicable CStr/view-RHS comparisons, which require explicit
 interface selection under semantic-rules sections 11 and 13.2 rather than a new
-overload priority. Neither profile executes yet.
+overload priority. With those four selections and additional reference-RHS
+assertions, the CString fixture now executes both normal profiles against the
+unchanged frozen V15 library.
 Receipts: `i13-associated-argument-fitting/{normal,sanitized}/run/evidence.json`,
 `i13-associated-argument-fitting/sanitized/fail/evidence.json` and
-`i13-text-ffi-cstring-traits-v17/run/evidence.json`. Remaining text acceptance is
+`i13-text-ffi-cstring-traits-v18/run/evidence.json`. Remaining text acceptance is
 not yet qualified.
 Required-constant obligations and full text qualification remain open.
 
