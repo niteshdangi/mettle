@@ -392,7 +392,7 @@ pub copy type Field {
     meta: usize
     render: fn(ptr<read u8>, usize, mut Sink): Unit throws Error
 }
-pub type Message<region r> { fields: read [Field] from r; tail: Piece }
+pub copy type Message<region r> { fields: read [Field] from r; tail: Piece }
 
 fn piece(read text: Text): Piece {
     let bytes = text.as_bytes()
@@ -458,6 +458,16 @@ extend<region r> Message<region r> {
         }
         try out.write_str(unsafe { piece_text(self.tail) })
     }
+}
+
+extend<region r> Message<region r> implements super.clone.Clone {
+    fn clone(): Message<region r> { self }
+}
+extend<region r> Message<region r> implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error { try self.write_to(mut f) }
+}
+extend<region r> Message<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error { try self.write_to(mut f) }
 }
 
 // Writes into a caller-owned byte buffer; fails (without partial characters) when full.
