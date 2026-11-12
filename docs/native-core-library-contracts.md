@@ -1230,8 +1230,11 @@ compares stored bits, returning success(old) after writing the replacement
 or failure(observed) without writing; weak form may fail spuriously.
 `fetch_add/sub` use wrapping integer arithmetic; fetch and/or/xor/nand and
 min/max compute the indicated operation and return the old value.
-Bool nand is logical negation of conjunction. Pointer fetch arithmetic moves
-the address without extending provenance or granting dereference authority.
+Bool nand is logical negation of conjunction; `fetch_not(order)` complements
+the bool and returns its old value. Pointer `fetch_and/or/xor(mask, order)`
+take a `usize` address mask and return the old pointer. Like pointer fetch
+arithmetic, they change the address without extending provenance or granting
+dereference authority.
 `fetch_update` uses `mut fn(old): T?`, may call it repeatedly under contention,
 stops on none without writing, and returns success(old) on the winning CAS
 or failure(last observed) when declined. User callbacks must tolerate retries.

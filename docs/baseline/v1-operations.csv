@@ -12655,7 +12655,7 @@ B0fe2e3281ebe3e3a46af92d7,operation:sync::atomic::AtomicBool::compare_exchange,h
 B99f12c9191e352d5f35aaa35,operation:sync::atomic::AtomicBool::compare_exchange_weak,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicBool.html#method.compare_exchange_weak,,missing,
 Bdafeee03ee9bd9241667f91e,operation:sync::atomic::AtomicBool::fetch_and,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicBool.html#method.fetch_and,,missing,
 Bb8892d79af0b0fe2d567b582,operation:sync::atomic::AtomicBool::fetch_nand,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicBool.html#method.fetch_nand,,missing,
-B4addcf50b248292618e0db22,operation:sync::atomic::AtomicBool::fetch_not,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicBool.html#method.fetch_not,,missing,
+B4addcf50b248292618e0db22,operation:sync::atomic::AtomicBool::fetch_not,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicBool.html#method.fetch_not,core.sync.atomic.AtomicBool.fetch_not,evidenced,tests/source/run/machine-atomic-bool-not-pointer-masks.mt;tests/backend/atomic_bitwise_contention.mt
 B2aac362fd46a4fa4626c75d3,operation:sync::atomic::AtomicBool::fetch_or,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicBool.html#method.fetch_or,,missing,
 B89fa79f02efc57f446f9f89f,operation:sync::atomic::AtomicBool::fetch_xor,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicBool.html#method.fetch_xor,,missing,
 Bd0eb3dd730f1a2bdaee24ee7,operation:sync::atomic::AtomicBool::from_mut,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicBool.html#method.from_mut,,missing,
@@ -12818,13 +12818,13 @@ B5baa1cd990e06a512733070c,operation:sync::atomic::AtomicPtr,https://doc.rust-lan
 Ba06af6ff80f890936de19535,operation:sync::atomic::AtomicPtr::as_ptr,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.as_ptr,,missing,
 B5d02c705f514ccf30629db8b,operation:sync::atomic::AtomicPtr::compare_exchange,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.compare_exchange,,missing,
 Be8cc47c77a555d1eed57fb1b,operation:sync::atomic::AtomicPtr::compare_exchange_weak,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.compare_exchange_weak,,missing,
-B25fc78c6e30d3e90a2863eff,operation:sync::atomic::AtomicPtr::fetch_and,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.fetch_and,,missing,
+B25fc78c6e30d3e90a2863eff,operation:sync::atomic::AtomicPtr::fetch_and,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.fetch_and,core.sync.atomic.AtomicPtr.fetch_and,evidenced,tests/source/run/machine-atomic-bool-not-pointer-masks.mt;tests/backend/atomic_bitwise_contention.mt
 Bae47677e50c5d4e250d3f3de,operation:sync::atomic::AtomicPtr::fetch_byte_add,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.fetch_byte_add,,missing,
 Bde9b1cee752f2a936caacc67,operation:sync::atomic::AtomicPtr::fetch_byte_sub,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.fetch_byte_sub,,missing,
-Bd0998a2a379cdf7218392390,operation:sync::atomic::AtomicPtr::fetch_or,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.fetch_or,,missing,
+Bd0998a2a379cdf7218392390,operation:sync::atomic::AtomicPtr::fetch_or,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.fetch_or,core.sync.atomic.AtomicPtr.fetch_or,evidenced,tests/source/run/machine-atomic-bool-not-pointer-masks.mt;tests/backend/atomic_bitwise_contention.mt
 Bc93f341c9a19959f5d471d81,operation:sync::atomic::AtomicPtr::fetch_ptr_add,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.fetch_ptr_add,,missing,
 B171c9e96fa69ecd5a9ce857b,operation:sync::atomic::AtomicPtr::fetch_ptr_sub,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.fetch_ptr_sub,,missing,
-B45df258ca56e6bd43e8cea11,operation:sync::atomic::AtomicPtr::fetch_xor,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.fetch_xor,,missing,
+B45df258ca56e6bd43e8cea11,operation:sync::atomic::AtomicPtr::fetch_xor,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.fetch_xor,core.sync.atomic.AtomicPtr.fetch_xor,evidenced,tests/source/run/machine-atomic-bool-not-pointer-masks.mt;tests/backend/atomic_bitwise_contention.mt
 B4c55ee3fdb1e40e67019f235,operation:sync::atomic::AtomicPtr::from_mut,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.from_mut,,missing,
 B89a64970db85d5f6707e7414,operation:sync::atomic::AtomicPtr::from_mut_slice,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.from_mut_slice,,missing,
 B9efeac6d0491bc495ce1833d,operation:sync::atomic::AtomicPtr::from_ptr,https://doc.rust-lang.org/1.99.1/core/sync/atomic/type.AtomicPtr.html#method.from_ptr,,missing,

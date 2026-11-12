@@ -1159,7 +1159,8 @@ private:
       return arguments[0];
     bool compare =
         method == "compare_exchange" || method == "compare_exchange_weak";
-    auto orderIndex = fence ? 0u : method == "load" ? 1u : compare ? 3u : 2u;
+    bool unary = method == "load" || method == "fetch_not";
+    auto orderIndex = fence ? 0u : unary ? 1u : compare ? 3u : 2u;
     auto *order = lowering.extract(arguments[orderIndex],
                                    instruction.operands[orderIndex].type, 0);
     if (compare) {
@@ -1245,7 +1246,10 @@ private:
       }
       bool pointerArithmetic =
           method.starts_with("fetch_ptr_") || method.starts_with("fetch_byte_");
-      if (pointerArithmetic ||
+      bool pointerMask = program.types->isPointer(payload) &&
+                         (method == "fetch_and" || method == "fetch_or" ||
+                          method == "fetch_xor");
+      if (pointerArithmetic || pointerMask ||
           (payload == Type::Bool && method == "fetch_nand")) {
         auto *function = builder.GetInsertBlock()->getParent();
         auto *entry = builder.GetInsertBlock();
@@ -1269,6 +1273,16 @@ private:
                               : lowering.storageType(
                                     program.types->pointer(payload).payload);
           desired = builder.CreateGEP(element, old, count);
+        } else if (pointerMask) {
+          auto *address = builder.CreatePtrToInt(old, builder.getInt64Ty());
+          auto *mask = arguments[1];
+          auto *masked =
+              method == "fetch_and"  ? builder.CreateAnd(address, mask)
+              : method == "fetch_or" ? builder.CreateOr(address, mask)
+                                     : builder.CreateXor(address, mask);
+          // Rebase the address on the observed pointer, as ptr.with_addr does.
+          desired = builder.CreateGEP(builder.getInt8Ty(), old,
+                                      builder.CreateSub(masked, address));
         } else
           desired =
               builder.CreateXor(builder.CreateAnd(old, physical(arguments[1])),
@@ -1292,7 +1306,7 @@ private:
         operation = llvm::AtomicRMWInst::And;
       else if (method == "fetch_or")
         operation = llvm::AtomicRMWInst::Or;
-      else if (method == "fetch_xor")
+      else if (method == "fetch_xor" || method == "fetch_not")
         operation = llvm::AtomicRMWInst::Xor;
       else if (method == "fetch_nand")
         operation = llvm::AtomicRMWInst::Nand;
@@ -1302,9 +1316,10 @@ private:
       else if (method == "fetch_max")
         operation = isSignedInteger(payload) ? llvm::AtomicRMWInst::Max
                                              : llvm::AtomicRMWInst::UMax;
-      return logical(
-          builder.CreateAtomicRMW(operation, pointer, physical(arguments[1]),
-                                  llvm::MaybeAlign(alignment), memoryOrder));
+      return logical(builder.CreateAtomicRMW(
+          operation, pointer,
+          method == "fetch_not" ? builder.getInt8(1) : physical(arguments[1]),
+          llvm::MaybeAlign(alignment), memoryOrder));
     };
     auto *function = builder.GetInsertBlock()->getParent();
     auto *done =

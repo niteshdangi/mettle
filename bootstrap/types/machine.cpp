@@ -430,12 +430,21 @@ machineSignature(const TypeStore &types, std::string_view operation,
                      ordering(operands[4])
                  ? signature(payload, Shape::Outcome, raw)
                  : std::nullopt;
+    if (method == "fetch_not")
+      return !raw && payload == Type::Bool && operands.size() == 2 &&
+                     ordering(operands[1])
+                 ? signature(payload)
+                 : std::nullopt;
+    bool pointerMask = types.isPointer(payload) &&
+                       (method == "fetch_and" || method == "fetch_or" ||
+                        method == "fetch_xor");
     if (method == "swap" || method == "fetch_and" || method == "fetch_or" ||
         method == "fetch_xor" || method == "fetch_nand" ||
         ((method == "fetch_add" || method == "fetch_sub" ||
           method == "fetch_min" || method == "fetch_max") &&
          isInteger(payload)))
-      return operands.size() == 3 && operands[1] == payload &&
+      return operands.size() == 3 &&
+                     operands[1] == (pointerMask ? Type::Usize : payload) &&
                      ordering(operands[2])
                  ? signature(payload, Shape::Value, raw)
                  : std::nullopt;

@@ -2018,6 +2018,13 @@ def check_driver_outputs(run, args, directory, evidence):
 SOURCES["c-memory-represented-aggregate-snapshots"] = (
     Path(__file__).with_name("foreign_storage.mt").read_text())
 
+SOURCES["atomic-bool-not-pointer-masks"] = (
+    Path(__file__).resolve().parents[1] / "source" / "run" /
+    "machine-atomic-bool-not-pointer-masks.mt").read_text()
+
+SOURCES["c-thread-atomic-bool-not-pointer-masks"] = (
+    Path(__file__).with_name("atomic_bitwise_contention.mt").read_text())
+
 if platform.system() == "Linux":
     SOURCES["heap-sorted-no-global-allocation"] = (
         Path(__file__).with_name("heap_sorted_no_global_allocation.mt").read_text())
@@ -2211,8 +2218,28 @@ def main(argv=None):
             for profile in args.profile or ("debug", "release"):
                 obj = directory / (name + "-" + profile + ".o")
                 program = directory / (name + "-" + profile)
-                run([args.compiler, "build", path, "--emit", "object", "-o", obj,
-                     "--profile", profile])
+                if name == "atomic-bool-not-pointer-masks":
+                    ir = obj.with_suffix(".ll")
+                    run([args.compiler, "build", path, "--emit", "llvm", "-o", ir,
+                         "--profile", profile])
+                    if profile == "debug":
+                        text = "\n".join(
+                            body for function, _, body in functions(ir.read_text())
+                            if function.strip('@"') in ("mettle.check", "mettle.check.body"))
+                        for pattern in (r"load atomic ptr",
+                                        r"cmpxchg ptr [^,\n]+, ptr [^,\n]+, ptr ",
+                                        r"getelementptr i8, ptr ",
+                                        r"atomicrmw xor ptr [^,\n]+, i8 1 "):
+                            if not re.search(pattern, text):
+                                raise AssertionError(
+                                    "Atomic pointer/bool representation lost " + pattern)
+                        if "inttoptr" in text:
+                            raise AssertionError(
+                                "Atomic pointer mask reconstructed an address-only pointer")
+                    run([args.cxx, "-x", "ir", "-c", ir, "-o", obj])
+                else:
+                    run([args.compiler, "build", path, "--emit", "object", "-o", obj,
+                         "--profile", profile])
                 volatile_disassembly = None
                 if name == "darwin-arm64-volatile-c-observer" and profile == "release":
                     volatile_disassembly = run([

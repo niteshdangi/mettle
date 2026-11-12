@@ -297,7 +297,8 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       auto position = operands.size();
       bool order = atomicMethod == "fence" ||
                    atomicMethod == "compiler_fence" ||
-                   (atomicMethod == "load" && position == 1) ||
+                   ((atomicMethod == "load" || atomicMethod == "fetch_not") &&
+                    position == 1) ||
                    ((atomicMethod == "compare_exchange" ||
                      atomicMethod == "compare_exchange_weak")
                         ? position >= 3
@@ -306,8 +307,12 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
         expected = checked.types->structural(AggregateKind::Ordering, {});
       else if (operation == "atomic.new")
         expected = payload;
-      else if (position == 1 && (atomicMethod.starts_with("fetch_ptr_") ||
-                                 atomicMethod.starts_with("fetch_byte_")))
+      else if (position == 1 &&
+               (atomicMethod.starts_with("fetch_ptr_") ||
+                atomicMethod.starts_with("fetch_byte_") ||
+                (checked.types->isPointer(payload) &&
+                 (atomicMethod == "fetch_and" || atomicMethod == "fetch_or" ||
+                  atomicMethod == "fetch_xor"))))
         expected = Type::Usize;
       else if (position >= 1)
         expected = payload;

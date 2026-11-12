@@ -138,3 +138,53 @@ extern "C" std::int32_t mettle_atomic_sequential_consistency(
   right.join();
   return forbidden ? 1 : 0;
 }
+
+extern "C" std::int32_t mettle_atomic_bitwise_contention(
+    void (*reset)(void *, std::uint32_t),
+    std::uintptr_t (*modify)(void *, std::uint32_t, std::uint32_t),
+    std::uintptr_t (*load)(void *, std::uint32_t), void *context,
+    std::uintptr_t base, std::uint32_t operation) {
+  constexpr unsigned rounds = 2000;
+  std::uintptr_t observed[2]{};
+  std::atomic<unsigned> phase{0}, done[2]{};
+  auto worker = [&](unsigned index) {
+    for (unsigned round = 1; round <= rounds; ++round) {
+      while (phase.load(std::memory_order_acquire) != round)
+        std::this_thread::yield();
+      observed[index] = modify(context, operation, index);
+      done[index].store(round, std::memory_order_release);
+    }
+  };
+  auto change = [&](std::uintptr_t value, unsigned index) {
+    auto bit = std::uintptr_t{1} << index;
+    switch (operation) {
+    case 0:
+      return value ^ std::uintptr_t{1};
+    case 1:
+      return value | bit;
+    case 2:
+      return value & ~bit;
+    default:
+      return value ^ bit;
+    }
+  };
+  auto initial = operation == 0 ? 0 : operation == 2 ? base | 3 : base;
+  auto expected = change(change(initial, 0), 1);
+  std::thread left(worker, 0), right(worker, 1);
+  bool failed = false;
+  for (unsigned round = 1; round <= rounds; ++round) {
+    // Phase/completion edges separate callbacks from resets and checks.
+    reset(context, operation);
+    phase.store(round, std::memory_order_release);
+    while (done[0].load(std::memory_order_acquire) != round ||
+           done[1].load(std::memory_order_acquire) != round)
+      std::this_thread::yield();
+    bool linear =
+        (observed[0] == initial && observed[1] == change(initial, 0)) ||
+        (observed[1] == initial && observed[0] == change(initial, 1));
+    failed |= !linear || load(context, operation) != expected;
+  }
+  left.join();
+  right.join();
+  return failed ? 1 : 0;
+}

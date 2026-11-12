@@ -81,6 +81,8 @@ def main():
     parser.add_argument("--sysroot")
     parser.add_argument("--link-arg", action="append", default=[])
     parser.add_argument("--sanitizers", action="store_true")
+    parser.add_argument("--case", action="append",
+                        help="only run the named existing thread case")
     args = parser.parse_args()
     directory = args.directory.resolve()
     directory.mkdir(parents=True, exist_ok=True)
@@ -146,12 +148,18 @@ def main():
                  "-Wall", "-Wextra", "-Wpedantic", "-Werror",
                  "-c", source, "-o", obj])
             objects.append(obj)
+        fixtures = directory / "libmemory_fixtures.a"
+        run([args.cxx.with_name("llvm-ar"), "rcs", fixtures, *objects])
         spec = importlib.util.spec_from_file_location("machine", ROOT / "tests/backend/machine.py")
         machine = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(machine)
         cases = {name: source for name, source in machine.SOURCES.items()
-                 if name.startswith("c-thread-")}
-        if len(cases) < 3:
+                 if name.startswith("c-thread-") and
+                 (not args.case or name in args.case)}
+        if args.case and set(args.case) - cases.keys():
+            raise AssertionError("Unknown thread case: " +
+                                 ", ".join(sorted(set(args.case) - cases.keys())))
+        if not args.case and len(cases) < 3:
             raise AssertionError("Expected publication, failed-CAS and SC litmus cases")
         for name, source in cases.items():
             path = directory / (name + ".mt")
@@ -165,9 +173,13 @@ def main():
                 obj, program = ir.with_suffix(".o"), ir.with_suffix("")
                 run([args.cxx, "-x", "ir", *flags, "-c", instrumented, "-o", obj])
                 symbols = run([args.cxx.with_name("llvm-nm"), "--undefined-only", obj])
-                if "tsan_atomic32_" not in symbols.stdout:
+                required = (("tsan_atomic8_fetch_xor",
+                             "tsan_atomic64_compare_exchange")
+                            if name == "c-thread-atomic-bool-not-pointer-masks"
+                            else ("tsan_atomic32_",))
+                if any(symbol not in symbols.stdout for symbol in required):
                     raise AssertionError("Generated Mettle atomic code lacks TSan instrumentation")
-                run([args.cxx, *flags, obj, *objects, "-o", program, *args.link_arg])
+                run([args.cxx, *flags, obj, fixtures, "-o", program, *args.link_arg])
                 run([program])
                 evidence["cases"].append({"name": name, "profile": profile,
                                           "source_sha256": digest(path),

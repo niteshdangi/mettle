@@ -9,8 +9,8 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-12): **8,832 evidenced, 2,583 declared,
-1,875 missing, 5 not applicable** of 13,295 records. Declared means implemented
+Latest operation ledger (2026-11-12): **8,836 evidenced, 2,583 declared,
+1,871 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
 The declared records comprise the previous 20 conversion-blanket records,
@@ -20,6 +20,24 @@ establish their required stable constant-callability. The integer audit corrects
 another 2,197 runtime-only records to declared, beyond the previous 312.
 Manifest alias contexts are deduplicated by canonical ID, not counted as
 independent obligations. This correction is not a runtime regression.
+
+### Atomic bitwise acceptance (2026-11-12)
+
+Four canonical records now have Linux x86-64 evidence: AtomicBool.fetch_not and
+AtomicPtr.fetch_and/fetch_or/fetch_xor. Pointer masks use pointer-valued loads,
+CAS and results, deriving the desired address from the observed pointer without
+integer-to-pointer reconstruction. Boolean inversion preserves byte values 0/1.
+All five RMW orderings and invalid operands have focused source/codegen evidence.
+Compiler ASan/UBSan source acceptance and intended rejection pass. Normal and
+TSan contention execute both profiles, with 2,000 rounds per operation checking
+old-value linearization and final state. TSan startup and intentional-race
+detection pass; instrumented callback archives exclude unrelated fixture
+dependencies, matching the ordinary machine runner's lazy linking.
+The affected declaration/boundary CTests and twelve existing atomic profile
+units pass. This does not close the atomic area or prove the complete memory
+model. Exact frozen identities and receipts are retained in
+`build/i13-atomic-bitwise-handoff.json`; normal receipts include
+`build/i13-atomic-staged-{source-run,source-fail,codegen,existing}`.
 
 ### Current const/compiler integration (2026-11-12)
 
