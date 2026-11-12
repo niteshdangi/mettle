@@ -16,6 +16,20 @@ type ManualGuard {
     drop { unsafe { *self.counter += self.amount } }
 }
 
+type CloneGuard {
+    clones: ptr<mut i32>
+    drops: ptr<mut i32>
+    amount: i32
+    drop { unsafe { *self.drops += self.amount } }
+}
+
+extend CloneGuard implements Clone {
+    fn clone(): CloneGuard {
+        unsafe { *self.clones += 1i32 }
+        CloneGuard(self.clones, self.drops, self.amount + 1i32)
+    }
+}
+
 fn digest<T: Hash>(read value: T): u64 {
     var hasher = fnv1a()
     value.hash(mut hasher)
@@ -75,5 +89,20 @@ fn main(): i32 {
         let taken = unsafe { storage.`take`() }
     }
     if take_count != 5i32 { return 10 }
+
+    var clones = 0i32
+    var clone_drops = 0i32
+    var original = core.mem.ManuallyDrop.new(
+        CloneGuard(core.ptr.from_mut(mut clones), core.ptr.from_mut(mut clone_drops), 1i32)
+    )
+    let duplicate = original.clone()
+    if clones != 1i32 || clone_drops != 0i32 { return 11 }
+    {
+        let payload = duplicate.into_inner()
+        if payload.amount != 2i32 { return 12 }
+    }
+    if clone_drops != 2i32 { return 13 }
+    unsafe { mut original.`drop`() }
+    if clone_drops != 3i32 { return 14 }
     0
 }
