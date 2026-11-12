@@ -2,9 +2,27 @@ import package.core.clone.Clone
 import package.core.convert.From
 import package.core.default.Default
 import package.core.fmt.{Debug, Error, Formatter}
+import package.core.hash.{Hash, Hasher}
 
 extend core.sync.atomic.Ordering implements Clone {
     fn clone(): core.sync.atomic.Ordering { self }
+}
+// The compiler lays Ordering out as its i32 variant index.
+fn ordering_index(order: core.sync.atomic.Ordering): i32 {
+    unsafe { core.mem.transmute<i32>(order) }
+}
+extend core.sync.atomic.Ordering implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let index = ordering_index(self)
+        if index == 0 { try f.write_str("Relaxed") }
+        else if index == 1 { try f.write_str("Release") }
+        else if index == 2 { try f.write_str("Acquire") }
+        else if index == 3 { try f.write_str("AcqRel") }
+        else { try f.write_str("SeqCst") }
+    }
+}
+extend core.sync.atomic.Ordering implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit { state.write_i32(ordering_index(self)) }
 }
 
 extend core.sync.atomic.AtomicI8 implements Default {

@@ -3,7 +3,10 @@ import core.convert.From
 import core.default.Default
 import core.fmt
 import core.fmt.Debug
+import core.hash.hash_one
+import core.borrow.ToOwned
 
+fn require_copy<T: Copy>(value: T): T { value }
 fn default_value<T: Default>(): T { T.(Default).default() }
 fn from_value<T: From<V>, V>(take value: V): T { T.(From<V>).from(value) }
 fn debug_is<T: Debug>(read value: T, read expected: core.text.Text): bool {
@@ -67,5 +70,33 @@ fn main(): i32 {
     let original = core.sync.atomic.Ordering.SeqCst
     let cloned = core.sync.atomic.Ordering.(Clone).clone(read original)
     core.sync.atomic.fence(cloned)
+    let all = [core.sync.atomic.Ordering.Relaxed, core.sync.atomic.Ordering.Release,
+               core.sync.atomic.Ordering.Acquire, core.sync.atomic.Ordering.AcqRel,
+               core.sync.atomic.Ordering.SeqCst]
+    let o0: core.sync.atomic.Ordering = all[0usize]
+    if !debug_is(read o0, "Relaxed") { return 200 }
+    let o1: core.sync.atomic.Ordering = all[1usize]
+    if !debug_is(read o1, "Release") { return 201 }
+    let o2: core.sync.atomic.Ordering = all[2usize]
+    if !debug_is(read o2, "Acquire") { return 202 }
+    let o3: core.sync.atomic.Ordering = all[3usize]
+    if !debug_is(read o3, "AcqRel") { return 203 }
+    let o4: core.sync.atomic.Ordering = all[4usize]
+    if !debug_is(read o4, "SeqCst") { return 204 }
+    var index = 0usize
+    while index < 5usize {
+        let current = all[index]
+        let again = require_copy(current)
+        if hash_one(read again) != hash_one(read current) { return 210 + index as i32 }
+        let duplicate = core.sync.atomic.Ordering.(ToOwned).to_owned(read current)
+        if hash_one(read duplicate) != hash_one(read current) { return 220 + index as i32 }
+        var other = 0usize
+        while other < index {
+            let earlier = all[other]
+            if hash_one(read earlier) == hash_one(read current) { return 230 + index as i32 }
+            other += 1usize
+        }
+        index += 1usize
+    }
     0
 }
