@@ -19,8 +19,8 @@
 | D13 | Function results use optional `: Type`, not `->`; omission infers from body returns/tails, not callers. Explicit annotations remain checked contracts, including for public definitions. |
 | D14 | `Unit` is a predeclared type name, not a keyword; `()` is its sole value, not a second type spelling. Omitted results may infer Unit but do not default to it. |
 | D15 | `Never` is the predeclared uninhabited type, replacing the lowercase built-in spelling; it remains distinct from Unit. Prefer `let _ = expression` for intentional non-Unit discard; semicolon semantics remain unchanged. |
-| D16 | Identity: Mettle must not read like a Rust copy. Priorities: source readability, runtime matching or beating Rust (D10), faster compilation and less build-cache storage (D17). Judged on the exhibit programs of [implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage), not punctuation counts. Accepted 2026-10-30 |
-| D17 | Compile time (clean, incremental, check-only) and retained build-cache bytes must beat the frozen Rust/Cargo baseline on the agreed workloads, on a qualified runner, with RSS and binary size reported; a compiler-work regression guard also applies ([performance.md §5.1-5.2](performance.md#51-compile-time-and-build-storage-gate)). Replaces the earlier "no accepted equality gate" for compile time |
+| D16 | Identity: Mettle must not read like a Rust copy. Priorities: source readability, runtime matching or beating Rust (D10), faster compilation and less build-cache storage (D17). Judged on the exhibit programs of [implementation-plan.md §8.7](../process/implementation-plan.md#87-experience-track-readability-compile-cost-and-storage), not punctuation counts. Accepted 2026-10-30 |
+| D17 | Compile time (clean, incremental, check-only) and retained build-cache bytes must beat the frozen Rust/Cargo baseline on the agreed workloads, on a qualified runner, with RSS and binary size reported; a compiler-work regression guard also applies ([performance.md §5.1-5.2](../process/performance.md#51-compile-time-and-build-storage-gate)). Replaces the earlier "no accepted equality gate" for compile time |
 
 These decisions supersede v0.21 implicit retention, the 10-percent slowdown
 trigger and the Word blueprint's earlier parameter/copyability rules.
@@ -28,24 +28,24 @@ trigger and the Word blueprint's earlier parameter/copyability rules.
 ## Experience revision (accepted 2026-10-30)
 
 D18-D29 retain V1 capability, ownership, failure and runtime contracts.
-Implementation/verification: [implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage).
+Implementation/verification: [implementation-plan.md §8.7](../process/implementation-plan.md#87-experience-track-readability-compile-cost-and-storage).
 
 | ID | Decision | Normative section |
 | --- | --- | --- |
 | D18 | Dots qualify modules, types and values; `T.(Interface).Item` selects interface items; lexical shadowing with diagnostics; bounded method lookup; one associated namespace for functions, constants and lowercase variants; brace-list and glob imports | [semantic-rules.md §13.1-13.3](semantic-rules.md#131-qualified-resolution-shadowing-and-interface-selection), [language-grammar.md §13.1](language-grammar.md#131-dotted-paths-and-imports) |
 | D19 | Generic application in expressions is `name<...>`, decided by a syntax-only follower rule; the `assert(a < b, c > (d))` parse is an accepted, diagnosed quirk | [language-grammar.md §13.3](language-grammar.md#133-generic-application) |
 | D20 | `List`, `Map` and `Set` default `A = Global` (hash collections also carry a hash builder `S`, D30); constructors are selected by explicit label/arity shape with declaration-checked applicability; no hidden allocator fallback and no return-type overloading | [semantic-rules.md §13.4](semantic-rules.md#134-constructor-selection) |
-| D21 | Native vocabulary (`List`, `Map`, `Set`, `SortedMap`, `SortedSet`, `OwnedIterable`, `MutableIterable`, `BidirectionalIterator`, `FromItems`, `ExtendItems`, the `Reader`/`Writer` family, past-participle iterator adapter types, contextual `extend`) with the versioned `experience-1` prelude; accurate standard words are kept | [library-surface.md §9](library-surface.md#9-vocabulary-and-the-experience-1-prelude), [language-grammar.md §13.2](language-grammar.md#132-contextual-extend-declarations), [baseline-mapping.md §4](baseline-mapping.md) |
+| D21 | Native vocabulary (`List`, `Map`, `Set`, `SortedMap`, `SortedSet`, `OwnedIterable`, `MutableIterable`, `BidirectionalIterator`, `FromItems`, `ExtendItems`, the `Reader`/`Writer` family, past-participle iterator adapter types, contextual `extend`) with the versioned `experience-1` prelude; accurate standard words are kept | [library-surface.md §9](../library/library-surface.md#9-vocabulary-and-the-experience-1-prelude), [language-grammar.md §13.2](language-grammar.md#132-contextual-extend-declarations), [baseline-mapping.md §4](../process/baseline-mapping.md) |
 | D22 | Builder inference is local to one named function, solved before capture or escape, with source-span provenance and earliest-conflict diagnostics | [semantic-rules.md §13.5](semantic-rules.md#135-local-builder-inference) |
-| D23 | `format` is a parameter kind whose type is the opaque borrowed `core.fmt.Message`; recipes never escape; std owns Writer `write`/`write_line` | [library-surface.md §10.1](library-surface.md#101-format-parameters-and-corefmtmessage), [language-grammar.md §13.5](language-grammar.md#135-format-parameters-and-interpolated-text) |
-| D24 | `print`/`eprint` take `format` parameters and panic on ordinary failure; a stdout broken pipe terminates quietly (SIGPIPE, or status 141 when EPIPE is observed) | [library-surface.md §10.2](library-surface.md#102-convenience-output-and-broken-pipes) |
-| D25 | Reusable lending lines (`read_line_into`, `read_bytes_line_into`) and Copy-valued `[u8].bytes()` | [library-surface.md §11](library-surface.md#11-lending-lines-and-byte-iteration) |
+| D23 | `format` is a parameter kind whose type is the opaque borrowed `core.fmt.Message`; recipes never escape; std owns Writer `write`/`write_line` | [library-surface.md §10.1](../library/library-surface.md#101-format-parameters-and-corefmtmessage), [language-grammar.md §13.5](language-grammar.md#135-format-parameters-and-interpolated-text) |
+| D24 | `print`/`eprint` take `format` parameters and panic on ordinary failure; a stdout broken pipe terminates quietly (SIGPIPE, or status 141 when EPIPE is observed) | [library-surface.md §10.2](../library/library-surface.md#102-convenience-output-and-broken-pipes) |
+| D25 | Reusable lending lines (`read_line_into`, `read_bytes_line_into`) and Copy-valued `[u8].bytes()` | [library-surface.md §11](../library/library-surface.md#11-lending-lines-and-byte-iteration) |
 | D26 | One closure introducer: `fn(x) => expr` and `fn(x) { ... }`; no `(x) =>` form | [language-grammar.md §13.4](language-grammar.md#134-closures-and-call-arguments) |
 | D27 | Named arguments follow positional ones; labels change neither access nor evaluation order; call sites omit `mut` for declaration-known mutable parameters (style only) | [core-semantics.md §9](semantic-rules.md#149-evaluation-order), [language-grammar.md §13.4](language-grammar.md#134-closures-and-call-arguments) |
-| D28 | `KeyView<Q>` lets `Map.get` take borrowed keys such as Text without allocation | [library-surface.md §12](library-surface.md#12-borrowed-keys-and-path-input) |
-| D29 | `path.PathInput` and std `write_path` accept and display native paths without lossy conversion; a bare-interface `read`/`mut` parameter permits unsized implementors | [library-surface.md §12](library-surface.md#12-borrowed-keys-and-path-input), [language-grammar.md §3](language-grammar.md#3-type-expressions) |
-| D30 | Owner-selected deterministic `alloc` Map default: no hidden OS entropy and no default collision-resistance promise; untrusted-key applications select a randomized builder | [native collection contracts §8.3](native-collection-contracts.md#83-hash-map) |
-| D31 | General borrowed-or-owned values use `BorrowedOrOwned<region r,B>`; slice `Cow<region r,T>` is an alias. Owner amendment 2026-11-11 separates `core.borrow.OwnedType` storage identity from `ToOwned` copying | [native collection contracts](native-collection-contracts.md) |
+| D28 | `KeyView<Q>` lets `Map.get` take borrowed keys such as Text without allocation | [library-surface.md §12](../library/library-surface.md#12-borrowed-keys-and-path-input) |
+| D29 | `path.PathInput` and std `write_path` accept and display native paths without lossy conversion; a bare-interface `read`/`mut` parameter permits unsized implementors | [library-surface.md §12](../library/library-surface.md#12-borrowed-keys-and-path-input), [language-grammar.md §3](language-grammar.md#3-type-expressions) |
+| D30 | Owner-selected deterministic `alloc` Map default: no hidden OS entropy and no default collision-resistance promise; untrusted-key applications select a randomized builder | [native collection contracts §8.3](../library/native-collection-contracts.md#83-hash-map) |
+| D31 | General borrowed-or-owned values use `BorrowedOrOwned<region r,B>`; slice `Cow<region r,T>` is an alias. Owner amendment 2026-11-11 separates `core.borrow.OwnedType` storage identity from `ToOwned` copying | [native collection contracts](../library/native-collection-contracts.md) |
 | D32 | Named parameter access precedes the binding (`mut item: Item`, `take view: read Item from r`), including closure and explicit-receiver declarations. Owner accepted 2026-11-09 | [semantic-rules.md §2](semantic-rules.md#2-value-formation-and-parameter-modes) |
 | D33 | `Outcome<T, E>` names native stored success/failure values; `throws E` is reserved for callable effects. Owner accepted 2026-11-09 | [language-grammar.md §3](language-grammar.md#3-type-expressions) |
 | D34 | If/while headers accept comma-separated boolean conditions and `let pattern = expression` clauses, evaluated once left to right with short-circuiting. Owner accepted 2026-11-09 | [language-grammar.md §6](language-grammar.md#6-expressions-errors-and-control-flow) |
@@ -107,14 +107,14 @@ Implementation/verification: [implementation-plan.md §8.7](implementation-plan.
 | Memory/provenance and async containment | Unsafe/async safety claim | Model/review and execute the selected mechanisms |
 | OS/SDK/WASI/board execution | Supported-target claims | Probe selected reference profiles and publish release evidence |
 | Benchmark pilot and fixed release experiment | Runtime release verdict | Apply the specified plan with actual controlled measurements |
-| Compile-time and build-storage measurement | Compile-time and build-cache claims (D17) | Qualified-runner corpus measurement per [performance.md §5.1](performance.md#51-compile-time-and-build-storage-gate) |
-| Experience track (D18-D29) | Claim that every syntax, lookup and inference obligation is complete | [Implementation-plan.md §8.7](implementation-plan.md#87-experience-track-readability-compile-cost-and-storage) records verified work and the remaining R1 blockers |
+| Compile-time and build-storage measurement | Compile-time and build-cache claims (D17) | Qualified-runner corpus measurement per [performance.md §5.1](../process/performance.md#51-compile-time-and-build-storage-gate) |
+| Experience track (D18-D29) | Claim that every syntax, lookup and inference obligation is complete | [Implementation-plan.md §8.7](../process/implementation-plan.md#87-experience-track-readability-compile-cost-and-storage) records verified work and the remaining R1 blockers |
 | Project license | Public open-source licensing/distribution | Separate owner decision; no invented approval |
 | Registry governance and public stabilization | Public service/compatibility promises | Owner decisions before launch; selected pre-implementation syntax is not a public stability guarantee |
 
 ## Documentation and implementation boundary
 
-[specification-status.md](specification-status.md) owns the closed documentation
+[status.md](../process/status.md) owns the closed documentation
 gate and evidence. Specification completion does not prove parser/coherence/
 memory-model correctness, target support or performance, choose a license or
 revive rejected identity proposals. Estimates require measured progress/capacity;

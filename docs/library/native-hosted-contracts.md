@@ -1,13 +1,12 @@
 # Native hosted library contracts
 
-Status: selected operation-family contracts, not implementation or profile
-qualification evidence. V1 executes on `linux-x64`. The other seven selected
+Operation-family contracts. V1 executes on `linux-x64`. The other seven selected
 profiles remain obligations after V1; absence of a service on a profile does not
 remove that profile or make a valid operation invalid on another profile.
 
 V1 gate: only Linux (and the portable core of each family) is exercised for V1.
 Sections specific to Windows, macOS, Android, WASI or other profiles are
-post-V1 obligations ([post-v1-worklist.md](post-v1-worklist.md)); they define
+post-V1 obligations ([post-v1-worklist.md](../process/post-v1-worklist.md)); they define
 contracts but are not V1 acceptance requirements.
 
 ## 1. Scope, signatures and effects
@@ -66,7 +65,7 @@ Common rules apply unless a row specifies more:
 
 Existing native authorities remain in force: allocation and error propagation
 in [library-and-abi](library-and-abi.md), validity/loans/thread properties in
-[memory-and-concurrency](memory-and-concurrency.md), formatting and broken-pipe
+[memory-and-concurrency](../spec/memory-and-concurrency.md), formatting and broken-pipe
 output in [library-surface section 10](library-surface.md#10-formatting-and-output),
 lending lines in section 11, and hosted task scopes in section 13. Core error
 protocols, C strings, scalar arithmetic, ordinary iterators, smart owners
@@ -102,8 +101,8 @@ Target applicability follows the actual operation predicate and these service
 prerequisites, not a blanket "Unix" label. For example, Android is not evidence
 for every Linux extension, and WASI descriptor access is not POSIX process
 support. Profile locks and ABI/panic prerequisites remain in
-[reference-profiles](reference-profiles.md) and
-[platform-contracts](platform-contracts.md).
+[reference-profiles](../spec/platform-contracts.md#8-reference-profiles) and
+[platform-contracts](../spec/platform-contracts.md).
 
 ## 3. I/O errors, buffers and streams
 

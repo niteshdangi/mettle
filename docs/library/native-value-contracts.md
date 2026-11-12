@@ -1,11 +1,9 @@
 # Optional and stored-outcome contracts
 
-Status: native operation specification. This document defines the listed
-operations without an external language specification. It does not certify
-their implementation, constant evaluation or target execution. The
+Native operation specification for the listed operations. The
 [library layers](library-and-abi.md#1-library-layers-and-naming),
-[ownership rules](semantic-rules.md#14-core-semantics-ownership-model-evaluation-and-cleanup) and
-[typing rules](semantic-rules.md) apply throughout.
+[ownership rules](../spec/semantic-rules.md#14-core-semantics-ownership-model-evaluation-and-cleanup) and
+[typing rules](../spec/semantic-rules.md) apply throughout.
 
 ## 1. Values, access and effects
 
@@ -27,7 +25,7 @@ constant work excluding payload operations, user callbacks, formatting and
 destruction. They allocate nothing themselves. User-provided Clone, Default,
 Deref, callbacks and destructors retain their own effects and costs.
 
-Arguments are evaluated under [the call evaluation rules](semantic-rules.md#149-evaluation-order)
+Arguments are evaluated under [the call evaluation rules](../spec/semantic-rules.md#149-evaluation-order)
 before the method runs. An eager fallback value is evaluated and transferred
 even when the method will not select it. Unused owned arguments are destroyed.
 A lazy callback body runs only on its selected branch, at most once.
@@ -77,7 +75,7 @@ and returns an optional `Pinned<mut T>`. Both return `none` on absence and
 otherwise project the existing payload at its existing address. They neither
 move the payload nor allocate, retain or clone it. The resulting pin and
 loan retain the source region and
-[the parent projection guarantee](advanced-contracts.md#1-pinning-and-address-sensitive-objects).
+[the parent projection guarantee](../spec/advanced-contracts.md#1-pinning-and-address-sensitive-objects).
 An exclusive projection cannot coexist with conflicting access to the parent.
 Neither method requires `T: Unpin` or grants permission to replace a pinned
 address-sensitive payload.
@@ -113,7 +111,7 @@ The following require a mutable receiver:
 `take_if` does not call its predicate on absence. Predicate mutation is not
 rolled back on false or panic. Constructor callbacks run before installation:
 if one panics, the absent receiver remains absent. Replacement/destructor panic
-behavior follows [replacement cleanup](semantic-rules.md#1410-destruction-and-failure-edges);
+behavior follows [replacement cleanup](../spec/semantic-rules.md#1410-destruction-and-failure-edges);
 in particular, a recovery boundary must not observe invalidated destination
 storage. Returning an exclusive payload view prevents another mutation until
 that view's loan ends.
@@ -265,7 +263,7 @@ success and the outer error on outer failure.
 
 The following operations must be usable in required constant evaluation when
 their input values, payload operations and regions satisfy the
-[constant-evaluation rules](specification-annex.md#1-numeric-operations-and-constant-evaluation):
+[constant-evaluation rules](../spec/specification-annex.md#1-numeric-operations-and-constant-evaluation):
 
 | Receiver | Required constant-callable operations |
 | --- | --- |
@@ -290,12 +288,12 @@ partial mutation on failure, returned-view regions and zero-or-one iteration.
 Include non-Copy payloads, destructor/callback panics and required-constant
 pass/fail cases. An implementation lacking these contracts remains partial.
 
-Candidate acceptance inputs: [optional operations](../tests/source/run/i13-option-operations.mt)
-and [outcome operations](../tests/source/run/i13-outcome-operations.mt).
+Candidate acceptance inputs: [optional operations](../../tests/source/run/i13-option-operations.mt)
+and [outcome operations](../../tests/source/run/i13-outcome-operations.mt).
 
 The contract covers only operations listed here. Named iterator types and the
 explicitly described protocol/collection implementations have separate
 [core definitions](native-core-library-contracts.md); unlisted methods and
 type-specific implementations remain outside this chapter. Native-authority assignments
 and the remaining reference-owned surfaces are recorded in
-[the mapping register](baseline-mapping.md#7-native-operation-authority).
+[the mapping register](../process/baseline-mapping.md#7-native-operation-authority).

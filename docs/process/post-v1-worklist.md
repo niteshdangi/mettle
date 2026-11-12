@@ -1,14 +1,14 @@
 # Reconciled post-V1 contract worklist
 
 Owner decisions, 2026-11-09: exclude all deprecated APIs from required scope;
-retain all eight [reference profiles](reference-profiles.md) after V1. The
+retain all eight [reference profiles](../spec/platform-contracts.md#8-reference-profiles) after V1. The
 Linux-only V1 gate is unchanged. This supersedes earlier requirements to
 implement deprecated stable contracts, not their frozen reference provenance.
 
 ## Exact inventory partition
 
 Inputs and their SHA-256 identities are recorded in
-[post-v1-summary.json](baseline/post-v1-summary.json). This snapshot accounts
+[post-v1-summary.json](../baseline/post-v1-summary.json). This snapshot accounts
 for 159,995 stable exposures and all **106,125 stable canonical records**:
 
 | Disposition | Canonical records | Meaning |
@@ -70,14 +70,14 @@ their exact signatures and exposure URLs remain available.
 
 ## How to use the ledger
 
-Generate using [the existing operation tool](../tools/v1_operations.py):
+Generate using [the existing operation tool](../../tools/v1_operations.py):
 
 ```sh
 python3 tools/v1_operations.py --remaining
 python3 -m unittest discover -s docs/baseline -p 'test_v1_operations.py'
 ```
 
-The [full gzip CSV](baseline/post-v1-worklist.csv.gz) is UTF-8. Filter
+The [full gzip CSV](../baseline/post-v1-worklist.csv.gz) is UTF-8. Filter
 `disposition=post-v1-obligation` for contextual obligations; group by `work_unit`
 for implementation planning. Follow `covered_by` to include member acceptance
 cases. `exposure_urls` and `availability` preserve exposure-specific reference

@@ -123,9 +123,9 @@ Compatibility includes Copy eligibility and default parameter access.
 Do not promise a stable native ABI, layout, iteration order or target property
 unless its owning contract and evidence establish it.
 
-Follow [library contracts](library-and-abi.md), the
-[native operation translation](library-surface.md), and the
-[memory model](memory-and-concurrency.md). Native code must not silently erase
+Follow [library contracts](../library/library-and-abi.md), the
+[native operation translation](../library/library-surface.md), and the
+[memory model](../spec/memory-and-concurrency.md). Native code must not silently erase
 the selected operation contract or depend on the reference implementation/toolchain.
 
 ## 5. Unsafe, memory and concurrency

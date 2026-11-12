@@ -1,12 +1,11 @@
 # Core library operation contracts
 
-Status: authored native specification, not an implementation or qualification
-receipt. The member groups explicitly described below have independent Mettle
+Native specification. The member groups explicitly described below have independent Mettle
 semantics. The coverage boundary in section 15 is part of this specification;
 mentioning a module does not assign every declaration in it native authority.
 
-[Core semantics and typing](semantic-rules.md),
-[the memory model](memory-and-concurrency.md), and
+[Core semantics and typing](../spec/semantic-rules.md),
+[the memory model](../spec/memory-and-concurrency.md), and
 [native signatures](library-surface.md#2-recursive-translation-rules) supply the
 language rules. The names here are native names; source names in parentheses
 identify declarations during migration, not an alternative implementation.
@@ -205,8 +204,8 @@ For each native signed/unsigned width, let N be its bit width and R its
 representable mathematical range. `BITS = N: u32`; MIN/MAX are exactly the
 endpoints of R with the owning integer type. `usize/isize` use the target
 pointer width, never the build host width.
-[Ordinary operators](semantic-rules.md#3-scalars-and-arithmetic) and
-[numeric casts](specification-annex.md#1-numeric-operations-and-constant-evaluation)
+[Ordinary operators](../spec/semantic-rules.md#3-scalars-and-arithmetic) and
+[numeric casts](../spec/specification-annex.md#1-numeric-operations-and-constant-evaluation)
 retain their existing contracts.
 
 The following families are defined mathematically, at every eligible width:
@@ -370,7 +369,7 @@ are finite and fused, and add no allocation.
 ### 3.3. Floating helpers
 
 Binary32/binary64 arithmetic, conversions, strict rounding and NaN arithmetic
-are owned by [the numeric annex](specification-annex.md#1-numeric-operations-and-constant-evaluation).
+are owned by [the numeric annex](../spec/specification-annex.md#1-numeric-operations-and-constant-evaluation).
 Classification returns Zero, Subnormal, Normal, Infinite or Nan based on the
 bits. `is_finite/is_infinite/is_nan/is_normal/is_subnormal` test those classes;
 sign predicates inspect the sign bit including zeros and NaNs.
@@ -870,7 +869,7 @@ drops its owned remainder normally.
 
 ## 9. Raw pointers and storage
 
-The [memory model](memory-and-concurrency.md#1-allocations-bytes-and-values)
+The [memory model](../spec/memory-and-concurrency.md#1-allocations-bytes-and-values)
 is normative for every operation here. Unsafe preconditions are obligations
 at the call, including zero-length calls where alignment/non-nullness is
 required, not suggestions to be checked only if a result is dereferenced.
@@ -1215,7 +1214,7 @@ Static no-op access lends a Waker with static backing and no wake/drop effects;
 it does not allocate or arrange a task poll.
 
 Atomic memory ordering and fences are independently specified in
-[memory-and-concurrency section 4](memory-and-concurrency.md#4-atomics-and-happens-before).
+[memory-and-concurrency section 4](../spec/memory-and-concurrency.md#4-atomics-and-happens-before).
 For every target-supported bool, integer and pointer atomic:
 `new/into_inner/get_mut/as_ptr` construct, consume, exclusively borrow or
 expose the storage without an atomic read/write; raw use retains race rules.
@@ -1284,7 +1283,7 @@ the target ABI operation, not a guessed bytewise native struct copy.
 These are portable core semantics wherever their input types and explicit
 target capabilities exist. Core requires no allocator, OS or executor.
 Alloc-backed results require the alloc layer. V1 qualification is Linux x64
-only; the eight [reference profiles](reference-profiles.md) remain post-V1
+only; the eight [reference profiles](../spec/platform-contracts.md#8-reference-profiles) remain post-V1
 applicability/qualification obligations. Target pointer width/endian/C ABI/
 atomic support control applicability, not the host running the compiler.
 Architecture operation families are excluded from this document.

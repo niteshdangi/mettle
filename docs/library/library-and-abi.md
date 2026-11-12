@@ -8,11 +8,11 @@ by [library-surface.md](library-surface.md). Native operation definitions are in
 [hosted contracts](native-hosted-contracts.md),
 [OS extensions](native-os-contracts.md) and
 [machine contracts](native-machine-contracts.md).
-The [authority register](baseline-mapping.md#7-native-operation-authority)
+The [authority register](../process/baseline-mapping.md#7-native-operation-authority)
 identifies their exact assignments;
 unmigrated operations retain the explicit fallback in
-[baseline-mapping.md](baseline-mapping.md). Profile-scoped implementation
-evidence is recorded in [implementation-plan.md](implementation-plan.md);
+[baseline-mapping.md](../process/baseline-mapping.md). Profile-scoped implementation
+evidence is recorded in [implementation-plan.md](../process/implementation-plan.md);
 the API contract is not a qualification receipt.
 
 ## 1. Library layers and naming
@@ -344,7 +344,7 @@ build flags, enabled targets and host tools. Keep platform SDK licensing and
 distribution constraints separate from the Mettle project license decision.
 
 Source identities are in toolchain-pins.json; target designs are in
-reference-profiles.md. Record actual installed hashes and probe results.
+platform-contracts.md. Record actual installed hashes and probe results.
 
 ## 9. Package and compatibility policy
 
@@ -370,9 +370,9 @@ The exact project license remains an owner decision.
 
 Borrowed views, concrete iterators, ordinary error results and C-compatible
 calls require no mandatory allocation. Compare equivalent layout, allocator,
-dispatch and failure behavior under [performance.md](performance.md).
+dispatch and failure behavior under [performance.md](../process/performance.md).
 
-Operation authority is assigned by [the native mapping register](baseline-mapping.md#7-native-operation-authority).
+Operation authority is assigned by [the native mapping register](../process/baseline-mapping.md#7-native-operation-authority).
 Unmigrated contracts retain their recorded reference; native layout and C ABI
 requirements are specified in sections 7-8 and the
-[platform contracts](platform-contracts.md).
+[platform contracts](../spec/platform-contracts.md).

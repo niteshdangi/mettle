@@ -1,11 +1,10 @@
 # Allocation, owner and collection operation contracts
 
-Status: authored native specification for the explicit member groups below,
-not evidence that their implementations or target executions are complete.
+Native specification for the explicit member groups below.
 [Core operation contracts](native-core-library-contracts.md) define shared
 protocols, views, callbacks and algorithms. The
 [ownership/allocation policy](library-and-abi.md#2-ownership-and-allocation-operations)
-and [memory model](memory-and-concurrency.md) apply.
+and [memory model](../spec/memory-and-concurrency.md) apply.
 Source-family names in parentheses identify the public identities being
 specified; they do not incorporate another language's behavioral authority.
 

@@ -156,9 +156,9 @@ and semantic evidence covering signatures, ownership, failure, allocation,
 threading, layout and unsafe requirements. Representative tests alone do not
 prove that every item was mapped.
 
-The [baseline inventory](baseline/README.md) owns provenance, runtime/const
+The [baseline inventory](../baseline/README.md) owns provenance, runtime/const
 stability and reproduction. Conditional supporting protocols are defined in
-[library-surface section 8](library-surface.md); implementation members inherit
+[library-surface section 8](../library/library-surface.md); implementation members inherit
 their interface member's stability. Metadata and documentation consistency
 alone do not establish native typechecking, target applicability or execution.
 
@@ -181,27 +181,27 @@ This preserves exact per-member flags without duplicating thousands of flags
 in prose. Named constants retain their separately specified values and types.
 Any actual conflict with native evaluation remains an explicit mapping defect.
 
-The [native value specification](native-value-contracts.md) owns exactly these
+The [native value specification](../library/native-value-contracts.md) owns exactly these
 inherent operation identities, including shared/exclusive-view specializations
 and reexports. Numeric suffixes on archived duplicate anchors are exposure
 identities, not additional native method names.
 
 | Reference owner/member | Native operation and specification |
 | --- | --- |
-| `option::Option::is_some`, `is_none` | `is_present`, `is_none`; [queries](native-value-contracts.md#2-optional-queries-and-projections) |
-| `option::Option::as_ref`, `as_mut`, `as_pin_ref`, `as_pin_mut`, `as_slice`, `as_mut_slice`, `iter`, `iter_mut`, `as_deref`, `as_deref_mut` | Same member names; [projections](native-value-contracts.md#2-optional-queries-and-projections) |
-| `option::Option::unwrap`, `expect`, `unwrap_unchecked`, `unwrap_or`, `unwrap_or_else`, `unwrap_or_default` | Same member names; [extraction](native-value-contracts.md#3-optional-extraction-and-mutation) |
-| `option::Option::take`, `replace`, `insert`, `get_or_insert`, `get_or_insert_with`, `get_or_insert_default`, `take_if` | Same member names, escaped `take`; [mutation](native-value-contracts.md#3-optional-extraction-and-mutation) |
-| `option::Option::map`, `map_or`, `map_or_else`, `map_or_default`, `and_then`, `or_else`, `is_some_and`, `is_none_or`, `ok_or`, `ok_or_else`, `filter`, `inspect`, `and`, `or`, `xor`, `zip`, `unzip`, `flatten`, `transpose`, `copied`, `cloned` | Same member names; [transformations](native-value-contracts.md#4-optional-transformations) |
-| `primitive::bool::then_some`, `then` | Same member names; [eager/lazy conditional construction](native-value-contracts.md#4-optional-transformations) |
-| `result::Result::is_ok`, `is_err` | `is_success`, `is_failure`; [queries](native-value-contracts.md#5-stored-outcome-queries-and-projections) |
-| `result::Result::as_ref`, `as_mut`, `iter`, `iter_mut`, `as_deref`, `as_deref_mut` | Same member names; [projections](native-value-contracts.md#5-stored-outcome-queries-and-projections) |
-| `result::Result::ok`, `err`, `unwrap`, `expect`, `unwrap_err`, `expect_err`, `unwrap_or`, `unwrap_or_else`, `unwrap_or_default`, `unwrap_unchecked`, `unwrap_err_unchecked` | Same member names; [extraction](native-value-contracts.md#6-stored-outcome-extraction) |
-| `result::Result::map`, `map_err`, `map_or`, `map_or_else`, `map_or_default`, `and_then`, `or_else`, `is_ok_and`, `is_err_and`, `and`, `or`, `inspect`, `inspect_err`, `copied`, `cloned`, `flatten`, `transpose` | Same member names; [transformations](native-value-contracts.md#7-stored-outcome-transformations) |
+| `option::Option::is_some`, `is_none` | `is_present`, `is_none`; [queries](../library/native-value-contracts.md#2-optional-queries-and-projections) |
+| `option::Option::as_ref`, `as_mut`, `as_pin_ref`, `as_pin_mut`, `as_slice`, `as_mut_slice`, `iter`, `iter_mut`, `as_deref`, `as_deref_mut` | Same member names; [projections](../library/native-value-contracts.md#2-optional-queries-and-projections) |
+| `option::Option::unwrap`, `expect`, `unwrap_unchecked`, `unwrap_or`, `unwrap_or_else`, `unwrap_or_default` | Same member names; [extraction](../library/native-value-contracts.md#3-optional-extraction-and-mutation) |
+| `option::Option::take`, `replace`, `insert`, `get_or_insert`, `get_or_insert_with`, `get_or_insert_default`, `take_if` | Same member names, escaped `take`; [mutation](../library/native-value-contracts.md#3-optional-extraction-and-mutation) |
+| `option::Option::map`, `map_or`, `map_or_else`, `map_or_default`, `and_then`, `or_else`, `is_some_and`, `is_none_or`, `ok_or`, `ok_or_else`, `filter`, `inspect`, `and`, `or`, `xor`, `zip`, `unzip`, `flatten`, `transpose`, `copied`, `cloned` | Same member names; [transformations](../library/native-value-contracts.md#4-optional-transformations) |
+| `primitive::bool::then_some`, `then` | Same member names; [eager/lazy conditional construction](../library/native-value-contracts.md#4-optional-transformations) |
+| `result::Result::is_ok`, `is_err` | `is_success`, `is_failure`; [queries](../library/native-value-contracts.md#5-stored-outcome-queries-and-projections) |
+| `result::Result::as_ref`, `as_mut`, `iter`, `iter_mut`, `as_deref`, `as_deref_mut` | Same member names; [projections](../library/native-value-contracts.md#5-stored-outcome-queries-and-projections) |
+| `result::Result::ok`, `err`, `unwrap`, `expect`, `unwrap_err`, `expect_err`, `unwrap_or`, `unwrap_or_else`, `unwrap_or_default`, `unwrap_unchecked`, `unwrap_err_unchecked` | Same member names; [extraction](../library/native-value-contracts.md#6-stored-outcome-extraction) |
+| `result::Result::map`, `map_err`, `map_or`, `map_or_else`, `map_or_default`, `and_then`, `or_else`, `is_ok_and`, `is_err_and`, `and`, `or`, `inspect`, `inspect_err`, `copied`, `cloned`, `flatten`, `transpose` | Same member names; [transformations](../library/native-value-contracts.md#7-stored-outcome-transformations) |
 
 Receiver modes, payload bounds, effects, complexity, failure and regions come
 from that native specification; its
-[constant and profile rules](native-value-contracts.md#8-constant-evaluation-and-profile-applicability)
+[constant and profile rules](../library/native-value-contracts.md#8-constant-evaluation-and-profile-applicability)
 replace reference-owned constant-callability requirements for assigned methods.
 This is an operation-level assignment, not a blanket assignment for every
 member or implementation of Option/Result. Separate iterator declarations and
@@ -218,11 +218,11 @@ share the resulting authority.
 
 | Operation selector | Native authority |
 | --- | --- |
-| Protocol members, scalar helpers, text/slice/array operations, named iterator constructors/adapters/consumers, pointer/storage/cell/pin operations, operators, formatting/type queries, poll/wake/atomics and C-string operations explicitly enumerated in the core boundary | [Core member groups](native-core-library-contracts.md#152-native-authority-boundary), with their owning sections 2-14 |
-| Optional/outcome `Iter`, `IterMut`, `IntoIter`: `next`, `next_back`, `size_hint`, `len`, fused behavior, stated Clone eligibility and owned cleanup | [Zero-or-one iterator types](native-core-library-contracts.md#6-iterator-protocols-and-constructors); inherited consumers/adapters retain their separately specified bounds |
-| Layout/allocator, unique/shared/weak owners, collections and entries, String/CString, borrowed-or-owned and allocating slice operations explicitly enumerated in the collection boundary | [Collection member groups](native-collection-contracts.md#12-exact-coverage-and-remaining-work), with their owning sections 1-11 and decisions D30-D31 |
-| I/O, OS strings/paths, files, environment/processes, time, threading/synchronization/channels and address/network members explicitly named by the hosted selectors and their runtime clauses | [Hosted member selectors](native-hosted-contracts.md#101-operation-selectors-for-integration), with the exclusions in section 10 |
-| Descriptor/handle/socket transfers, OS string representations and filesystem/process/network/thread extensions explicitly named by the OS selectors and their runtime clauses | [OS member selectors](native-os-contracts.md#81-integration-selectors), with the exclusions in section 8 |
+| Protocol members, scalar helpers, text/slice/array operations, named iterator constructors/adapters/consumers, pointer/storage/cell/pin operations, operators, formatting/type queries, poll/wake/atomics and C-string operations explicitly enumerated in the core boundary | [Core member groups](../library/native-core-library-contracts.md#152-native-authority-boundary), with their owning sections 2-14 |
+| Optional/outcome `Iter`, `IterMut`, `IntoIter`: `next`, `next_back`, `size_hint`, `len`, fused behavior, stated Clone eligibility and owned cleanup | [Zero-or-one iterator types](../library/native-core-library-contracts.md#6-iterator-protocols-and-constructors); inherited consumers/adapters retain their separately specified bounds |
+| Layout/allocator, unique/shared/weak owners, collections and entries, String/CString, borrowed-or-owned and allocating slice operations explicitly enumerated in the collection boundary | [Collection member groups](../library/native-collection-contracts.md#12-exact-coverage-and-remaining-work), with their owning sections 1-11 and decisions D30-D31 |
+| I/O, OS strings/paths, files, environment/processes, time, threading/synchronization/channels and address/network members explicitly named by the hosted selectors and their runtime clauses | [Hosted member selectors](../library/native-hosted-contracts.md#101-operation-selectors-for-integration), with the exclusions in section 10 |
+| Descriptor/handle/socket transfers, OS string representations and filesystem/process/network/thread extensions explicitly named by the OS selectors and their runtime clauses | [OS member selectors](../library/native-os-contracts.md#81-integration-selectors), with the exclusions in section 8 |
 
 A group assigns only a member with a native runtime definition, including its
 signature translation, access/regions, effects, failure, cost and unsafe
@@ -234,14 +234,14 @@ per-canonical implementation audit.
 
 ### Machine assignments
 
-The [native machine specification](native-machine-contracts.md) additionally
+The [native machine specification](../library/native-machine-contracts.md) additionally
 owns these explicit function identities, including canonical reexports:
 
 | Catalog function identities | Native specification |
 | --- | --- |
-| x86/x86-64 `_blcfill_u32/u64`, `_blci_u32/u64`, `_blcic_u32/u64`, `_blcmsk_u32/u64`, `_blcs_u32/u64`, `_blsfill_u32/u64`, `_blsic_u32/u64`, `_t1mskc_u32/u64`, `_tzmsk_u32/u64`, `_bextri_u32/u64` | [Bit helpers](native-machine-contracts.md#3-integer-bit-helpers), including wrapping results, constant-control checks and TBM requirements |
-| x86/x86-64 `__cpuid`, `__get_cpuid_max`, `_mm_extract_si64`, `_mm_extracti_si64`, `_mm_insert_si64`, `_mm_inserti_si64`, `_mm_stream_ss`, `_mm_stream_sd`; x86-64 `cmpxchg16b` | [Queries and transfers](native-machine-contracts.md#4-machine-queries-and-specialized-transfers), with the common access/feature and store-fence rules in sections 1-2 |
-| wasm32 `i8x16`, `u8x16`, `i16x8`, `u16x8`, `i32x4`, `u32x4`, `i64x2`, `u64x2`, `f32x4`, `f64x2`, `memory_size`, `memory_grow`, `unreachable` | [WebAssembly constructors, memory and trap operations](native-machine-contracts.md#6-webassembly-operations) |
+| x86/x86-64 `_blcfill_u32/u64`, `_blci_u32/u64`, `_blcic_u32/u64`, `_blcmsk_u32/u64`, `_blcs_u32/u64`, `_blsfill_u32/u64`, `_blsic_u32/u64`, `_t1mskc_u32/u64`, `_tzmsk_u32/u64`, `_bextri_u32/u64` | [Bit helpers](../library/native-machine-contracts.md#3-integer-bit-helpers), including wrapping results, constant-control checks and TBM requirements |
+| x86/x86-64 `__cpuid`, `__get_cpuid_max`, `_mm_extract_si64`, `_mm_extracti_si64`, `_mm_insert_si64`, `_mm_inserti_si64`, `_mm_stream_ss`, `_mm_stream_sd`; x86-64 `cmpxchg16b` | [Queries and transfers](../library/native-machine-contracts.md#4-machine-queries-and-specialized-transfers), with the common access/feature and store-fence rules in sections 1-2 |
+| wasm32 `i8x16`, `u8x16`, `i16x8`, `u16x8`, `i32x4`, `u32x4`, `i64x2`, `u64x2`, `f32x4`, `f64x2`, `memory_size`, `memory_grow`, `unreachable` | [WebAssembly constructors, memory and trap operations](../library/native-machine-contracts.md#6-webassembly-operations) |
 
 These are function assignments only. They do not assign every architecture
 type, implementation, intrinsic or source-only branch. The other ISA-family
@@ -250,14 +250,14 @@ individual contract review. In particular, a vendor link is not proof that all
 native safety, immediate and feature requirements have been reconciled.
 
 Language copying, retention, evaluation and cleanup are independently specified
-by [core semantics](semantic-rules.md#14-core-semantics-ownership-model-evaluation-and-cleanup) and its owning refinements. Their former
+by [core semantics](../spec/semantic-rules.md#14-core-semantics-ownership-model-evaluation-and-cleanup) and its owning refinements. Their former
 external design-source links are not normative fallbacks.
-The [specification gate](specification-status.md) records migration boundaries.
+The [specification gate](status.md) records migration boundaries.
 
 ### Remaining migration
 
 The following reference-owned surfaces remain blockers to complete reference
-removal. Apply the [V1 priority rules](specification-status.md#v1-priority-and-deferred-migration)
+removal. Apply the [V1 priority rules](status.md#v1-priority-and-deferred-migration)
 to schedule them: complete reference removal is not a V1 prerequisite, while
 contract conflicts affecting selected V1 operations still block their acceptance.
 

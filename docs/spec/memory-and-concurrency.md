@@ -1,7 +1,5 @@
 # Memory and concurrency design contract
 
-Status: selected semantic contract, not a mechanically proved model.
-
 ## 1. Allocations, bytes and values
 
 An allocation has identity, byte extent, alignment, lifetime and permitted

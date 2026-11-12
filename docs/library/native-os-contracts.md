@@ -11,7 +11,7 @@ not independent resource types.
 
 V1 gate: only Linux (and the portable core of each family) is exercised for V1.
 Sections specific to Windows, macOS, Android, WASI or other profiles are
-post-V1 obligations ([post-v1-worklist.md](post-v1-worklist.md)); they define
+post-V1 obligations ([post-v1-worklist.md](../process/post-v1-worklist.md)); they define
 contracts but are not V1 acceptance requirements.
 
 ## 1. Platform applicability and common rules

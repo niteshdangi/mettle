@@ -1,10 +1,10 @@
 # Contributing to Mettle
 
-The [code quality standard](docs/code-quality.md) is normative.
-The [compiler architecture](docs/compiler-architecture.md) defines responsibilities,
+The [code quality standard](docs/process/code-quality.md) is normative.
+The [compiler architecture](docs/process/compiler-architecture.md) defines responsibilities,
 representations and future feature placement. CMake declares the current
 component targets and dependencies.
-The [language specifications](docs/semantic-rules.md) define behavior;
+The [language specifications](docs/spec/semantic-rules.md) define behavior;
 implementation convenience does not override them.
 
 For milestone work, follow the
@@ -13,7 +13,7 @@ scope before compiler edits, batch shared-interface changes, and separate
 focused implementation checks from frozen-source qualification.
 
 Until self-hosting (I15), limit C++ compiler changes to what V1 requires; see
-the [C++ compiler scope](docs/implementation-plan.md#8-delivery-milestones).
+the [C++ compiler scope](docs/process/implementation-plan.md#8-delivery-milestones).
 
 ## Local checks
 
@@ -38,10 +38,10 @@ python3 tools/build.py --configuration Debug --sanitizers
 `--quality` includes CTest, static analysis and clean-rebuild checks; do not
 also run standalone CTest. Repeat static analysis in another configuration only
 when its changed definitions or sources require it.
-The [quality standard](docs/code-quality.md#5-unsafe-memory-and-concurrency)
+The [quality standard](docs/process/code-quality.md#5-unsafe-memory-and-concurrency)
 owns sanitizer requirements and the toolchain compatibility decision.
 The Linux host qualification gate and historical macOS evidence scopes are in
-[implementation-plan section 8.0](docs/implementation-plan.md).
+[implementation-plan section 8.0](docs/process/implementation-plan.md).
 
 Cross-target/backend changes also require the existing Linux source runner:
 
@@ -55,7 +55,7 @@ Start the dedicated VM first and stop it after dependent work; see the
 ## Change checklist
 
 Use existing runners and the
-[compiler test categories](docs/code-quality.md#6-diagnostics-and-behavioral-tests);
+[compiler test categories](docs/process/code-quality.md#6-diagnostics-and-behavioral-tests);
 each regression must guard meaningful behavior.
 
 - Explain the problem, changed behavior and affected compiler/library boundary.

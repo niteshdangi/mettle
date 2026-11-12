@@ -67,7 +67,7 @@ def documentation_checks(project):
             failures.append({"id": row["id"], "problem": "Missing owner/evidence obligation"})
         for target in row["specification"].split("|"):
             check_link(capability_file, target)
-    milestone_text = (project / "docs/implementation-plan.md").read_text()
+    milestone_text = (project / "docs/process/implementation-plan.md").read_text()
     milestone_rows = re.findall(
         r"^\|\s*(I\d+)\s*\|\s*([^|\n]+)\|\s*([^|\n]+)\|\s*([^|\n]+)\|\s*$",
         milestone_text, re.M)
@@ -93,7 +93,7 @@ def documentation_checks(project):
 
     grammar, production_counts = {}, {}
     for filename in ("language-grammar.md",):
-        text = (project / "docs" / filename).read_text()
+        text = (project / "docs/spec" / filename).read_text()
         body = "\n".join(re.findall(r"```ebnf\n(.*?)```", text, re.S))
         productions = re.findall(r"^([a-z_]\w*)\s*=\s*(.*?)(?=^[a-z_]\w*\s*=|\Z)", body, re.M | re.S)
         names = [name for name, _ in productions]
@@ -137,7 +137,7 @@ def main():
     counts = Counter()
     native_primitive_mappings = Counter()
     declared_rules = set(re.findall(
-        r"\| (T\d\d) \|", (ROOT.parent / "library-surface.md").read_text()))
+        r"\| (T\d\d) \|", (ROOT.parent / "library/library-surface.md").read_text()))
     expected_rules = {f"T{i:02d}" for i in range(1, 17)}
     if declared_rules != expected_rules:
         failures.append({"problem": "Translation rule definitions are incomplete"})

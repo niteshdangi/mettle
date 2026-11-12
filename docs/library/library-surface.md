@@ -1,7 +1,6 @@
 # Native library surface and signature translation
 
-Status: normative operation translation; manifests are contracts, not
-implementation receipts. Evidence: [implementation-plan.md](implementation-plan.md).
+Normative operation translation.
 
 ## 1. What specifies an operation
 
@@ -13,7 +12,7 @@ signatures and behavior in their owning specifications; unassigned operations
 still require recursive translation of the retained declaration.
 
 For operations assigned native authority in
-[the mapping register](baseline-mapping.md#7-native-operation-authority),
+[the mapping register](../process/baseline-mapping.md#7-native-operation-authority),
 the owning native specification supplies semantics, complexity, panics, unsafe
 preconditions and allocation/invalidation guarantees.
 For unmigrated operations the linked versioned contract still supplies those
@@ -296,7 +295,7 @@ external name alone does not give a native-layout value a stable C calling ABI.
 
 The [native machine contracts](native-machine-contracts.md) specify common
 instruction access/feature rules and explicitly assigned helper operations.
-The [authority register](baseline-mapping.md#7-native-operation-authority)
+The [authority register](../process/baseline-mapping.md#7-native-operation-authority)
 distinguishes those assignments from remaining instruction-contract migration.
 
 The initial mechanisms use compiler-owned Linux x86-64 SSE/SSE2 and Darwin
@@ -396,7 +395,7 @@ V1 obligations regardless of this subset.
 
 Owner amendment (2026-11-09): all selected reference profiles remain required
 for post-V1 applicability/qualification, without expanding the Linux-only V1
-gate. The [reconciled worklist](post-v1-worklist.md) separates independent
+gate. The [reconciled worklist](../process/post-v1-worklist.md) separates independent
 obligations, implementation members, shared declarations and exclusions.
 Its counts are inventory scope, not implementation or target-qualification
 receipts. Source-cfg applicability still requires review on each profile.
@@ -502,7 +501,7 @@ call would lose a stable capability; exposing every experimental implementation
 would expand the agreed baseline. The native translation preserves the callable
 and its exact eligible substitutions, not unrestricted implementation rights.
 The machine-readable family register is
-[supporting-protocols.json](baseline/supporting-protocols.json).
+[supporting-protocols.json](../baseline/supporting-protocols.json).
 
 | Family | Native contract and boundary |
 | --- | --- |

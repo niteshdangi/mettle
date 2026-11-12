@@ -1,10 +1,10 @@
 # Native machine operation contracts
 
-Status: operation specification, not target qualification. These rules define
+Operation specification. These rules define
 architecture operations independently of another programming language.
-[Native memory validity](memory-and-concurrency.md),
-[scalar arithmetic](semantic-rules.md#3-scalars-and-arithmetic) and
-[platform ABI contracts](platform-contracts.md) still apply.
+[Native memory validity](../spec/memory-and-concurrency.md),
+[scalar arithmetic](../spec/semantic-rules.md#3-scalars-and-arithmetic) and
+[platform ABI contracts](../spec/platform-contracts.md) still apply.
 
 ## 1. Declarations and applicability
 
@@ -35,7 +35,7 @@ feature. Feature-dependent calling ABIs must be bridged under
 
 Unsupported lowering is diagnosed explicitly. It does not redefine the
 operation, authorize arbitrary instruction execution or qualify the profile.
-All eight [reference profiles](reference-profiles.md) remain in post-V1 scope;
+All eight [reference profiles](../spec/platform-contracts.md#8-reference-profiles) remain in post-V1 scope;
 only applicable instructions belong to a profile's operation obligations.
 
 ## 2. ISA-defined intrinsic families
@@ -129,7 +129,7 @@ observe the old 128-bit value, replace it only when its bits match the expected
 value, and return the observed value. The pointer must be 16-byte aligned and
 valid for the atomic access; the processor feature and requested
 success/failure orderings must be valid.
-[Native atomic ordering](memory-and-concurrency.md#4-atomics-and-happens-before)
+[Native atomic ordering](../spec/memory-and-concurrency.md#4-atomics-and-happens-before)
 governs synchronization. No tearing or blocking lock emulation is permitted
 under this operation's identity.
 
@@ -230,7 +230,7 @@ An unreachable instruction traps and does not run cleanup.
 ## 7. Assembly, validity and acceptance
 
 Inline/global/naked assembly use the independent native contracts in
-[the assembly annex](specification-annex.md#5-attributes-layout-and-assembly)
+[the assembly annex](../spec/specification-annex.md#5-attributes-layout-and-assembly)
 and [foreign completion](library-surface.md#5-layout-and-foreign-completion).
 No optional feature, clobber, unwind permission or memory effect is inferred
 solely from assembly text.

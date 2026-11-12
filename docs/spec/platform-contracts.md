@@ -1,7 +1,7 @@
 # Platform and feature contracts
 
 Status: selected profiles and qualification gates. Support evidence is recorded
-in [implementation-plan.md](implementation-plan.md).
+in [implementation-plan.md](../process/implementation-plan.md).
 
 ## 1. Target profile selection
 
@@ -22,7 +22,7 @@ WASI is not a promise of browser DOM APIs or native process/thread facilities.
 Browser embedding and WASI services have separate imports. Unsupported target
 capabilities need explicit diagnostics and profile applicability in the matrix.
 
-[Reference profiles](reference-profiles.md) select OS/SDK/API baselines, WASI
+[Reference profiles](#8-reference-profiles) select OS/SDK/API baselines, WASI
 runtime, CPU baselines, linker policy and a concrete freestanding board model.
 Support/reproducibility claims require installed hashes and build/execution probes.
 
@@ -120,3 +120,74 @@ execution must be visible; sandboxing/hermetic execution remain optional.
 LSP and compiler share syntax/analysis representations, but error recovery does
 not authorize execution of invalid programs. Formatter preservation includes
 newline boundaries, block-tail values, modes, and comment placement.
+
+## 8. Reference profiles
+
+Design/test selections, not support claims or installed-artifact locks.
+Source IDs: toolchain-pins.json. Reproducible execution also requires immutable
+SDK/sysroot/package digests.
+
+### Initial profile choices
+
+| Profile | Reference environment | CPU / ABI / format | Initial panic policy |
+| --- | --- | --- | --- |
+| linux-x64 | Maintained Linux userland; record the installed distribution and libc identity per run | x86_64-unknown-linux-gnu; x86-64 baseline, no AVX requirement; SysV; ELF/DWARF | unwind and abort |
+| linux-arm64 | Maintained Linux userland; record the installed distribution and libc identity per run | aarch64-unknown-linux-gnu; ARMv8-A baseline; AAPCS64; ELF/DWARF | unwind and abort |
+| windows-x64 | Windows 11 24H2; Windows SDK 10.0.26100.0 | x86_64-pc-windows-msvc; Windows x64 C ABI; PE/COFF, CodeView/PDB | platform unwind and abort |
+| macos-arm64 | macOS 15 deployment baseline; Xcode 16.2 SDK bundle | aarch64-apple-darwin; Apple ARM64 C ABI; Mach-O/DWARF | platform unwind and abort |
+| android-arm64 | Android API 28 deployment baseline; NDK r27c | aarch64-linux-android; Bionic C ABI; ELF/DWARF | unwind and abort for compatible native boundaries |
+| wasi32 | WASI Preview 1; wasi-sdk-25; Wasmtime 29.0.1 | wasm32-wasip1; single-threaded baseline; Wasm | abort/trap |
+| wasm32-core | Explicit embedding; no WASI imports by default | wasm32-unknown-unknown; core plus optional allocator | embedder abort/trap |
+| cortex-m3 | QEMU 9.2.0 lm3s6965evb model | thumbv7m-none-eabi; soft-float AAPCS32; ELF/DWARF | user panic handler, no hosted unwind |
+
+Minimum interfaces do not assure later-OS compatibility. Validate maintained
+installations with exact patch/build identities. Owner decision (2026-11-09):
+Linux uses the installed host, recording distribution/libc/kernel; no Ubuntu or
+glibc version mandate or inferred cross-distribution compatibility.
+QEMU qualifies emulation, not physical hardware.
+
+Use the platform's C ABI specifications for argument classification and aggregate
+layout. Pointer widths are 64 bits for the five native hosted profiles and 32
+bits for the Wasm and Cortex-M3 profiles. All selected profiles are little-endian.
+Do not extrapolate big-endian support from these selections.
+
+Baseline compiler invocations must not use host-native CPU tuning. Optional
+target features are explicit and require dispatch or caller guarantees.
+The list of native lock-free atomic widths is produced by profile probes and
+the target ABI; the language cannot assume that every integer width is lock-free.
+
+### Runtime and linkage selections
+
+ELF profiles use LLD by default with the target sysroot's C startup and runtime.
+Windows uses COFF LLD where compatible and the selected SDK/CRT interfaces;
+record the actual redistributable/runtime package identity separately.
+macOS uses its selected platform SDK/linker. WASI uses its explicit SDK startup
+and imports. Freestanding uses a project-provided vector/startup object, linker
+script and panic handler.
+
+Hosted std requires platform services, not an implicit executor. Core-only
+profiles exclude files/processes/hosted threads; record feature applicability
+in the capability audit.
+
+Compatible unwinding is a capability to implement and probe, not permission to
+unwind through an ordinary C boundary. Early abort-only compiler milestones do
+not fulfill the final native hosted unwind requirement.
+
+### Required profile-lock fields
+
+For every run record exact OS build/kernel, SDK/sysroot file hashes, compiler
+and linker revisions, CRT/libc identity, startup objects, CPU feature mask,
+allocator, panic mode, debug format, target libraries and command-line flags.
+Compiler source revisions alone cannot substitute for this environment lock.
+
+Missing artifact digests block reproducibility, not design selection. Do not
+invent hashes or download SDKs just to complete a planning record.
+
+### Sources
+
+- https://learn.microsoft.com/en-us/windows/apps/windows-sdk/downloads
+- https://developer.apple.com/documentation/xcode-release-notes/xcode-16_2-release-notes
+- https://github.com/android/ndk/releases/tag/r27c
+- https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-25
+- https://github.com/bytecodealliance/wasmtime/releases/tag/v29.0.1
+- https://github.com/qemu/qemu/tree/v9.2.0/docs/system/arm

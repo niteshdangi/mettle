@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""D17 comparison harness: Mettle versus Rust/Cargo (docs/performance.md).
+"""D17 comparison harness: Mettle versus Rust/Cargo (docs/process/performance.md).
 
 Measures, for paired workloads under benchmarks/ and a synthetic N-modules x
 M-functions scaling family: run time, clean build, no-op rebuild, comment-edit

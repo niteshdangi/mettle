@@ -53,7 +53,7 @@ elseif(APPLE)
   set(METTLE_LINKER_FLAGS "--sysroot=${CMAKE_OSX_SYSROOT}")
 endif()
 
-# Documented macOS baseline (docs/reference-profiles.md) for the runtime and
+# Documented macOS baseline (docs/spec/platform-contracts.md) for the runtime and
 # for the objects the compiler emits, so linking never sees the host kernel
 # version. The compiler itself is built for the host and is not affected.
 set(METTLE_MACOS_DEPLOYMENT_TARGET "15.0" CACHE STRING

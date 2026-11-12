@@ -19,9 +19,9 @@
 ## If I asked something to be done, DONOT STOP AFTER ACKNOWLEDGING, OR DOING HALF WORK FROM ABOVE WITHOUT DOING FULL TASK WHAT I ASKED. If you know its not done then dont stop without completing that task properly. Below Rules are AI generated, if some rule wastes time for a task which can skip some rules below then skip it. 
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) and the normative
-[code quality standard](docs/code-quality.md) before changing this repository.
+[code quality standard](docs/process/code-quality.md) before changing this repository.
 These rules apply to compiler, runtime, libraries, tools, tests and documentation.
-The [compiler architecture](docs/compiler-architecture.md) owns component
+The [compiler architecture](docs/process/compiler-architecture.md) owns component
 responsibilities and phase contracts; CMake owns the current component targets
 and dependencies. Update both with architectural changes.
 
@@ -80,7 +80,7 @@ weaken the quality standard or authorize dropping a selected contract.
    requirement's implementation state (missing, partial or implemented),
    verification scope/revision, remaining work, owning files, required fixtures
    and documentation. Do not equate implemented with verified. For I06, start
-   with the inventory in `docs/implementation-plan.md` section 8.3.
+   with the inventory in `docs/process/implementation-plan.md` section 8.3.
 2. Plan AST, type, IR, ownership, runtime and backend interfaces together before
    changing shared headers. Batch their dependent implementations coherently.
    Keep one source writer for shared compiler interfaces; independent work must

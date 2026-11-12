@@ -1,7 +1,6 @@
 # Specification annex: selected rules
 
-Status: normative refinements, not implementation/proof results. Explicit owner
-decisions take precedence; this annex supersedes earlier unspecified rules.
+Normative refinements. Explicit owner decisions take precedence; this annex supersedes earlier unspecified rules.
 
 ## 1. Numeric operations and constant evaluation
 
@@ -268,7 +267,7 @@ and target metadata; ordinary inline assembly cannot unexpectedly unwind.
 
 Frozen instruction/register tables, target C ABI facts and per-operation
 contracts remain normative input for unmigrated operations under
-[baseline-mapping.md](baseline-mapping.md). Operations assigned to a standalone
+[baseline-mapping.md](../process/baseline-mapping.md). Operations assigned to a standalone
 native specification in its section 7 use that specification as authority;
 their frozen records remain audit provenance.
 Conflicts with native rules reopen mapping; incorporation is not qualification.
@@ -316,6 +315,6 @@ not admitted by that contract.
 ## 8. Runtime implications
 
 Compare equivalent numeric modes, layout/assembly promises, dispatch and scoped
-task lifetimes under [performance.md](performance.md). Region solving requires
+task lifetimes under [performance.md](../process/performance.md). Region solving requires
 no runtime region objects. Capture destruction follows the deterministic order
 specified in section 3.

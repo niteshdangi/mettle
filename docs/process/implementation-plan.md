@@ -96,7 +96,7 @@ Avoid adding a third-party test framework until a concrete testing need warrants
 it. C++ implementation choices do not leak into Mettle source contracts.
 
 LLVM is the production backend through V1.1. toolchain-pins.json selects exact
-upstream source identities and reference-profiles.md selects target environments.
+upstream source identities and platform-contracts.md selects target environments.
 Before the first backend build, capture installed artifact hashes and perform
 object/link/debug probes. Source selection is fixed; joint build compatibility
 and platform execution are not claimed before those probes.
@@ -145,7 +145,7 @@ lowering. Shared assumptions remain limitations even when both outputs agree.
 The technical minimum for a lexer/parser prototype is determinate grammar cases,
 but the user selected a stronger project gate: finish documentation before
 implementation, not on the strength of the subset alone.
-`specification-status.md` defines the documentation completion evidence and its
+`status.md` defines the documentation completion evidence and its
 limits. That gate has closed and the user authorized I01 implementation; source/build
 files are now permitted. Documentation validation
 excludes tool caches and build output without relaxing the frozen API audit.
@@ -205,7 +205,7 @@ delivered by its own gates.
 ### 8.0. Gated profile: `linux-x64`
 
 The remaining V1 milestones gate on `linux-x64` from
-[reference-profiles.md](reference-profiles.md): a Linux x86-64 compiler host
+[platform-contracts.md](../spec/platform-contracts.md#8-reference-profiles): a Linux x86-64 compiler host
 producing x86_64-unknown-linux-gnu executables on the installed maintained Linux
 userland (WSL2 is acceptable). No distribution or glibc version is mandated;
 each qualification run records the actual OS, libc, kernel and sysroot.
@@ -455,7 +455,7 @@ the same declaration, applicability and per-operation evidence rules as I13.
 It may proceed alongside I15-I16.
 
 Owner worklist amendment (2026-11-09): deprecated APIs are no longer required,
-and all eight [reference profiles](reference-profiles.md) remain in post-V1
+and all eight [reference profiles](../spec/platform-contracts.md#8-reference-profiles) remain in post-V1
 scope. The [reconciled worklist](post-v1-worklist.md) accounts for all 106,125
 stable canonical records: 629 excluded deprecated records, 13,295 V1
 obligations, 41,151 post-V1 contextual obligations, 50,190 attached
@@ -564,10 +564,10 @@ four Text/String ownership cases of library-surface section 9. Test fixtures:
 Compile/execute both exhibits with the matched edge/error/ownership cases;
 a documentation check alone is not equivalence evidence.
 
-Exhibit programs: [cli_wordcount_lines.mt](../tests/std/cli_wordcount_lines.mt)
-(byte-streaming word count; before: [cli_wordcount.mt](../tests/std/cli_wordcount.mt)) and
-[ini_parser_readable.mt](../tests/alloc/ini_parser_readable.mt) (digit-list parser; before:
-[ini_parser.mt](../tests/alloc/ini_parser.mt)). They keep arguments, raw path support, byte
+Exhibit programs: [cli_wordcount_lines.mt](../../tests/std/cli_wordcount_lines.mt)
+(byte-streaming word count; before: [cli_wordcount.mt](../../tests/std/cli_wordcount.mt)) and
+[ini_parser_readable.mt](../../tests/alloc/ini_parser_readable.mt) (digit-list parser; before:
+[ini_parser.mt](../../tests/alloc/ini_parser.mt)). They keep arguments, raw path support, byte
 counts, separators, final unterminated line, exit codes, first-`=` splitting,
 CR retention and the original overflow-profile arithmetic. Compare outputs
 byte for byte against the originals.

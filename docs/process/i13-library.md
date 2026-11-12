@@ -3,12 +3,12 @@
 Gated profile: `linux-x64` (see [implementation-plan.md](implementation-plan.md)
 section 8.0). The 18 library areas are L003, L005, L009, S005-S014, S019-S021 and
 S024-S025. Per-operation status lives in the generated ledger
-([v1-operations.csv](baseline/v1-operations.csv)); this document holds only the
+([v1-operations.csv](../baseline/v1-operations.csv)); this document holds only the
 definition of done and the working rules.
 
 ## Definition of done
 
-Every operation in the V1 subset ([library-surface.md](library-surface.md)
+Every operation in the V1 subset ([library-surface.md](../library/library-surface.md)
 section 6.1) has both:
 
 1. **A compiled native declaration** in `library/{core,alloc,std}` using the
@@ -63,5 +63,5 @@ macros; mem/ptr.
 ## Read first
 
 `AGENTS.md`, `CONTRIBUTING.md`, [code-quality.md](code-quality.md),
-[library-surface.md](library-surface.md) sections 1-3, 6.1, 9 and 10-13, and
-[capability-coverage.md](capability-coverage.md).
+[library-surface.md](../library/library-surface.md) sections 1-3, 6.1, 9 and 10-13, and
+[status.md](status.md).

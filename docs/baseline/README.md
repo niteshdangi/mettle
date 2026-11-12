@@ -47,7 +47,7 @@ python3 -m unittest discover -s docs/baseline -p 'test_v1_operations.py'
 V1 membership. Outputs are [post-v1-worklist.csv.gz](post-v1-worklist.csv.gz)
 and [post-v1-summary.json](post-v1-summary.json).
 The gzip CSV is UTF-8 and deterministic. Do not hand-edit derived outputs.
-Update the [worklist explanation](../post-v1-worklist.md) and milestone counts
+Update the [worklist explanation](../process/post-v1-worklist.md) and milestone counts
 when inputs change. The ledger retains every stable canonical ID and exposure
 URL, exact signatures, conditions, owning dependencies and recorded V1 evidence.
 Blank evidence is not a missing-code claim. Reexports share a canonical row;
@@ -94,11 +94,11 @@ and other omitted catalog categories are obtained from archive enumeration.
 
 ## Contract interpretation
 
-[Native library surface](../library-surface.md) supplies T01-T16 and the
+[Native library surface](../library/library-surface.md) supplies T01-T16 and the
 conditional-family boundaries. Those rules apply recursively to every matching
 shape; the per-record rule list is a discovery/index aid, not a syntactic
 translation program or a waiver for a shape a regular expression did not flag.
-The [native authority register](../baseline-mapping.md#7-native-operation-authority)
+The [native authority register](../process/baseline-mapping.md#7-native-operation-authority)
 assigns standalone contracts to migrated operations. Their contract URLs retain
 provenance, not semantic authority. For unassigned operations, the contract URL
 still incorporates the selected semantics until a complete native specification
@@ -136,7 +136,7 @@ or membership of every example in an expectations manifest.
 It does **not** typecheck native declarations, prove the ownership/memory model,
 compile all cfg expansions, run the Mettle fixtures, certify target
 support or measure performance. These remain implementation/release gates in
-[specification-status.md](../specification-status.md).
+[status.md](../process/status.md).
 
 Upstream source/docs remain subject to their own licenses; this project has not
 selected a publication license or copied their library implementations.
