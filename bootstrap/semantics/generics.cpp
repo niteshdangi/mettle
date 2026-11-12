@@ -297,6 +297,13 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
       }
     return false;
   };
+  auto open = [&](Type type) {
+    for (auto parameter : checked.types->typeParameters(type))
+      for (const auto &binding : bindings)
+        if (binding.parameter == parameter && binding.argument == Type::Unknown)
+          return true;
+    return false;
+  };
   // `I: Iterator<Item = T>` determines `T` once `I` is known: normalize the
   // projection `I::Item` and bind `T` to it.
   auto fromBounds = [&] {
@@ -311,19 +318,30 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
         continue;
       for (const auto &bound : bounds)
         for (const auto &argument : bound.arguments) {
-          if (argument.binding.empty() || !argument.type ||
-              argument.type->form != TypeForm::Named)
+          if (argument.binding.empty() || !argument.type)
             continue;
-          auto target = environment.names.find(
-              nameKey(argument.type->name, argument.type->context));
-          if (target == environment.names.end())
-            continue;
-          auto open = std::find_if(
-              bindings.begin(), bindings.end(), [&](const auto &binding) {
-                return binding.parameter == target->second &&
-                       binding.argument == Type::Unknown;
-              });
-          if (open == bindings.end())
+          auto slot = bindings.end();
+          Type pattern = Type::Unknown;
+          if (argument.type->form == TypeForm::Named) {
+            auto target = environment.names.find(
+                nameKey(argument.type->name, argument.type->context));
+            if (target == environment.names.end())
+              continue;
+            slot = std::find_if(
+                bindings.begin(), bindings.end(), [&](const auto &binding) {
+                  return binding.parameter == target->second &&
+                         binding.argument == Type::Unknown;
+                });
+            if (slot == bindings.end())
+              continue;
+          } else if (argument.type->form == TypeForm::Tuple) {
+            auto savedPattern = genericEnvironment;
+            genericEnvironment = const_cast<GenericEnvironment *>(&environment);
+            pattern = annotation(*argument.type, environment.declarationSpan, {});
+            genericEnvironment = savedPattern;
+            if (pattern == Type::Unknown || !open(pattern))
+              continue;
+          } else
             continue;
           auto stripped = bound;
           stripped.arguments.erase(
@@ -340,24 +358,30 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
             continue;
           auto value = interfaceProjection(owner->argument, interfaceType,
                                            argument.binding, {}, span);
-          if (value == Type::Unknown ||
-              std::any_of(bindings.begin(), bindings.end(),
+          if (value == Type::Unknown)
+            continue;
+          if (slot == bindings.end()) {
+            auto attempt = bindings;
+            if (!inferGeneric(pattern, value, attempt, span))
+              continue;
+            for (std::size_t index = 0; index < bindings.size(); ++index)
+              if (bindings[index].argument == Type::Unknown &&
+                  attempt[index].argument != Type::Unknown) {
+                bindings[index].argument = attempt[index].argument;
+                progress = true;
+              }
+            continue;
+          }
+          if (std::any_of(bindings.begin(), bindings.end(),
                           [&](const auto &binding) {
                             return binding.parameter == value;
                           }))
             continue;
-          open->argument = value;
+          slot->argument = value;
           progress = true;
         }
     }
     return progress;
-  };
-  auto open = [&](Type type) {
-    for (auto parameter : checked.types->typeParameters(type))
-      for (const auto &binding : bindings)
-        if (binding.parameter == parameter && binding.argument == Type::Unknown)
-          return true;
-    return false;
   };
   // `where Self.Item = read T from r` determines `T` once `Self` is known:
   // normalize the closed side and match the open side against it.

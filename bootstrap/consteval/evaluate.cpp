@@ -3228,13 +3228,8 @@ private:
       }
     } else if (callee.kind == Kind::Name) {
       auto separator = callee.text.rfind("::");
-      if (separator != std::string::npos) {
-        TypeSyntax syntax;
-        syntax.name = callee.text.substr(0, separator);
-        syntax.context = callee.context;
-        syntax.arguments = callee.ownerGenericArguments;
-        floating = host.resolveType(syntax, callee.span);
-      }
+      if (separator != std::string::npos)
+        floating = builtinType(callee.text.substr(0, separator));
     }
     if (!isFloating(floating))
       return aggregateCall(node, want);
@@ -3260,10 +3255,9 @@ private:
     } else if (callee.kind == Kind::Name) {
       auto separator = callee.text.rfind("::");
       if (separator != std::string::npos) {
-        TypeSyntax syntax;
-        syntax.name = callee.text.substr(0, separator);
-        syntax.context = callee.context;
-        owner = host.resolveType(syntax, callee.span);
+        // Only a float owner changes how the call evaluates; resolving any other
+        // owner here would reject generic types named without arguments.
+        owner = builtinType(callee.text.substr(0, separator));
         method = callee.text.substr(separator + 2);
       }
       if (!isFloating(owner))

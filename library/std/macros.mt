@@ -9,6 +9,7 @@ import package.alloc.vec
 import package.alloc.vec.List
 import package.alloc.string
 import package.alloc.string.String
+import package.core.cmp.PartialEq
 import package.core.fmt
 import package.core.fmt.Debug
 import package.core.iter.Iterator
@@ -266,6 +267,86 @@ fn panic_with_prefix(read prefix: Text, message: format fmt.Message): Never {
         failure(_) => { package.core.panic.panic("formatting failed") }
     }
     package.core.panic.panic(output.as_text())
+}
+
+fn assertion_values<T: Debug, U: Debug>(read left: T, read right: U): String {
+    var output = string.new()
+    output.push_str("\n  left: ")
+    let left_text = debug_text(left)
+    output.push_str(left_text.as_text())
+    output.push_str("\n right: ")
+    let right_text = debug_text(right)
+    output.push_str(right_text.as_text())
+    output
+}
+
+fn assertion_failure<T: Debug, U: Debug>(
+    read left: T,
+    read right: U,
+    read operator: Text
+): Never {
+    var output = string.from_text("assertion failed: left ")
+    output.push_str(operator)
+    output.push_str(" right")
+    let values = assertion_values(left, right)
+    output.push_str(values.as_text())
+    package.core.panic.panic(output.as_text())
+}
+
+fn assertion_failure_with_message<T: Debug, U: Debug>(
+    read left: T,
+    read right: U,
+    read operator: Text,
+    read message: String
+): Never {
+    var output = string.from_text("assertion failed: left ")
+    output.push_str(operator)
+    output.push_str(" right: ")
+    output.push_str(message.as_text())
+    let values = assertion_values(left, right)
+    output.push_str(values.as_text())
+    package.core.panic.panic(output.as_text())
+}
+
+fn assert_values<T: PartialEq<U> + Debug, U: Debug>(
+    read left: T,
+    read right: U,
+    expected_equal: bool,
+    read operator: Text
+) {
+    if (left == right) != expected_equal {
+        assertion_failure(left, right, operator)
+    }
+}
+
+pub macro assert_eq {
+    ($left:expr, $right:expr $(,)?) => {
+        assert_values($left, $right, true, "==")
+    };
+    ($left:expr, $right:expr, $message:expr $(,)?) => {
+        {
+            let left = read $left
+            let right = read $right
+            if !(*left == *right) {
+                assertion_failure_with_message(*left, *right, "==", format_message($message))
+            }
+        }
+    };
+}
+
+pub macro assert_ne {
+    ($left:expr, $right:expr $(,)?) => {
+        assert_values($left, $right, false, "!=")
+    };
+    ($left:expr, $right:expr, $message:expr $(,)?) => {
+        {
+            let left = read $left
+            let right = read $right
+            if *left == *right {
+                assertion_failure_with_message(*left, *right, "!=", format_message($message))
+            }
+        }
+    };
 }
 
 pub macro todo {

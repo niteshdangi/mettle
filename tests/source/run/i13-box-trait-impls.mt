@@ -8,7 +8,7 @@ import alloc.vec.{List, IntoIter}
 import core.borrow.{AsMut, AsRef, Borrow, BorrowMut}
 import core.any.Any
 import core.clone.Clone
-import core.cmp.{Ord, Ordering}
+import core.cmp.{Eq, Ord, Ordering}
 import core.convert.{From, TryFrom}
 import core.default.Default
 import core.error.Error
@@ -32,6 +32,7 @@ extend Oops implements Display {
 extend Oops implements Error {}
 
 fn assert_error<E: Error>(read value: E): bool { true }
+fn equal<T: Eq>(read left: T, read right: T): bool { left == right }
 
 fn as_view<V: AsRef<[i32]>>(read value: V): read [i32] from value { V.(AsRef<[i32]>).as_ref(value) }
 
@@ -85,6 +86,11 @@ fn main(): i32 {
 
     let other = boxed.new(8)
     if mutable != other || !(boxed.new(1) < other) { return 7 }
+    if !equal(read mutable, read other) ||
+        equal(read mutable, read boxed.new(9)) ||
+        *mutable.get() != 8 {
+        return 65
+    }
     match boxed.new(2).cmp(read other) {
         Ordering.Less => {},
         _ => { return 8 }
@@ -117,6 +123,11 @@ fn main(): i32 {
 
     let text_box = Box<Text>.(From<read Text>).from("hi")
     if text_box.get() != "hi" { return 18 }
+    let equivalent_text = boxed.copy_text("hi")
+    if !equal(read text_box, read equivalent_text) ||
+        text_box.get() != "hi" {
+        return 66
+    }
     var mutable_text_source = boxed.copy_text("mutable")
     let mutable_text_view: mut Text = mutable_text_source.get_mut()
     let copied_mutable_text = Box<Text>.(From<mut Text>).from(take mutable_text_view)

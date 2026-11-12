@@ -14,7 +14,8 @@ extend Arguments implements Iterator {
     mut fn next(): String? {
         if self.index == 2usize { return none }
         self.index += 1usize
-        present(String(if self.index == 1usize { "first" } else { "second" }))
+        let word: read Text = if self.index == 1usize { "first" } else { "second" }
+        present(alloc.string.from_text(word))
     }
 }
 

@@ -17,7 +17,8 @@ fn shell(read script: Text): Command {
 }
 
 fn pipeline(kind: u8): i32 throws Error {
-    var producer = shell(if kind == 1u8 { "printf pipe >&2" } else { "printf pipe" })
+    let script: read Text = if kind == 1u8 { "printf pipe >&2" } else { "printf pipe" }
+    var producer = shell(script)
     producer.stdout(if kind == 1u8 { Stdio.Null } else { Stdio.Piped })
     producer.stderr(if kind == 1u8 { Stdio.Piped } else { Stdio.Null })
     var child = try producer.spawn()
@@ -98,7 +99,7 @@ fn file_configuration(): i32 throws Error {
         let written = unsafe { std.sys.write(fd, core.slice.data("!".as_bytes()), 1usize) }
         if written != -1 || io.last_os_error().raw_os_error() != present(9i32) { return 12 }
     }
-    let bytes = try std.fs.read(path)
+    let bytes = try std.fs.`read`(path)
     try std.fs.remove_file(path)
     if !ffi.os_str(bytes.as_slice()).same(ffi.os_str_from_text("filefilefile")) { return 13 }
     let unwind_file = try File.create_new(path)

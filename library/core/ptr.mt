@@ -108,7 +108,8 @@ extend<T: unsized> NonNull<T> {
         }
     }
 
-    // Safety: the pointer must address a valid `T` whose destructor has not run.
+    // Safety: caller has exclusive destruction authority for initialized `T`
+    // and must not access or destroy the payload again.
     pub unsafe fn drop_in_place(): Unit {
         unsafe { core.ptr.drop_in_place(self.pointer) }
     }

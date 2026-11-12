@@ -24,18 +24,19 @@ const fn element_offsets(): i32 {
     unsafe { *middle.as_ref() }
 }
 
-const fn literal_pointer(): NonNull<u8> {
+const fn literal_byte(): u8 {
     let bytes: read [u8; 1] = b"Z"
-    NonNull.from_ref(read bytes[0usize])
+    let pointer = NonNull.from_ref(read bytes[0usize])
+    unsafe { *pointer.as_ref() }
 }
 
 const SHARED: i32 = shared_projection()
 const EXCLUSIVE: i32 = exclusive_projection()
 const MIDDLE: i32 = element_offsets()
-static LITERAL: NonNull<u8> = literal_pointer()
+const LITERAL: u8 = literal_byte()
 
 fn main(): i32 {
     if SHARED != 17i32 || EXCLUSIVE != 23i32 || MIDDLE != 11i32 { return 1 }
-    if unsafe { *LITERAL.as_ref() } != 90u8 { return 2 }
+    if LITERAL != 90u8 { return 2 }
     0
 }

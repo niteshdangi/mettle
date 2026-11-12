@@ -33,6 +33,37 @@ fn run(): i32 throws Error {
         }
     }
 
+    var read_only_options = File.options()
+    read_only_options.`read`(true)
+    var read_only = try read_only_options.open(file_path)
+    var first_byte = [0u8]
+    if try read_only.read_some(first_byte) != 1usize || first_byte[0usize] != 102u8 {
+        return 30
+    }
+    core.mem.drop(take read_only)
+
+    var invalid_read_truncate = File.options()
+    invalid_read_truncate.`read`(true)
+    invalid_read_truncate.truncate(true)
+    match take capture invalid_read_truncate.open(file_path) {
+        success(invalid) => { core.mem.drop(take invalid); return 31 },
+        failure(error) => {
+            if !error.kind().is(ErrorKind.InvalidInput) { return 32 }
+        }
+    }
+    if (try std.fs.read_to_string(file_path)).as_text() != "first" { return 33 }
+    var append_truncate = File.options()
+    append_truncate.write(true)
+    append_truncate.append(true)
+    append_truncate.truncate(true)
+    match take capture append_truncate.open(file_path) {
+        success(invalid) => { core.mem.drop(take invalid); return 34 },
+        failure(error) => {
+            if !error.kind().is(ErrorKind.InvalidInput) { return 35 }
+        }
+    }
+    if (try std.fs.read_to_string(file_path)).as_text() != "first" { return 36 }
+
     var options = File.options()
     options.`read`(true)
     options.truncate(true)

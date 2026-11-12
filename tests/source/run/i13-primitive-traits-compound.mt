@@ -38,9 +38,9 @@ fn is_eq<T: Eq + unsized>(read a: T, read b: T): bool { a == b }
 fn order<T: Ord + unsized>(read a: T, read b: T): Ordering { a.cmp(read b) }
 fn partial<T: PartialOrd + unsized>(read a: T, read b: T): Ordering? { a.partial_cmp(read b) }
 fn make<T: Default>(): T { T.(Default).default() }
-fn view_len<T: AsRef<[i32]>>(read value: T): usize { value.as_ref().len() }
+fn view_len<T: AsRef<[i32]>>(read value: T): usize { T.(AsRef<[i32]>).as_ref(value).len() }
 fn set_first<T: AsMut<[i32]>>(mut value: T) {
-    let slots: mut [i32] = value.as_mut()
+    let slots: mut [i32] = T.(AsMut<[i32]>).as_mut(mut value)
     slots[0usize] = 9
 }
 

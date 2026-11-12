@@ -347,7 +347,9 @@ extend<region r> Ancestors<region r> implements package.core.clone.Clone {
 }
 
 extend Path {
-    pub static fn new(read bytes: [u8]): read Path from bytes { path(bytes) }
+    pub static fn new(read input: PathInput): read Path from input {
+        input.as_path()
+    }
     pub fn as_bytes(): read [u8] from self { read self.bytes }
     pub fn as_os_str(): read OsStr from self { ffi.os_str(read self.bytes) }
     pub mut fn as_mut_os_str(): mut OsStr from self { ffi.os_str_mut(self.bytes) }
@@ -897,6 +899,15 @@ extend PathBuf {
 
 extend Path implements PathInput {
     fn as_path(): read Path from self { path(self.as_bytes()) }
+}
+extend<region r> read [u8] from r implements PathInput {
+    fn as_path(): read Path from r { path(*self) }
+}
+extend<region r, const N: usize> read [u8; N] from r implements PathInput {
+    fn as_path(): read Path from r { path(self.as_slice()) }
+}
+extend<const N: usize> [u8; N] implements PathInput {
+    fn as_path(): read Path from self { path(self.as_slice()) }
 }
 extend Text implements PathInput {
     fn as_path(): read Path from self { path(self.as_bytes()) }

@@ -282,6 +282,11 @@ extend<region r> OsString implements AsRef<OsStr> {
     fn as_ref(): read OsStr from self { self.as_os_str() }
 }
 
+// A borrowed owner converts like the owner, so iterators over `read OsString` feed `AsRef<OsStr>` APIs.
+extend<region r> read OsString from r implements AsRef<OsStr> {
+    fn as_ref(): read OsStr from self { self.as_os_str() }
+}
+
 extend OsStr implements OwnedType {
     type Owned = OsString
 }
