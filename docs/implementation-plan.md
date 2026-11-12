@@ -1264,8 +1264,8 @@ Current library implementation, blockers and exact focused receipts are owned by
 [i13-library.md](i13-library.md#handoff-start-here-in-a-new-session); the
 [capability inventory](capability-coverage.md#i13-macos-arm64-acceptance-inventory)
 retains row/fixture ownership. All eighteen library areas remain partial.
-Latest 2026-11-12 operation ledger: **11,345 evidenced, 74 declared,
-1,871 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
+Latest 2026-11-12 operation ledger: **11,464 evidenced, 74 declared,
+1,752 missing, 5 not applicable** (13,295 total, grouped into 2,442 operation
 and 2,309 implementation families; subset/source-cfg reconciliation pending).
 Unzip has focused Linux native/emitted-ASan debug/release evidence; 20
 conversion blanket exposures remain declared. Fifteen callable-adapter
@@ -1277,6 +1277,12 @@ Shared read-view endpoints additionally close four core-slice exposures;
 exclusive splits close six more. Current normal/negative, compiler-ASan/UBSan
 and emitted-ASan receipts are recorded in i13-library.md; this is not complete
 library-area, Linux-host or I13 qualification.
+The original 119 missing Cell records also have scoped source/guard/constant
+evidence: 24 current normal execution units, eighteen normal rejections,
+eleven combined compiler/emitted sanitizer Debug units and seven
+compiler-sanitized rejections, with the original constant-kernel sanitizer
+scope retained separately. Exact identities and reuse boundaries are in the
+[Cell acceptance](i13-library.md#cell-source-and-guard-acceptance-2026-11-12).
 Minimal NonNull, borrowed chaining, bounds/exact/fused protocols
 and collision-safe Any identity have scoped evidence, not full-area closure;
 Static/unsized Any, synchronization and complete operation coverage remain open.

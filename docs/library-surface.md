@@ -108,6 +108,9 @@ unsafe unless the compiler can establish that exact initialized interpretation.
 
 The compiler-owned `core.cell.Cell<T>` provides `new`, Copy-only `get`,
 `set`, `replace`, `swap`, `get_mut`, `into_inner` and `as_ptr`.
+Source extensions add Copy-payload `update` and constant-callable `from_mut`,
+`as_array_of_cells` and `as_slice_of_cells`; projections preserve the original
+storage lifetime, extent and element layout without allocating.
 `RefCell<T>` provides `new`, `replace`, `swap`, `get_mut`, `into_inner`,
 `as_ptr`, `borrow`, `borrow_mut`, `try_borrow` and `try_borrow_mut`.
 These operations allocate nothing and require no OS or executor.
@@ -120,18 +123,26 @@ Both provide `get_ref`; `RefMut` additionally provides `get_mut`, requiring
 exclusive access to the guard. `Ref.clone()` acquires another counted read
 guard, without cloning the payload. A guard stored in a nominal type declares
 its cell lifetime, for example `guard: core.cell.RefMut<T> from r`.
+Both guard types provide consuming `map`, `filter_map` and `map_split`.
+Callbacks return views tied to their input; exclusive split results must be
+disjoint. Failed filtering returns the original guard. Successful projection
+retains the original counter and payload metadata, and each split guard owns
+one counted token; callback panic releases the original guard.
 Returned payload views borrow their guard, not merely its backing cell.
 The guards cannot be moved, forgotten or destroyed while such views remain
 live. A surviving guard keeps its cell immovable and alive until cleanup,
 including the interval between its last explicit use and destruction.
 
-Read guards coexist; an exclusive guard conflicts with every other guard.
+Read guards coexist; acquiring an exclusive borrow conflicts with any live guard.
 `borrow`/`borrow_mut`, conflicting `RefCell.replace`/`swap`, and read-counter
 exhaustion panic. Swapping a RefCell with itself also panics.
 Try-borrow operations return a native outcome: success contains the guard;
 failure contains the zero-sized `BorrowError` or `BorrowMutError`.
 Failure neither acquires nor releases a borrow. Dropping a guard releases its
 count once, including partial paths and unwind; it never destroys the payload.
+Exclusive splits count each surviving exclusive guard separately; acquiring a
+new shared or exclusive borrow remains forbidden until all are released.
+Shared cloning and shared/exclusive splitting panic before counter overflow.
 Forgetting it intentionally leaves the counter occupied, without extending the
 authority of any surviving reference. The state is not thread synchronization.
 
@@ -141,6 +152,19 @@ value, so an old destructor's panic or re-entry observes initialized new storage
 Interior mutation does not manufacture ordinary mutable authority from a
 shared view: only a dynamically checked exclusive guard exposes RefCell payload
 mutation. Cells remain invariant in their contained view regions.
+
+Unsafe `RefCell.try_borrow_unguarded` returns a shared payload view or
+`BorrowError` without acquiring a token. The view retains its cell lifetime;
+the caller must prevent conflicting mutable access for its duration.
+
+Source `OnceCell<T>` provides `new`, `get`, `get_mut`, `set`, `get_or_init`,
+`take` and consuming `into_inner`, without allocation or OS services. It is not
+Shareable; Transferable follows its payload. Shared access may initialize once;
+removal needs exclusive
+access. Failed `set` returns the rejected owner. Initialization callbacks run
+only while empty; reentrant installation makes the outer initialization panic
+without overwriting the installed payload. Clone delegates to the initialized
+payload's Clone operation.
 
 Unsafe manual Unpin implementations may use interface, associated-item,
 generic and region requirements supported by the interface solver. Failed or

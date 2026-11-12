@@ -825,18 +825,13 @@ void CleanupFrame::drop(unsigned node) {
   builder.CreateStore(builder.getFalse(), field(entry.flag));
   if (entry.nativeAction == NativeCleanup::RefRelease ||
       entry.nativeAction == NativeCleanup::RefMutRelease) {
-    auto owner =
-        lowering.program.types
-            ->view(lowering.program.types->product(entry.type).components[0])
-            .payload;
-    auto *cell = lowering.load(
+    auto *counter = lowering.load(
         lowering.program.types->product(entry.type).fields[0].type,
         nodeAddress(node), llvm::Align(lowering.alignment(entry.type)));
-    auto *counter = lowering.projectField(cell, owner, 0);
     auto *count = builder.CreateLoad(builder.getInt64Ty(), counter);
     builder.CreateStore(entry.nativeAction == NativeCleanup::RefRelease
                             ? builder.CreateSub(count, builder.getInt64(1))
-                            : builder.getInt64(0),
+                            : builder.CreateAdd(count, builder.getInt64(1)),
                         counter);
   } else if (entry.nativeAction == NativeCleanup::VaListEnd) {
     builder.CreateCall(

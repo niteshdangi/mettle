@@ -1366,19 +1366,24 @@ private:
     if (method == "into_inner")
       return lowering.extract(arguments[0], wrapper, cellPayloadField(kind));
     bool guard = kind == AggregateKind::Ref || kind == AggregateKind::RefMut;
-    auto owner =
-        guard
-            ? program.types->view(program.types->product(wrapper).components[0])
-                  .payload
-            : wrapper;
-    auto payload = program.types->product(owner).components[0];
+    auto owner = wrapper;
+    auto payload =
+        guard ? program.types
+                    ->pointer(program.types->product(wrapper).fields[1].type)
+                    .payload
+              : program.types->product(owner).components[0];
     auto *address = arguments[0];
-    if (guard)
-      address =
-          lowering.load(program.types->product(wrapper).components[0], address,
-                        llvm::Align(lowering.alignment(wrapper)));
-    auto *storage = lowering.projectField(
-        address, owner, cellPayloadField(program.types->product(owner).kind));
+    auto guardField = [&](unsigned field) {
+      auto type = program.types->product(wrapper).fields[field].type;
+      return lowering.load(type, lowering.projectField(address, wrapper, field),
+                           llvm::Align(lowering.alignment(type)));
+    };
+    auto *storage =
+        guard ? guardField(1)
+              : lowering.projectField(address, owner, cellPayloadField(kind));
+    if (guard && method == "project_unchecked")
+      return lowering.construct(instruction.result.type,
+                                {guardField(0), arguments[1]});
     if (method == "as_ptr" || method == "get_ref" || method == "get_mut")
       return storage;
     if (method == "get")
@@ -1395,9 +1400,23 @@ private:
       builder.CreateUnreachable();
       builder.SetInsertPoint(valid);
     };
-    bool dynamic = program.types->product(owner).kind == AggregateKind::RefCell;
-    auto *counter =
-        dynamic ? lowering.projectField(address, owner, 0) : nullptr;
+    bool dynamic = kind == AggregateKind::RefCell;
+    auto *counter = guard     ? guardField(0)
+                    : dynamic ? lowering.projectField(address, owner, 0)
+                              : nullptr;
+    if (guard) {
+      auto *count = builder.CreateLoad(builder.getInt64Ty(), counter);
+      bool exclusive = kind == AggregateKind::RefMut;
+      require(exclusive ? builder.CreateICmpNE(
+                              count, builder.getInt64(0x8000000000000000ULL))
+                        : builder.CreateICmpNE(
+                              count, builder.getInt64(0x7fffffffffffffffULL)));
+      builder.CreateStore(exclusive
+                              ? builder.CreateSub(count, builder.getInt64(1))
+                              : builder.CreateAdd(count, builder.getInt64(1)),
+                          counter);
+      return lowering.construct(instruction.result.type, {counter, storage});
+    }
     if (method == "replace" || method == "swap") {
       if (dynamic)
         require(builder.CreateICmpEQ(
@@ -1431,13 +1450,15 @@ private:
     }
     bool exclusive = method.ends_with("_mut");
     bool fallible = method.starts_with("try_");
+    bool unguarded = method == "try_borrow_unguarded";
     auto *count = builder.CreateLoad(builder.getInt64Ty(), counter);
     auto *available =
-        exclusive ? builder.CreateICmpEQ(count, builder.getInt64(0))
-                  : builder.CreateAnd(
-                        builder.CreateICmpSGE(count, builder.getInt64(0)),
-                        builder.CreateICmpNE(
-                            count, builder.getInt64(0x7fffffffffffffffULL)));
+        exclusive   ? builder.CreateICmpEQ(count, builder.getInt64(0))
+        : unguarded ? builder.CreateICmpSGE(count, builder.getInt64(0))
+                    : builder.CreateAnd(
+                          builder.CreateICmpSGE(count, builder.getInt64(0)),
+                          builder.CreateICmpNE(
+                              count, builder.getInt64(0x7fffffffffffffffULL)));
     llvm::BasicBlock *failed = nullptr, *done = nullptr;
     if (fallible) {
       auto *valid = llvm::BasicBlock::Create(context, "cell.borrow", function);
@@ -1448,14 +1469,16 @@ private:
       builder.SetInsertPoint(valid);
     } else
       require(available);
-    builder.CreateStore(exclusive
-                            ? builder.getInt64(-1)
-                            : builder.CreateAdd(count, builder.getInt64(1)),
-                        counter);
+    if (!unguarded)
+      builder.CreateStore(exclusive
+                              ? builder.getInt64(-1)
+                              : builder.CreateAdd(count, builder.getInt64(1)),
+                          counter);
     auto result = instruction.result.type;
     auto guardType =
         fallible ? program.types->product(result).components[0] : result;
-    auto *borrow = lowering.construct(guardType, {address});
+    auto *borrow =
+        unguarded ? storage : lowering.construct(guardType, {counter, storage});
     if (!fallible)
       return borrow;
     auto *success = lowering.variant(result, 0, {borrow});

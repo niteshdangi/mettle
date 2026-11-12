@@ -937,6 +937,38 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
         case AggregateKind::RefCell:
           fields(std::array{Type::Isize, r.components[0]});
           break;
+        case AggregateKind::Ref:
+        case AggregateKind::RefMut: {
+          auto source = r.components[0];
+          if (!store.isView(source) ||
+              !store.isProduct(store.view(source).payload) ||
+              store.product(store.view(source).payload).kind !=
+                  AggregateKind::RefCell ||
+              store.product(store.view(source).payload).components.size() != 1)
+            reject("invalid dynamic borrow guard payload");
+          auto region = store.view(source).region;
+          auto payload =
+              store.product(store.view(source).payload).components[0];
+          if (r.fields.size() != 2)
+            reject("dynamic borrow guard field arity mismatch");
+          for (unsigned field = 0; field < 2; ++field) {
+            auto type = r.fields[field].type;
+            auto mode = field == 1 && r.kind == AggregateKind::RefMut
+                            ? ParameterMode::Mut
+                            : ParameterMode::Read;
+            bool valid = field == 0
+                             ? store.isView(type) &&
+                                   store.view(type).payload == Type::Isize &&
+                                   store.view(type).mode == mode &&
+                                   store.view(type).region == region
+                             : store.isPointer(type) &&
+                                   store.pointer(type).payload == payload &&
+                                   store.pointer(type).mode == mode;
+            if (!valid)
+              reject("invalid dynamic borrow guard field");
+          }
+          break;
+        }
         case AggregateKind::VarArgs:
           fields(std::array{Type::U64, Type::U64, Type::U64});
           break;
@@ -952,15 +984,6 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
         default:
           fields(std::array{r.components[0]});
           break;
-        }
-        if (r.kind == AggregateKind::Ref || r.kind == AggregateKind::RefMut) {
-          auto view = r.components[0];
-          if (!store.isView(view) ||
-              !store.isProduct(store.view(view).payload) ||
-              store.product(store.view(view).payload).kind !=
-                  AggregateKind::RefCell ||
-              store.product(store.view(view).payload).components.size() != 1)
-            reject("invalid dynamic borrow guard payload");
         }
       }
     } else if (auto parameter = std::get_if<TypeParameter>(&definition)) {

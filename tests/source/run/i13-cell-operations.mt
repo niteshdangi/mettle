@@ -6,6 +6,7 @@ import core.default.Default
 import core.fmt
 import core.fmt.Debug
 import core.clone.Clone
+import core.borrow.ToOwned
 import core.text.Text
 
 fn debug_ok<T: Debug>(read value: T) {}
@@ -50,6 +51,22 @@ fn cell_operations(): i32 {
     if defaulted.get() != 0 { return 7 }
     if !(core.cell.Cell.new(1i32) == core.cell.Cell.new(1i32)) { return 8 }
     if core.cell.Cell.new(1i32) >= core.cell.Cell.new(2i32) { return 9 }
+    if !core.cell.Cell.new(1i32).cmp(core.cell.Cell.new(2i32)).is_lt() {
+        return 18
+    }
+    if core.cell.Cell.new(1i32) == core.cell.Cell.new(2i32) { return 20 }
+    if !core.cell.Cell.new(1i32).cmp(core.cell.Cell.new(1i32)).is_eq() ||
+        !core.cell.Cell.new(2i32).cmp(core.cell.Cell.new(1i32)).is_gt() {
+        return 21
+    }
+    if !core.cell.Cell.new(1i32).partial_cmp(core.cell.Cell.new(1i32)).unwrap().is_eq() ||
+        !core.cell.Cell.new(2i32).partial_cmp(core.cell.Cell.new(1i32)).unwrap().is_gt() ||
+        core.cell.Cell.new(f32.NAN).partial_cmp(core.cell.Cell.new(0.0f32)).is_present() {
+        return 22
+    }
+    let copied = value.to_owned()
+    value.set(11)
+    if copied.get() != 8 || value.get() != 11 { return 19 }
     eq_ok<core.cell.Cell<i32>>()
     partial_eq_ok<core.cell.Cell<i32>>()
     ord_ok<core.cell.Cell<i32>>()

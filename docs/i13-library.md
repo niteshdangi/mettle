@@ -9,8 +9,8 @@ areas remain partial: L003, L005, L009, S005-S014, S019-S021, S024-S025.
 
 ## Handoff (start here in a new session)
 
-Latest operation ledger (2026-11-12): **11,345 evidenced, 74 declared,
-1,871 missing, 5 not applicable** of 13,295 records. Declared means implemented
+Latest operation ledger (2026-11-12): **11,464 evidenced, 74 declared,
+1,752 missing, 5 not applicable** of 13,295 records. Declared means implemented
 but not behaviorally verified per type/profile. Subset/source-cfg reconciliation
 and Linux applicability review remain open; no area is closed by these batches.
 The declared records comprise the previous 20 conversion-blanket records and
@@ -20,6 +20,33 @@ The earlier integer audit corrected another 2,197 runtime-only records to
 declared, beyond the previous 312, before qualifying their constant-callability.
 Manifest alias contexts are deduplicated by canonical ID, not counted as
 independent obligations. This correction is not a runtime regression.
+
+### Cell source and guard acceptance (2026-11-12)
+
+All **119 original missing Cell records now have scoped Linux x86-64 evidence**:
+97 source/trait records, eight required-const exposures and fourteen native
+guard/unguarded-borrow exposures. OnceCell owns its optional payload; rejected
+sets return the rejected owner. Guard projections retain their original counter
+and payload metadata, and exclusive splits release one counted token per guard.
+Callback panic, counter exhaustion, forgotten guards and owner/view lifetimes
+have focused regressions.
+
+The publication candidate contains tracked library sources at 75dd9a4 plus
+only the Cell source change. It passes 24 normal debug/release execution units
+and eighteen normal ownership/unsafe/concurrency-policy rejections. Seven
+runtime cases pass combined compiler ASan/UBSan and emitted ASan in Debug;
+four guard cases pass the same instrumentation on the separately frozen guard
+library. Five guard and two lifetime rejections pass compiler ASan/UBSan.
+Affected normal/sanitized declaration and IR-codec CTests, optimized-host
+sanitizer detectors and pinned formatting pass.
+
+Both current required-const profiles pass. The earlier ten-unit constant
+compiler-sanitizer acceptance retains its immutable V3/compiler scope: its
+evaluator/host and constant method bodies are unchanged, rather than relabeled
+as a new compiler run. Exact canonical mappings, inputs and receipt scopes are
+in `build/i13-cell-119-acceptance-handoff.json`; publication receipts are under
+`/home/nites/mettle-optimization-build/i13-cell-publication/`.
+This closes the original record group, not a complete library area, LNX or I13.
 
 ### Native static and guard compiler integration (2026-11-12)
 
@@ -76,10 +103,9 @@ are recorded in `build/i13-cell-const-frozen-inputs.json`; they matched before
 and after the sanitizer build and acceptance. Candidate identities and scoped receipts are
 under `/home/nites/mettle-optimization-build/i13-cell-const-projections/`.
 That immutable library excludes the additional, unqualified guard projection
-methods now present in the worktree. The 97 other source-backed Cell records
-have an assertion reconciliation and focused normal acceptance; their remaining
-compiler-sanitizer acceptance is separate. Guard projection/split and unguarded-borrow
-qualification remain separate; none of the 119 Cell records is promoted.
+methods now present in the worktree. At this revision the other source-backed Cell records and native guard
+projections were not promoted. Their subsequent source acceptance above closes
+the original 119-record group without widening this constant receipt's scope.
 
 ### Atomic bitwise acceptance (2026-11-12)
 
@@ -234,14 +260,14 @@ remain historical, not evidence for the final eligibility ordering.
 Origin analysis now traverses only aggregate payloads, not the extent metadata
 carried by address constants.
 
-Current source-only reconciliation: cells 97 implemented/eight partial/14
-missing of 119; sync/thread 228/27/82 of 337; deduplicated owners 165/two/13
+Other source-only reconciliation: sync/thread 228/27/82 of 337;
+deduplicated owners 165/two/13
 of 180; core operations 260/32/five of 297; pointer/pinning 114/12/33 of 159;
 shared traits 42/ten partial of 52. All 207 IO/filesystem records have source
 candidates, with 56 profile units prepared. These overlapping inventories are
 not additive or qualification receipts. Processes/time has source candidates
-for all 71 records, all unverified. Only the 109 frozen-qualified
-networking records are promoted; source-only candidates are not.
+for all 71 records, all unverified. The 109 frozen-qualified networking records
+and Cell batch above have scoped evidence; other source-only candidates do not.
 Tasks/futures has 47 source candidates and two conditional-Copy blockers of
 49 records; none are verified. The two Poll and two Reverse Copy exposures
 are selected V1 mapping conflicts with the declaration-bound named-type Copy

@@ -568,9 +568,22 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     }
   using Shape = MachineSignature::Shape;
   auto result = signature->value;
-  if (signature->shape == Shape::Ref || signature->shape == Shape::RefMut ||
-      signature->shape == Shape::TryRef ||
-      signature->shape == Shape::TryRefMut) {
+  if (signature->shape == Shape::RefProjection ||
+      signature->shape == Shape::RefMutProjection) {
+    auto owner = checked.types->structural(AggregateKind::RefCell, {result});
+    result = checked.types->structural(
+        signature->shape == Shape::RefProjection ? AggregateKind::Ref
+                                                 : AggregateKind::RefMut,
+        {checked.types->viewType(owner, ParameterMode::Read)});
+  } else if (signature->shape == Shape::UnguardedRef) {
+    result = checked.types->structural(
+        AggregateKind::Outcome,
+        {checked.types->viewType(result, ParameterMode::Read),
+         checked.types->structural(AggregateKind::BorrowError, {})});
+  } else if (signature->shape == Shape::Ref ||
+             signature->shape == Shape::RefMut ||
+             signature->shape == Shape::TryRef ||
+             signature->shape == Shape::TryRefMut) {
     bool exclusive = signature->shape == Shape::RefMut ||
                      signature->shape == Shape::TryRefMut;
     result = checked.types->structural(

@@ -21,7 +21,10 @@ struct MachineSignature {
     Ref,
     RefMut,
     TryRef,
-    TryRefMut
+    TryRefMut,
+    RefProjection,
+    RefMutProjection,
+    UnguardedRef
   };
   Type value;
   Shape shape = Shape::Value;

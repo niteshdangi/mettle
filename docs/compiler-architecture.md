@@ -985,6 +985,12 @@ Shared invariants for the implementation pass:
   runtime guard, not an unsound ordinary mutable loan derived from a read view.
   Forgetting a guard may retain the borrow state but must not enable an alias,
   owner move, invalid reference or dangling guard-counter access.
+  Projected guards retain the original counter authority separately from their
+  metadata-bearing payload pointer. Positive counts track shared guards;
+  negative counts track exclusive split guards. Projection transfers a token,
+  splitting checks count overflow before duplicating one, and each cleanup
+  releases exactly one token. Unsafe unguarded borrowing retains the source
+  lifetime without incrementing the counter.
 - The native cleanup-action path must coexist with suppressed MaybeUninit/
   ManuallyDrop payload cleanup, packed relocation, pinned destructors and
   repeated-unwind flags. Guard/cursor release cannot repeat or introduce a

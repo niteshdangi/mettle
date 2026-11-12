@@ -291,7 +291,13 @@ Type TypeStore::structural(AggregateKind kind, std::vector<Type> components,
               std::string(
                   name(product(view(components.at(0)).payload).components[0])) +
               ">";
-    fields = {{"<cell>", components[0]}};
+    auto authority = view(components[0]);
+    auto payload = product(authority.payload).components[0];
+    fields = {{"<borrows>",
+               viewType(Type::Isize, ParameterMode::Read, authority.region)},
+              {"<value>", pointerType(payload, kind == AggregateKind::Ref
+                                                   ? ParameterMode::Read
+                                                   : ParameterMode::Mut)}};
     copy = false;
   } else if (kind == AggregateKind::Uninit ||
              kind == AggregateKind::ManualDrop ||

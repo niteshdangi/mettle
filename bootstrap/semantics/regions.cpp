@@ -917,7 +917,7 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
   if (types.product(type).kind == AggregateKind::Ref ||
       types.product(type).kind == AggregateKind::RefMut) {
     auto kind = types.product(type).kind;
-    auto owner = types.view(types.product(type).fields[0].type).payload;
+    auto owner = types.view(types.product(type).components[0]).payload;
     auto payload = types.product(owner)
                        .fields[cellPayloadField(types.product(owner).kind)]
                        .type;
@@ -1821,11 +1821,18 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
       return originalType(node);
     auto kind = types.product(owner).kind;
     bool guard = kind == AggregateKind::Ref || kind == AggregateKind::RefMut;
-    if (guard && method == "clone")
-      return types.structural(AggregateKind::Ref,
-                              {types.product(owner).fields[0].type});
+    if (guard && (method == "clone" || method == "split_token_unchecked"))
+      return types.structural(kind, {types.product(owner).components[0]});
+    if (guard && method == "project_unchecked") {
+      auto source = types.product(owner).components[0];
+      auto payload = types.pointer(arguments.at(0)).payload;
+      return types.structural(
+          kind,
+          {types.viewType(types.structural(AggregateKind::RefCell, {payload}),
+                          ParameterMode::Read, types.view(source).region)});
+    }
     auto cell =
-        guard ? types.view(types.product(owner).fields[0].type).payload : owner;
+        guard ? types.view(types.product(owner).components[0]).payload : owner;
     auto payload = types.product(cell)
                        .fields[cellPayloadField(types.product(cell).kind)]
                        .type;
@@ -1849,6 +1856,11 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
       require(other, cell, node.span);
       return Type::Unit;
     }
+    if (method == "try_borrow_unguarded")
+      return types.structural(
+          AggregateKind::Outcome,
+          {types.viewType(payload, ParameterMode::Read, methodLocation),
+           types.structural(AggregateKind::BorrowError, {})});
     bool exclusive = method.ends_with("_mut");
     auto result = types.structural(
         exclusive ? AggregateKind::RefMut : AggregateKind::Ref,

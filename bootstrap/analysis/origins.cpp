@@ -352,6 +352,15 @@ bool interiorStorage(const TypeStore &types, Type type) {
          (types.product(type).kind == AggregateKind::Cell ||
           types.product(type).kind == AggregateKind::RefCell);
 }
+bool guardAuthority(const TypeStore &types, Type root, const ViewPath &path) {
+  if (path.empty() || path.back() != Projection::field(0))
+    return false;
+  auto owner =
+      projectedType(types, root, std::span(path).first(path.size() - 1));
+  return owner && types.isProduct(*owner) &&
+         (types.product(*owner).kind == AggregateKind::Ref ||
+          types.product(*owner).kind == AggregateKind::RefMut);
+}
 bool cleanupUses(const ProductType &type) {
   return type.hasDestructor || type.nativeCleanup != NativeCleanup::None;
 }
@@ -716,7 +725,10 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
     for (const auto &[path, type] : viewPaths(function.locals[p].type, types)) {
       auto key = bases[p];
       key.fields = path;
-      entry[key].insert(externalLoan(key, type, static_cast<int>(p)));
+      auto id = externalLoan(key, type, static_cast<int>(p));
+      result.loans.at(id).interiorRoot |=
+          guardAuthority(types, function.locals[p].type, path);
+      entry[key].insert(id);
     }
   }
   auto staticSlot = [&](int identity) {
@@ -801,7 +813,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
         created[b][i].push_back(instruction.result.id);
       else if (instruction.op == ir::Op::Machine &&
                instruction.text.starts_with("cell.") &&
-               types.isView(instruction.result.type))
+               (types.isView(instruction.result.type) ||
+                instruction.text == "cell.try_borrow_unguarded"))
         created[b][i].push_back(instruction.result.id);
       else if (instruction.op == ir::Op::OpaqueRepack &&
                instruction.result.access != ir::Access::Owned)
@@ -1264,7 +1277,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 }
               }
             }
-            if (instruction.text == "cell.clone") {
+            if (instruction.text == "cell.clone" ||
+                instruction.text == "cell.split_token_unchecked" ||
+                instruction.text == "cell.project_unchecked") {
               for (const auto &cell : cells)
                 join(value[{Projection::field(0)}], cell.authority);
             } else {
@@ -1287,6 +1302,25 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
               value[{}].insert(id);
               point.defines.insert(id);
             }
+          } else if (instruction.text == "cell.try_borrow_unguarded") {
+            int id = created[b][i][0];
+            auto &loan = result.loans[id];
+            auto oldTargets = loan.targets.size(),
+                 oldParents = loan.parents.size();
+            loan.mode = ParameterMode::Read;
+            loan.interiorPayload = true;
+            join(loan.parents,
+                 flatten(result.values[instruction.operands[0].id]));
+            for (auto target : referents) {
+              join(loan.parents, target.authority);
+              project(target.place, Projection::field(1));
+              loan.targets.insert(std::move(target));
+            }
+            if (oldTargets != loan.targets.size() ||
+                oldParents != loan.parents.size())
+              changed = true;
+            value[{Projection::field(1)}].insert(id);
+            point.defines.insert(id);
           } else if (instruction.text == "cell.borrow" ||
                      instruction.text == "cell.borrow_mut" ||
                      instruction.text == "cell.try_borrow" ||
@@ -1541,6 +1575,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             auto &loan = result.loans[id];
             if (types.isView(paths[path].second))
               loan.mode = types.view(paths[path].second).mode;
+            loan.interiorRoot = guardAuthority(types, instruction.result.type,
+                                               paths[path].first);
             value[paths[path].first].insert(id);
             point.defines.insert(id);
           }

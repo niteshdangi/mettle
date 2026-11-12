@@ -173,11 +173,25 @@ machineSignature(const TypeStore &types, std::string_view operation,
     bool guarded =
         cell.kind == AggregateKind::Ref || cell.kind == AggregateKind::RefMut;
     if (guarded) {
-      if (operands.size() != 1 || !types.isView(operands[0]) ||
+      if (operands.empty() || !types.isView(operands[0]) ||
           types.view(operands[0]).payload != argument)
         return std::nullopt;
       auto owner = types.view(cell.components[0]).payload;
       auto payload = types.product(owner).components[0];
+      if (method == "project_unchecked")
+        return operands.size() == 2 && types.isPointer(operands[1]) &&
+                       types.pointer(operands[1]).mode ==
+                           (cell.kind == AggregateKind::Ref
+                                ? ParameterMode::Read
+                                : ParameterMode::Mut)
+                   ? signature(types.pointer(operands[1]).payload,
+                               cell.kind == AggregateKind::Ref
+                                   ? Shape::RefProjection
+                                   : Shape::RefMutProjection,
+                               true)
+                   : std::nullopt;
+      if (operands.size() != 1)
+        return std::nullopt;
       if (method == "get_ref")
         return signature(payload, Shape::ViewRead);
       if (method == "get_mut" && cell.kind == AggregateKind::RefMut &&
@@ -185,6 +199,10 @@ machineSignature(const TypeStore &types, std::string_view operation,
         return signature(payload, Shape::ViewMut);
       if (method == "clone" && cell.kind == AggregateKind::Ref)
         return signature(owner, Shape::Ref);
+      if (method == "split_token_unchecked")
+        return signature(
+            owner, cell.kind == AggregateKind::Ref ? Shape::Ref : Shape::RefMut,
+            true);
       return std::nullopt;
     }
     if (cell.kind != AggregateKind::Cell && cell.kind != AggregateKind::RefCell)
@@ -237,6 +255,8 @@ machineSignature(const TypeStore &types, std::string_view operation,
         return signature(argument, Shape::TryRef);
       if (method == "try_borrow_mut")
         return signature(argument, Shape::TryRefMut);
+      if (method == "try_borrow_unguarded")
+        return signature(payload, Shape::UnguardedRef, true);
     }
     return std::nullopt;
   }
@@ -1084,6 +1104,34 @@ machineSignature(const TypeStore &types, std::string_view operation,
 bool machineResultMatches(const TypeStore &types,
                           const MachineSignature &signature, Type result) {
   using Shape = MachineSignature::Shape;
+  if (signature.shape == Shape::RefProjection ||
+      signature.shape == Shape::RefMutProjection) {
+    if (!types.isProduct(result) ||
+        types.product(result).kind != (signature.shape == Shape::RefProjection
+                                           ? AggregateKind::Ref
+                                           : AggregateKind::RefMut))
+      return false;
+    auto source = types.product(result).components[0];
+    return types.isView(source) &&
+           types.view(source).mode == ParameterMode::Read &&
+           types.isProduct(types.view(source).payload) &&
+           types.product(types.view(source).payload).kind ==
+               AggregateKind::RefCell &&
+           types.product(types.view(source).payload).components ==
+               std::vector<Type>{signature.value};
+  }
+  if (signature.shape == Shape::UnguardedRef) {
+    if (!types.isProduct(result) ||
+        types.product(result).kind != AggregateKind::Outcome)
+      return false;
+    auto value = types.product(result).components[0];
+    auto error = types.product(result).components[1];
+    return types.isView(value) &&
+           types.view(value).mode == ParameterMode::Read &&
+           types.view(value).payload == signature.value &&
+           types.isProduct(error) &&
+           types.product(error).kind == AggregateKind::BorrowError;
+  }
   if (signature.shape == Shape::Ref || signature.shape == Shape::RefMut ||
       signature.shape == Shape::TryRef || signature.shape == Shape::TryRefMut) {
     bool exclusive =
