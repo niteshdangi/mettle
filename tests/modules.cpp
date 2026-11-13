@@ -260,7 +260,7 @@ void macroDiscoveryDistinguishesProviderKinds() {
           "provider-kind fixture did not exercise import miss/module success");
 }
 
-void importedAndDeclaredMacroFilesStayDistinct() {
+void importedDirectoryModulesLoadModuleFile() {
   for (bool declared : {false, true}) {
     mettle::resolution::SourceProvider provider =
         [](const std::string &path) -> std::optional<mettle::Source> {
@@ -277,9 +277,8 @@ void importedAndDeclaredMacroFilesStayDistinct() {
         provider, diagnostics);
     require(tree && diagnostics.empty(), "macro file discovery failed");
     const auto &value = mainValue(*tree);
-    require(value.kind == mettle::Kind::Integer &&
-                value.text == (declared ? "42" : "7"),
-            "import main.mt and declared module.mt were confused");
+    require(value.kind == mettle::Kind::Integer && value.text == "42",
+            "imported directory module did not load module.mt");
     auto symbols = mettle::resolution::resolve(*tree, diagnostics);
     require(symbols && diagnostics.empty(),
             "macro discovery left an unresolved module/import");
@@ -683,7 +682,7 @@ void macroDefinitionSiteReplaysQualifiedRootSource() {
   require(tree && diagnostics.empty(),
           "qualified macro definition-site replay failed loading");
   require(decoyReads == 0,
-          "qualified macro replay probed the import main.mt decoy");
+          "qualified macro replay probed the main.mt decoy");
   for (const auto *catalog : {&sourceModules, &allSources}) {
     auto source =
         std::find_if(catalog->begin(), catalog->end(), [](const auto &entry) {
@@ -698,7 +697,7 @@ void macroDefinitionSiteReplaysQualifiedRootSource() {
                          [](const auto &entry) {
                            return entry.source.path == "memory/hidden/main.mt";
                          }),
-            "root-package source catalog adopted the import main.mt decoy");
+            "root-package source catalog adopted the main.mt decoy");
   }
   auto symbols = mettle::resolution::resolve(*tree, diagnostics, ownership);
   if (!symbols)
@@ -1025,7 +1024,7 @@ int main() {
     selectedMacroImportCycleTerminatesWithoutRepeatedReads();
     missingQualifiedMacroDiscoveryIsMemoized();
     macroDiscoveryDistinguishesProviderKinds();
-    importedAndDeclaredMacroFilesStayDistinct();
+    importedDirectoryModulesLoadModuleFile();
     unknownOwnershipCannotGrantLocality();
     crossPackageReexportsPreserveOwnership();
     syntaxAndIdentities();

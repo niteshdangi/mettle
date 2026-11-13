@@ -46,7 +46,7 @@ Dependency aliases are available by their declared names from every module,
 independent of local/registry/Git source selection. Explicit local bindings shadow
 them; `package` can explicitly anchor lookup at the current package root.
 An import can discover an undeclared source module through `name.mt` or
-`name/main.mt`; finding both is an ambiguity error. Intermediate directories
+`name/module.mt`; finding both is an ambiguity error. Intermediate directories
 need no handwritten aggregator. Package entry selection is owned by
 tooling-and-packages.md; its default is `src/main.mt` for both dependency APIs
 and executable entry checking.
