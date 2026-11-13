@@ -12020,8 +12020,8 @@ Bcdd860dbb3b4d3fcb792b0a0,operation:primitive::str,https://doc.rust-lang.org/1.9
 B9bc200b61b828bc742b7da3e,operation:primitive::str::as_bytes,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.as_bytes,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
 Bd1a2b9fa0a418bfb8a7f2bb0,operation:primitive::str::as_bytes,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#method.as_bytes,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
 B8e671abb912e848b9f9ab8cd,operation:primitive::str::as_bytes_mut,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.as_bytes_mut,,evidenced,tests/source/run/i13-string-traits-and-utf16.mt
-B59aa6ffd26b1411b651fb1dc,operation:primitive::str::as_mut_ptr,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.as_mut_ptr,,missing,
-Baf0c74820f26991ae3323430,operation:primitive::str::as_ptr,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.as_ptr,,missing,
+B59aa6ffd26b1411b651fb1dc,operation:primitive::str::as_mut_ptr,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.as_mut_ptr,,evidenced,tests/alloc/i13_text_pointer_box_conversions.mt
+Baf0c74820f26991ae3323430,operation:primitive::str::as_ptr,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.as_ptr,,evidenced,tests/alloc/i13_text_pointer_box_conversions.mt
 B43410342aaa07915e7bfbb29,operation:primitive::str::bytes,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.bytes,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
 B7afb340d6df447b486f097d2,operation:primitive::str::ceil_char_boundary,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.ceil_char_boundary,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
 B7978ed507dd73ab93a33529b,operation:primitive::str::char_indices,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.char_indices,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
@@ -12050,8 +12050,8 @@ B643a953f3bc6545e139a0477,operation:primitive::str::get_unchecked,https://doc.ru
 B8da4760d16a1bbdceedd6587,operation:primitive::str::get_unchecked,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.get_unchecked,,evidenced,tests/source/run/i13-string-traits-and-utf16.mt
 B431e5a9b5b25e1121fe8f557,operation:primitive::str::get_unchecked_mut,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.get_unchecked_mut,,evidenced,tests/source/run/i13-string-traits-and-utf16.mt
 B8717a1bece336856398d15b5,operation:primitive::str::get_unchecked_mut,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#method.get_unchecked_mut,,evidenced,tests/source/run/i13-string-traits-and-utf16.mt
-B833da135e7458871e78f023b,operation:primitive::str::into_boxed_bytes,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#method.into_boxed_bytes,,missing,
-B56672c60f04d40bb98d0922e,operation:primitive::str::into_string,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#method.into_string,,missing,
+B833da135e7458871e78f023b,operation:primitive::str::into_boxed_bytes,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#method.into_boxed_bytes,,evidenced,tests/alloc/i13_text_pointer_box_conversions.mt
+B56672c60f04d40bb98d0922e,operation:primitive::str::into_string,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#method.into_string,,evidenced,tests/alloc/i13_text_pointer_box_conversions.mt
 Bf59bcef40ab497826934f476,operation:primitive::str::is_ascii,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.is_ascii,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
 Bbc948d93613084f6b5f48461,operation:primitive::str::is_char_boundary,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.is_char_boundary,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
 B8e61633a52c21b55d6a91dee,operation:primitive::str::is_empty,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.is_empty,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt

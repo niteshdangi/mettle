@@ -1098,6 +1098,8 @@ extend Text {
         true
     }
     pub const fn as_bytes(): read [u8] from self { read self.bytes }
+    pub const fn as_ptr(): ptr<read u8> { self.bytes.as_ptr() }
+    pub mut const fn as_mut_ptr(): ptr<mut u8> { self.bytes.as_mut_ptr() }
     pub const fn is_char_boundary(index: usize): bool {
         if index == 0usize || index == self.bytes.len() { return true }
         if index > self.bytes.len() { return false }
