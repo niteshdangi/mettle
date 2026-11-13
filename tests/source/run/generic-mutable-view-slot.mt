@@ -12,7 +12,7 @@ fn main(): i32 {
     let first = "first"
     let second = "second"
     let text = forward(first, second)
-    assert(text == second, "generic mutable borrow replaces a fat view slot")
+    assert(text == "second", "generic mutable borrow replaces a fat view slot")
     let left = [1u8, 2u8]
     let right = [3u8, 4u8, 5u8]
     let first_slice = read left[0usize..2usize]

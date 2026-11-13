@@ -1,16 +1,15 @@
 import alloc.arc
-import core.sync.atomic.{AtomicUsize, Ordering}
 import std.thread
 
 fn collective(): i32 {
     let owner = arc.new(37)
     let slot = core.cell.Cell.new(present(owner.retain()))
-    let phase = arc.new(AtomicUsize.new(0usize))
+    let phase = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
     let worker_phase = phase.retain()
     let worker = thread.spawn(take fn(): i32 {
         let sibling = slot.replace(none).unwrap()
-        worker_phase.get().store(1usize, Ordering.SeqCst)
-        while worker_phase.get().load(Ordering.SeqCst) != 2usize {
+        worker_phase.get().store(1usize, core.sync.atomic.Ordering.SeqCst)
+        while worker_phase.get().load(core.sync.atomic.Ordering.SeqCst) != 2usize {
             thread.yield_now()
         }
         match take sibling.into_inner() {
@@ -18,8 +17,8 @@ fn collective(): i32 {
             none => 0
         }
     })
-    while phase.get().load(Ordering.SeqCst) != 1usize { thread.yield_now() }
-    phase.get().store(2usize, Ordering.SeqCst)
+    while phase.get().load(core.sync.atomic.Ordering.SeqCst) != 1usize { thread.yield_now() }
+    phase.get().store(2usize, core.sync.atomic.Ordering.SeqCst)
     let extracted = match take owner.into_inner() {
         present(value) => if value == 37 { 1 } else { 100 },
         none => 0
@@ -33,13 +32,13 @@ fn collective(): i32 {
 fn unique(): i32 {
     var owner = arc.new(41)
     let slot = core.cell.Cell.new(present(owner.retain()))
-    let phase = arc.new(AtomicUsize.new(0usize))
+    let phase = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
     let worker_phase = phase.retain()
-    let exclusive = arc.new(AtomicUsize.new(0usize))
+    let exclusive = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
     let worker_exclusive = exclusive.retain()
     let worker = thread.spawn(take fn(): i32 {
         let sibling = slot.replace(none).unwrap()
-        while worker_phase.get().load(Ordering.SeqCst) == 0usize {
+        while worker_phase.get().load(core.sync.atomic.Ordering.SeqCst) == 0usize {
             thread.yield_now()
         }
         let observer = sibling.downgrade()
@@ -48,7 +47,7 @@ fn unique(): i32 {
         while attempt < 64usize {
             match take observer.upgrade() {
                 present(strong) => {
-                    if worker_exclusive.get().load(Ordering.SeqCst) != 0usize {
+                    if worker_exclusive.get().load(core.sync.atomic.Ordering.SeqCst) != 0usize {
                         return 1
                     }
                     let _ = strong.strong_count()
@@ -59,15 +58,15 @@ fn unique(): i32 {
         }
         0
     })
-    phase.get().store(1usize, Ordering.SeqCst)
+    phase.get().store(1usize, core.sync.atomic.Ordering.SeqCst)
     var attempt = 0usize
     while attempt < 64usize {
         match take owner.get_mut() {
             present(value) => {
-                exclusive.get().store(1usize, Ordering.SeqCst)
+                exclusive.get().store(1usize, core.sync.atomic.Ordering.SeqCst)
                 thread.yield_now()
                 *value += 1
-                exclusive.get().store(0usize, Ordering.SeqCst)
+                exclusive.get().store(0usize, core.sync.atomic.Ordering.SeqCst)
             },
             none => {}
         }

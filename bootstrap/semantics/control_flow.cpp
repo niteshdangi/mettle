@@ -190,11 +190,13 @@ bool Checker::desugarIteration(Node &n, Type original) {
   if (mode == ParameterMode::Read && !place(source) &&
       !checked.types->isView(original))
     mode = ParameterMode::Take;
-  // An iterator held in a local is consumed by iterating it, like a value.
+  // An iterator or owned-iterable held in a local is consumed by iterating it,
+  // like a value, unless the type is iterable through a shared view.
   if (mode == ParameterMode::Read && place(source) &&
       !checked.types->isView(original) &&
       !implementsProtocol(self, shared, source.span) &&
-      implementsProtocol(self, iterator, source.span))
+      (implementsProtocol(self, iterator, source.span) ||
+       implementsProtocol(self, into, source.span)))
     mode = ParameterMode::Take;
   std::string_view method, owner;
   if (mode == ParameterMode::Take) {

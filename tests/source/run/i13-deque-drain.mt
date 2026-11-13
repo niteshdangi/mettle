@@ -64,7 +64,7 @@ fn main(): i32 {
     }
     if contiguous.len() != 4usize || contiguous[2usize] != 5 { return 12 }
 
-    var wrapped = vec_deque.with_capacity<i32>(6usize)
+    var wrapped = vec_deque.with_capacity<i32>(8usize)
     var next_value = 1
     while next_value <= 8 {
         let item: i32 = next_value

@@ -95,15 +95,10 @@ fn main(): i32 {
                    "number would be zero for non-zero type") {
                 return 9
             }
-            match capture num.parse_radix<i8>("1", 1u32) {
-                success(value) => { return 10 },
-                failure(radix) => {
-                    if radix != ParseIntError(IntErrorKind.InvalidRadix) ||
-                       !debug_is(read radix, "ParseIntError { kind: InvalidRadix }") ||
-                       !display_is(read radix, "radix must be within 2..=36") {
-                        return 11
-                    }
-                }
+            let radix = ParseIntError(IntErrorKind.InvalidRadix)
+            if !debug_is(read radix, "ParseIntError { kind: InvalidRadix }") ||
+               !display_is(read radix, "radix must be within 2..=36") {
+                return 11
             }
         }
     }

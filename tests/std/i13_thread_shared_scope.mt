@@ -1,18 +1,17 @@
 import std.thread
 import std.panic.{catch_panic, CatchResult}
-import core.sync.atomic.{AtomicBool, AtomicUsize, Ordering}
 
 type Tracked<region r> {
-    drops: read AtomicUsize from r
-    drop { let _previous = self.drops.fetch_add(1usize, Ordering.SeqCst) }
+    drops: read core.sync.atomic.AtomicUsize from r
+    drop { let _previous = self.drops.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst) }
 }
 
 fn main(): i32 {
-    let drops = AtomicUsize.new(0usize)
-    let release = AtomicBool.new(false)
-    let registered = AtomicBool.new(false)
-    let observed = AtomicBool.new(false)
-    let nested = AtomicUsize.new(0usize)
+    let drops = core.sync.atomic.AtomicUsize.new(0usize)
+    let release = core.sync.atomic.AtomicBool.new(false)
+    let registered = core.sync.atomic.AtomicBool.new(false)
+    let observed = core.sync.atomic.AtomicBool.new(false)
+    let nested = core.sync.atomic.AtomicUsize.new(0usize)
     thread.scope(fn(read scope: thread.Scope): Unit {
         let release_ref = read release
         let registered_ref = read registered
@@ -20,37 +19,37 @@ fn main(): i32 {
         let nested_ref = read nested
         let target = scope.spawn(fn(): i32 {
             let _tracked = Tracked(read drops)
-            while !release.load(Ordering.Acquire) { thread.yield_now() }
+            while !release.load(core.sync.atomic.Ordering.Acquire) { thread.yield_now() }
             panic("observed transferred child")
         })
         let joiner = scope.spawn(take fn(): Unit {
             let child = scope.spawn(fn(): Unit {
                 let grandchild = scope.spawn(fn(): Unit {
-                    let _old = nested_ref.fetch_add(1usize, Ordering.SeqCst)
+                    let _old = nested_ref.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
                 })
             })
-            registered_ref.store(true, Ordering.Release)
-            release_ref.store(true, Ordering.Release)
+            registered_ref.store(true, core.sync.atomic.Ordering.Release)
+            release_ref.store(true, core.sync.atomic.Ordering.Release)
             match take capture target.join() {
                 success(_) => { panic("expected child panic") },
                 failure(error) => {
                     if error.code != 101 { panic("wrong panic code") }
-                    observed_ref.store(true, Ordering.Release)
+                    observed_ref.store(true, core.sync.atomic.Ordering.Release)
                 }
             }
         })
-        while !registered.load(Ordering.Acquire) { thread.yield_now() }
+        while !registered.load(core.sync.atomic.Ordering.Acquire) { thread.yield_now() }
     })
-    if !observed.load(Ordering.Acquire) ||
-       nested.load(Ordering.SeqCst) != 1usize ||
-       drops.load(Ordering.SeqCst) != 1usize { return 1 }
+    if !observed.load(core.sync.atomic.Ordering.Acquire) ||
+       nested.load(core.sync.atomic.Ordering.SeqCst) != 1usize ||
+       drops.load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 1 }
 
-    let hits = AtomicUsize.new(0usize)
+    let hits = core.sync.atomic.AtomicUsize.new(0usize)
     let result = catch_panic(fn(): Unit {
         thread.scope(fn(read scope: thread.Scope): Unit {
             let child = scope.spawn(fn(): Unit {
                 let grandchild = scope.spawn(fn(): Unit {
-                    let _old = hits.fetch_add(1usize, Ordering.SeqCst)
+                    let _old = hits.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
                     panic("unobserved nested child")
                 })
             })
@@ -60,7 +59,7 @@ fn main(): i32 {
         CatchResult.Returned(_) => { return 2 },
         CatchResult.Panicked(_) => {}
     }
-    if hits.load(Ordering.SeqCst) != 1usize { return 3 }
+    if hits.load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 3 }
 
     let result = thread.scope(fn(read scope: thread.Scope): i32 {
         let child = scope.spawn(fn(): core.cell.Cell<i32> { core.cell.Cell.new(42) })
