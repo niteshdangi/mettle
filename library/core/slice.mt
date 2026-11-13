@@ -4,6 +4,9 @@ import super.clone.Clone
 import super.borrow.{AsRef, AsMut, Borrow, BorrowMut}
 import super.ops.{Index, IndexMut}
 import super.fmt
+import super.default.Default
+import super.text.{Text, Utf8Error, from_utf8, from_utf8_unchecked}
+import super.num.EscapeDefault
 
 copy type Raw { data: ptr<read u8>; len: usize }
 
@@ -2338,4 +2341,67 @@ extend<T, const N: usize> [T; N] implements MutableIterable {
         let items: mut [T] from r = mut self
         items.iter_mut()
     }
+}
+
+extend<region r, T> read [T] from r implements Default {
+    static fn default(): read [T] from r { unsafe { from_raw_parts(aligned_dangling<T>().cast_const(), 0usize) } }
+}
+extend<region r, T> mut [T] from r implements Default {
+    static fn default(): mut [T] from r { unsafe { from_raw_parts_mut(aligned_dangling<T>(), 0usize) } }
+}
+
+pub type SliceEscapeAscii<region r> { rest: read [u8] from r; current: EscapeDefault? }
+extend<region r> SliceEscapeAscii<region r> implements Iterator {
+    type Item = u8
+    mut fn next(): u8? {
+        while true {
+            match mut self.current {
+                present(escape) => {
+                    let value = escape.next()
+                    if value.is_present() { return value }
+                    self.current = none
+                },
+                none => {
+                    if self.rest.len() == 0usize { return none }
+                    let byte = self.rest[0usize]
+                    self.rest = self.rest.split_at(1usize).1
+                    self.current = present(byte.escape_ascii())
+                }
+            }
+        }
+        none
+    }
+}
+
+// One run of valid UTF-8 followed by the invalid bytes that end it.
+pub type Utf8Chunk<region r> { valid: read Text from r; invalid: read [u8] from r }
+extend<region r> Utf8Chunk<region r> {
+    pub fn valid(): read Text from r { self.valid }
+    pub fn invalid(): read [u8] from r { self.invalid }
+}
+pub type Utf8Chunks<region r> { rest: read [u8] from r }
+extend<region r> Utf8Chunks<region r> implements Iterator {
+    type Item = Utf8Chunk<region r>
+    mut fn next(): Utf8Chunk<region r>? {
+        if self.rest.len() == 0usize { return none }
+        let bytes = self.rest
+        match from_utf8(bytes) {
+            success(text) => {
+                self.rest = bytes.split_at(bytes.len()).1
+                present(Utf8Chunk(text, bytes.split_at(bytes.len()).1))
+            },
+            failure(error) => {
+                let (head, tail) = bytes.split_at(error.valid_up_to())
+                let bad = match error.error_len() { present(length) => length, none => tail.len() }
+                let (invalid, remaining) = tail.split_at(bad)
+                self.rest = remaining
+                present(Utf8Chunk(unsafe { from_utf8_unchecked(head) }, invalid))
+            }
+        }
+    }
+}
+
+extend [u8] {
+    pub fn escape_ascii(): SliceEscapeAscii<region self> { SliceEscapeAscii(read self, none) }
+    pub fn utf8_chunks(): Utf8Chunks<region self> { Utf8Chunks(read self) }
 }

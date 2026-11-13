@@ -14,6 +14,8 @@ fn checked_text<region r>(take value: read OsStr from r): (Outcome<read Text fro
     TextView<region r>.(TryFrom<read OsStr from r>).try_from(value)
 }
 
+fn default_of<T: core.default.Default>(): T { T.(core.default.Default).default() }
+
 fn main(): i32 {
     let text = "path/leaf"
     if same_ref(text) != "path/leaf" { return 1 }
@@ -33,6 +35,11 @@ fn main(): i32 {
         success(converted) => { if converted != "path/leaf" { return 7 } },
         failure(error) => { return 6 }
     }
+
+    let empty_view: read [i32] = default_of()
+    let empty_cstr: read core.ffi.CStr = default_of()
+    var empty_storage: mut [i32] = default_of()
+    if empty_view.len() != 0usize || empty_storage.len() != 0usize || empty_cstr.to_bytes().len() != 0usize { return 9 }
 
     var storage = [97u8, 98u8, 99u8, 100u8]
     var editable: mut Text = unsafe { core.text.from_utf8_unchecked_mut(mut storage) }

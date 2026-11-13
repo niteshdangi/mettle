@@ -41,6 +41,14 @@ fn run(): i32 throws Error {
     slice_lines.consume(9usize)
     if try available(slice_lines.by_ref()) != 0usize { return 8 }
 
+    var window = [0u8; 4]
+    {
+        var target = io.Cursor.new(mut window[..])
+        try target.write_all([5u8, 6u8, 7u8])
+        if target.position() != 3u64 { return 9 }
+    }
+    if window[0usize] != 5u8 || window[2usize] != 7u8 || window[3usize] != 0u8 { return 10 }
+
     var buffered = io.buf_writer(vec.new<u8>())
     if buffered.capacity() != 8192usize { return 4 }
     try put(buffered.by_ref(), 9u8)
