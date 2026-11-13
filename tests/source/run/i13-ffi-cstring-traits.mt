@@ -2,7 +2,7 @@
 module source_helpers;
 import core.borrow.{AsRef, Borrow, ToOwned}
 import core.clone.Clone
-import core.cmp.{Ord, PartialEq}
+import core.cmp.{Ord, Ordering, PartialEq, PartialOrd}
 import core.convert.From
 import core.default.Default
 import core.fmt.Debug
@@ -98,5 +98,13 @@ fn main(): i32 {
     }
     let empty = CString.default()
     if !empty.is_empty() || empty.count_bytes() != 0usize { return 14 }
+    let larger = match take capture CStr.from_bytes_with_nul("ABD\u{0}".as_bytes()) {
+        success(value) => value,
+        failure(_) => { return 15 }
+    }
+    if checked.cmp(larger) != Ordering.Less || larger.partial_cmp(checked) != present(Ordering.Greater) { return 17 }
+    if owned.cmp(larger.into_c_string()) != Ordering.Less || owned.partial_cmp(owned) != present(Ordering.Equal) { return 18 }
+    if core.hash.hash_one(checked) == core.hash.hash_one(larger) ||
+        core.hash.hash_one(owned) != core.hash.hash_one(checked.into_c_string()) { return 19 }
     0
 }
