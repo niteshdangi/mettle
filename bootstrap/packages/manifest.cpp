@@ -274,7 +274,8 @@ std::optional<Manifest> parseManifest(const data::Value &root,
         reader.error(name->span, "invalid package name '" + *text +
                                      "' (expected [a-z][a-z0-9_-]*)");
       else if (*text == "core" || *text == "alloc" || *text == "std" ||
-               moduleName(*text) == "package" || moduleName(*text) == "self")
+               moduleName(*text) == "package" || moduleName(*text) == "self" ||
+               moduleName(*text) == "super")
         reader.error(name->span, "package name '" + *text +
                                      "' collides with a reserved module root");
     }
@@ -391,6 +392,14 @@ std::optional<Manifest> parseManifest(const data::Value &root,
     if (dependency.optional)
       reader.error(dependency.span,
                    "development dependencies cannot be optional");
+  for (const auto *list : {&manifest.dependencies, &manifest.buildDependencies,
+                           &manifest.devDependencies})
+    for (const auto &dependency : *list)
+      if (moduleName(dependency.name) == moduleName(manifest.name))
+        reader.error(dependency.span,
+                     "dependency '" + dependency.name +
+                         "' has the name of its own package; a package name "
+                         "and its dependency names share one namespace");
   if (const auto *registry = root.find("registry")) {
     if (registry->kind != Kind::Object ||
         !reader.known(*registry, "[registry]", {"path"}))

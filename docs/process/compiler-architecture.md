@@ -1276,8 +1276,8 @@ does not establish compatible C-unwind interoperability or a stable public ABI.
 Package resolution/build planning (`packages`, planned before compilation and
 handed to the loader as source/version/context-specific `Library::packages`
 mounts; each package instance gets a unique internal canonical prefix, while
-`package.NAME` imports resolve against the owning package's direct dependency
-aliases. The driver owns Git CLI execution; the lock records its immutable
+a path headed by a package name resolves to the owning package's root (its own
+name) or to a direct dependency alias. The driver owns Git CLI execution; the lock records its immutable
 commit and source checksum. Host dependency mounts and feature sets are kept
 separate from target mounts. Remote HTTP registries remain unspecified and
 unsupported.

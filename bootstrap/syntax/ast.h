@@ -1,6 +1,7 @@
 #pragma once
 
 #include "syntax/token.h"
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -259,6 +260,9 @@ inline NodeOwner NodeOwner::borrow(Node &node) {
   result.owning = false;
   return result;
 }
+// Restriction of loader- and expander-generated items; no source spelling
+// produces it.
+inline const std::vector<std::string> packageVisibility = {"<package>"};
 struct VisibilitySyntax {
   bool publicItem = false;
   std::vector<std::string> restriction;
@@ -458,6 +462,9 @@ struct Module {
   std::vector<ModuleDeclaration> modules;
   std::vector<MacroDeclaration> macros;
   std::vector<Import> imports;
+  // Package name by package root module (empty for the selected package); a
+  // path whose head is the owning package's name starts at its root.
+  std::map<std::string, std::string> packageNames;
   // Names the loader makes visible, below every explicit and glob binding, in
   // each module outside `libraryRoots`. Empty when no library supplies them.
   struct Prelude {

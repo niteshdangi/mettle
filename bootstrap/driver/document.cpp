@@ -1,6 +1,7 @@
 #include "driver/document.h"
 #include "documentation/html.h"
 #include "expansion/macros.h"
+#include "packages/manifest.h"
 #include "packages/plan.h"
 #include "resolution/load.h"
 #include "resolution/resolve.h"
@@ -248,6 +249,7 @@ int document(const Options &options) {
     library.configuration.features = std::set<std::string>(
         outcome.plan->features.begin(), outcome.plan->features.end());
     library.packageDependencies = outcome.plan->dependencies;
+    library.configuration.packageName = packages::moduleName(outcome.plan->package);
     for (const auto &mount : outcome.plan->mounts) {
       std::set<std::string> features(mount.features.begin(),
                                      mount.features.end());

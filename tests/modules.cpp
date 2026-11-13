@@ -415,8 +415,8 @@ void syntaxAndIdentities() {
 void sameDeclarationGlobs() {
   mettle::Source source{"memory/root.mt",
                         "module base { pub fn answer() { 42 } }\n"
-                        "module a { pub import package.base.answer; }\n"
-                        "module b { pub import package.base.answer; }\n"
+                        "module a { pub import main.base.answer; }\n"
+                        "module b { pub import main.base.answer; }\n"
                         "import a.*;\nimport b.*;\nfn main() { answer() }\n"};
   mettle::Diagnostics diagnostics;
   auto tree = mettle::parse(source, diagnostics);
@@ -430,9 +430,9 @@ void delayedExplicitImport() {
                         "module a { pub fn answer() { 1 } }\n"
                         "module b { pub fn answer() { 42 } }\n"
                         "module selected {\n"
-                        "pub import package.a.*;\n"
-                        "pub import package.relay.answer;\n}\n"
-                        "module relay { pub import package.b.answer; }\n"
+                        "pub import main.a.*;\n"
+                        "pub import main.relay.answer;\n}\n"
+                        "module relay { pub import main.b.answer; }\n"
                         "import selected.*;\nfn main() { answer() }\n"};
   mettle::Diagnostics diagnostics;
   auto tree = mettle::parse(source, diagnostics);

@@ -192,8 +192,8 @@ def main(executable, directory, only=None, *, jobs=4, pattern=None,
                    "fn main() { outer.result() - 42 }\n"})
     case("same-declaration-two-globs", {
         "main.mt": "module base { pub fn answer() { 42 } }\n"
-                   "module a { pub import package.base.answer; }\n"
-                   "module b { pub import package.base.answer; }\n"
+                   "module a { pub import main.base.answer; }\n"
+                   "module b { pub import main.base.answer; }\n"
                    "import a.*;\nimport b.*;\nfn main() { answer() - 42 }\n"})
     case("explicit-before-globs-independent-of-order", {
         "main.mt": "module a { pub fn answer() { 1 } }\n"
@@ -293,7 +293,7 @@ def main(executable, directory, only=None, *, jobs=4, pattern=None,
                    "fn main() { 0 }\n"},
          "name", "cannot reexport private or restricted item 'exposed'", (2, 5))
     case("restriction-not-ancestor", {
-        "main.mt": "module a {}\nmodule b { pub(package.a) fn bad() { 0 } }\n"
+        "main.mt": "module a {}\nmodule b { pub(main.a) fn bad() { 0 } }\n"
                    "fn main() { 0 }\n"},
          "name", "restricted visibility must name an enclosing module", (2, 12))
     case("restricted-denied", {
@@ -355,7 +355,7 @@ def main(executable, directory, only=None, *, jobs=4, pattern=None,
         **library, "main.mt": "fn main(): i32 { core.answer() - 42 }\n"}, options=custom)
     case("library-alloc-reaches-core-by-package-path", {
         "lib/core/module.mt": "pub fn answer(): i32 { 42 }\n",
-        "lib/alloc/module.mt": "pub fn via_core(): i32 { package.core.answer() }\n",
+        "lib/alloc/module.mt": "pub fn via_core(): i32 { core.answer() }\n",
         "lib/std/module.mt": "",
         "main.mt": "fn main(): i32 { alloc.via_core() - 42 }\n"},
          options=["--library-dir", str(directory / "library-alloc-reaches-core-by-package-path" / "lib")])

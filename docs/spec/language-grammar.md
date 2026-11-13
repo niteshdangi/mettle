@@ -42,9 +42,16 @@ enclosing module respectively.
 
 ## 2. Paths, imports and generics
 
-Dependency aliases are available by their declared names from every module,
-independent of local/registry/Git source selection. Explicit local bindings shadow
-them; `package` can explicitly anchor lookup at the current package root.
+A path starts with a package name or with `self`/`super`. A package's own name
+(from `package.mettle`; `main` for a source without a manifest) names its root
+module from every module inside it (`import app.helper` in package `app`), and a
+dependency alias names the dependency the same way, independent of
+local/registry/Git source selection. The own name and the dependency aliases
+share one namespace: a dependency named like its own package is a manifest
+error, a root module named like either is a name error, and a package name
+heading a multi-component path always means that package, so no import has two
+meanings. `package` is not a path head; `package.x` is rejected with the package
+name to use instead.
 An import can discover an undeclared source module through `name.mt` or
 `name/main.mt`; finding both is an ambiguity error. Intermediate directories
 need no handwritten aggregator. Package entry selection is owned by
@@ -53,7 +60,7 @@ and executable entry checking.
 
 ```ebnf
 path          = path_head, { ".", IDENT } ;
-path_head     = IDENT | "self" | "super" | "package" ;
+path_head     = IDENT | "self" | "super" ;
 visibility    = "pub", [ "(", path, ")" ] ;
 module        = [ visibility ], "module", IDENT, [ ";" ]
               | [ visibility ], "module", IDENT, "{", items, "}" ;
@@ -524,8 +531,10 @@ Foreign definitions may name their final variadic cursor `args: ...`; it is not
 an ordinary stored type or a facility available to non-foreign native functions.
 Only foreign callable types permit a final `...` in parameter_types.
 
-`package` names the current package root; self and super select the current and
-parent module. `_` is an inference placeholder only where local inference is
+A package name (own or dependency) names that package's root; self and super
+select the current and parent module. A `pub(path)` restriction may start with
+the own package name (`pub(app)`, `pub(app.family)`) or name a module from the
+package root. `_` is an inference placeholder only where local inference is
 permitted. Optional result annotations are a separate rule; they do not enable
 placeholder inference for public parameters, fields or bodyless signatures.
 The unsized bound removes

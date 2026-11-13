@@ -41,8 +41,10 @@ The emitted backend does not provide UBSan or cross-target qualification.
 component, then compiles the selected entry with each resolved
 dependency library mounted as a public root module named after the package
 (`-` becomes `_`). Dependency aliases resolve from every module using the same
-`import name` spelling for local, registry and Git sources. Explicit local
-bindings take precedence; `package.name` remains an optional root qualifier.
+`import name` spelling for local, registry and Git sources. A package's own
+name roots its own modules the same way and shares one namespace with the
+dependency aliases: a dependency named like its own package is a manifest
+error. A source without a manifest is package `main`.
 
 - Manifest: root `name`/`version`, optional `mettle-version` (minimum compiler
   SemVer), `kind` (`"executable"` by default or `"library"`), `emit` and `entry`

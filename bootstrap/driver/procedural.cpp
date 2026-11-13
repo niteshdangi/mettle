@@ -1,5 +1,6 @@
 #include "driver/procedural.h"
 #include "driver/observe.h"
+#include "packages/manifest.h"
 #include "packages/sha256.h"
 #include "llvm/Support/Program.h"
 #include <cstdint>
@@ -129,6 +130,7 @@ bool ProcedureHost::prepare() {
     host.explain = options.explain;
     host.packageContext = true;
     host.packageInstance = macro.identity;
+    host.packageName = packages::moduleName(macro.package);
     host.injectedFeatures.insert(macro.features.begin(), macro.features.end());
     host.packageDependencies = macro.dependencies;
     injectHostContext(host, hostPackages, scriptResults);

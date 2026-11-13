@@ -227,7 +227,7 @@ private:
     // The generated harness is in the package root, so collected entries in
     // descendant modules must be package-visible to that caller.
     function.item.visibility.publicItem = true;
-    function.item.visibility.restriction = {"package"};
+    function.item.visibility.restriction = packageVisibility;
     module.tests.push_back(std::move(found));
   }
 

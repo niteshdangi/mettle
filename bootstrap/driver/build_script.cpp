@@ -1,6 +1,7 @@
 #include "driver/build_script.h"
 #include "driver/cache.h"
 #include "driver/observe.h"
+#include "packages/manifest.h"
 #include "packages/sha256.h"
 #include "llvm/Support/Program.h"
 #include <algorithm>
@@ -282,6 +283,7 @@ private:
     host.explain = options.explain;
     host.packageContext = true;
     host.packageInstance = script.identity;
+    host.packageName = packages::moduleName(script.package);
     host.injectedFeatures = featuresOf(script);
     host.packageDependencies = script.dependencies;
     injectHostContext(host, plan.hostMounts, results);

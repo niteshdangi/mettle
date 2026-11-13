@@ -355,7 +355,7 @@ public:
                                             test.path.begin());
                         })) {
           declaration.item.visibility.publicItem = true;
-          declaration.item.visibility.restriction = {"package"};
+          declaration.item.visibility.restriction = packageVisibility;
         }
       }
       bool bench = library.harness == Library::Harness::Bench;
@@ -409,6 +409,13 @@ public:
       for (const auto &[name, modules] : roots)
         for (const auto &module : modules)
           packageImport({}, name, module);
+      result.packageNames[""] = library.configuration.packageName;
+      reserveRootName({}, library.configuration.packageName, "the package name");
+      for (const auto &package : library.packages)
+        if (!package.module.empty()) {
+          result.packageNames[package.module] = package.name;
+          reserveRootName(package.module, package.name, "the package name");
+        }
     }
     if (diagnostics.empty())
       mountLibraries();
@@ -661,9 +668,10 @@ private:
                       const MacroModuleLocation &location,
                       const fs::path &directory, bool imported) {
     source.configuration = library.configuration;
-    if (location.package)
+    if (location.package) {
       source.configuration->features = location.package->features;
-    else if (!location.nativeRoot.empty())
+      source.configuration->packageName = location.package->name;
+    } else if (!location.nativeRoot.empty())
       source.configuration->features.clear();
     auto [entry, inserted] = macroSources.try_emplace(
         source.source.id,
@@ -683,9 +691,8 @@ private:
   macroModule(const std::vector<std::string> &requested,
               const std::vector<std::string> &from, bool imported = false) {
     auto path = requested;
-    bool rooted = path.size() >= 2 && path.front() == "package";
     if (!path.empty()) {
-      auto alias = path[rooted ? 1 : 0];
+      auto alias = path[0];
       std::replace(alias.begin(), alias.end(), '-', '_');
       std::string module;
       const Library::Package *ownerPackage = nullptr;
@@ -698,15 +705,19 @@ private:
       const auto &dependencies = ownerPackage ? ownerPackage->dependencies
                                               : library.packageDependencies;
       for (const auto &[name, target] : dependencies)
-        if (name == alias || name == path[rooted ? 1 : 0]) {
+        if (name == alias || name == path[0]) {
           module = target;
           break;
         }
-      if (module.empty() && rooted)
-        return std::nullopt;
       if (!module.empty()) {
-        path.erase(path.begin(), path.begin() + (rooted ? 2 : 1));
+        path.erase(path.begin());
         path.insert(path.begin(), module);
+      } else if (path.size() > 1 &&
+                 path[0] == (ownerPackage ? ownerPackage->name
+                                          : library.configuration.packageName)) {
+        path.erase(path.begin());
+        if (ownerPackage && !ownerPackage->module.empty())
+          path.insert(path.begin(), ownerPackage->module);
       }
     }
     if (library.compiledMacros &&
@@ -993,16 +1004,12 @@ private:
     };
     for (; scannedImports < result.imports.size(); ++scannedImports) {
       const auto &imported = result.imports[scannedImports];
-      auto index = !imported.path.empty() && imported.path.front() == "package"
-                       ? std::size_t{1}
-                       : std::size_t{0};
-      if (index >= imported.path.size() || !libraryRoot(imported.path[index]))
+      if (imported.path.empty() || !libraryRoot(imported.path.front()))
         continue;
       auto origin = owner.find(imported.span.source);
-      found.push_back({imported.path[index],
-                       index + 1 < imported.path.size()
-                           ? imported.path[index + 1]
-                           : std::string{},
+      found.push_back({imported.path.front(),
+                       imported.path.size() > 1 ? imported.path[1]
+                                                : std::string{},
                        origin == owner.end() ? std::string{} : origin->second,
                        imported.span, false});
     }
@@ -1039,10 +1046,7 @@ private:
               significant[pathStart - 1]->text == "::") &&
              significant[pathStart - 2]->kind == TokenKind::Word)
         pathStart -= 2;
-      auto nativePath = libraryRoot(significant[pathStart]->text) ||
-                        (significant[pathStart]->text == "package" &&
-                         pathStart + 2 < significant.size() &&
-                         libraryRoot(significant[pathStart + 2]->text));
+      auto nativePath = libraryRoot(significant[pathStart]->text);
       if (!nativePath && token.kind == TokenKind::Word && from(token).empty() &&
           i > 0 && significant[i - 1]->text == "." &&
           i + 1 < significant.size() && significant[i + 1]->text == "(" &&
@@ -1069,12 +1073,7 @@ private:
           i + 1 >= significant.size() ||
           (significant[i + 1]->text != "::" && significant[i + 1]->text != "."))
         continue;
-      // `package.core...` names the mounted root like a bare `core...`.
-      bool packageRooted = i > 1 &&
-                           (significant[i - 1]->text == "::" ||
-                            significant[i - 1]->text == ".") &&
-                           significant[i - 2]->text == "package";
-      if (i > 0 && !packageRooted &&
+      if (i > 0 &&
           (significant[i - 1]->text == "::" || significant[i - 1]->text == "."))
         continue;
       std::string member;
@@ -1126,18 +1125,24 @@ private:
     currentPackage = nullptr;
   }
 
-  void packageImport(const std::string &scope, const std::string &name,
-                     const std::string &module) {
+  bool reserveRootName(const std::string &scope, const std::string &name,
+                       const char *role) {
     for (const auto &declaration : result.modules)
       if (declaration.item.scope == (scope.empty()
                                          ? std::vector<std::string>{}
                                          : std::vector<std::string>{scope}) &&
           declaration.name == name) {
         diagnostics.error("name", declaration.span,
-                          "module '" + name +
-                              "' collides with a dependency package alias");
-        return;
+                          "module '" + name + "' collides with " + role);
+        return false;
       }
+    return true;
+  }
+
+  void packageImport(const std::string &scope, const std::string &name,
+                     const std::string &module) {
+    if (!reserveRootName(scope, name, "a dependency package alias"))
+      return;
     Module::Import imported;
     imported.path = {module};
     imported.alias = name;
@@ -1348,6 +1353,8 @@ private:
     auto selected = library.configuration;
     selected.features =
         currentPackage ? currentPackage->features : std::set<std::string>{};
+    if (currentPackage)
+      selected.packageName = currentPackage->name;
     return configurations.emplace(key, std::move(selected)).first->second;
   }
 
@@ -1368,7 +1375,9 @@ private:
                                              ? currentPackage->name
                                              : currentPackage->module}
               : std::vector<std::string>{};
-      if (path[0] == "package") {
+      auto ownName =
+          currentPackage ? currentPackage->name : library.configuration.packageName;
+      if (path.size() > 1 && path[0] == ownName) {
         scope = packageRoot;
         ++start;
       } else if (path[0] == "self")

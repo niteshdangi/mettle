@@ -1,1 +1,1 @@
-pub import package.origin.Shared
+pub import relay.origin.Shared

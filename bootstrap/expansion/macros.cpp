@@ -1612,7 +1612,9 @@ private:
       package.clear();
     boundary = scope;
     std::size_t position = 0;
-    if (visibility.restriction.front() == "package") {
+    if (visibility.restriction == packageVisibility ||
+        (configuration &&
+         visibility.restriction.front() == configuration->packageName)) {
       boundary = package;
       ++position;
     } else if (visibility.restriction.front() == "self") {
