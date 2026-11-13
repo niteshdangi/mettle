@@ -2914,14 +2914,26 @@ private:
         receiver = eval(*callee.children[0], nullptr);
       if (!receiver)
         return std::nullopt;
+      if (receiver->kind == Value::Kind::Reference) {
+        auto target = pointee(*receiver);
+        if (target && isFloating(target->type)) {
+          auto loaded = readMemory(*receiver, *target, callee.span);
+          if (!loaded)
+            return std::nullopt;
+          receiver = std::move(*loaded);
+        }
+      }
       if (receiver->kind == Value::Kind::Floating) {
         if (!defaultTypes(*receiver, callee.span))
           return std::nullopt;
-        if (!constantFloatMethod(callee.text))
+        if (constantFloatMethod(callee.text))
+          return primitiveCall(node, receiver->type, callee.text, receiver);
+        // Other float methods are library const functions.
+        auto library = host.method(receiver->type, node);
+        if (library.kind == Lookup::Kind::Missing)
           return fail("constant", callee.span,
                       "call to non-const or unavailable float method '" +
                           callee.text + "'");
-        return primitiveCall(node, receiver->type, callee.text, receiver);
       }
       if (operation.name.empty()) {
         if (receiver->kind == Value::Kind::Pointer)

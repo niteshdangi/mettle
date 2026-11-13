@@ -41,6 +41,17 @@ const std::vector<bool> &Checker::interfacesDeclaring(const std::string &name) {
   }
   return declaring;
 }
+static bool builtinPinMethod(std::string_view name) {
+  static const std::set<std::string_view> methods{
+      "as_ref",
+      "as_mut",
+      "get_ref",
+      "get_mut",
+      "get_unchecked_mut",
+      "into_inner",
+      "into_inner_unchecked"};
+  return methods.contains(name);
+}
 std::optional<std::size_t> Checker::receiverCandidate(
     Type receiver, ParameterMode mode, std::string_view name, const Node &call,
     const std::function<const std::vector<Type> *()> &arguments) {
@@ -54,15 +65,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
                 checked.types->product(receiver).kind == AggregateKind::Pin;
   // A pin's own methods (`extend pinned read T`) precede its target's;
   // its builtin methods precede both.
-  static const std::set<std::string_view> builtinPinMethods{
-      "as_ref",
-      "as_mut",
-      "get_ref",
-      "get_mut",
-      "get_unchecked_mut",
-      "into_inner",
-      "into_inner_unchecked"};
-  if (pinned && !builtinPinMethods.contains(name) &&
+  if (pinned && !builtinPinMethod(name) &&
       !name.starts_with("project_")) {
     pinAsOwner = true;
     auto own = receiverCandidate(receiver, mode, name, call, arguments);
@@ -618,6 +621,11 @@ std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
       error("type", call.span, "cyclic receiver dereference");
       return std::nullopt;
     }
+    // A pin's builtin methods shadow same-named methods of its target.
+    if (checked.types->isProduct(plan.target) &&
+        checked.types->product(plan.target).kind == AggregateKind::Pin &&
+        builtinPinMethod(call.children[0]->text))
+      return std::nullopt;
     for (auto mode :
          {ParameterMode::Take, ParameterMode::Read, ParameterMode::Mut}) {
       auto before = diagnostics.items.size();

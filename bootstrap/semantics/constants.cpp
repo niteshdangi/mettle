@@ -785,10 +785,16 @@ public:
       syntax.context = name.context;
       syntax.arguments = name.ownerGenericArguments;
       auto type = resolveType(syntax, name.span);
-      if (checker.typeStore().isSum(type))
-        return variant(type, name.text.substr(separator + 2), name.span);
-      if (isFloating(type))
-        return floatingValue(type, name.text.substr(separator + 2), name.span);
+      if (checker.typeStore().isSum(type)) {
+        auto found = variant(type, name.text.substr(separator + 2), name.span);
+        if (found.kind != Lookup::Kind::Missing)
+          return found;
+      } else if (isFloating(type)) {
+        auto found =
+            floatingValue(type, name.text.substr(separator + 2), name.span);
+        if (found.kind != Lookup::Kind::Missing)
+          return found;
+      }
     }
     auto failure = [&](const std::string &message) {
       checker.error("constant", name.span, message);
