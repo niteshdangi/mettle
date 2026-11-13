@@ -49,8 +49,15 @@ ir::Function Builder::runDefault(const mettle::Function &source,
                                                         : ParameterMode::Read)
                 : i < source.parameters.size() ? ParameterMode::Value
                                                : local.mode;
+    // A later unsized borrowed parameter is never bound here; its slot is sized
+    // placeholder storage instead of owned unsized storage.
+    auto type = i >= parameter && i < source.parameters.size() &&
+                        !module.typeStore()->isSized(local.type,
+                                                     checked.sizedBounds)
+                    ? Type::Unit
+                    : local.type;
     function.locals.push_back(
-        {local.name, local.type, local.mutableBinding, local.span, mode,
+        {local.name, type, local.mutableBinding, local.span, mode,
          i < parameter ? 0 : -1,
          i < parameter ? static_cast<std::uint32_t>(i) : 0, local.storage,
          local.staticIndex});
