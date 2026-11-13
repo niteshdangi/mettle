@@ -21,5 +21,10 @@ fn main(): i32 {
     let slice: mut [i32] = mut values
     same_mut(slice)[0usize] = 7
     if values[0usize] != 7 || same_ref(read values[1usize..]).len() != 2usize { return 5 }
+
+    var storage = [97u8, 98u8, 99u8, 100u8]
+    var editable: mut Text = unsafe { core.text.from_utf8_unchecked_mut(mut storage) }
+    var head: mut Text = mut editable[..2usize]
+    if head != "ab" || same_mut(mut head) != "ab" { return 8 }
     0
 }

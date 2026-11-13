@@ -1296,6 +1296,14 @@ extend<region r> SliceReader<region r> implements Reader {
     }
 }
 
+extend<region r> SliceReader<region r> implements BufRead {
+    mut fn fill_buf(): read [u8] from self throws Error { self.data.split_at(self.pos).1 }
+    mut fn consume(n: usize): Unit {
+        let left = self.data.len() - self.pos
+        self.pos += if n < left { n } else { left }
+    }
+}
+
 extend<region r> SliceReader<region r> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         var debug = try f.debug_struct("SliceReader")
