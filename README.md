@@ -115,6 +115,20 @@ override, so cold-cache and eviction tests retain their existing budgets.
 Standalone runners retain `-j N` and accept zero-based `--shard-index I
 --shard-count N`. Each shard writes separate artifacts and evidence.
 
+Running the suite quickly: checked-library interfaces and library objects are cache
+entries keyed by every flag the harnesses pass (profile, overflow checks,
+sanitizers, target, library path), and a cold build of `core` alone takes ~26 s,
+more for `alloc` and `std`. Concurrent cold shards each rebuild them, so the
+`cache.prime.*` fixture tests build `tests/cache_prime/{core,alloc,std}.mt` once per
+configuration the source and library shards use before those shards start. CTest adds
+them for any selected dependent test (`ctest -j 3 -R '^library\.std\.'` primes only
+`std`); `-FA mettle-cache` skips them. A source case whose `flags` change the
+checked-library key needs a matching `mettle_add_cache_prime` line in
+`CMakeLists.txt`. Package shards assert cold caches and keep private ones. Keep the
+build directory between runs: `test-cache`, `durations.json` and CTest's cost data
+all make later runs faster. For one case or file, run the standalone runner with
+`--filter REGEX` (or `ctest -R '^source\.run\.3$'` for one shard) instead of a suite.
+
 Runners retain `durations.json` beside their evidence and submit previously
 long-running work first; source runners can also seed estimates from existing
 per-command evidence. Timing history affects order only, never selection or
