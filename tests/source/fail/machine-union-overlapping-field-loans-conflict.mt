@@ -1,4 +1,4 @@
-// expect-error: ownership 7:5 access or storage lifetime conflicts with a live read loan
+// expect-error: ownership 7:5 access or storage conflicts with a live read loan
 
 union Bits { integer: u32; real: f32 }
 fn main() {

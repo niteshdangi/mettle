@@ -1,4 +1,4 @@
-// expect-error: ownership 9:13 cannot move out of a borrowed place
+// expect-error: ownership 9:13 cannot move out of a viewed place
 import alloc.borrow.Cow
 
 type Value { number: i32 }

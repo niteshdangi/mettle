@@ -1,4 +1,4 @@
-// expect-error: ownership 9:5 cannot move out of a borrowed place
+// expect-error: ownership 9:5 cannot move out of a viewed place
 
 interface Choose { fn choose(): i32; }
 type Value { take fn choose(): i32 { 1 } }

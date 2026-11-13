@@ -170,7 +170,7 @@ Type Checker::callableAnnotation(const TypeSyntax &syntax, Span span,
               static_cast<std::size_t>(found - source.parameters.begin());
           if (std::find(eligible.begin(), eligible.end(), index) ==
               eligible.end())
-            error("ownership", span, "callable result source is not borrowed");
+            error("ownership", span, "callable result source is not a view");
           else
             descriptor.resultSources.push_back(index);
         }
@@ -179,7 +179,7 @@ Type Checker::callableAnnotation(const TypeSyntax &syntax, Span span,
       descriptor.resultSources = eligible;
     else
       error("ownership", span,
-            "borrowed callable result requires an unambiguous from contract");
+            "callable view result requires an unambiguous from contract");
     std::sort(descriptor.resultSources.begin(), descriptor.resultSources.end());
     descriptor.resultSources.erase(std::unique(descriptor.resultSources.begin(),
                                                descriptor.resultSources.end()),
@@ -323,7 +323,7 @@ Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
         descriptor.resultSources = eligible;
       else
         error("ownership", span,
-              "borrowed callable result requires an unambiguous from contract");
+              "callable view result requires an unambiguous from contract");
     }
     std::sort(descriptor.resultSources.begin(), descriptor.resultSources.end());
     descriptor.resultSources.erase(std::unique(descriptor.resultSources.begin(),
@@ -568,7 +568,7 @@ int Checker::indirectCall(Node &node, bool reachable, int calleeVariable) {
         mutableReceiverPlan(plan, node.span);
       } else if (mode != ParameterMode::Read && !checked.types->isCopy(type))
         error("ownership", node.span,
-              "cannot move a consuming callable out of a borrowed place");
+              "cannot move a consuming callable out of a viewed place");
       facts(node).receiverPlan = std::move(plan);
     }
   }

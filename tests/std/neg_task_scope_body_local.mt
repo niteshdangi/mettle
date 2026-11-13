@@ -1,4 +1,4 @@
-// expect-error: region 17:21 borrowed source does not outlive the required region
+// expect-error: region 17:21 viewed source does not outlive the required region
 import core.future.{Context, Future, Poll}
 import std.task
 

@@ -1,4 +1,4 @@
-// expect-error: ownership 8:5 cannot move out of a borrowed place
+// expect-error: ownership 8:5 cannot move out of a viewed place
 
 type Counter { value: i32; take fn consume() {} }
 fn main() {

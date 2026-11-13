@@ -1,6 +1,6 @@
 // expect-error-count: 1
 // profiles: debug release
-// expect-error: ownership 16:17 access or storage lifetime conflicts with a live read loan
+// expect-error: ownership 16:17 access or storage conflicts with a live read loan
 import core.cell
 import core.convert.TryInto
 

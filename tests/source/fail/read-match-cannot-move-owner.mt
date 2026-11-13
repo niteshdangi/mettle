@@ -1,4 +1,4 @@
-// expect-error: ownership 5:73 pattern binding 'item' moves a non-copyable payload out of a borrowed scrutinee
+// expect-error: ownership 5:73 pattern binding 'item' moves a non-copyable payload out of a viewed scrutinee
 type Owned { value: i32 }
 enum Value { Held(Owned) }
 fn consume(take value: Owned) {}

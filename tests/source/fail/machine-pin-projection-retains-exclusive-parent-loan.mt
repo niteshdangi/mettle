@@ -1,4 +1,4 @@
-// expect-error: ownership 9:5 access or storage lifetime conflicts with a live exclusive loan
+// expect-error: ownership 9:5 access or storage conflicts with a live exclusive loan
 
 type Child { value: i32; marker: core.marker.PhantomPinned }
 type Parent { @pinned child: Child; other: i32 }

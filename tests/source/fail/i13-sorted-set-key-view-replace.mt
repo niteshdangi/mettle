@@ -1,4 +1,4 @@
-// expect-error: ownership 10:5 access or storage lifetime conflicts
+// expect-error: ownership 10:5 access or storage conflicts
 import alloc.btree
 
 fn main(): i32 {

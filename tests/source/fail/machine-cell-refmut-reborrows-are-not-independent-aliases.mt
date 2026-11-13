@@ -1,4 +1,4 @@
-// expect-error: ownership 8:15 access or storage lifetime conflicts with a live exclusive loan
+// expect-error: ownership 8:15 access or storage conflicts with a live exclusive loan
 
 fn main() {
     let cell = core.cell.RefCell.new(42)

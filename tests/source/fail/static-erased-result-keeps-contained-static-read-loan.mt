@@ -1,4 +1,4 @@
-// expect-error: ownership 16:5 access or storage lifetime conflicts with a live read loan
+// expect-error: ownership 16:5 access or storage conflicts with a live read loan
 interface Show { fn value(): i32; }
 type Held { value: read i32 from static; drop {} }
 extend Held implements Show { fn value(): i32 { *self.value } }

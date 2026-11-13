@@ -720,7 +720,7 @@ RegionId RegionPass::source(const LexicalNameSyntax &name,
   auto found = context.names.find(lexicalName(name));
   if (found != context.names.end())
     return found->second;
-  error(span, "unknown region or borrowed source '" + name.spelling + "'");
+  error(span, "unknown region or view source '" + name.spelling + "'");
   return RegionId::Unspecified;
 }
 RegionId RegionPass::sources(const TypeSyntax &syntax, RegionContext &context,
@@ -1419,7 +1419,7 @@ bool RegionPass::require(Type actual, Type expected, Span span, bool enforce,
           result == RegionAnswer::Inconclusive
               ? "region constraint solving is inconclusive"
           : relations.erasedBoundRejected()
-              ? "erased owner payload borrow does not outlive the expected "
+              ? "erased owner payload view does not outlive the expected "
                 "from sources"
               : "view region or invariant payload does not satisfy its "
                 "declared relationship",
@@ -1439,7 +1439,7 @@ void RegionPass::require(RegionId longer, RegionId shorter, Span span) {
     error(span,
           result == RegionAnswer::Inconclusive
               ? "outlives constraint solving is inconclusive"
-              : "borrowed source does not outlive the required region",
+              : "viewed source does not outlive the required region",
           result == RegionAnswer::Inconclusive);
 }
 Type RegionPass::merge(Type left, Type right, Span span) {
@@ -3447,7 +3447,7 @@ void RegionPass::resultSources(std::size_t index) {
           named.insert(p);
         } else
           error(syntax.span,
-                "borrowed result source is not borrowed input storage");
+                "view result source is not viewed input storage");
         continue;
       }
       bool patternBinding = false;
@@ -3463,7 +3463,7 @@ void RegionPass::resultSources(std::size_t index) {
       auto region = signatures[index].context.names.find(lexicalName(name));
       if (region == signatures[index].context.names.end()) {
         error(syntax.span,
-              "unknown borrowed result source '" + name.spelling + "'");
+              "unknown view result source '" + name.spelling + "'");
         continue;
       }
       for (auto p : eligible) {
@@ -3512,16 +3512,16 @@ void RegionPass::resultSources(std::size_t index) {
                            region) == signatures[index].quantified.end();
         }))
       diagnostics.error("ownership", syntax.span,
-                        "borrowed result has no eligible input source");
+                        "view result has no eligible input source");
   } else if (eligible.size() == 1)
     facts.resultSources = eligible;
   else if (eligible.size() > 1)
     diagnostics.error(
         "type", syntax.span,
-        "ambiguous borrowed result requires an explicit from relationship");
+        "ambiguous view result requires an explicit from relationship");
   else
     diagnostics.error("ownership", syntax.span,
-                      "borrowed result has no eligible input source");
+                      "view result has no eligible input source");
   for (auto p : carried)
     if (!borrowed.contains(p) && !named.contains(p))
       facts.resultContents.push_back(p);

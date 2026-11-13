@@ -1,4 +1,4 @@
-// expect-error: ownership 14:5 access or storage lifetime conflicts with a live read loan
+// expect-error: ownership 14:5 access or storage conflicts with a live read loan
 
 type Slot<region r> { value: read i32 from r }
 type Writer<region a,region b> {

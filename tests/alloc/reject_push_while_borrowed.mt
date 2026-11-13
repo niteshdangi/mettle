@@ -1,4 +1,4 @@
-// expect-error: ownership 6:5 access or storage lifetime conflicts with a live read loan
+// expect-error: ownership 6:5 access or storage conflicts with a live read loan
 fn main(): i32 {
     var v = alloc.vec.new<i32>()
     v.push(1)

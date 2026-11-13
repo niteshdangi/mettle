@@ -1,4 +1,4 @@
-// expect-error: region 10:51 erased owner payload borrow
+// expect-error: region 10:51 erased owner payload view
 import core.future.Future
 interface Source {
     async(heap) fn total(n: i32): i32

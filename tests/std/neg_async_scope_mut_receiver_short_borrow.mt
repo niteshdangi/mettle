@@ -1,4 +1,4 @@
-// expect-error: ownership 31:5 access or storage lifetime conflicts with a live read loan
+// expect-error: ownership 31:5 access or storage conflicts with a live read loan
 import core.future.{Context, Future, Poll}
 import std.thread.{Brand, Within}
 

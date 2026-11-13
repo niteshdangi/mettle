@@ -1,4 +1,4 @@
-// expect-error: ownership 7:26 access or storage lifetime conflicts
+// expect-error: ownership 7:26 access or storage conflicts
 import std.thread
 
 fn main(): i32 {

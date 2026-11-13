@@ -675,7 +675,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     if (module.statics[*index].mutableBinding)
       requireUnsafe(node.span);
     if (module.statics[*index].mutableBinding && checked.types->isView(type))
-      return fail("constant safe view cannot borrow mutable static storage");
+      return fail("constant safe view cannot target mutable static storage");
     return result;
   }
   if (node.kind == Kind::Call && checked.types->isProduct(type) &&

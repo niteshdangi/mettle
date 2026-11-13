@@ -1449,7 +1449,7 @@ private:
     if (auto root = rootOf(address);
         root && root->immutableLiteral && address.exclusive)
       return fail("constant", span,
-                  "constant exclusive borrow requires writable provenance"),
+                  "constant mut view requires writable provenance"),
              false;
     while (target->kind == Shape::Kind::Product &&
            target->elements.size() == 1) {
@@ -1677,7 +1677,7 @@ private:
       if (found.kind == Lookup::Kind::Constant && found.freshValue) {
         if (!host.copy(host.valueType(found.value))) {
           fail("feature", node.span,
-               "required projection or borrow of a non-Copy associated value "
+               "required projection or view of a non-Copy associated value "
                "is not implemented");
           return {};
         }
@@ -1815,7 +1815,7 @@ private:
         pattern.kind != PatternKind::Wildcard) {
       auto target = pointee(value);
       if (!target)
-        return unsupported(pattern.span, "this borrowed constant pattern");
+        return unsupported(pattern.span, "this viewed constant pattern");
       bool binding = pattern.kind == PatternKind::Binding ||
                      pattern.kind == PatternKind::At;
       // A binding keeps the view itself; destructuring looks through it.
@@ -1833,7 +1833,7 @@ private:
             auto element = host.layout(type);
             if (!element)
               return unsupported(pattern.span,
-                                 "this borrowed constant pattern");
+                                 "this viewed constant pattern");
             projected.offset += i * element->size;
           } else {
             auto field = i;
@@ -1847,7 +1847,7 @@ private:
             }
             if (!layout || field >= layout->fields.size())
               return unsupported(pattern.span,
-                                 "this borrowed constant pattern");
+                                 "this viewed constant pattern");
             projected.offset += layout->fields[field];
           }
           projected.type = host.referenceType(type, false, false);
@@ -3643,13 +3643,13 @@ private:
         }
         if (!where.value && !where.address)
           return fail("constant", node.span,
-                      "constant borrow requires a live place");
+                      "constant view requires a live place");
         if (node.text == "mut" && !where.mutableBinding)
           return fail("constant", node.span,
-                      "constant exclusive borrow requires a mutable place");
+                      "constant mut view requires a mutable place");
         if (node.text == "mut" && where.address && !where.address->writable)
           return fail("constant", node.span,
-                      "constant exclusive borrow requires writable provenance");
+                      "constant mut view requires writable provenance");
         auto value = addressOf(where, node.text == "mut");
         if (!validReference(value, node.span))
           return std::nullopt;

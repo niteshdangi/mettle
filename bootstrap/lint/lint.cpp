@@ -267,7 +267,7 @@ private:
       else if (candidate.variable && !unit.mutated[slot])
         report(unusedMutability, candidate.span,
                "'var " + candidate.name +
-                   "' is never reassigned or mutably borrowed; declare it "
+                   "' is never reassigned or mutably viewed; declare it "
                    "with 'let'");
     }
   }

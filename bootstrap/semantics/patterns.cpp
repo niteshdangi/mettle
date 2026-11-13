@@ -446,7 +446,7 @@ void Checker::diagnoseBorrowedMatchMove(const Node &expression, int variable) {
   const auto &binding = facts(*current).locals[slot];
   error("ownership", binding.span,
         "pattern binding '" + binding.name +
-            "' moves a non-copyable payload out of a borrowed scrutinee",
+            "' moves a non-copyable payload out of a viewed scrutinee",
         {{"help", {}, "write `match take <expr>` to consume the payload"}});
 }
 

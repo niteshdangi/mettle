@@ -262,9 +262,9 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
           diagnostics.error(
               "ownership", instruction.span,
               moved && types.isCopy(*moved)
-                  ? "cannot move out of a borrowed place; a `take` argument "
+                  ? "cannot move out of a viewed place; a `take` argument "
                     "consumes its value, so copy it into a binding first"
-                  : "cannot move out of a borrowed place");
+                  : "cannot move out of a viewed place");
         }
         Place prefix{instruction.place.root, {}};
         auto type = function.locals[prefix.root].type;
@@ -319,7 +319,7 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
           instruction.op == ir::Op::ViewMut) {
         if (readOnly || !writable)
           diagnostics.error("ownership", instruction.span,
-                            "exclusive borrow requires a mutable place");
+                            "mut view requires a mutable place");
       }
       if ((instruction.op == ir::Op::Store ||
            instruction.op == ir::Op::StorageWrite) &&

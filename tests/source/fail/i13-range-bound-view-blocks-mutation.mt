@@ -1,4 +1,4 @@
-// expect-error: ownership 9:5 access or storage lifetime conflicts
+// expect-error: ownership 9:5 access or storage conflicts
 import core.iter
 import core.iter.{Bound, RangeBounds}
 fn main(): i32 {

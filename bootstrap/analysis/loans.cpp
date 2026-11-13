@@ -460,7 +460,7 @@ void check(const ir::Function &function, const ir::Program &program,
       if (conflict)
         diagnostics.error(
             "ownership", instruction.span,
-            std::string("access or storage lifetime conflicts with a live ") +
+            std::string("access or storage conflicts with a live ") +
                 (exclusiveConflict ? "exclusive" : "read") + " loan");
       live = before(std::move(live), available, b, i);
       rewindAvailability(available, remaining, b, i);

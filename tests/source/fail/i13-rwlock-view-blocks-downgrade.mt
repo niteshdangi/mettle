@@ -1,4 +1,4 @@
-// expect-error: ownership 10:18 access or storage lifetime conflicts
+// expect-error: ownership 10:18 access or storage conflicts
 import std.sync.rwlock
 
 fn main(): i32 {

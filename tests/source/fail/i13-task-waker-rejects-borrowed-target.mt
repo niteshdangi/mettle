@@ -1,6 +1,6 @@
 // expect-error-count: 2
-// expect-error: region 21:13 borrowed source does not outlive the required region
-// expect-error: region 22:13 borrowed source does not outlive the required region
+// expect-error: region 21:13 viewed source does not outlive the required region
+// expect-error: region 22:13 viewed source does not outlive the required region
 import alloc.arc.Arc
 import core.convert.From
 import core.future.Waker
