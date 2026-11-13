@@ -17,6 +17,8 @@ struct Configuration {
   // Test builds: collect `@test`/`@bench` functions into `Module::tests` and
   // drop the root source's entry function (the harness supplies the entry).
   bool collectTests = false, dropEntry = false;
+  // Module-spelled name of the package whose sources are expanded.
+  std::string packageName = "main";
 };
 // Allocates the identity of a generated source (the text of a derive).
 using SourceAllocator = std::function<SourceId()>;

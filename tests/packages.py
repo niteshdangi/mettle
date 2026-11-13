@@ -132,7 +132,7 @@ def path_dependency():
 def restricted_dependency_visibility():
     app = packages("path-dependency/app")
     library = packages("path-dependency/units/src/main.mt")
-    library.write_text("pub(package) fn secret(): i32 { 21 }\n"
+    library.write_text("pub(units) fn secret(): i32 { 21 }\n"
                        "pub fn base(): i32 { secret() }\n")
     build_and_run(app)
     main = app / "src/main.mt"
@@ -141,6 +141,24 @@ def restricted_dependency_visibility():
                   ["error[name]", "unresolved, inaccessible, ambiguous or "
                    "cyclic import"])
     assert re.search(r"main\.mt:1:1", text), text
+
+
+def package_name_roots_own_modules():
+    app = packages("path-dependency/app")
+    (app / "src/main.mt").write_text(
+        "module inner {\n    import path_app.helper.value\n"
+        "    pub fn get(): i32 { value() }\n}\n"
+        "fn main(): i32 { inner.get() - 42 }\n")
+    (app / "src/helper.mt").write_text("pub fn value(): i32 { 42 }\n")
+    build_and_run(app)
+    (app / "src/main.mt").write_text("import package.helper.value\n"
+                                     "fn main(): i32 { value() - 42 }\n")
+    invoke(["check", app], 1, "use the package name `path_app` instead")
+    manifest = app / "package.mettle"
+    manifest.write_text(manifest.read_text().replace(
+        "mathlib: \"../mathlib\"", "mathlib: \"../mathlib\"\n    path-app: \"../mathlib\""))
+    text = invoke(["check", app], 1, "has the name of its own package")
+    assert re.search(r"package\.mettle:\d+:\d+", text), text
 
 
 def nested_dependency_imports():
@@ -157,7 +175,7 @@ def nested_dependency_imports():
     build_and_run(app)
     (library / "nested.mt").write_text(
         "module units { pub fn base(): i32 { 100 } }\n"
-        "pub fn value(): i32 { units.base() - package.units.base() - 37 }\n")
+        "pub fn value(): i32 { self.units.base() - units.base() - 37 }\n")
     build_and_run(app)
     app = packages("registry-resolution/app")
     shapes = packages("registry/shapes/1.2.0/src")
@@ -1341,7 +1359,7 @@ def public_declarative_macro_dependency():
         'name: "units"\nversion: "0.1.0"\nkind: "library"\n'
         'features { enabled: [] }\n')
     (app / "src/main.mt").write_text(
-        "import package.units.value\n"
+        "import units.value\n"
         "fn main(): i32 { value!() - 42 }\n")
     (dependency / "src/main.mt").write_text(
         '@cfg(feature = "enabled")\n'
@@ -3115,7 +3133,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          driver_noop_changes_keep_checked_index, package_ownership,
          cyclic_module_macro_definition,
          path_dependency, restricted_dependency_visibility, nested_dependency_imports,
-         configured_entry, mettle_version, library_entries, development_dependencies,
+         package_name_roots_own_modules, configured_entry, mettle_version, library_entries, development_dependencies,
          missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, wildcard_version_bounds,
          backtracking, cycle_backtracking, lock_publication_isolated, offline, features,

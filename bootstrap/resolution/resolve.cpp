@@ -233,6 +233,14 @@ std::vector<std::size_t> Resolution::associated(std::string canonical,
   return matches;
 }
 
+ModuleId Resolution::packageRoot(ModuleId module) const {
+  while (module != 0 && moduleInfos[module].parent != 0)
+    module = moduleInfos[module].parent;
+  return module != 0 && moduleInfos[module].name.starts_with("mettle_pkg_")
+             ? module
+             : 0;
+}
+
 std::optional<std::string> Resolution::lookup(ModuleId from,
                                               std::string_view spelling,
                                               Namespace space, Span use,
@@ -242,15 +250,25 @@ std::optional<std::string> Resolution::lookup(ModuleId from,
   auto path = components(spelling);
   ModuleId scope = from;
   std::size_t position = 0;
+  auto root = packageRoot(from);
+  auto own = packageNames.find(root == 0 ? "" : moduleInfos[root].name);
   if (path[0] == "package") {
-    while (scope != 0 && moduleInfos[scope].parent != 0)
-      scope = moduleInfos[scope].parent;
-    if (scope == 0 || !moduleInfos[scope].name.starts_with("mettle_pkg_"))
-      scope = 0;
-    ++position;
-  } else if (path[0].starts_with("mettle_pkg_")) {
+    if (diagnostics)
+      diagnostics->error(
+          "name", use,
+          own == packageNames.end()
+              ? "'package' is not a path head; use the package name instead"
+              : "'package' is not a path head; use the package name `" +
+                    own->second + "` instead");
+    return std::nullopt;
+  }
+  if (path[0].starts_with("mettle_pkg_")) {
     scope = 0;
   } else if (path[0] == "self") {
+    ++position;
+  } else if (path.size() > 1 && own != packageNames.end() &&
+             path[0] == own->second) {
+    scope = root;
     ++position;
   } else if (path.size() > 1 &&
              (path[0] == "core" || path[0] == "alloc" || path[0] == "std") &&
@@ -258,14 +276,10 @@ std::optional<std::string> Resolution::lookup(ModuleId from,
     // A mounted library root is reachable from every module unless shadowed.
     scope = 0;
   }
+  // A package name heads a multi-component path whatever the scope binds.
   if (position == 0 && path[0] != "super" &&
-      find(scope, path[0], path.size() > 1 ? Namespace::Module : space, from)
-          .empty()) {
-    auto root = scope;
-    while (root != 0 && moduleInfos[root].parent != 0)
-      root = moduleInfos[root].parent;
-    if (root == 0 || !moduleInfos[root].name.starts_with("mettle_pkg_"))
-      root = 0;
+      !path[0].starts_with("mettle_pkg_") &&
+      (path.size() > 1 || find(scope, path[0], space, from).empty())) {
     auto aliases = find(root, path[0], Namespace::Module, from);
     if (!aliases.empty() &&
         std::all_of(aliases.begin(), aliases.end(), [&](auto index) {
@@ -339,7 +353,9 @@ public:
     result.moduleInfos.push_back({0, "", ""});
     result.scopes.emplace_back();
     result.definitions.push_back(
-        {Namespace::Module, 0, publicBoundary, "package", "", {}, 0});
+        {Namespace::Module, 0, publicBoundary, "", "", {}, 0});
+    result.packageNames = tree.packageNames;
+    result.packageNames.try_emplace("", "main");
     moduleNames.emplace("", 0);
   }
 
@@ -402,14 +418,12 @@ private:
       return publicBoundary;
     auto path = visibility.restriction;
     ModuleId current = module;
-    ModuleId package = module;
-    while (package != 0 && result.moduleInfos[package].parent != 0)
-      package = result.moduleInfos[package].parent;
-    if (package == 0 ||
-        !result.moduleInfos[package].name.starts_with("mettle_pkg_"))
-      package = 0;
+    ModuleId package = result.packageRoot(module);
     std::size_t position = 0;
-    if (path[0] == "package") {
+    auto own = result.packageNames.find(
+        package == 0 ? "" : result.moduleInfos[package].name);
+    if (path == packageVisibility ||
+        (own != result.packageNames.end() && path[0] == own->second)) {
       current = package;
       ++position;
     } else if (path[0] == "self") {
@@ -863,12 +877,19 @@ private:
         }
       }
     } while (changed);
-    for (std::size_t i = 0; i < tree.imports.size(); ++i)
-      if (!resolved[i])
+    for (std::size_t i = 0; i < tree.imports.size(); ++i) {
+      if (resolved[i])
+        continue;
+      const auto &imported = tree.imports[i];
+      if (!imported.path.empty() && imported.path.front() == "package")
+        result.lookup(scope(imported.item.scope), join(imported.path),
+                      Namespace::Module, imported.span, &diagnostics);
+      else
         diagnostics.error(
-            "name", tree.imports[i].span,
+            "name", imported.span,
             "unresolved, inaccessible, ambiguous or cyclic import '" +
-                join(tree.imports[i].path) + "'");
+                join(imported.path) + "'");
+    }
     for (const auto &declaration : tree.imports) {
       auto module = scope(declaration.item.scope);
       result.items.push_back(

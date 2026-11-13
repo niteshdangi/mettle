@@ -35,6 +35,8 @@ struct Options {
   // Internal package context for host build programs and procedural macros.
   bool packageContext = false;
   std::string packageInstance;
+  // Module-spelled name of the package whose sources are built.
+  std::string packageName = "main";
   std::set<std::string> injectedFeatures;
   std::vector<resolution::Library::Package> injectedPackages;
   std::vector<std::pair<std::string, std::string>> packageDependencies;

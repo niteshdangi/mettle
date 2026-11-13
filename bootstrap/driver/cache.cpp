@@ -152,6 +152,7 @@ BuildInputs::key(const Options &options,
   add(options.freestanding ? "freestanding" : "hosted");
   add(options.packageContext ? "package-context" : "ordinary-context");
   add("harness:" + options.harness);
+  add("package-name:" + options.packageName);
   for (const auto &sanitizer : options.sanitizers)
     add("sanitize:" + sanitizer);
   // The linker embeds the output's file name (code-signature identifier).

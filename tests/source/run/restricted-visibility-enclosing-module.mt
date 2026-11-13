@@ -1,7 +1,7 @@
 module family {
     pub module inner {
         pub(super) fn answer(): i32 { 42 }
-        pub(package.family) macro value { () => { 20 }; }
+        pub(main.family) macro value { () => { 20 }; }
         pub(super) alias Number = i32
         pub(super) const NUMBER: Number = 20
         pub(super) static STATIC_NUMBER: Number = 22

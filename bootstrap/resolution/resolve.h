@@ -95,6 +95,10 @@ private:
   std::vector<std::size_t>
   associated(std::string canonical, std::string_view name, ModuleId from) const;
   bool inside(ModuleId module, ModuleId boundary) const;
+  // Root module of the dependency package that contains `module`, or 0 for
+  // the selected package.
+  ModuleId packageRoot(ModuleId module) const;
+  std::map<std::string, std::string> packageNames;
   std::vector<std::size_t> find(ModuleId module, std::string_view name,
                                 Namespace space, ModuleId from) const;
 };

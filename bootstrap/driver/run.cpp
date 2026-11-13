@@ -10,6 +10,7 @@
 #include "driver/procedural.h"
 #include "expansion/macros.h"
 #include "lint/lint.h"
+#include "packages/manifest.h"
 #include "packages/plan.h"
 #include "packages/sha256.h"
 #include "pipeline/compile.h"
@@ -961,6 +962,7 @@ int build(const Options &requested,
     }
     input = outcome.plan->root;
     options.packageInstance = outcome.plan->rootIdentity;
+    options.packageName = packages::moduleName(outcome.plan->package);
     options.library =
         outcome.plan->kind == "library" && options.harness.empty();
     if (!options.emitExplicit && options.harness.empty()) {
@@ -1147,6 +1149,7 @@ int build(const Options &requested,
   options.packageDependencies = packageDependencies;
   library.packageDependencies = std::move(packageDependencies);
   library.configuration = configuration;
+  library.configuration.packageName = options.packageName;
   if (options.harness == "test")
     library.harness = resolution::Library::Harness::Test;
   else if (options.harness == "bench")
