@@ -27,6 +27,12 @@ public:
     return found.type == Type::Unknown && !found.kind &&
            found.numeric == Variable::Numeric::Integer;
   }
+  // A numeric literal no constraint has typed yet (it would default).
+  bool pendingNumeric(int variable) {
+    const auto &found = variables[root(variable)];
+    return found.type == Type::Unknown && !found.kind &&
+           found.numeric != Variable::Numeric::None;
+  }
   // Whether the variable is, or structurally contains, a listed representative.
   bool depends(int variable, const std::set<int> &representatives);
 

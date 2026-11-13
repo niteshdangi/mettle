@@ -252,9 +252,12 @@ std::optional<int> Checker::genericCall(
       continue;
     auto [argument, variable] = actuals[i];
     auto expected = facts(n).callParameterTypes[target];
-    auto actual =
-        normalizeGenericType(inference.value(variable), {}, argument->span);
-    inference.set(variable, actual);
+    auto actual = inference.value(variable);
+    // An untyped numeric literal stays flexible until the parameter fixes it.
+    if (!inference.pendingNumeric(variable)) {
+      actual = normalizeGenericType(actual, {}, argument->span);
+      inference.set(variable, actual);
+    }
     if ((modes[target] == ParameterMode::Read ||
          modes[target] == ParameterMode::Mut) &&
         borrowCoercion(*argument, variable, expected, modes[target]))
