@@ -125,6 +125,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
     return inherent[0];
   }
   std::vector<std::tuple<std::size_t, Type, int>> candidates;
+  std::set<std::uint32_t> suppliedByBounds;
   auto consider = [&](Type bound) {
     if (!checked.types->isErased(bound))
       return;
@@ -132,6 +133,8 @@ std::optional<std::size_t> Checker::receiverCandidate(
          interfaces::hierarchy(*checked.types, *checked.interfaceData, self,
                                bound, call.span, diagnostics)) {
       const auto &descriptor = checked.types->erased(inherited);
+      if (suppliedByBounds.contains(descriptor.declaration))
+        continue;
       const auto &definition =
           checked.interfaceData->definitions[descriptor.declaration];
       if (protocol && definition.name != call.text)
@@ -187,10 +190,13 @@ std::optional<std::size_t> Checker::receiverCandidate(
           !propertyBound(bound, call.span))
         consider(interfaceBound(bound, call.span, {}, self));
   }
-  // A where-clause bound that supplies the method takes precedence over
-  // blanket implementations for a generic parameter.
-  if (!checked.types->isErased(self) &&
-      !(checked.types->isParameter(self) && !candidates.empty())) {
+  // A where-clause bound shadows blanket implementations of its own interface
+  // (`T: AsMut<P>` versus `AsMut<T> for T`); other interfaces stay candidates.
+  if (checked.types->isParameter(self))
+    for (const auto &candidate : candidates)
+      suppliedByBounds.insert(
+          checked.types->erased(std::get<1>(candidate)).declaration);
+  if (!checked.types->isErased(self)) {
     auto caller = accessModule(call);
     auto visible = [&](const interfaces::Definition &definition) {
       if (protocol)
