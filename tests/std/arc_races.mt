@@ -2,7 +2,7 @@ import std.thread
 import alloc.arc
 
 type Tracker {
-  drops: arc.Arc<core.sync.atomic.AtomicUsize>
+  drops: arc.Shared<core.sync.atomic.AtomicUsize>
   drop { let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst) }
 }
 
@@ -10,7 +10,7 @@ fn discard<T>(take value: T): Unit {}
 
 // Weak.upgrade races the final strong drop: each round the value must be
 // destroyed exactly once and upgrades must never observe a dead value.
-fn round(read drops: arc.Arc<core.sync.atomic.AtomicUsize>): i32 {
+fn round(read drops: arc.Shared<core.sync.atomic.AtomicUsize>): i32 {
   let owner = arc.new(Tracker(drops.retain()))
   var handles = alloc.vec.new<thread.JoinHandle<i32>>()
   var k = 0

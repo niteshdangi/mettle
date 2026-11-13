@@ -1,6 +1,6 @@
 // expect-exit: 0
 // profiles: debug release
-// Evidence for the V1 single-threaded Rc and Weak operations (alloc.rc).
+// Evidence for the V1 single-threaded LocalShared and Weak operations (alloc.rc).
 // Each operation is called and its result checked; drop counts are observed
 // through a counter shared by every owner so over- and under-release fail.
 
@@ -11,7 +11,7 @@ import core.convert.From
 import core.default.Default
 
 type Probe {
-    drops: rc.Rc<core.sync.atomic.AtomicUsize>
+    drops: rc.LocalShared<core.sync.atomic.AtomicUsize>
     value: i32
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
@@ -23,7 +23,7 @@ type Node {
     value: i32
 }
 
-fn drops_of(read counter: rc.Rc<core.sync.atomic.AtomicUsize>): usize {
+fn drops_of(read counter: rc.LocalShared<core.sync.atomic.AtomicUsize>): usize {
     counter.get().load(core.sync.atomic.Ordering.SeqCst)
 }
 
@@ -234,13 +234,13 @@ fn checks_cyclic_and_pin(): i32 {
 
 // Defaults and conversions from owned values.
 fn checks_defaults_and_conversions(): i32 {
-    let defaulted: rc.Rc<i32> = default_value<rc.Rc<i32>>()
+    let defaulted: rc.LocalShared<i32> = default_value<rc.LocalShared<i32>>()
     if *defaulted.get() != 0 { return 100 }
-    let empty_slice: rc.Rc<[i32]> = default_value<rc.Rc<[i32]>>()
+    let empty_slice: rc.LocalShared<[i32]> = default_value<rc.LocalShared<[i32]>>()
     if empty_slice.get().len() != 0usize { return 101 }
-    let empty_text: rc.Rc<core.text.Text> = default_value<rc.Rc<core.text.Text>>()
+    let empty_text: rc.LocalShared<core.text.Text> = default_value<rc.LocalShared<core.text.Text>>()
     if empty_text.get().as_bytes().len() != 0usize { return 102 }
-    let converted: rc.Rc<i32> = from_value<rc.Rc<i32>>(33)
+    let converted: rc.LocalShared<i32> = from_value<rc.LocalShared<i32>>(33)
     let other = rc.new(33)
     if !(converted == other) { return 103 }
     0

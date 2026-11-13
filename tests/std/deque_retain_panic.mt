@@ -1,12 +1,12 @@
 // expect-exit: 0
 import alloc.arc
-import alloc.arc.Arc
+import alloc.arc.Shared
 import alloc.vec_deque
 import std.panic.CatchResult
 
 type Item {
     id: i32
-    drops: Arc<core.sync.atomic.AtomicUsize>
+    drops: Shared<core.sync.atomic.AtomicUsize>
     panic_on_drop: bool
     drop {
         let _old = self.drops.get().fetch_add(

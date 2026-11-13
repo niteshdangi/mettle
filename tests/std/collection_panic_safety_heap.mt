@@ -1,6 +1,6 @@
 // expect-exit: 0
 import alloc.arc
-import alloc.arc.Arc
+import alloc.arc.Shared
 import alloc.binary_heap
 import core.cmp.{ Eq, Ord, Ordering, PartialEq, PartialOrd }
 import std.panic.CatchResult
@@ -8,8 +8,8 @@ import std.panic.CatchResult
 type Item {
     value: i32
     drop_bit: usize
-    panic_cmp: Arc<core.sync.atomic.AtomicUsize>
-    drops: Arc<core.sync.atomic.AtomicUsize>
+    panic_cmp: Shared<core.sync.atomic.AtomicUsize>
+    drops: Shared<core.sync.atomic.AtomicUsize>
     drop {
         // Bit 7 records repeated destruction; lower bits identify individual items.
         let old = self.drops.get().load(core.sync.atomic.Ordering.SeqCst)
@@ -36,8 +36,8 @@ extend Item implements Ord {
     }
 }
 
-fn new_item(value: i32, drop_bit: usize, take panic_cmp: Arc<core.sync.atomic.AtomicUsize>,
-    take drops: Arc<core.sync.atomic.AtomicUsize>): Item {
+fn new_item(value: i32, drop_bit: usize, take panic_cmp: Shared<core.sync.atomic.AtomicUsize>,
+    take drops: Shared<core.sync.atomic.AtomicUsize>): Item {
     Item(value, drop_bit, panic_cmp, drops)
 }
 

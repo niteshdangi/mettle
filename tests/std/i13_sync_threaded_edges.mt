@@ -4,7 +4,7 @@ import std.panic.{ catch_panic, CatchResult }
 import alloc.arc
 
 type DropProbe {
-    drops: arc.Arc<core.sync.atomic.AtomicUsize>
+    drops: arc.Shared<core.sync.atomic.AtomicUsize>
     value: i32
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)

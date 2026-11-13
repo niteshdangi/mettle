@@ -19,7 +19,7 @@ fn main(): i32 {
     if *empty.deref() != 0 { return 1 }
     let text = boxed.Pinned<core.text.Text>.(Default).default()
     if text.deref().len() != 0usize { return 2 }
-    let adopted = boxed.Pinned<i32>.(core.convert.From<boxed.Box<i32>>).from(boxed.new(11))
+    let adopted = boxed.Pinned<i32>.(core.convert.From<boxed.Heap<i32>>).from(boxed.new(11))
     if *adopted.deref() != 11 { return 5 }
     let waker = noop_waker()
     var context = Context.from_waker(read waker)

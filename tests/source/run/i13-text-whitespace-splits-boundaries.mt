@@ -434,7 +434,7 @@ fn main(): i32 {
     }
     if splice_source.len() != 4usize || splice_source[1] != 8 ||
         splice_source[2] != 9 { return 97 }
-    let boxed = splice_source.into_boxed_slice()
+    let boxed = splice_source.into_heap_slice()
     if boxed.get()[3] != 3 { return 98 }
     var leak_source = vec.new<i32>()
     leak_source.push(7)

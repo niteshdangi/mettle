@@ -1,6 +1,6 @@
 // expect-exit: 0
 // profiles: debug release
-// Evidence for the V1 atomically counted Arc and Weak operations (alloc.arc).
+// Evidence for the V1 atomically counted Shared and Weak operations (alloc.arc).
 // Each operation is called and its result checked; drop counts are observed
 // through a counter shared by every owner so over- and under-release fail.
 
@@ -18,7 +18,7 @@ import core.iter.FromItems
 import core.ops.Deref
 
 type Probe {
-    drops: arc.Arc<core.sync.atomic.AtomicUsize>
+    drops: arc.Shared<core.sync.atomic.AtomicUsize>
     value: i32
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
@@ -53,7 +53,7 @@ extend ArcErrorBranch implements Error {
     }
 }
 
-fn drops_of(read counter: arc.Arc<core.sync.atomic.AtomicUsize>): usize {
+fn drops_of(read counter: arc.Shared<core.sync.atomic.AtomicUsize>): usize {
     counter.get().load(core.sync.atomic.Ordering.SeqCst)
 }
 
@@ -298,30 +298,30 @@ fn checks_cyclic_and_pin(): i32 {
 
 // Defaults and conversions from owned values.
 fn checks_defaults_and_conversions(): i32 {
-    let defaulted: arc.Arc<i32> = default_value<arc.Arc<i32>>()
+    let defaulted: arc.Shared<i32> = default_value<arc.Shared<i32>>()
     if *defaulted.get() != 0 { return 100 }
-    let empty_slice: arc.Arc<[i32]> = default_value<arc.Arc<[i32]>>()
+    let empty_slice: arc.Shared<[i32]> = default_value<arc.Shared<[i32]>>()
     if empty_slice.get().len() != 0usize { return 101 }
-    let empty_text: arc.Arc<core.text.Text> = default_value<arc.Arc<core.text.Text>>()
+    let empty_text: arc.Shared<core.text.Text> = default_value<arc.Shared<core.text.Text>>()
     if empty_text.get().as_bytes().len() != 0usize { return 102 }
     let default_weak: arc.Weak<i32> = default_value<arc.Weak<i32>>()
     if default_weak.strong_count() != 0usize || default_weak.weak_count() != 0usize {
         return 103
     }
     if !debug_is(read default_weak, "(Weak)") { return 104 }
-    let converted: arc.Arc<i32> = from_value<arc.Arc<i32>>(33)
+    let converted: arc.Shared<i32> = from_value<arc.Shared<i32>>(33)
     let other = arc.new(33)
     if !(converted == other) { return 105 }
     let boxed = alloc.boxed.new(34)
-    let from_box = arc.Arc<i32>.(From<alloc.boxed.Box<i32>>).from(boxed)
+    let from_box = arc.Shared<i32>.(From<alloc.boxed.Heap<i32>>).from(boxed)
     if *from_box.get() != 34 { return 119 }
 
     let low = arc.new(3)
     let high = arc.new(4)
     if !(low < high) || low.cmp(read high) != core.cmp.Ordering.Less { return 106 }
     if low.partial_cmp(read high) != present(core.cmp.Ordering.Less) { return 107 }
-    if *arc.Arc<i32>.(Deref).deref(read high) != 4 { return 108 }
-    if *arc.Arc<i32>.(AsRef<i32>).as_ref(read high) != 4 { return 109 }
+    if *arc.Shared<i32>.(Deref).deref(read high) != 4 { return 108 }
+    if *arc.Shared<i32>.(AsRef<i32>).as_ref(read high) != 4 { return 109 }
     if borrow_i32(read high) != 4 { return 110 }
     if hash_one(read high) != hash_one(read 4i32) { return 111 }
     if !debug_is(read high, "4") || !display_is(read high, "4") {
@@ -334,24 +334,24 @@ fn checks_defaults_and_conversions(): i32 {
         none => { return 128 }
     }
 
-    let from_array = arc.Arc<[i32]>.(From<[i32; 3]>).from([4, 5, 6])
+    let from_array = arc.Shared<[i32]>.(From<[i32; 3]>).from([4, 5, 6])
     if from_array.get().len() != 3usize || from_array.get()[2usize] != 6 {
         return 113
     }
     let slice_source = [11, 12, 13]
     let slice_view: read [i32] = read slice_source
-    let from_slice = arc.Arc<[i32]>.(From<read [i32]>).from(slice_view)
+    let from_slice = arc.Shared<[i32]>.(From<read [i32]>).from(slice_view)
     if from_slice.get()[0usize] != 11 || from_slice.get()[2usize] != 13 {
         return 120
     }
     var mutable_source = [14, 15]
     let mutable_view: mut [i32] = mut mutable_source
-    let from_mut_slice = arc.Arc<[i32]>.(From<mut [i32]>).from(take mutable_view)
+    let from_mut_slice = arc.Shared<[i32]>.(From<mut [i32]>).from(take mutable_view)
     if from_mut_slice.get()[0usize] != 14 || from_mut_slice.get()[1usize] != 15 {
         return 121
     }
-    let text_owner = arc.Arc<core.text.Text>.(From<read core.text.Text>).from("sync")
-    let bytes_owner = arc.Arc<[u8]>.(From<arc.Arc<core.text.Text>>).from(text_owner)
+    let text_owner = arc.Shared<core.text.Text>.(From<read core.text.Text>).from("sync")
+    let bytes_owner = arc.Shared<[u8]>.(From<arc.Shared<core.text.Text>>).from(text_owner)
     if bytes_owner.get().len() != 4usize || bytes_owner.get()[0usize] != b's' {
         return 122
     }
@@ -360,23 +360,23 @@ fn checks_defaults_and_conversions(): i32 {
         success(value) => value,
         failure(_) => { return 124 }
     }
-    let mutable_text_owner = arc.Arc<core.text.Text>.(From<mut core.text.Text>).from(
+    let mutable_text_owner = arc.Shared<core.text.Text>.(From<mut core.text.Text>).from(
         take mutable_text
     )
     if mutable_text_owner.get().as_bytes()[1usize] != b'k' { return 125 }
-    let string_owner = arc.Arc<core.text.Text>.(From<alloc.string.String>).from(
+    let string_owner = arc.Shared<core.text.Text>.(From<alloc.string.String>).from(
         alloc.string.from_text("text")
     )
     if string_owner.get().as_bytes().len() != 4usize { return 123 }
-    match arc.Arc<[i32; 3]>.(TryFrom<arc.Arc<[i32]>>).try_from(from_array) {
+    match arc.Shared<[i32; 3]>.(TryFrom<arc.Shared<[i32]>>).try_from(from_array) {
         success(array) => {
             if array.get()[0usize] != 4 || array.get()[2usize] != 6 { return 115 }
         },
         failure(_) => { return 116 }
     }
     let wrong_values = alloc.vec.List<i32>.(From<[i32; 2]>).from([9, 10])
-    let wrong_length = arc.Arc<[i32]>.(From<alloc.vec.List<i32>>).from(wrong_values)
-    match arc.Arc<[i32; 3]>.(TryFrom<arc.Arc<[i32]>>).try_from(wrong_length) {
+    let wrong_length = arc.Shared<[i32]>.(From<alloc.vec.List<i32>>).from(wrong_values)
+    match arc.Shared<[i32; 3]>.(TryFrom<arc.Shared<[i32]>>).try_from(wrong_length) {
         success(_) => { return 117 },
         failure(original) => {
             if original.get().len() != 2usize || original.get()[1usize] != 10 {
@@ -385,7 +385,7 @@ fn checks_defaults_and_conversions(): i32 {
         }
     }
     let list = alloc.vec.List<i32>.(From<[i32; 2]>).from([7, 8])
-    let from_items = arc.Arc<[i32]>.(FromItems<i32>).from_iter(list.into_iter())
+    let from_items = arc.Shared<[i32]>.(FromItems<i32>).from_iter(list.into_iter())
     if from_items.get().len() != 2usize || from_items.get()[1usize] != 8 {
         return 114
     }

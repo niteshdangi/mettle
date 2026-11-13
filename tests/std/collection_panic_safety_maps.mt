@@ -1,6 +1,6 @@
 // expect-exit: 0
 import alloc.arc
-import alloc.arc.Arc
+import alloc.arc.Shared
 import alloc.btree
 import alloc.hash_map
 import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
@@ -9,9 +9,9 @@ import std.panic.CatchResult
 
 type Key {
     value: i32
-    panic_hash: Arc<core.sync.atomic.AtomicUsize>
-    panic_eq: Arc<core.sync.atomic.AtomicUsize>
-    panic_cmp: Arc<core.sync.atomic.AtomicUsize>
+    panic_hash: Shared<core.sync.atomic.AtomicUsize>
+    panic_eq: Shared<core.sync.atomic.AtomicUsize>
+    panic_cmp: Shared<core.sync.atomic.AtomicUsize>
 }
 
 extend Key implements PartialEq {
@@ -43,14 +43,14 @@ extend Key implements Hash {
     }
 }
 
-fn make_key(value: i32, take panic_hash: Arc<core.sync.atomic.AtomicUsize>,
-            take panic_eq: Arc<core.sync.atomic.AtomicUsize>,
-            take panic_cmp: Arc<core.sync.atomic.AtomicUsize>): Key {
+fn make_key(value: i32, take panic_hash: Shared<core.sync.atomic.AtomicUsize>,
+            take panic_eq: Shared<core.sync.atomic.AtomicUsize>,
+            take panic_cmp: Shared<core.sync.atomic.AtomicUsize>): Key {
     Key(value, panic_hash, panic_eq, panic_cmp)
 }
 
 type DropBomb {
-    drops: Arc<core.sync.atomic.AtomicUsize>
+    drops: Shared<core.sync.atomic.AtomicUsize>
     panic_on_drop: bool
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)

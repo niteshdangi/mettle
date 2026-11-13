@@ -3,7 +3,7 @@
 import std.task
 import std.sync.mutex
 import alloc.arc
-import alloc.arc.Arc
+import alloc.arc.Shared
 import core.future.{Future, Poll, Context}
 
 type Count { left: i32 }
@@ -32,7 +32,7 @@ async fn sum(a: i32): i32 {
     let y = await task.yield_now()
     a + x
 }
-async fn record(take log: Arc<mutex.Mutex<i32>>, v: i32) {
+async fn record(take log: Shared<mutex.Mutex<i32>>, v: i32) {
     await task.yield_now();
     let locked = capture log.get().lock()
     var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }

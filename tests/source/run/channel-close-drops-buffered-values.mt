@@ -2,7 +2,7 @@ import std.sync.mpsc
 import alloc.arc
 
 type Counted {
-    drops: arc.Arc<core.sync.atomic.AtomicUsize>
+    drops: arc.Shared<core.sync.atomic.AtomicUsize>
     drop { let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst) }
 }
 

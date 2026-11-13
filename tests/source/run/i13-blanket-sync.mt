@@ -1,6 +1,6 @@
 // expect-exit: 0
 // profiles: debug release
-// Blanket and auto-property evidence for sync types (Arc, locks, guards, Once, mpsc). Each call instantiates the
+// Blanket and auto-property evidence for sync types (Shared, locks, guards, Once, mpsc). Each call instantiates the
 // blanket trait row for a hosted std type. Pairs the compiler cannot satisfy are
 // listed as gaps at the end of main; negative impls are evidenced in tests/source/fail.
 fn any_ok<T: unsized + core.any.Any>(): Unit {}
@@ -13,7 +13,7 @@ fn tryinto_ok<T: core.convert.TryInto<T>>(): Unit {}
 fn string_ok<T: alloc.string.ToString>(): Unit {}
 fn send_ok<T: unsized + Transferable>(): Unit {}
 fn sync_ok<T: unsized + Shareable>(): Unit {}
-alias A_sync_Arc = alloc.arc.Arc<i32>
+alias A_sync_Arc = alloc.arc.Shared<i32>
 alias A_sync_Barrier = std.sync.barrier.Barrier
 alias A_sync_Condvar = std.sync.condition.Condition
 alias A_sync_Mutex = std.sync.mutex.Mutex<i32>
@@ -29,7 +29,7 @@ alias A_sync_mpsc_Receiver = std.sync.mpsc.Receiver<i32>
 alias A_sync_mpsc_Sender = std.sync.mpsc.Sender<i32>
 alias A_sync_mpsc_SyncSender = std.sync.mpsc.SyncSender<i32>
 fn main(): i32 {
-    // sync::Arc
+    // sync::Shared
     any_ok<A_sync_Arc>()
     borrow_ok<A_sync_Arc>()
     from_ok<A_sync_Arc>()

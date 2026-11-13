@@ -1,6 +1,6 @@
 import alloc.future
 import alloc.arc
-import alloc.arc.Arc
+import alloc.arc.Shared
 import core.future.{Context, Future, Poll}
 import std.task
 import std.thread
@@ -29,7 +29,7 @@ extend Stable implements Future {
 }
 
 type Panics {
-    drops: Arc<core.sync.atomic.AtomicUsize>
+    drops: Shared<core.sync.atomic.AtomicUsize>
     drop { let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst) }
 }
 extend Panics implements Future {

@@ -1,4 +1,4 @@
-import alloc.boxed.Box
+import alloc.boxed.Heap
 interface Show { fn value(): i32; }
 type Held<region r> { value: read i32 from r; drop {} }
 extend<region r> Held<region r> implements Show {
@@ -9,26 +9,26 @@ fn wrap<region r>(read value: i32 from r): heap any Show from r {
     heap Held(read value)
 }
 
-fn explicit<region r>(take shown: Box<any Show from r>): Box<any Show from r> {
-    let identity = take fn(take value: Box<any Show from r>): Box<any Show from r> {
+fn explicit<region r>(take shown: Heap<any Show from r>): Heap<any Show from r> {
+    let identity = take fn(take value: Heap<any Show from r>): Heap<any Show from r> {
         take value
     }
     identity(shown)
 }
 
 fn select_payload<region r, region s>(
-    take first: Box<any Show from r>, take second: Box<any Show from s>
-): Box<any Show from r> {
+    take first: Heap<any Show from r>, take second: Heap<any Show from s>
+): Heap<any Show from r> {
     let choose = take fn(
-        take value: Box<any Show from r>, take unused: Box<any Show from s>
-    ): Box<any Show from r> { take value }
+        take value: Heap<any Show from r>, take unused: Heap<any Show from s>
+    ): Heap<any Show from r> { take value }
     choose(first, second)
 }
 
 type StaticValue {}
 extend StaticValue implements Show { fn value(): i32 { 42 } }
-fn static_producer(): Box<any Show from static> {
-    let make = take fn(): Box<any Show from static> { heap StaticValue() }
+fn static_producer(): Heap<any Show from static> {
+    let make = take fn(): Heap<any Show from static> { heap StaticValue() }
     make()
 }
 

@@ -2,7 +2,7 @@
 import alloc.vec
 import alloc.vec.{List, IntoIter, Drain}
 import alloc.boxed
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import alloc.binary_heap
 import alloc.binary_heap.BinaryHeap
 import alloc.string
@@ -141,7 +141,7 @@ fn main(): i32 {
     if v.len() != 4usize || v[3usize] != 77 { return 33 }
     let from_string = List<u8>.(From<string.String>).from(string.from_text("cd"))
     if from_string[0usize] != 99u8 { return 34 }
-    let from_box = List<i32>.(From<Box<[i32]>>).from(Box<[i32]>.(From<[i32; 2]>).from([21, 22]))
+    let from_box = List<i32>.(From<Heap<[i32]>>).from(Heap<[i32]>.(From<[i32; 2]>).from([21, 22]))
     if from_box[1usize] != 22 { return 35 }
     var pile = binary_heap.new<i32>()
     pile.push(4)

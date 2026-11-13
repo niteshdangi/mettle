@@ -3,7 +3,7 @@
 // trait so each implementation is resolved on its own: comparison, conversion,
 // extension, hashing, operators, indexing and formatting.
 import alloc.borrow.BorrowedOrOwned
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import alloc.ffi.CString
 import alloc.string.{String, ToString}
 import alloc.vec
@@ -119,9 +119,9 @@ fn checks_building(): i32 {
     var texts = vec.new<read Text from static>()
     texts.push("2")
     String.(ExtendItems<read Text from static>).extend(mut extended, take texts)
-    var boxes = vec.new<Box<Text>>()
-    boxes.push(Box<Text>.(From<read Text from static>).from("3"))
-    String.(ExtendItems<Box<Text>>).extend(mut extended, take boxes)
+    var boxes = vec.new<Heap<Text>>()
+    boxes.push(Heap<Text>.(From<read Text from static>).from("3"))
+    String.(ExtendItems<Heap<Text>>).extend(mut extended, take boxes)
     var more = vec.new<String>()
     more.push(String("4"))
     String.(ExtendItems<String>).extend(mut extended, take more)

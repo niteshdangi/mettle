@@ -1,5 +1,5 @@
 // expect-exit: 0
-// Evidence for Arc and Weak operations across threads: strong and weak counts
+// Evidence for Shared and Weak operations across threads: strong and weak counts
 // while workers hold clones, the payload dropping exactly once on whichever
 // thread releases the last owner, and unique access once the workers join.
 import std.thread
@@ -7,7 +7,7 @@ import alloc.arc
 import core.clone.Clone
 
 type Tracked {
-    drops: arc.Arc<core.sync.atomic.AtomicUsize>
+    drops: arc.Shared<core.sync.atomic.AtomicUsize>
     value: i32
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)

@@ -6,7 +6,7 @@ import std.thread
 
 type Tracked {
     value: i32
-    drops: arc.Arc<core.sync.atomic.AtomicUsize>
+    drops: arc.Shared<core.sync.atomic.AtomicUsize>
     drop { let _ = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst) }
 }
 

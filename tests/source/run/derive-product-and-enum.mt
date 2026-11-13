@@ -6,7 +6,7 @@ import core.hash.Hash
 type Pair { a: i32; b: i32 }
 
 @derive(Clone, PartialEq, PartialOrd)
-enum Shape { Dot, Line(i32, i32), Box { w: i32, h: i32 } }
+enum Shape { Dot, Line(i32, i32), Heap { w: i32, h: i32 } }
 
 @derive(Clone, PartialEq)
 type Wrap<T> { value: T }
@@ -20,7 +20,7 @@ fn main(): i32 {
     let s = Shape.Line(1, 2)
     if !(s.clone() == Shape.Line(1, 2)) { return 4 }
     if s == Shape.Dot { return 5 }
-    let b = Shape.Box(w: 1, h: 1)
+    let b = Shape.Heap(w: 1, h: 1)
     if !(Shape.Dot < b) { return 6 }
     if !(Wrap(5).clone() == Wrap(5)) { return 7 }
     0

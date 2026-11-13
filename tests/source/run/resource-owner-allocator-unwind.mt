@@ -1,6 +1,6 @@
 import alloc.alloc.{Allocator, Global, Layout, AllocError}
 import alloc.{arc, boxed, rc}
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import core.clone.Clone
 import core.convert.From
 import std.panic.{catch_panic, CatchResult}
@@ -105,7 +105,7 @@ fn main(): i32 {
         let source = boxed.new_in(Payload(pointer), Probe(pointer))
         refused.panic_allocate = true
         match take catch_panic(take fn(): Unit {
-            let _ = rc.Rc<Payload, Probe>.(From<Box<Payload, Probe>>).from(source)
+            let _ = rc.LocalShared<Payload, Probe>.(From<Heap<Payload, Probe>>).from(source)
         }) {
             CatchResult.Panicked(_) => {},
             CatchResult.Returned(_) => { return 7 }
@@ -120,7 +120,7 @@ fn main(): i32 {
         let source = boxed.new_in(Payload(pointer), Probe(pointer))
         moved.panic_deallocate = true
         match take catch_panic(take fn(): Unit {
-            let _ = arc.Arc<Payload, Probe>.(From<Box<Payload, Probe>>).from(source)
+            let _ = arc.Shared<Payload, Probe>.(From<Heap<Payload, Probe>>).from(source)
         }) {
             CatchResult.Panicked(_) => {},
             CatchResult.Returned(_) => { return 9 }

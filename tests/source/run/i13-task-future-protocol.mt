@@ -7,7 +7,7 @@ import core.future.{Context, Future, Poll, Waker}
 import core.hash.hash_one
 import core.convert.From
 import core.outcome
-import alloc.arc.Arc
+import alloc.arc.Shared
 import std.task.Wake
 
 fn debug<T: Debug>(read value: T): alloc.string.String {
@@ -24,7 +24,7 @@ fn debug<T: Debug>(read value: T): alloc.string.String {
 
 type WakeTarget { wakes: core.sync.atomic.AtomicUsize }
 extend WakeTarget implements Wake {
-    fn wake(read me: Arc<WakeTarget>): Unit {
+    fn wake(read me: Shared<WakeTarget>): Unit {
         let _ = self.wakes.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
     }
 }
@@ -83,7 +83,7 @@ fn main(): i32 {
     let release_observer = release_target.retain()
     {
         let drop_probe: Waker =
-            Waker.(From<Arc<WakeTarget>>).from(release_target)
+            Waker.(From<Shared<WakeTarget>>).from(release_target)
         if release_observer.strong_count() != 2usize { return 18 }
     }
     if release_observer.strong_count() != 1usize { return 19 }
@@ -100,7 +100,7 @@ fn main(): i32 {
     }
     let target = alloc.arc.new(WakeTarget(core.sync.atomic.AtomicUsize.new(0usize)))
     let observer = target.retain()
-    let owned_waker: Waker = Waker.(From<Arc<WakeTarget>>).from(target)
+    let owned_waker: Waker = Waker.(From<Shared<WakeTarget>>).from(target)
     let cloned_waker = owned_waker.clone()
     if observer.strong_count() != 3usize { return 20 }
     owned_waker.wake_by_ref()

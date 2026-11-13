@@ -1,11 +1,11 @@
 // expect-error: ownership 26:5 access or storage conflicts
-import alloc.boxed.Box
+import alloc.boxed.Heap
 interface Show { fn value(): i32; }
 type Held<region r> { value: read i32 from r; drop {} }
 extend<region r> Held<region r> implements Show {
     fn value(): i32 { *self.value }
 }
-type Fault<region r> { payload: Box<any Show from r> }
+type Fault<region r> { payload: Heap<any Show from r> }
 
 interface Buffer {
     fn fill<region r>(receiver mut self: Self from r): i32 throws Fault<region r>;

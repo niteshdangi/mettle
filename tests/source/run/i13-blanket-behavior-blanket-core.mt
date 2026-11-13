@@ -13,7 +13,7 @@ import core.convert.Into
 import core.clone.Clone
 import alloc.string.ToString
 import alloc.string.String
-import alloc.boxed.Box
+import alloc.boxed.Heap
 
 fn main(): i32 {
     // i32 (primitive::integer)
@@ -35,12 +35,12 @@ fn main(): i32 {
     if owned_text.clone().to_owned().as_text() != owned_text.clone().as_text() { return 9 }
     if owned_text.clone().to_string().as_text() != "blanket" { return 10 }
 
-    // alloc.boxed.Box<i32>
-    if *Box<i32>.(Borrow<Box<i32>>).borrow(Box<i32>.(From<i32>).`from`(7)).get() != 7 { return 11 }
-    if *Box<i32>.(From<i32>).`from`(7).get() != 7 { return 12 }
-    let boxed_into: Box<i32> = i32.(Into<Box<i32>>).into(7)
+    // alloc.boxed.Heap<i32>
+    if *Heap<i32>.(Borrow<Heap<i32>>).borrow(Heap<i32>.(From<i32>).`from`(7)).get() != 7 { return 11 }
+    if *Heap<i32>.(From<i32>).`from`(7).get() != 7 { return 12 }
+    let boxed_into: Heap<i32> = i32.(Into<Heap<i32>>).into(7)
     if *boxed_into.get() != 7 { return 13 }
-    let boxed = Box<i32>.(From<i32>).`from`(7)
+    let boxed = Heap<i32>.(From<i32>).`from`(7)
     if *boxed.clone().to_owned().get() != *boxed.clone().get() { return 14 }
     if boxed.clone().to_string().as_text() != "7" { return 15 }
 

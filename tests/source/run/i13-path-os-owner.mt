@@ -1,5 +1,5 @@
 // profiles: debug release
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import core.convert.From
 import std.ffi.{OsString, bytes_equal, os_str_from_text}
 import std.path.{Path, PathBuf, path_buf_from_bytes, path_from_text}
@@ -40,8 +40,8 @@ fn main(): i32 {
     if native.as_bytes().as_ptr() != changed_pointer ||
         native.capacity() != changed_capacity { return 8 }
     let owned = PathBuf.(From<OsString>).from(take native)
-    let boxed = owned.into_boxed_path()
-    let unboxed = PathBuf.(From<Box<Path>>).from(take boxed)
+    let boxed = owned.into_heap_path()
+    let unboxed = PathBuf.(From<Heap<Path>>).from(take boxed)
     if !bytes_equal(unboxed.as_bytes(), read changed) { return 9 }
 
     var empty = PathBuf.new()

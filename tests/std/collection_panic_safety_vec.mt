@@ -1,6 +1,6 @@
 // expect-exit: 0
 import alloc.arc
-import alloc.arc.Arc
+import alloc.arc.Shared
 import alloc.linked_list
 import alloc.vec
 import alloc.vec_deque
@@ -10,7 +10,7 @@ import std.panic.CatchResult
 
 type CloneBomb {
     id: i32
-    drops: Arc<core.sync.atomic.AtomicUsize>
+    drops: Shared<core.sync.atomic.AtomicUsize>
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
     }
@@ -24,7 +24,7 @@ extend CloneBomb implements Clone {
 }
 
 type DropBomb {
-    drops: Arc<core.sync.atomic.AtomicUsize>
+    drops: Shared<core.sync.atomic.AtomicUsize>
     panic_on_drop: bool
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
@@ -34,7 +34,7 @@ type DropBomb {
 
 type RetainBomb {
     id: i32
-    drops: Arc<core.sync.atomic.AtomicUsize>
+    drops: Shared<core.sync.atomic.AtomicUsize>
     panic_on_drop: bool
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
@@ -44,7 +44,7 @@ type RetainBomb {
 
 type DedupBomb {
     id: i32
-    drops: Arc<core.sync.atomic.AtomicUsize>
+    drops: Shared<core.sync.atomic.AtomicUsize>
     panic_on_drop: bool
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)

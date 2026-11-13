@@ -3,10 +3,10 @@ import alloc.string
 import core.iter.{collect, once}
 import core.text.Text
 
-fn copy_borrowed_part(): boxed.Box<Text> {
+fn copy_borrowed_part(): boxed.Heap<Text> {
     var backing = string.from_text("borrowed")
     let part = backing.as_text()
-    let owned: boxed.Box<Text> = collect(once(part))
+    let owned: boxed.Heap<Text> = collect(once(part))
     backing.push_str(" changed")
     owned
 }

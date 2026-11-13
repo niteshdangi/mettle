@@ -1,7 +1,7 @@
 import alloc.alloc.{Allocator, Global, Layout, AllocError}
 import alloc.rc
 import alloc.arc
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import alloc.vec
 import core.convert.From
 
@@ -84,7 +84,7 @@ fn main(): i32 {
         values.push(Payload(record_ptr, 29))
         if record.allocations != 1 || record.live != 1 { return 1 }
 
-        let owner = rc.Rc<[Payload], Probe>.(From<vec.List<Payload, Probe>>).from(values)
+        let owner = rc.LocalShared<[Payload], Probe>.(From<vec.List<Payload, Probe>>).from(values)
         if owner.get().len() != 2usize ||
             owner.get()[0usize].value != 13 ||
             owner.get()[1usize].value != 29 {
@@ -107,7 +107,7 @@ fn main(): i32 {
     let empty_ptr = core.ptr.from_mut(empty_record)
     {
         let empty = vec.new_in<i32, Probe>(Probe(empty_ptr))
-        let owner = rc.Rc<[i32], Probe>.(From<vec.List<i32, Probe>>).from(empty)
+        let owner = rc.LocalShared<[i32], Probe>.(From<vec.List<i32, Probe>>).from(empty)
         if owner.get().len() != 0usize || empty_record.allocations != 1 ||
             empty_record.deallocations != 0 || empty_record.live != 1 {
             return 5
@@ -122,7 +122,7 @@ fn main(): i32 {
     zero_sized.push(())
     zero_sized.push(())
     zero_sized.push(())
-    let zero_sized_owner = rc.Rc<[Unit]>.(From<vec.List<Unit>>).from(zero_sized)
+    let zero_sized_owner = rc.LocalShared<[Unit]>.(From<vec.List<Unit>>).from(zero_sized)
     if zero_sized_owner.get().len() != 3usize { return 7 }
 
     var boxed_record = Record(0, 0, 0, 0, 0, 0, 0usize, 0usize, 0usize, 0usize, 0)
@@ -131,8 +131,8 @@ fn main(): i32 {
         var values = vec.with_capacity_in<Payload, Probe>(2usize, Probe(boxed_ptr))
         values.push(Payload(boxed_ptr, 37))
         values.push(Payload(boxed_ptr, 43))
-        let source = values.into_boxed_slice()
-        let owner = rc.Rc<[Payload], Probe>.(From<Box<[Payload], Probe>>).from(source)
+        let source = values.into_heap_slice()
+        let owner = rc.LocalShared<[Payload], Probe>.(From<Heap<[Payload], Probe>>).from(source)
         if owner.get().len() != 2usize || owner.get()[0usize].value != 37 ||
             owner.get()[1usize].value != 43 || boxed_record.allocations != 2 ||
             boxed_record.source_frees != 1 || boxed_record.payload_drops != 0 { return 8 }
@@ -146,8 +146,8 @@ fn main(): i32 {
         var values = vec.with_capacity_in<Payload, Probe>(2usize, Probe(atomic_ptr))
         values.push(Payload(atomic_ptr, 47))
         values.push(Payload(atomic_ptr, 53))
-        let source = values.into_boxed_slice()
-        let owner = arc.Arc<[Payload], Probe>.(From<Box<[Payload], Probe>>).from(source)
+        let source = values.into_heap_slice()
+        let owner = arc.Shared<[Payload], Probe>.(From<Heap<[Payload], Probe>>).from(source)
         if owner.get().len() != 2usize || owner.get()[0usize].value != 47 ||
             owner.get()[1usize].value != 53 || atomic_record.allocations != 2 ||
             atomic_record.source_frees != 1 || atomic_record.payload_drops != 0 { return 10 }
@@ -155,23 +155,23 @@ fn main(): i32 {
     if atomic_record.payload_drops != 2 || atomic_record.owner_frees != 1 ||
         atomic_record.live != 0 || atomic_record.mismatches != 0 { return 11 }
 
-    let source: Box<any core.any.Any> = heap Aligned(61)
-    let erased = rc.Rc<any core.any.Any>.(From<Box<any core.any.Any>>).from(source)
+    let source: Heap<any core.any.Any> = heap Aligned(61)
+    let erased = rc.LocalShared<any core.any.Any>.(From<Heap<any core.any.Any>>).from(source)
     match take erased.downcast<Aligned>() {
         success(owner) => {
             if owner.get().value != 61 || owner.as_ptr().addr() % 64usize != 0usize { return 12 }
         },
         failure(_) => { return 13 }
     }
-    let atomic_source: Box<any core.any.Any> = heap Aligned(67)
-    let atomic_erased = arc.Arc<any core.any.Any>.(From<Box<any core.any.Any>>).from(atomic_source)
+    let atomic_source: Heap<any core.any.Any> = heap Aligned(67)
+    let atomic_erased = arc.Shared<any core.any.Any>.(From<Heap<any core.any.Any>>).from(atomic_source)
     if !core.any.is<Aligned>(atomic_erased.get()) ||
         atomic_erased.as_ptr().addr() % 64usize != 0usize { return 14 }
-    let units = vec.from_array([(), (), ()]).into_boxed_slice()
-    let shared_units = arc.Arc<[Unit]>.(From<Box<[Unit]>>).from(units)
+    let units = vec.from_array([(), (), ()]).into_heap_slice()
+    let shared_units = arc.Shared<[Unit]>.(From<Heap<[Unit]>>).from(units)
     if shared_units.get().len() != 3usize { return 15 }
-    let empty = vec.new<i32>().into_boxed_slice()
-    let shared_empty = rc.Rc<[i32]>.(From<Box<[i32]>>).from(empty)
+    let empty = vec.new<i32>().into_heap_slice()
+    let shared_empty = rc.LocalShared<[i32]>.(From<Heap<[i32]>>).from(empty)
     if shared_empty.get().len() != 0usize { return 16 }
     0
 }

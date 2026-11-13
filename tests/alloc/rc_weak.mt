@@ -1,4 +1,4 @@
-import alloc.rc.{Rc, Weak}
+import alloc.rc.{LocalShared, Weak}
 type D { c: ptr<mut i32>
     drop { unsafe { *self.c += 1 } } }
 fn main(): i32 {

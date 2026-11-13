@@ -1,5 +1,5 @@
 import alloc.alloc.{Allocator, Global, Layout, AllocError}
-import alloc.arc.Arc
+import alloc.arc.Shared
 import core.clone.Clone
 
 type Tracker {
@@ -57,7 +57,7 @@ fn main(): i32 {
     )
     let observer: alloc.arc.Weak<[i32], Tracker> = {
         let sized = alloc.arc.new_in([1, 2, 3], tracker)
-        let owner: Arc<[i32], Tracker> = sized
+        let owner: Shared<[i32], Tracker> = sized
         weak owner
     }
     if frees != 0 { return 1 }

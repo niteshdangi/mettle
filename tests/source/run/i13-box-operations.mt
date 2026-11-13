@@ -1,6 +1,6 @@
 // profiles: debug release
 import alloc.boxed
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import alloc.vec
 import core.clone.Clone
 import core.cmp.PartialEq
@@ -37,9 +37,9 @@ fn main(): i32 {
     if !(small < large) || large < small { return 7 }
 
     // Default and From<T> construct a boxed payload.
-    let default_box = Box<i32>.(Default).default()
+    let default_box = Heap<i32>.(Default).default()
     if *default_box.get() != 0 { return 8 }
-    let from_value = Box<i32>.(From<i32>).from(7)
+    let from_value = Heap<i32>.(From<i32>).from(7)
     if *from_value.get() != 7 { return 9 }
 
     // into_inner moves the payload out and frees the box.
@@ -75,17 +75,17 @@ fn main(): i32 {
     let slice_uninit = boxed.new_uninit_slice<i32>(2usize)
     if slice_uninit.get().len() != 2usize { return 18 }
 
-    // Box<[T]> holds an owned slice and reports its length and contents.
+    // Heap<[T]> holds an owned slice and reports its length and contents.
     let vector = vec.new<i32>()
     var source = vector
     source.push(7)
     source.push(8)
-    let slice_box = source.into_boxed_slice()
+    let slice_box = source.into_heap_slice()
     if slice_box.get().len() != 2usize || slice_box.get()[1usize] != 8 { return 19 }
-    let empty_slice = Box<[i32]>.(Default).default()
+    let empty_slice = Heap<[i32]>.(Default).default()
     if empty_slice.get().len() != 0usize { return 20 }
 
-    // Box<I> forwards Iterator, DoubleEnded and ExactSize to the boxed iterator.
+    // Heap<I> forwards Iterator, DoubleEnded and ExactSize to the boxed iterator.
     let items = [1, 2, 3]
     var forwarded = boxed.new(items.iter())
     if forwarded.len() != 3usize { return 21 }
