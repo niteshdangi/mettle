@@ -818,6 +818,9 @@ extend<T: unsized + Unpin, A: Allocator> Pinned<T, A> {
     pub take fn into_inner(): Box<T, A> { unsafe { self.into_inner_unchecked() } }
 }
 
+extend<T: unsized, A: Allocator> Pinned<T, A> implements From<Box<T, A>> {
+    static fn from(take value: Box<T, A>): Pinned<T, A> { value.into_pinned() }
+}
 extend<T: unsized, A: Allocator> Pinned<T, A> implements Deref {
     type Target = T
     fn deref(): read T from self { self.get_ref() }

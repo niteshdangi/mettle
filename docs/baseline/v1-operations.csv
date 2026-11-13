@@ -3136,7 +3136,7 @@ B10183d22de5501bbe6e94997,impl:pin::Pin:cmp::PartialEq,https://doc.rust-lang.org
 Beef2b5783c4a6e8e2c1ba0b8,impl:pin::Pin:cmp::PartialEq,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-PartialEq%3CPin%3CQ%3E%3E-for-Pin%3CPtr%3E,,evidenced,tests/source/run/i13-pinned-view-trait-matrix.mt
 Bc430f2d7111e6b7eaec77795,impl:pin::Pin:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/std/pin/struct.Pin.html#impl-PartialOrd%3CPin%3CQ%3E%3E-for-Pin%3CPtr%3E,,evidenced,tests/source/run/i13-pinned-view-trait-matrix.mt
 Bdfa7a478adc64f8e9b5112aa,impl:pin::Pin:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-PartialOrd%3CPin%3CQ%3E%3E-for-Pin%3CPtr%3E,,evidenced,tests/source/run/i13-pinned-view-trait-matrix.mt
-B4e29969d1380d5af775a2f82,impl:pin::Pin:convert::From,"https://doc.rust-lang.org/1.99.1/std/pin/struct.Pin.html#impl-From%3CBox%3CT,+A%3E%3E-for-Pin%3CBox%3CT,+A%3E%3E",,missing,
+B4e29969d1380d5af775a2f82,impl:pin::Pin:convert::From,"https://doc.rust-lang.org/1.99.1/std/pin/struct.Pin.html#impl-From%3CBox%3CT,+A%3E%3E-for-Pin%3CBox%3CT,+A%3E%3E",,evidenced,tests/source/run/i13-pinned-box-default-future.mt
 Bb6400dbbafb9618027589e82,impl:pin::Pin:convert::From,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-From%3CT%3E-for-T,,evidenced,tests/source/run/i13-blanket-cursor-pin-core.mt
 B6ee32b094d8a0a8d2ce71716,impl:pin::Pin:convert::Into,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-Into%3CU%3E-for-T,,evidenced,tests/source/run/i13-blanket-cursor-pin-core.mt
 Ba28081bf2b3182928dbdcb44,impl:pin::Pin:convert::TryFrom,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-TryFrom%3CU%3E-for-T,core.convert.TryFrom,evidenced,tests/source/run/i13-conversion-blanket-owners.mt
