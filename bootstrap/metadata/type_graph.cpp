@@ -71,7 +71,7 @@ template <class A> void record(A &a, ProductType::VectorShape &r) {
   a(r.element, r.lanes, r.alignment);
 }
 template <class A> void record(A &a, ProductType &r) {
-  a(r.name, r.fields, r.copyRequested, r.hasDestructor);
+  a(r.name, r.fields, r.copyRequested, r.conditionalCopy, r.hasDestructor);
   a.function(r.destructor);
   a(r.kind, r.variants, r.components, r.genericParameters, r.genericOrigin,
     r.genericArguments, r.arrayCount, r.opaqueBounds);

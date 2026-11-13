@@ -71,7 +71,7 @@ pub fn clamp<T: Ord>(take value: T, take low: T, take high: T): T {
 }
 
 // Inverts the order of the wrapped value.
-pub type Reverse<T> { pub value: T }
+pub copy type Reverse<T> { pub value: T }
 extend<T: PartialEq> Reverse<T> implements PartialEq { fn eq(read other: Reverse<T>): bool { other.value == self.value } }
 extend<T: Eq> Reverse<T> implements Eq {}
 extend<T: super.clone.Clone> Reverse<T> implements super.clone.Clone {

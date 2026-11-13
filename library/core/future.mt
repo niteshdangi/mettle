@@ -13,7 +13,7 @@ import package.core.convert.From
 import package.core.fmt.{Debug, Formatter}
 import package.core.hash.{Hash, Hasher}
 
-pub enum Poll<T> { Ready(T); Pending }
+pub copy enum Poll<T> { Ready(T); Pending }
 
 extend<T> Poll<T> {
     pub const fn is_ready(): bool { match self { Poll.Ready(value) => true, Poll.Pending => false } }

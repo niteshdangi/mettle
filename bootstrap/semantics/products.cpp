@@ -114,14 +114,32 @@ void Checker::products() {
       return;
     }
     state[index] = 1;
-    const auto &type = checked.types->product(identities[index]);
+    // Substitution interns types, so keep copies of the product's parts.
+    const auto type = checked.types->product(identities[index]);
+    // A Copy product whose fields are Copy only when its unbounded type
+    // parameters are is Copy exactly when its type arguments are.
+    std::vector<TypeBinding> assumeCopy;
+    for (auto parameter : type.genericParameters)
+      if (checked.types->isParameter(parameter) &&
+          !checked.types->parameter(parameter).copyRequested)
+        assumeCopy.push_back({parameter, Type::I32});
+    bool conditional = false;
     for (std::size_t f = 0; f < type.fields.size(); ++f) {
       const auto &field = type.fields[f];
       member(field.type, depth + 1, fieldSpans[index][f]);
-      if (type.copyRequested && !checked.types->isCopy(field.type))
-        error("type", module.products[index].span,
-              "Copy product field '" + field.name + "' is not Copy");
+      if (!type.copyRequested || checked.types->isCopy(field.type))
+        continue;
+      if (!assumeCopy.empty() &&
+          checked.types->isCopy(
+              checked.types->substitute(field.type, assumeCopy))) {
+        conditional = true;
+        continue;
+      }
+      error("type", module.products[index].span,
+            "Copy product field '" + field.name + "' is not Copy");
     }
+    if (conditional)
+      checked.types->setConditionalCopy(identities[index]);
     state[index] = 2;
   };
   for (std::size_t i = 0; i < identities.size(); ++i)

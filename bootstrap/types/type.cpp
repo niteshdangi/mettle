@@ -496,6 +496,9 @@ void TypeStore::setDestructor(Type type, int function) {
   record.hasDestructor = true;
   record.destructor = function;
 }
+void TypeStore::setConditionalCopy(Type type) {
+  products.at(entries.at(type.index() - builtins).index).conditionalCopy = true;
+}
 bool TypeStore::needsDrop(Type type) const {
   if (isErased(type))
     return true;
@@ -818,11 +821,26 @@ std::string displayType(const TypeStore &types, Type type,
   };
   return render(render, type);
 }
+bool TypeStore::copyProduct(Type type) const {
+  const auto &record = product(type);
+  if (!record.copyRequested)
+    return false;
+  const auto &origin = record.genericOrigin == Type::Unknown
+                           ? record
+                           : product(record.genericOrigin);
+  if (!origin.conditionalCopy)
+    return true;
+  const auto &arguments = record.genericArguments.empty()
+                              ? record.genericParameters
+                              : record.genericArguments;
+  return std::all_of(arguments.begin(), arguments.end(),
+                     [&](Type argument) { return isCopy(argument); });
+}
 bool TypeStore::isCopy(Type type) const {
   return isFunctionPointer(type) || isPointer(type) ? true
          : isParameter(type) ? parameter(type).copyRequested
          : isView(type)      ? view(type).mode == ParameterMode::Read
-         : isProduct(type)   ? product(type).copyRequested
+         : isProduct(type)   ? copyProduct(type)
                              : isNumeric(type) || type == Type::Bool ||
                                    type == Type::Unit || type == Type::Never ||
                                    type == Type::Char || type == Type::U8;

@@ -1326,7 +1326,8 @@ bool verify(const Program &program, Diagnostics &diagnostics,
             if (valid && !program.types->isSized(field.type) &&
                 index + 1 != product.fields.size())
               invalid("unsized field is not the final field");
-            if (product.copyRequested && !program.types->isCopy(field.type))
+            if (program.types->isCopy(current) &&
+                !program.types->isCopy(field.type))
               invalid("non-Copy field in Copy product");
           }
           if (product.hasDestructor) {
