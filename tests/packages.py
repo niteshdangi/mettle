@@ -117,7 +117,7 @@ def path_dependency():
     app = packages("path-dependency/app")
     build_and_run(app)
     lock = lock_of(app)
-    assert 'name: "units"' in lock and "sha256:" in lock, lock
+    assert 'name: "units"' in lock and "sha256-tree-2:" in lock, lock
     build_and_run(app, "--locked")
     assert lock_of(app) == lock, "an unchanged build rewrote the lock"
     invoke(["check", app, "--frozen"])
@@ -533,7 +533,7 @@ def git_source():
         '}\n')
     build_and_run(app)
     lock = lock_of(app)
-    assert first in lock and "sha256:" in lock, lock
+    assert first in lock and "sha256-tree-2:" in lock, lock
     invoke(["check", app, "--locked", "--cache-dir", evidence / "other-cache"])
     assert lock_of(app) == lock
     invoke(["check", app, "--offline", "--locked"])
