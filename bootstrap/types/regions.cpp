@@ -44,7 +44,15 @@ RegionId RegionStore::local(RegionScope scope) {
 }
 RegionId RegionStore::intersection(std::vector<RegionId> sources) {
   std::vector<RegionId> flattened;
+  // An unspecified source records no constraint; it must not poison the
+  // intersection with a region no relation can ever prove.
+  bool unspecified = false, specified = false;
   for (auto source : sources) {
+    if (source == RegionId::Unspecified) {
+      unspecified = true;
+      continue;
+    }
+    specified = true;
     const auto &record = get(source);
     if (record.kind == RegionKind::Intersection)
       flattened.insert(flattened.end(), record.sources.begin(),
@@ -56,7 +64,7 @@ RegionId RegionStore::intersection(std::vector<RegionId> sources) {
   flattened.erase(std::unique(flattened.begin(), flattened.end()),
                   flattened.end());
   if (flattened.empty())
-    return RegionId::Static;
+    return unspecified && !specified ? RegionId::Unspecified : RegionId::Static;
   if (flattened.size() == 1)
     return flattened.front();
   if (auto existing = intersections.find(flattened);

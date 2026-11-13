@@ -628,6 +628,17 @@ private:
                   Span span);
   RegionId sources(const TypeSyntax &syntax, RegionContext &context, Span span,
                    RegionId fallback);
+  // `heap T from r` parses its clause onto the payload; for a plain payload it
+  // names the owner's backing region, while an erased payload's clause bounds
+  // its hidden borrows instead.
+  const TypeSyntax &backingSyntax(const TypeSyntax &annotation, Type type) {
+    if (annotation.form != TypeForm::Owner || !annotation.sources.empty() ||
+        !annotation.nested || !types.isProduct(type) ||
+        types.product(type).genericArguments.empty() ||
+        types.isErased(types.product(type).genericArguments.front()))
+      return annotation;
+    return *annotation.nested;
+  }
   void declare(RegionContext &context,
                const std::vector<LexicalNameSyntax> &names, Span span,
                std::vector<RegionId> *quantified = nullptr);
@@ -1475,6 +1486,8 @@ RegionId RegionPass::backing(const Node &node) {
       return types.view(type).region;
     return backing(*node.children[0]);
   }
+  if (node.kind == Kind::Unary && (node.text == "read" || node.text == "mut"))
+    return backing(*node.children[0]);
   if (node.kind == Kind::Unary && node.text == "*") {
     auto type = expression(*node.children[0]);
     if (types.isView(type))
@@ -4184,10 +4197,10 @@ void RegionPass::run() {
                  functions[i].locals[p].mode == ParameterMode::Read ||
                      functions[i].locals[p].mode == ParameterMode::Mut);
       auto region = store.bound(context.scope, syntax.parameters[p].name);
-      if (!syntax.parameters[p].annotation.sources.empty() &&
-          !types.isView(functions[i].locals[p].type))
-        region = sources(syntax.parameters[p].annotation, context,
-                         syntax.parameters[p].span, region);
+      const auto &backed = backingSyntax(syntax.parameters[p].annotation,
+                                         functions[i].locals[p].type);
+      if (!backed.sources.empty() && !types.isView(functions[i].locals[p].type))
+        region = sources(backed, context, syntax.parameters[p].span, region);
       context.names.emplace(
           lexicalName(syntax.parameters[p].name, syntax.parameters[p].context),
           region);
