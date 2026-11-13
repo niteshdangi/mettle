@@ -1,7 +1,7 @@
 // expect-error: name 7:1 unresolved, inaccessible, ambiguous or cyclic import
 module family {
     pub module inner {
-        pub(super) const VALUE: i32 = 42
+        pub parent const VALUE: i32 = 42
     }
 }
 import family.inner.VALUE
