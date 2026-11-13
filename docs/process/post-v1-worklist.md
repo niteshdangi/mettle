@@ -120,3 +120,35 @@ The following work is still open:
 Do not claim these units are equally sized, all missing, fully applicable, or
 qualified. Any further semantic deduplication or scope exclusion needs source
 evidence; a genuinely new reduction needs an owner decision.
+
+## Work groups and sequencing
+
+Groups partition the 41,151 contextual obligations by owning module of the
+reference contract (counts of canonical records, approximate for D-J because
+they bucket by reference path, not by native file). They are not effort ratings.
+
+| Group | Records | Contents | Depends on |
+| --- | ---: | --- | --- |
+| A. Linux architecture | 6,809 | `arch::x86` and `x86_64` intrinsics, feature guards, ABI and instruction semantics | Vector types, target features |
+| B. Other-profile architecture | 6,336 | `aarch64`, `wasm32`/`wasm`, feature-detection and asm macros | Their targets and runners |
+| C. OS extensions | 780 | `os::*` fd, filesystem and process extension interfaces | V1 fs/io/process |
+| D. Numeric | ~2,500 | numeric trait implementations and numeric/float declarations outside V1 | V1 numeric families |
+| E. Operators, comparison, conversion | ~6,900 | `ops`, `cmp`, `convert`, `clone` implementations and `ops` declarations | V1 operator matrix |
+| F. Marker and unwind-safety traits | ~3,450 | `marker` and `panic` auto/marker properties | Concurrency declarations |
+| G. Formatting | ~1,640 | `fmt` implementations and declarations | V1 `fmt` |
+| H. Collections and iteration | ~4,100 | `iter`, `collections`, `slice`, `str`, `range` | V1 collections and iterators |
+| I. Hosted services and memory | ~1,950 | `io`, `sync`, `ffi`, `alloc`, `mem` and related | V1 hosted services |
+| J. Primitive and root pages | ~3,000 | primitive-type implementations, root functions and macros | Cross-cutting |
+
+Sequencing (implementation-plan.md section 8.6): I17 depends on I14, not I15,
+and may proceed alongside I15-I16.
+
+- Groups C-J are Mettle library work under `library/` and can start after I14.
+  Split by file; D-J extend V1 types, so serialize work within a module.
+- Groups A and B wait for compiler support for vector types and instruction
+  semantics. The C++ compiler changes only for V1 requirements until I15
+  (implementation-plan.md section 7), so they follow I15 in the Mettle compiler
+  and feed I16. B also needs aarch64/wasm runners.
+- A library change that exposes a compiler defect is a C++ change before I15
+  and needs a correctness or soundness justification.
+- Profile applicability (gate 1 above) is audited before any group is closed.
