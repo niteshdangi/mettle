@@ -33,7 +33,7 @@ void Checker::parameterDefaults(Function &function) {
           (static_cast<std::size_t>(facts(*place).slot) < i ||
            (facts(function).parameterBindings.contains(facts(*place).slot) &&
             facts(function).parameterBindings.at(facts(*place).slot) < i));
-      Type output = type;
+      Type output = type, target = type;
       if (borrowed && checked.types->isView(actual) &&
           checked.types->view(actual).payload == type) {
         output = actual;
@@ -56,6 +56,10 @@ void Checker::parameterDefaults(Function &function) {
       } else if (borrowed && earlierPlace) {
         output = checked.types->viewType(type, mode);
         facts(function).defaultBorrowed[i] = true;
+      } else if (borrowed && !checked.types->isSized(type)) {
+        output = checked.types->viewType(type, mode);
+        target = output;
+        facts(function).defaultBorrowed[i] = true;
       }
       if (checked.types->isView(type) && actual == type) {
         const auto *expression = parameter.defaultValue.get();
@@ -72,7 +76,7 @@ void Checker::parameterDefaults(Function &function) {
           }
         }
       }
-      coerce(*parameter.defaultValue, value, inference.fresh(type),
+      coerce(*parameter.defaultValue, value, inference.fresh(target),
              parameter.span);
       facts(function).defaultValueTypes[i] = output;
       facts(function).defaultAbiResults[i] =
