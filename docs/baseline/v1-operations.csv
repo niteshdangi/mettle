@@ -8176,7 +8176,7 @@ B1c322568cac4525ddbc7d72c,operation:fs::OpenOptions::create,https://doc.rust-lan
 Ba1f04437a4fc30ed1f767f0d,operation:fs::OpenOptions::create_new,https://doc.rust-lang.org/1.99.1/std/fs/struct.OpenOptions.html#method.create_new,,evidenced,tests/std/fs-operations.mt
 Bd4fbaf035b5a047509b87b54,operation:fs::OpenOptions::new,https://doc.rust-lang.org/1.99.1/std/fs/struct.OpenOptions.html#method.new,,evidenced,tests/std/fs-operations.mt
 B5c0d1b31a4a0d70400df18d9,operation:fs::OpenOptions::open,https://doc.rust-lang.org/1.99.1/std/fs/struct.OpenOptions.html#method.open,,evidenced,tests/std/fs-operations.mt
-B119a57a958ff1941eba35190,operation:fs::OpenOptions::read,https://doc.rust-lang.org/1.99.1/std/fs/struct.OpenOptions.html#method.read,,missing,
+B119a57a958ff1941eba35190,operation:fs::OpenOptions::read,https://doc.rust-lang.org/1.99.1/std/fs/struct.OpenOptions.html#method.read,,evidenced,tests/std/fs_basic.mt
 Bac8040260ab65dd594ecdfbe,operation:fs::OpenOptions::truncate,https://doc.rust-lang.org/1.99.1/std/fs/struct.OpenOptions.html#method.truncate,,evidenced,tests/std/i13_fs_create_options.mt;tests/std/i13_fs_positional_io.mt
 B0dc1ab6da8b61baff7ed6736,operation:fs::OpenOptions::write,https://doc.rust-lang.org/1.99.1/std/fs/struct.OpenOptions.html#method.write,,evidenced,tests/std/fs-operations.mt
 Bb2de2f70862be819bdcf6167,operation:fs::Permissions,https://doc.rust-lang.org/1.99.1/std/fs/struct.Permissions.html,,evidenced,tests/std/i13_fs_traits.mt
@@ -8964,8 +8964,8 @@ Bd3ae02736aafff4e4bd47b0a,operation:primitive::array::as_mut_slice,https://doc.r
 B5ffe00ac30bb79997ac9eeb4,operation:primitive::array::as_slice,https://doc.rust-lang.org/1.99.1/core/primitive.array.html#method.as_slice,,evidenced,tests/source/run/i13-prim-array-operations.mt
 B5d2e79872663da8663a4ba62,operation:primitive::array::each_mut,https://doc.rust-lang.org/1.99.1/core/primitive.array.html#method.each_mut,,evidenced,tests/source/run/i13-primitive-array-operations.mt
 B5f7742897d886e7d3703fd67,operation:primitive::array::each_ref,https://doc.rust-lang.org/1.99.1/core/primitive.array.html#method.each_ref,,evidenced,tests/source/run/i13-primitive-array-operations.mt
-B67f2815efa556af2b47e83fc,operation:primitive::array::map,https://doc.rust-lang.org/1.99.1/std/primitive.array.html#method.map,,missing,
-B87aa96aab15209535c0556ed,operation:primitive::array::map,https://doc.rust-lang.org/1.99.1/core/primitive.array.html#method.map,,missing,
+B67f2815efa556af2b47e83fc,operation:primitive::array::map,https://doc.rust-lang.org/1.99.1/std/primitive.array.html#method.map,,evidenced,tests/source/run/i13-core-array-construction.mt
+B87aa96aab15209535c0556ed,operation:primitive::array::map,https://doc.rust-lang.org/1.99.1/core/primitive.array.html#method.map,,evidenced,tests/source/run/i13-core-array-construction.mt
 B2c89e041950ba904f9b7641c,operation:primitive::bool,https://doc.rust-lang.org/1.99.1/core/primitive.bool.html,,evidenced,tests/source/run/i13-num-primitive-operations.mt
 Bf57467aefa4c71ca1492e9fc,operation:primitive::bool::ok_or,https://doc.rust-lang.org/1.99.1/core/primitive.bool.html#method.ok_or,,evidenced,tests/source/run/i13-num-primitive-operations.mt
 B9036a172c8e2da4357e43def,operation:primitive::bool::ok_or_else,https://doc.rust-lang.org/1.99.1/std/primitive.bool.html#method.ok_or_else,,evidenced,tests/source/run/i13-num-primitive-operations.mt
@@ -8979,7 +8979,7 @@ B2a9ff836497650bb124a3879,operation:primitive::char::MAX_LEN_UTF16,https://doc.r
 B56f8d8bca65e4f4f916dd9a3,operation:primitive::char::MAX_LEN_UTF8,https://doc.rust-lang.org/1.99.1/core/primitive.char.html#associatedconstant.MAX_LEN_UTF8,core.char,evidenced,tests/source/run/i13-char-constants-encode.mt;tests/source/run/i13-char-encode-utf8-buffer-too-small.mt
 Bdaee1a7317efcccf5ce1e0f3,operation:primitive::char::MIN,https://doc.rust-lang.org/1.99.1/core/primitive.char.html#associatedconstant.MIN,core.char,evidenced,tests/source/run/i13-char-constants-encode.mt;tests/source/run/i13-char-encode-utf8-buffer-too-small.mt
 Bec2557a5ebdfed67841d15b1,operation:primitive::char::REPLACEMENT_CHARACTER,https://doc.rust-lang.org/1.99.1/core/primitive.char.html#associatedconstant.REPLACEMENT_CHARACTER,core.char,evidenced,tests/source/run/i13-char-constants-encode.mt;tests/source/run/i13-char-encode-utf8-buffer-too-small.mt
-B0b156830552a279439f11542,operation:primitive::char::UNICODE_VERSION,https://doc.rust-lang.org/1.99.1/core/primitive.char.html#associatedconstant.UNICODE_VERSION,,missing,
+B0b156830552a279439f11542,operation:primitive::char::UNICODE_VERSION,https://doc.rust-lang.org/1.99.1/core/primitive.char.html#associatedconstant.UNICODE_VERSION,,evidenced,tests/source/run/i13-char-constants-encode.mt
 B035980022af2d2339bf4d8cb,operation:primitive::char::decode_utf16,https://doc.rust-lang.org/1.99.1/std/primitive.char.html#method.decode_utf16,,evidenced,tests/source/run/i13-num-primitive-operations.mt
 Bc92933a567093d548a3fd6dc,operation:primitive::char::decode_utf16,https://doc.rust-lang.org/1.99.1/core/primitive.char.html#method.decode_utf16,,evidenced,tests/source/run/i13-num-primitive-operations.mt
 Bae2d7ea8fbe718a474f3b544,operation:primitive::char::encode_utf16,https://doc.rust-lang.org/1.99.1/core/primitive.char.html#method.encode_utf16,char.encode_utf16,evidenced,tests/source/run/i13-text-whitespace-splits-boundaries.mt;tests/source/run/i13-char-encode-utf16-buffer-too-small.mt

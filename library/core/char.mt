@@ -224,6 +224,7 @@ extend char {
     pub const REPLACEMENT_CHARACTER: char = '\u{fffd}'
     pub const MAX_LEN_UTF8: usize = 4usize
     pub const MAX_LEN_UTF16: usize = 2usize
+    pub const UNICODE_VERSION: (u8, u8, u8) = (17u8, 0u8, 0u8)
 }
 
 extend char {

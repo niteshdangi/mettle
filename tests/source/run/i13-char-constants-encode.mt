@@ -9,6 +9,7 @@ fn checks_constants(): i32 {
     if char.MIN != '\0' { return 2 }
     if char.REPLACEMENT_CHARACTER != '\u{fffd}' { return 3 }
     if char.MAX_LEN_UTF8 != 4usize || char.MAX_LEN_UTF16 != 2usize { return 4 }
+    if char.UNICODE_VERSION != (17u8, 0u8, 0u8) { return 40 }
     if char.MAX.len_utf8() != char.MAX_LEN_UTF8 { return 6 }
     if char.MAX.len_utf16() != char.MAX_LEN_UTF16 { return 7 }
     0
