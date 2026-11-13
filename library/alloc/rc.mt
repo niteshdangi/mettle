@@ -12,7 +12,7 @@ import core.text.Text
 import core.any.Any
 import super.vec.slice_ptr_mut
 
-type RcHeader {
+type LocalSharedHeader {
     strong: usize
     wk: usize
     allocation: Layout
@@ -20,17 +20,17 @@ type RcHeader {
 
 // Non-empty raw handles own one strong or weak count and preserve slice or
 // witness metadata. Empty weak tokens have a null header and own no count.
-pub type RawRc<T: unsized, A: Allocator = Global> {
+pub type RawLocalShared<T: unsized, A: Allocator = Global> {
     p: ptr<mut T>
-    h: ptr<mut RcHeader>
+    h: ptr<mut LocalSharedHeader>
     a: A
 }
 pub type RawWeak<T: unsized, A: Allocator = Global> {
     p: ptr<mut T>
-    h: ptr<mut RcHeader>
+    h: ptr<mut LocalSharedHeader>
     a: A
 }
-extend<T: unsized, A: Allocator> RawRc<T, A> {
+extend<T: unsized, A: Allocator> RawLocalShared<T, A> {
     pub fn as_ptr(): ptr<mut T> { self.p }
 }
 extend<T: unsized, A: Allocator> RawWeak<T, A> {
@@ -38,7 +38,7 @@ extend<T: unsized, A: Allocator> RawWeak<T, A> {
 }
 
 fn allocation_layout<T>(): (Layout, usize) throws AllocError {
-    let result = capture extend_layout(layout_of<RcHeader>(), layout_of<T>())
+    let result = capture extend_layout(layout_of<LocalSharedHeader>(), layout_of<T>())
     match take result {
         success((layout, offset)) => (layout.pad_to_align(), offset),
         failure(error) => throw AllocError(error.size, error.align)
@@ -51,7 +51,7 @@ fn slice_allocation_layout<T>(len: usize): (Layout, usize, Layout) throws AllocE
         success(layout) => layout,
         failure(error) => throw AllocError(error.size, error.align)
     }
-    let allocation_result = capture extend_layout(layout_of<RcHeader>(), payload)
+    let allocation_result = capture extend_layout(layout_of<LocalSharedHeader>(), payload)
     let (allocation, offset) = match take allocation_result {
         success((layout, offset)) => (layout.pad_to_align(), offset),
         failure(error) => throw AllocError(error.size, error.align)
@@ -60,9 +60,9 @@ fn slice_allocation_layout<T>(len: usize): (Layout, usize, Layout) throws AllocE
 }
 
 // Single-threaded shared owner; the allocator travels with each handle.
-pub type Rc<T: unsized, A: Allocator = Global> {
+pub type LocalShared<T: unsized, A: Allocator = Global> {
     p: ptr<mut T>
-    h: ptr<mut RcHeader>
+    h: ptr<mut LocalSharedHeader>
     a: A
     drop {
         unsafe {
@@ -79,10 +79,10 @@ pub type Rc<T: unsized, A: Allocator = Global> {
 // Non-owning handle: keeps the block (not the payload) alive.
 pub type Weak<T: unsized, A: Allocator = Global> {
     p: ptr<mut T>
-    h: ptr<mut RcHeader>
+    h: ptr<mut LocalSharedHeader>
     a: A
     drop {
-        if self.h != core.ptr.null_mut<RcHeader>() {
+        if self.h != core.ptr.null_mut<LocalSharedHeader>() {
             unsafe {
                 let _guard = WeakRelease(self.h, core.ptr.from_mut(self.a))
             }
@@ -92,7 +92,7 @@ pub type Weak<T: unsized, A: Allocator = Global> {
 
 // Drops one weak reference and frees the block when none remain.
 type WeakRelease<A: Allocator> {
-    p: ptr<mut RcHeader>
+    p: ptr<mut LocalSharedHeader>
     a: ptr<mut A>
     drop {
         unsafe {
@@ -103,31 +103,31 @@ type WeakRelease<A: Allocator> {
     }
 }
 
-pub fn try_new_in<T, A: Allocator>(take value: T, take allocator: A): Rc<T, A> throws AllocError {
+pub fn try_new_in<T, A: Allocator>(take value: T, take allocator: A): LocalShared<T, A> throws AllocError {
     var a = allocator
     let (layout, offset) = try allocation_layout<T>()
     let raw = try a.allocate(layout)
-    let b = raw.cast<RcHeader>()
+    let b = raw.cast<LocalSharedHeader>()
     let p = unsafe { raw.add(offset) }.cast<T>()
     unsafe {
-        core.ptr.write(b, RcHeader(1usize, 1usize, layout))
+        core.ptr.write(b, LocalSharedHeader(1usize, 1usize, layout))
         core.ptr.write(p, value)
     }
-    Rc(p, b, a)
+    LocalShared(p, b, a)
 }
-pub fn new_in<T, A: Allocator>(take value: T, take allocator: A): Rc<T, A> {
+pub fn new_in<T, A: Allocator>(take value: T, take allocator: A): LocalShared<T, A> {
     let outcome = capture try_new_in(value, allocator)
     match take outcome {
         success(r) => r,
         failure(e) => handle_alloc_error(unsafe { layout_unchecked(e.size, e.align) })
     }
 }
-pub fn new<T>(take value: T): Rc<T> { new_in(value, Global()) }
-pub fn try_new<T>(take value: T): Rc<T> throws AllocError { try try_new_in(value, Global()) }
+pub fn new<T>(take value: T): LocalShared<T> { new_in(value, Global()) }
+pub fn try_new<T>(take value: T): LocalShared<T> throws AllocError { try try_new_in(value, Global()) }
 
 // An empty Weak has no allocation or count; its null header is the sentinel.
 pub fn new_weak<T>(): Weak<T> {
-    Weak(core.ptr.null_mut<T>(), core.ptr.null_mut<RcHeader>(), Global())
+    Weak(core.ptr.null_mut<T>(), core.ptr.null_mut<LocalSharedHeader>(), Global())
 }
 
 extend<T> Weak<T> implements core.default.Default {
@@ -136,70 +136,70 @@ extend<T> Weak<T> implements core.default.Default {
 
 pub fn try_new_uninit_in<T, A: Allocator>(
     take allocator: A
-): Rc<core.mem.MaybeUninit<T>, A> throws AllocError {
+): LocalShared<core.mem.MaybeUninit<T>, A> throws AllocError {
     try try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
 }
-pub fn new_uninit_in<T, A: Allocator>(take allocator: A): Rc<core.mem.MaybeUninit<T>, A> {
+pub fn new_uninit_in<T, A: Allocator>(take allocator: A): LocalShared<core.mem.MaybeUninit<T>, A> {
     let result = capture try_new_uninit_in<T, A>(allocator)
     match take result {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
     }
 }
-pub fn try_new_uninit<T>(): Rc<core.mem.MaybeUninit<T>> throws AllocError {
+pub fn try_new_uninit<T>(): LocalShared<core.mem.MaybeUninit<T>> throws AllocError {
     try try_new_uninit_in<T, Global>(Global())
 }
-pub fn new_uninit<T>(): Rc<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(Global()) }
+pub fn new_uninit<T>(): LocalShared<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>(Global()) }
 
 pub fn try_new_zeroed_in<T, A: Allocator>(
     take allocator: A
-): Rc<core.mem.MaybeUninit<T>, A> throws AllocError {
+): LocalShared<core.mem.MaybeUninit<T>, A> throws AllocError {
     try try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
 }
-pub fn new_zeroed_in<T, A: Allocator>(take allocator: A): Rc<core.mem.MaybeUninit<T>, A> {
+pub fn new_zeroed_in<T, A: Allocator>(take allocator: A): LocalShared<core.mem.MaybeUninit<T>, A> {
     let result = capture try_new_zeroed_in<T, A>(allocator)
     match take result {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
     }
 }
-pub fn try_new_zeroed<T>(): Rc<core.mem.MaybeUninit<T>> throws AllocError {
+pub fn try_new_zeroed<T>(): LocalShared<core.mem.MaybeUninit<T>> throws AllocError {
     try try_new_zeroed_in<T, Global>(Global())
 }
-pub fn new_zeroed<T>(): Rc<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(Global()) }
+pub fn new_zeroed<T>(): LocalShared<core.mem.MaybeUninit<T>> { new_zeroed_in<T, Global>(Global()) }
 
 fn try_new_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A,
     zeroed: bool
-): Rc<[core.mem.MaybeUninit<T>], A> throws AllocError {
+): LocalShared<[core.mem.MaybeUninit<T>], A> throws AllocError {
     var a = allocator
     let (layout, offset, payload) = try slice_allocation_layout<T>(len)
     let raw = try a.allocate(layout)
-    let h = raw.cast<RcHeader>()
+    let h = raw.cast<LocalSharedHeader>()
     let data = unsafe { raw.add(offset) }.cast<core.mem.MaybeUninit<T>>()
     unsafe {
-        core.ptr.write(h, RcHeader(1usize, 1usize, layout))
+        core.ptr.write(h, LocalSharedHeader(1usize, 1usize, layout))
         if zeroed && payload.size() != 0usize {
             // Only the payload extent is zeroed; the reference-count header
             // remains initialized, and all payload slots remain MaybeUninit.
             core.ptr.write_bytes(data.cast<u8>(), 0u8, payload.size())
         }
     }
-    Rc(slice_ptr_mut(data, len), h, a)
+    LocalShared(slice_ptr_mut(data, len), h, a)
 }
 
 pub fn try_new_uninit_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
-): Rc<[core.mem.MaybeUninit<T>], A> throws AllocError {
+): LocalShared<[core.mem.MaybeUninit<T>], A> throws AllocError {
     try try_new_slice_in<T, A>(len, allocator, false)
 }
 
 pub fn new_uninit_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
-): Rc<[core.mem.MaybeUninit<T>], A> {
+): LocalShared<[core.mem.MaybeUninit<T>], A> {
     let result = capture try_new_uninit_slice_in<T, A>(len, allocator)
     match take result {
         success(owner) => owner,
@@ -211,25 +211,25 @@ pub fn new_uninit_slice_in<T, A: Allocator>(
 
 pub fn try_new_uninit_slice<T>(
     len: usize
-): Rc<[core.mem.MaybeUninit<T>]> throws AllocError {
+): LocalShared<[core.mem.MaybeUninit<T>]> throws AllocError {
     try try_new_uninit_slice_in<T, Global>(len, Global())
 }
 
-pub fn new_uninit_slice<T>(len: usize): Rc<[core.mem.MaybeUninit<T>]> {
+pub fn new_uninit_slice<T>(len: usize): LocalShared<[core.mem.MaybeUninit<T>]> {
     new_uninit_slice_in<T, Global>(len, Global())
 }
 
 pub fn try_new_zeroed_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
-): Rc<[core.mem.MaybeUninit<T>], A> throws AllocError {
+): LocalShared<[core.mem.MaybeUninit<T>], A> throws AllocError {
     try try_new_slice_in<T, A>(len, allocator, true)
 }
 
 pub fn new_zeroed_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
-): Rc<[core.mem.MaybeUninit<T>], A> {
+): LocalShared<[core.mem.MaybeUninit<T>], A> {
     let result = capture try_new_zeroed_slice_in<T, A>(len, allocator)
     match take result {
         success(owner) => owner,
@@ -241,36 +241,36 @@ pub fn new_zeroed_slice_in<T, A: Allocator>(
 
 pub fn try_new_zeroed_slice<T>(
     len: usize
-): Rc<[core.mem.MaybeUninit<T>]> throws AllocError {
+): LocalShared<[core.mem.MaybeUninit<T>]> throws AllocError {
     try try_new_zeroed_slice_in<T, Global>(len, Global())
 }
 
-pub fn new_zeroed_slice<T>(len: usize): Rc<[core.mem.MaybeUninit<T>]> {
+pub fn new_zeroed_slice<T>(len: usize): LocalShared<[core.mem.MaybeUninit<T>]> {
     new_zeroed_slice_in<T, Global>(len, Global())
 }
 
 // Copies only from a validated Text view, preserving Text's UTF-8 invariant.
-pub fn try_copy_text_in<A: Allocator>(read value: Text, take allocator: A): Rc<Text, A> throws AllocError {
+pub fn try_copy_text_in<A: Allocator>(read value: Text, take allocator: A): LocalShared<Text, A> throws AllocError {
     var a = allocator
     let bytes = value.as_bytes()
-    let result = capture extend_layout(layout_of<RcHeader>(), super.alloc.layout_of_val(bytes))
+    let result = capture extend_layout(layout_of<LocalSharedHeader>(), super.alloc.layout_of_val(bytes))
     let (layout, offset) = match take result {
         success((layout, offset)) => (layout.pad_to_align(), offset),
         failure(error) => throw AllocError(error.size, error.align)
     }
     let raw = try a.allocate(layout)
-    let h = raw.cast<RcHeader>()
+    let h = raw.cast<LocalSharedHeader>()
     let data = unsafe { raw.add(offset) }.cast<u8>()
     unsafe {
-        core.ptr.write(h, RcHeader(1usize, 1usize, layout))
+        core.ptr.write(h, LocalSharedHeader(1usize, 1usize, layout))
         core.ptr.copy(core.slice.data(bytes), data, bytes.len())
     }
     let slice = slice_ptr_mut(data, bytes.len())
     let text = unsafe { core.mem.transmute<ptr<mut Text>>(slice) }
-    Rc(text, h, a)
+    LocalShared(text, h, a)
 }
 
-pub fn copy_text_in<A: Allocator>(read value: Text, take allocator: A): Rc<Text, A> {
+pub fn copy_text_in<A: Allocator>(read value: Text, take allocator: A): LocalShared<Text, A> {
     let outcome = capture try_copy_text_in(value, allocator)
     match take outcome {
         success(owner) => owner,
@@ -278,10 +278,10 @@ pub fn copy_text_in<A: Allocator>(read value: Text, take allocator: A): Rc<Text,
     }
 }
 
-pub fn try_copy_text(read value: Text): Rc<Text> throws AllocError {
+pub fn try_copy_text(read value: Text): LocalShared<Text> throws AllocError {
     try try_copy_text_in(value, Global())
 }
-pub fn copy_text(read value: Text): Rc<Text> { copy_text_in(value, Global()) }
+pub fn copy_text(read value: Text): LocalShared<Text> { copy_text_in(value, Global()) }
 
 fn bump(count: usize): usize {
     // Overflow would let a count wrap to zero and free a live payload.
@@ -292,16 +292,16 @@ fn bump(count: usize): usize {
 pub fn try_new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
     take allocator: A,
     take make: F
-): Rc<T, A> throws AllocError {
+): LocalShared<T, A> throws AllocError {
     var a = allocator
     let weak_allocator = a.clone()
     let (layout, offset) = try allocation_layout<T>()
     let raw = try a.allocate(layout)
-    let h = raw.cast<RcHeader>()
+    let h = raw.cast<LocalSharedHeader>()
     let p = unsafe { raw.add(offset) }.cast<T>()
     // Keep upgrades disabled until the payload is initialized; the guard
     // releases the implicit weak count if the constructor unwinds.
-    unsafe { core.ptr.write(h, RcHeader(0usize, 2usize, layout)) }
+    unsafe { core.ptr.write(h, LocalSharedHeader(0usize, 2usize, layout)) }
     let weak_handle = Weak(p, h, weak_allocator)
     let _guard = WeakRelease(h, core.ptr.from_mut(a))
     let value = make(read weak_handle)
@@ -310,31 +310,31 @@ pub fn try_new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T
         (*h).strong = 1usize
     }
     core.mem.forget(take _guard)
-    Rc(p, h, a)
+    LocalShared(p, h, a)
 }
 pub fn new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
     take allocator: A,
     take make: F
-): Rc<T, A> {
+): LocalShared<T, A> {
     let result = capture try_new_cyclic_in<T, A, F>(allocator, make)
     match take result {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
     }
 }
-pub fn try_new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): Rc<T> throws AllocError {
+pub fn try_new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): LocalShared<T> throws AllocError {
     try try_new_cyclic_in<T, Global, F>(Global(), make)
 }
-pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): Rc<T> {
+pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): LocalShared<T> {
     new_cyclic_in<T, Global, F>(Global(), make)
 }
 
-extend<T: unsized, A: Allocator + Clone> Rc<T, A> {
+extend<T: unsized, A: Allocator + Clone> LocalShared<T, A> {
     // Another strong owner of the same payload; the payload is not cloned.
-    pub fn retain(): Rc<T, A> {
+    pub fn retain(): LocalShared<T, A> {
         let allocator = self.a.clone()
         unsafe { (*self.h).strong = bump((*self.h).strong) }
-        Rc(self.p, self.h, allocator)
+        LocalShared(self.p, self.h, allocator)
     }
     pub fn downgrade(): Weak<T, A> {
         let allocator = self.a.clone()
@@ -342,35 +342,35 @@ extend<T: unsized, A: Allocator + Clone> Rc<T, A> {
         Weak(self.p, self.h, allocator)
     }
 }
-extend<T: unsized, A: Allocator + Clone> Rc<T, A> implements Clone {
-    fn clone(): Rc<T, A> { self.retain() }
+extend<T: unsized, A: Allocator + Clone> LocalShared<T, A> implements Clone {
+    fn clone(): LocalShared<T, A> { self.retain() }
 }
 
-extend<T, A: Allocator> Rc<core.mem.MaybeUninit<T>, A> {
+extend<T, A: Allocator> LocalShared<core.mem.MaybeUninit<T>, A> {
     // Safety: the caller initialized the payload before taking ownership as T.
-    pub take unsafe fn assume_init(): Rc<T, A> {
+    pub take unsafe fn assume_init(): LocalShared<T, A> {
         let raw = self.into_raw()
-        unsafe { from_raw(RawRc(raw.p.cast<T>(), raw.h, raw.a)) }
+        unsafe { from_raw(RawLocalShared(raw.p.cast<T>(), raw.h, raw.a)) }
     }
 }
 
-extend<T, A: Allocator> Rc<[core.mem.MaybeUninit<T>], A> {
+extend<T, A: Allocator> LocalShared<[core.mem.MaybeUninit<T>], A> {
     // Safety: every element is initialized as T; element layout and length
     // metadata are unchanged by replacing MaybeUninit<T> with T.
-    pub take unsafe fn assume_init(): Rc<[T], A> {
+    pub take unsafe fn assume_init(): LocalShared<[T], A> {
         let raw = self.into_raw()
         let slice = unsafe { core.mem.transmute<ptr<mut [T]>>(raw.p) }
-        unsafe { from_raw(RawRc(slice, raw.h, raw.a)) }
+        unsafe { from_raw(RawLocalShared(slice, raw.h, raw.a)) }
     }
 }
 
-extend<T: unsized, A: Allocator> Rc<T, A> {
+extend<T: unsized, A: Allocator> LocalShared<T, A> {
     pub fn get(): read T from self { unsafe { read *self.p } }
     // The pointer is valid while this strong owner remains alive.
     pub fn as_ptr(): ptr<read T> { self.p.cast_const() }
     pub fn strong_count(): usize { unsafe { (*self.h).strong } }
     pub fn weak_count(): usize { unsafe { (*self.h).wk - 1usize } }
-    pub fn ptr_eq(read other: Rc<T, A>): bool { self.h == other.h }
+    pub fn ptr_eq(read other: LocalShared<T, A>): bool { self.h == other.h }
     pub fn is_unique(): bool { unsafe { (*self.h).strong == 1usize && (*self.h).wk == 1usize } }
     // Exclusive access only while no other strong or weak handle exists.
     pub mut fn get_mut(): (mut T from self)? {
@@ -378,11 +378,11 @@ extend<T: unsized, A: Allocator> Rc<T, A> {
     }
 }
 
-extend<T, A: Allocator> Rc<T, A> {
+extend<T, A: Allocator> LocalShared<T, A> {
     // Moves the payload out when this is the only strong owner; otherwise the
     // handle is returned unchanged. Weak handles may remain but can no longer
     // upgrade.
-    pub take fn try_unwrap(): T throws Rc<T, A> {
+    pub take fn try_unwrap(): T throws LocalShared<T, A> {
         if unsafe { (*self.h).strong } != 1usize { throw self }
         unsafe {
             let b = self.h
@@ -412,47 +412,47 @@ extend<T, A: Allocator> Rc<T, A> {
     }
 }
 
-extend<T: unsized, A: Allocator> Rc<T, A> {
-    pub take fn into_raw(): RawRc<T, A> {
+extend<T: unsized, A: Allocator> LocalShared<T, A> {
+    pub take fn into_raw(): RawLocalShared<T, A> {
         unsafe {
             let p = self.p
             let h = self.h
             let a = core.ptr.`read`(core.ptr.from_ref(self.a))
             core.mem.forget(take self)
-            RawRc(p, h, a)
+            RawLocalShared(p, h, a)
         }
     }
 }
-pub unsafe fn from_raw<T: unsized, A: Allocator>(take raw: RawRc<T, A>): Rc<T, A> {
-    Rc(raw.p, raw.h, raw.a)
+pub unsafe fn from_raw<T: unsized, A: Allocator>(take raw: RawLocalShared<T, A>): LocalShared<T, A> {
+    LocalShared(raw.p, raw.h, raw.a)
 }
 // Creates a second raw ownership token; consume both tokens exactly once.
 pub unsafe fn increment_strong_count<T: unsized, A: Allocator + Clone>(
-    read raw: RawRc<T, A>
-): RawRc<T, A> {
+    read raw: RawLocalShared<T, A>
+): RawLocalShared<T, A> {
     let allocator = raw.a.clone()
     unsafe { (*raw.h).strong = bump((*raw.h).strong) }
-    RawRc(raw.p, raw.h, allocator)
+    RawLocalShared(raw.p, raw.h, allocator)
 }
-pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(take raw: RawRc<T, A>): Unit {
+pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(take raw: RawLocalShared<T, A>): Unit {
     let _owner = unsafe { from_raw(raw) }
 }
 
 extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
-    pub fn upgrade(): Rc<T, A>? {
-        if self.h == core.ptr.null_mut<RcHeader>() { return none }
+    pub fn upgrade(): LocalShared<T, A>? {
+        if self.h == core.ptr.null_mut<LocalSharedHeader>() { return none }
         if unsafe { (*self.h).strong } == 0usize { return none }
         let allocator = self.a.clone()
         unsafe {
             let b = self.h
             if (*b).strong == 0usize { return none }
             (*b).strong = bump((*b).strong)
-            present(Rc(self.p, b, allocator))
+            present(LocalShared(self.p, b, allocator))
         }
     }
     pub fn retain(): Weak<T, A> {
         let allocator = self.a.clone()
-        if self.h != core.ptr.null_mut<RcHeader>() {
+        if self.h != core.ptr.null_mut<LocalSharedHeader>() {
             unsafe { (*self.h).wk = bump((*self.h).wk) }
         }
         Weak(self.p, self.h, allocator)
@@ -479,11 +479,11 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
     // dereferencing it.
     pub fn as_ptr(): ptr<read T> { self.p.cast_const() }
     pub fn strong_count(): usize {
-        if self.h == core.ptr.null_mut<RcHeader>() { return 0usize }
+        if self.h == core.ptr.null_mut<LocalSharedHeader>() { return 0usize }
         unsafe { (*self.h).strong }
     }
     pub fn weak_count(): usize {
-        if self.h == core.ptr.null_mut<RcHeader>() { return 0usize }
+        if self.h == core.ptr.null_mut<LocalSharedHeader>() { return 0usize }
         unsafe {
             if (*self.h).strong == 0usize {
                 0usize
@@ -495,7 +495,7 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
     pub fn ptr_eq(read other: Weak<T, A>): bool { self.h == other.h }
 }
 
-extend<T: Clone, A: Allocator + Clone> Rc<T, A> {
+extend<T: Clone, A: Allocator + Clone> LocalShared<T, A> {
     pub mut fn make_mut(): mut T from self {
         if self.is_unique() { return unsafe { mut *self.p } }
         let replacement = new_uninit_in<T, A>(self.a.clone())
@@ -519,21 +519,21 @@ extend<T: Clone, A: Allocator + Clone> Rc<T, A> {
     }
 }
 
-extend<T: Default> Rc<T> implements Default {
-    static fn default(): Rc<T> { new(T.(Default).default()) }
+extend<T: Default> LocalShared<T> implements Default {
+    static fn default(): LocalShared<T> { new(T.(Default).default()) }
 }
-extend<T> Rc<[T]> implements Default {
-    static fn default(): Rc<[T]> {
+extend<T> LocalShared<[T]> implements Default {
+    static fn default(): LocalShared<[T]> {
         unsafe { new_zeroed_slice<T>(0usize).assume_init() }
     }
 }
-extend Rc<Text> implements Default {
-    static fn default(): Rc<Text> { copy_text("") }
+extend LocalShared<Text> implements Default {
+    static fn default(): LocalShared<Text> { copy_text("") }
 }
 
-extend<T, A: Allocator> Rc<[T], A> implements From<super.vec.List<T, A>> {
-    static fn from(take values: super.vec.List<T, A>): Rc<[T], A> {
-        let source = values.into_boxed_slice()
+extend<T, A: Allocator> LocalShared<[T], A> implements From<super.vec.List<T, A>> {
+    static fn from(take values: super.vec.List<T, A>): LocalShared<[T], A> {
+        let source = values.into_heap_slice()
         let length = source.get().len()
         let source_layout = super.alloc.layout_of_val(source.get())
         let raw = source.into_raw()
@@ -555,13 +555,13 @@ extend<T, A: Allocator> Rc<[T], A> implements From<super.vec.List<T, A>> {
         }
         // The helper places the header and the length-sized, aligned payload
         // inside this exact allocation before any pointer arithmetic occurs.
-        let header = allocation.cast<RcHeader>()
+        let header = allocation.cast<LocalSharedHeader>()
         let destination = unsafe { allocation.add(offset) }.cast<core.mem.MaybeUninit<T>>()
-        unsafe { core.ptr.write(header, RcHeader(1usize, 1usize, allocation_layout)) }
+        unsafe { core.ptr.write(header, LocalSharedHeader(1usize, 1usize, allocation_layout)) }
 
         var index = 0usize
         while index < length {
-            // The consumed Box owns exactly `length` initialized source items;
+            // The consumed Heap owns exactly `length` initialized source items;
             // each is moved once into a distinct in-bounds uninitialized slot.
             unsafe {
                 let item = core.ptr.`read`(source_items.add(index))
@@ -573,7 +573,7 @@ extend<T, A: Allocator> Rc<[T], A> implements From<super.vec.List<T, A>> {
             index += 1usize
         }
         let slice = slice_ptr_mut(destination.cast<T>(), length)
-        var owner = Rc(slice, header, allocator)
+        var owner = LocalShared(slice, header, allocator)
         // The source is moved-from and its captured dynamic layout remains
         // paired with the same allocator value now owned by `owner`.
         let _release_source = unsafe {
@@ -589,8 +589,8 @@ extend<T, A: Allocator> Rc<[T], A> implements From<super.vec.List<T, A>> {
 }
 
 // Shared handles compare, hash and format as their payload; `ptr_eq` tests identity.
-extend<T, const N: usize> Rc<[T]> implements From<[T; N]> {
-    static fn from(take items: [T; N]): Rc<[T]> {
+extend<T, const N: usize> LocalShared<[T]> implements From<[T; N]> {
+    static fn from(take items: [T; N]): LocalShared<[T]> {
         var owner = new_uninit_slice<T>(N)
         {
             let destination = match take owner.get_mut() {
@@ -615,68 +615,68 @@ extend<T, const N: usize> Rc<[T]> implements From<[T; N]> {
     }
 }
 
-extend<T, const N: usize, A: Allocator> Rc<[T; N], A>
-    implements TryFrom<Rc<[T], A>>
+extend<T, const N: usize, A: Allocator> LocalShared<[T; N], A>
+    implements TryFrom<LocalShared<[T], A>>
 {
-    type Error = Rc<[T], A>
+    type Error = LocalShared<[T], A>
 
-    static fn try_from(take value: Rc<[T], A>): Outcome<Rc<[T; N], A>, Rc<[T], A>> {
+    static fn try_from(take value: LocalShared<[T], A>): Outcome<LocalShared<[T; N], A>, LocalShared<[T], A>> {
         if value.get().len() != N { return failure(value) }
         let raw = value.into_raw()
         // Equal lengths preserve layout when slice metadata becomes an array type.
-        success(unsafe { from_raw(RawRc(raw.p.cast<[T; N]>(), raw.h, raw.a)) })
+        success(unsafe { from_raw(RawLocalShared(raw.p.cast<[T; N]>(), raw.h, raw.a)) })
     }
 }
 
-extend<T: unsized, A: Allocator> Rc<T, A> implements Deref {
+extend<T: unsized, A: Allocator> LocalShared<T, A> implements Deref {
     type Target = T
     fn deref(): read T from self { self.get() }
 }
-extend<T: unsized, A: Allocator> Rc<T, A> implements AsRef<T> {
+extend<T: unsized, A: Allocator> LocalShared<T, A> implements AsRef<T> {
     fn as_ref(): read T from self { self.get() }
 }
-extend<T: unsized, A: Allocator> Rc<T, A> implements Borrow<T> {
+extend<T: unsized, A: Allocator> LocalShared<T, A> implements Borrow<T> {
     fn borrow(): read T from self { self.get() }
 }
-extend<T> Rc<T> implements From<T> {
-    static fn from(take value: T): Rc<T> { new(value) }
+extend<T> LocalShared<T> implements From<T> {
+    static fn from(take value: T): LocalShared<T> { new(value) }
 }
-extend<T: PartialEq + unsized, A: Allocator> Rc<T, A> implements PartialEq {
-    fn eq(read other: Rc<T, A>): bool { self.get().eq(other.get()) }
+extend<T: PartialEq + unsized, A: Allocator> LocalShared<T, A> implements PartialEq {
+    fn eq(read other: LocalShared<T, A>): bool { self.get().eq(other.get()) }
 }
-extend<T: Eq + unsized, A: Allocator> Rc<T, A> implements Eq {}
-extend<T: PartialOrd + unsized, A: Allocator> Rc<T, A> implements PartialOrd {
-    fn partial_cmp(read other: Rc<T, A>): Ordering? { self.get().partial_cmp(other.get()) }
+extend<T: Eq + unsized, A: Allocator> LocalShared<T, A> implements Eq {}
+extend<T: PartialOrd + unsized, A: Allocator> LocalShared<T, A> implements PartialOrd {
+    fn partial_cmp(read other: LocalShared<T, A>): Ordering? { self.get().partial_cmp(other.get()) }
 }
-extend<T: Ord + unsized, A: Allocator> Rc<T, A> implements Ord {
-    fn cmp(read other: Rc<T, A>): Ordering { self.get().cmp(other.get()) }
+extend<T: Ord + unsized, A: Allocator> LocalShared<T, A> implements Ord {
+    fn cmp(read other: LocalShared<T, A>): Ordering { self.get().cmp(other.get()) }
 }
-extend<T: Hash + unsized, A: Allocator> Rc<T, A> implements Hash {
+extend<T: Hash + unsized, A: Allocator> LocalShared<T, A> implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit { self.get().hash(mut state) }
 }
-extend<T: fmt.Display + unsized, A: Allocator> Rc<T, A> implements fmt.Display {
+extend<T: fmt.Display + unsized, A: Allocator> LocalShared<T, A> implements fmt.Display {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Display).fmt(self.get(), mut f) }
 }
-extend<T: fmt.Debug + unsized, A: Allocator> Rc<T, A> implements fmt.Debug {
+extend<T: fmt.Debug + unsized, A: Allocator> LocalShared<T, A> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try T.(fmt.Debug).fmt(self.get(), mut f) }
 }
 
-extend<A: Allocator> Rc<any Any, A> {
-    pub take fn downcast<T: Static>(): Outcome<Rc<T, A>, Rc<any Any, A>> {
+extend<A: Allocator> LocalShared<any Any, A> {
+    pub take fn downcast<T: Static>(): Outcome<LocalShared<T, A>, LocalShared<any Any, A>> {
         if !core.any.is<T>(self.get()) { return failure(self) }
         let raw = self.into_raw()
         // A matching TypeId guarantees the erased payload has T's layout.
-        success(unsafe { from_raw(RawRc(raw.p.cast<T>(), raw.h, raw.a)) })
+        success(unsafe { from_raw(RawLocalShared(raw.p.cast<T>(), raw.h, raw.a)) })
     }
 }
 
 // Shared owner whose payload never moves until the last owner destroys it.
-// Only `pin` creates one: an existing `Rc` may have unpinned siblings that
+// Only `pin` creates one: an existing `LocalShared` may have unpinned siblings that
 // could still move the payload out. Owners reach the payload only by
 // shared or pinned-read access.
 pub type Pinned<T: unsized, A: Allocator = Global> {
     p: ptr<mut T>
-    h: ptr<mut RcHeader>
+    h: ptr<mut LocalSharedHeader>
     a: A
     drop {
         unsafe {
@@ -791,25 +791,25 @@ extend Pinned<Text> implements Default {
 extend<T: unsized, A: Allocator> Weak<T, A> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("(Weak)") }
 }
-extend<region r> Rc<Text> implements From<read Text from r> {
-    static fn from(take value: read Text from r): Rc<Text> { copy_text(value) }
+extend<region r> LocalShared<Text> implements From<read Text from r> {
+    static fn from(take value: read Text from r): LocalShared<Text> { copy_text(value) }
 }
-extend Rc<Text> implements From<super.string.String> {
-    static fn from(take value: super.string.String): Rc<Text> { copy_text(value.as_text()) }
+extend LocalShared<Text> implements From<super.string.String> {
+    static fn from(take value: super.string.String): LocalShared<Text> { copy_text(value.as_text()) }
 }
-extend<region r> Rc<Text> implements From<mut Text from r> {
-    static fn from(take value: mut Text from r): Rc<Text> { copy_text(read value) }
+extend<region r> LocalShared<Text> implements From<mut Text from r> {
+    static fn from(take value: mut Text from r): LocalShared<Text> { copy_text(read value) }
 }
-extend<T: unsized, A: Allocator> Rc<T, A> implements From<super.boxed.Box<T, A>> {
-    static fn from(take value: super.boxed.Box<T, A>): Rc<T, A> {
-        let moved = capture unsafe { value.try_move_with_prefix(layout_of<RcHeader>()) }
+extend<T: unsized, A: Allocator> LocalShared<T, A> implements From<super.boxed.Heap<T, A>> {
+    static fn from(take value: super.boxed.Heap<T, A>): LocalShared<T, A> {
+        let moved = capture unsafe { value.try_move_with_prefix(layout_of<LocalSharedHeader>()) }
         let (pointer, block, allocation, source, source_layout, allocator) = match take moved {
             success(parts) => parts,
             failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
         }
-        let header = block.cast<RcHeader>()
-        unsafe { core.ptr.write(header, RcHeader(1usize, 1usize, allocation)) }
-        var owner = Rc(pointer, header, allocator)
+        let header = block.cast<LocalSharedHeader>()
+        unsafe { core.ptr.write(header, LocalSharedHeader(1usize, 1usize, allocation)) }
+        var owner = LocalShared(pointer, header, allocator)
         let _release_source = unsafe {
             super.alloc.free_block(source, source_layout, core.ptr.from_mut(owner.a))
         }
@@ -817,58 +817,58 @@ extend<T: unsized, A: Allocator> Rc<T, A> implements From<super.boxed.Box<T, A>>
         owner
     }
 }
-extend Rc<core.ffi.CStr> implements From<super.ffi.CString> {
-    static fn from(take value: super.ffi.CString): Rc<core.ffi.CStr> {
-        Rc<core.ffi.CStr>.(From<super.boxed.Box<core.ffi.CStr>>).from(
-            value.into_boxed_c_str()
+extend LocalShared<core.ffi.CStr> implements From<super.ffi.CString> {
+    static fn from(take value: super.ffi.CString): LocalShared<core.ffi.CStr> {
+        LocalShared<core.ffi.CStr>.(From<super.boxed.Heap<core.ffi.CStr>>).from(
+            value.into_heap_c_str()
         )
     }
 }
-extend<region r> Rc<core.ffi.CStr> implements From<read core.ffi.CStr from r> {
-    static fn from(take value: read core.ffi.CStr from r): Rc<core.ffi.CStr> {
-        Rc<core.ffi.CStr>.(From<super.ffi.CString>).from(value.to_owned())
+extend<region r> LocalShared<core.ffi.CStr> implements From<read core.ffi.CStr from r> {
+    static fn from(take value: read core.ffi.CStr from r): LocalShared<core.ffi.CStr> {
+        LocalShared<core.ffi.CStr>.(From<super.ffi.CString>).from(value.to_owned())
     }
 }
-extend<region r> Rc<core.ffi.CStr> implements From<mut core.ffi.CStr from r> {
-    static fn from(take value: mut core.ffi.CStr from r): Rc<core.ffi.CStr> {
-        Rc<core.ffi.CStr>.(From<super.ffi.CString>).from(value.to_owned())
+extend<region r> LocalShared<core.ffi.CStr> implements From<mut core.ffi.CStr from r> {
+    static fn from(take value: mut core.ffi.CStr from r): LocalShared<core.ffi.CStr> {
+        LocalShared<core.ffi.CStr>.(From<super.ffi.CString>).from(value.to_owned())
     }
 }
-extend<region r, B: core.borrow.ToOwned + unsized> Rc<B> implements From<super.borrow.BorrowedOrOwned<region r, B>> where Rc<B>: From<read B from r> + From<B.Owned> {
-    static fn from(take value: super.borrow.BorrowedOrOwned<region r, B>): Rc<B> {
+extend<region r, B: core.borrow.ToOwned + unsized> LocalShared<B> implements From<super.borrow.BorrowedOrOwned<region r, B>> where LocalShared<B>: From<read B from r> + From<B.Owned> {
+    static fn from(take value: super.borrow.BorrowedOrOwned<region r, B>): LocalShared<B> {
         match take value {
-            super.borrow.BorrowedOrOwned.Borrowed(view) => Rc<B>.(From<read B from r>).from(view),
-            super.borrow.BorrowedOrOwned.Owned(owner) => Rc<B>.(From<B.Owned>).from(owner)
+            super.borrow.BorrowedOrOwned.Borrowed(view) => LocalShared<B>.(From<read B from r>).from(view),
+            super.borrow.BorrowedOrOwned.Owned(owner) => LocalShared<B>.(From<B.Owned>).from(owner)
         }
     }
 }
-extend<A: Allocator> Rc<[u8], A> implements From<Rc<Text, A>> {
-    static fn from(take value: Rc<Text, A>): Rc<[u8], A> {
+extend<A: Allocator> LocalShared<[u8], A> implements From<LocalShared<Text, A>> {
+    static fn from(take value: LocalShared<Text, A>): LocalShared<[u8], A> {
         let raw = value.into_raw()
         // Text is a byte-slice tail with identical metadata and alignment.
         let bytes = unsafe { core.mem.transmute<ptr<mut [u8]>>(raw.p) }
-        Rc(bytes, raw.h, raw.a)
+        LocalShared(bytes, raw.h, raw.a)
     }
 }
-extend<region r, T: Clone> Rc<[T]> implements From<read [T] from r> {
-    static fn from(take values: read [T] from r): Rc<[T]> {
+extend<region r, T: Clone> LocalShared<[T]> implements From<read [T] from r> {
+    static fn from(take values: read [T] from r): LocalShared<[T]> {
         var copies = super.vec.with_capacity<T>(values.len())
         var index = 0usize
         while index < values.len() {
             copies.push(values[index].clone())
             index += 1usize
         }
-        Rc<[T]>.from(copies)
+        LocalShared<[T]>.from(copies)
     }
 }
-extend<region r, T: Clone> Rc<[T]> implements From<mut [T] from r> {
-    static fn from(take values: mut [T] from r): Rc<[T]> {
-        Rc<[T]>.from(values.to_vec())
+extend<region r, T: Clone> LocalShared<[T]> implements From<mut [T] from r> {
+    static fn from(take values: mut [T] from r): LocalShared<[T]> {
+        LocalShared<[T]>.from(values.to_vec())
     }
 }
-extend<T> Rc<[T]> implements FromItems<T> {
-    static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): Rc<[T]> {
+extend<T> LocalShared<[T]> implements FromItems<T> {
+    static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): LocalShared<[T]> {
         let values = super.vec.List<T>.(FromItems<T>).from_iter(items)
-        Rc<[T]>.from(values)
+        LocalShared<[T]>.from(values)
     }
 }

@@ -13,7 +13,7 @@ import super.sys
 import super.time.{Duration, Instant}
 import super.thread.{Brand, Within}
 import alloc.arc
-import alloc.arc.Arc
+import alloc.arc.Shared
 import alloc.boxed
 import alloc.alloc.Global
 import alloc.vec.List
@@ -27,10 +27,10 @@ extern "C" {
     unsafe fn mettle_rt_catch(context: ptr<mut u8>, body: extern "C" fn(ptr<mut u8>): Unit): i32;
 }
 
-// A task handle that can be woken from any thread. `me` is the Arc the waker
+// A task handle that can be woken from any thread. `me` is the Shared the waker
 // owns, so the implementation can re-queue itself.
 pub interface Wake: Sized {
-    fn wake(read me: Arc<Self>): Unit;
+    fn wake(read me: Shared<Self>): Unit;
 }
 
 fn waker_table<W: Wake + Transferable + Shareable + Static>(): RawWakerVTable {
@@ -39,7 +39,7 @@ fn waker_table<W: Wake + Transferable + Shareable + Static>(): RawWakerVTable {
 
 unsafe fn waker_clone<W: Wake + Transferable + Shareable + Static>(data: ptr<mut u8>): RawWaker {
     unsafe {
-        let handle = data.cast<Arc<W>>()
+        let handle = data.cast<Shared<W>>()
         let dup = boxed.new((*handle).retain())
         let parts = dup.into_raw()
         RawWaker(parts.0.cast<u8>(), waker_table<W>())
@@ -47,29 +47,29 @@ unsafe fn waker_clone<W: Wake + Transferable + Shareable + Static>(data: ptr<mut
 }
 unsafe fn waker_wake<W: Wake + Transferable + Shareable + Static>(data: ptr<mut u8>): Unit {
     unsafe {
-        let owned = boxed.from_raw_in(data.cast<Arc<W>>(), Global())
+        let owned = boxed.from_raw_in(data.cast<Shared<W>>(), Global())
         owned.get().get().wake(owned.get())
     }
 }
 unsafe fn waker_wake_by_ref<W: Wake + Transferable + Shareable + Static>(data: ptr<mut u8>): Unit {
     unsafe {
-        let handle = data.cast<Arc<W>>()
+        let handle = data.cast<Shared<W>>()
         (*handle).get().wake(read *handle)
     }
 }
 unsafe fn waker_release<W: Wake + Transferable + Shareable + Static>(data: ptr<mut u8>): Unit {
-    unsafe { let _owned = boxed.from_raw_in(data.cast<Arc<W>>(), Global()) }
+    unsafe { let _owned = boxed.from_raw_in(data.cast<Shared<W>>(), Global()) }
 }
 
 // A waker owning one reference to `handle`'s payload.
-pub fn waker_from_arc<W: Wake + Transferable + Shareable + Static>(read handle: Arc<W>): Waker {
+pub fn waker_from_shared<W: Wake + Transferable + Shareable + Static>(read handle: Shared<W>): Waker {
     let dup = boxed.new(handle.retain())
     let parts = dup.into_raw()
     unsafe { core.future.waker_from_raw(RawWaker(parts.0.cast<u8>(), waker_table<W>())) }
 }
 
-extend<W: Wake + Transferable + Shareable + Static> Waker implements From<Arc<W>> {
-    static fn from(take handle: Arc<W>): Waker { waker_from_arc(read handle) }
+extend<W: Wake + Transferable + Shareable + Static> Waker implements From<Shared<W>> {
+    static fn from(take handle: Shared<W>): Waker { waker_from_shared(read handle) }
 }
 
 type Reactor {
@@ -80,7 +80,7 @@ type Reactor {
 unsafe extend Reactor implements Transferable {}
 unsafe extend Reactor implements Shareable {}
 
-fn new_reactor(): Arc<Reactor> {
+fn new_reactor(): Shared<Reactor> {
     let reactor = unsafe { sys.mettle_rt_reactor_new() }
     if reactor == core.ptr.null_mut<u8>() {
         core.panic.panic("async reactor creation failed")
@@ -90,13 +90,13 @@ fn new_reactor(): Arc<Reactor> {
 
 // A latch that a waker sets and a blocked thread consumes.
 type Signal {
-    reactor: Arc<Reactor>
+    reactor: Shared<Reactor>
     set: mutex.Mutex<bool>
 }
 fn new_signal(): Signal { Signal(new_reactor(), mutex.new(false)) }
 
 extend Signal implements Wake {
-    fn wake(read me: Arc<Signal>): Unit {
+    fn wake(read me: Shared<Signal>): Unit {
         let locked = capture self.set.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         *guard.get_mut() = true
@@ -121,7 +121,7 @@ extend Signal {
         }
     }
 }
-// Every executor waker retains the Signal Arc, which owns this reactor handle.
+// Every executor waker retains the Signal Shared, which owns this reactor handle.
 unsafe extend Signal implements Transferable {}
 unsafe extend Signal implements Shareable {}
 
@@ -160,7 +160,7 @@ extend YieldNow implements Future {
 }
 
 type Registration {
-    reactor: Arc<Reactor>
+    reactor: Shared<Reactor>
     token: u64
     // Delivery consumes the waker, but cancellation still needs a live reactor.
     drop { unsafe { sys.mettle_rt_reactor_cancel(self.reactor.get().handle, self.token) } }
@@ -287,7 +287,7 @@ unsafe extend<T: Transferable> ResultSlot<T> implements Shareable {}
 
 pub enum JoinError { Cancelled; Panicked(i32) }
 
-type Packet<F, T> { future: F; result: Arc<ResultSlot<T>> }
+type Packet<F, T> { future: F; result: Shared<ResultSlot<T>> }
 
 type ErasedReport {
     data: ptr<mut u8>
@@ -325,14 +325,14 @@ fn poll_packet<T, F: Future<Output = T>>(data: ptr<mut u8>, read waker: Waker): 
     }
 }
 fn fail_erased<T>(data: ptr<mut u8>, code: i32): Unit {
-    let result = data.cast<Arc<ResultSlot<T>>>()
+    let result = data.cast<Shared<ResultSlot<T>>>()
     let locked = capture unsafe { (*result).get().state.lock() }
     var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
     guard.get_mut().status = if code == 0 { 2u8 } else { 3u8 }
     guard.get_mut().code = code
 }
 fn release_report<T>(data: ptr<mut u8>): Unit {
-    unsafe { let _owner = boxed.from_raw_in(data.cast<Arc<ResultSlot<T>>>(), Global()) }
+    unsafe { let _owner = boxed.from_raw_in(data.cast<Shared<ResultSlot<T>>>(), Global()) }
 }
 fn release_erased<T, F>(data: ptr<mut u8>): Unit {
     unsafe { let _owned = boxed.from_raw_in(data.cast<Packet<F, T>>(), Global()) }
@@ -370,16 +370,16 @@ fn dispose(take future: ErasedFuture, code: i32, cancelled: bool): Unit {
     else if cancelled { (report.fail)(report.data, 0) }
 }
 
-// The queue holds raw Box<Arc<Task>> pointers: the Task -> Shared -> queue ->
+// The queue holds raw Heap<Shared<Task>> pointers: the Task -> ExecutorShared -> queue ->
 // Task type cycle is otherwise beyond region inference.
-fn leak_task(take task: Arc<Task>): ptr<mut u8> { boxed.new(task).into_raw().0.cast<u8>() }
-fn reclaim_task(raw: ptr<mut u8>): Arc<Task> {
-    unsafe { boxed.from_raw_in(raw.cast<Arc<Task>>(), Global()).into_inner() }
+fn leak_task(take task: Shared<Task>): ptr<mut u8> { boxed.new(task).into_raw().0.cast<u8>() }
+fn reclaim_task(raw: ptr<mut u8>): Shared<Task> {
+    unsafe { boxed.from_raw_in(raw.cast<Shared<Task>>(), Global()).into_inner() }
 }
 
-type Shared {
+type ExecutorShared {
     queue: mutex.Mutex<Queue>
-    reactor: Arc<Reactor>
+    reactor: Shared<Reactor>
     live: core.sync.atomic.AtomicUsize
     polling: core.sync.atomic.AtomicBool
 }
@@ -392,10 +392,10 @@ type Task {
     finalizing: core.sync.atomic.AtomicBool
     polling: core.sync.atomic.AtomicBool
     cancel_requested: core.sync.atomic.AtomicBool
-    hub: Arc<Shared>
+    hub: Shared<ExecutorShared>
 }
 
-enum WakeTarget { Task(Arc<Task>); Signal(Arc<Signal>) }
+enum WakeTarget { Task(Shared<Task>); Signal(Shared<Signal>) }
 type ExecutorWake {
     target: WakeTarget
 }
@@ -407,7 +407,7 @@ unsafe extend ExecutorWake implements Transferable {}
 unsafe extend ExecutorWake implements Shareable {}
 
 extend ExecutorWake implements Wake {
-    fn wake(read me: Arc<ExecutorWake>): Unit {
+    fn wake(read me: Shared<ExecutorWake>): Unit {
         match self.target {
             WakeTarget.Task(task) => task.get().wake(read task),
             WakeTarget.Signal(signal) => signal.get().wake(read signal)
@@ -417,13 +417,13 @@ extend ExecutorWake implements Wake {
 
 fn executor_waker(take target: WakeTarget): Waker {
     let handle = arc.new(ExecutorWake(target))
-    waker_from_arc(read handle)
+    waker_from_shared(read handle)
 }
 
-fn reactor_from_waker(read waker: Waker): Arc<Reactor>? {
+fn reactor_from_waker(read waker: Waker): Shared<Reactor>? {
     if waker.uses_vtable(waker_table<ScopeWake>()) {
         let parent = unsafe {
-            (*waker.data().cast<Arc<ScopeWake>>()).get().parent_waker()
+            (*waker.data().cast<Shared<ScopeWake>>()).get().parent_waker()
         }
         return match take parent {
             present(waker) => reactor_from_waker(read waker),
@@ -431,9 +431,9 @@ fn reactor_from_waker(read waker: Waker): Arc<Reactor>? {
         }
     }
     if !waker.uses_vtable(waker_table<ExecutorWake>()) { return none }
-    // The exact executor vtable identifies data as its boxed Arc payload.
+    // The exact executor vtable identifies data as its heap ExecutorShared payload.
     unsafe {
-        match (*waker.data().cast<Arc<ExecutorWake>>()).get().target {
+        match (*waker.data().cast<Shared<ExecutorWake>>()).get().target {
             WakeTarget.Task(task) => present(task.get().hub.get().reactor.retain()),
             WakeTarget.Signal(signal) => present(signal.get().reactor.retain())
         }
@@ -444,19 +444,19 @@ fn reactor_from_waker(read waker: Waker): Arc<Reactor>? {
 // active task until the unique poll has returned and the future and erased
 // result report have been removed. The scoped entry additionally proves that
 // every input and output region outlives the scope. A foreign waker owns an
-// Arc<Task> but only takes the queue lock: it never dereferences the erased
+// Shared<Task> but only takes the queue lock: it never dereferences the erased
 // payload. The queue lock orders close/finish against enqueue, and the atomic
 // flags publish completion to handles. Thus a wake retained after scope exit
 // can retain metadata but cannot touch borrowed storage.
-// The retained Shared reference also keeps its C reactor handle alive until
+// The retained ExecutorShared reference also keeps its C reactor handle alive until
 // the last executor, task, and executor waker has been dropped.
-unsafe extend Shared implements Transferable {}
-unsafe extend Shared implements Shareable {}
+unsafe extend ExecutorShared implements Transferable {}
+unsafe extend ExecutorShared implements Shareable {}
 unsafe extend Task implements Transferable {}
 unsafe extend Task implements Shareable {}
 
 extend Task implements Wake {
-    fn wake(read me: Arc<Task>): Unit {
+    fn wake(read me: Shared<Task>): Unit {
         let hub = self.hub.get()
         let locked = capture hub.queue.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
@@ -472,7 +472,7 @@ extend Task implements Wake {
 // Finished registrations are swept after driving the executor and amortized
 // across spawns. Handles and foreign wakers retain their own metadata owners.
 pub type Executor {
-    hub: Arc<Shared>
+    hub: Shared<ExecutorShared>
     tasks: core.cell.UnsafeCell<List<ptr<mut u8>>>
     drop {
         let _cancel = CancelRest(self.tasks.get())
@@ -518,19 +518,19 @@ type CancelRest {
 
 pub fn executor(): Executor {
     let queue = Queue(alloc.vec_deque.new<ptr<mut u8>>(), false)
-    Executor(arc.new(Shared(mutex.new(queue), new_reactor(),
+    Executor(arc.new(ExecutorShared(mutex.new(queue), new_reactor(),
                              core.sync.atomic.AtomicUsize.new(0usize),
                              core.sync.atomic.AtomicBool.new(false))),
              core.cell.UnsafeCell.new(alloc.vec.new<ptr<mut u8>>()))
 }
 
-fn erase<T, F: Future<Output = T>>(take future: F, take result: Arc<ResultSlot<T>>): ErasedFuture {
+fn erase<T, F: Future<Output = T>>(take future: F, take result: Shared<ResultSlot<T>>): ErasedFuture {
     let report = boxed.new(result.retain()).into_raw()
     let storage = boxed.new(Packet(future, result)).into_raw()
     ErasedFuture(storage.0.cast<u8>(), poll_erased<T, F>, release_erased<T, F>,
                  present(ErasedReport(report.0.cast<u8>(), fail_erased<T>, release_report<T>)))
 }
-fn new_task(take erased: ErasedFuture, take hub: Arc<Shared>): Arc<Task> {
+fn new_task(take erased: ErasedFuture, take hub: Shared<ExecutorShared>): Shared<Task> {
     arc.new(Task(mutex.new(present(erased)), core.sync.atomic.AtomicBool.new(false),
                   core.sync.atomic.AtomicBool.new(true),
                   core.sync.atomic.AtomicBool.new(false),
@@ -547,7 +547,7 @@ extend Executor {
             var i = 0usize
             while i < (*self.tasks.get()).len() {
                 let raw = (*self.tasks.get())[i]
-                if (*raw.cast<Arc<Task>>()).get().finished.load(core.sync.atomic.Ordering.Acquire) {
+                if (*raw.cast<Shared<Task>>()).get().finished.load(core.sync.atomic.Ordering.Acquire) {
                     let removed = (*self.tasks.get()).swap_remove(i)
                     let _owner = reclaim_task(removed)
                 } else { i += 1usize }
@@ -620,7 +620,7 @@ extend Executor {
     }
 }
 
-fn next_task(read hub: Shared, block: bool): Arc<Task>? {
+fn next_task(read hub: ExecutorShared, block: bool): Shared<Task>? {
     loop {
         var next: ptr<mut u8>? = none
         var closed = false
@@ -646,7 +646,7 @@ fn next_task(read hub: Shared, block: bool): Arc<Task>? {
 
 // Lock order is future then queue. Wake takes only queue; the queue lock
 // serializes close/completion against enqueue. Drop payloads after unlocking.
-fn finish_task(read task: Arc<Task>): Unit {
+fn finish_task(read task: Shared<Task>): Unit {
     let hub = task.get().hub.get()
     let locked = capture hub.queue.lock()
     var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
@@ -656,7 +656,7 @@ fn finish_task(read task: Arc<Task>): Unit {
     unsafe { sys.mettle_rt_reactor_wake(hub.reactor.get().handle) }
 }
 
-fn cancel(read task: Arc<Task>): Unit {
+fn cancel(read task: Shared<Task>): Unit {
     // A task can drop its own local handle during poll. Its payload cannot be
     // destroyed until that exclusive poll has returned.
     if task.get().polling.load(core.sync.atomic.Ordering.Acquire) {
@@ -687,7 +687,7 @@ fn cancel(read task: Arc<Task>): Unit {
     }
 }
 
-fn poll_task(take task: Arc<Task>): bool {
+fn poll_task(take task: Shared<Task>): bool {
     task.get().queued.store(false, core.sync.atomic.Ordering.Release)
     var waker = executor_waker(WakeTarget.Task(task.retain()))
     var removed: ErasedFuture? = none
@@ -733,8 +733,8 @@ fn poll_task(take task: Arc<Task>): bool {
 // Handles are local to the executor thread. Forgetting one leaks its reference,
 // but does not remove the executor's registration or permit a scoped escape.
 pub type JoinHandle<T> {
-    task: Arc<Task>
-    result: Arc<ResultSlot<T>>
+    task: Shared<Task>
+    result: Shared<ResultSlot<T>>
     drop { cancel(read self.task) }
 }
 extend<T> JoinHandle<T> not Transferable
@@ -821,7 +821,7 @@ extend ScopeWake {
 }
 
 extend ScopeWake implements Wake {
-    fn wake(read me: Arc<ScopeWake>): Unit {
+    fn wake(read me: Shared<ScopeWake>): Unit {
         self.ready.store(true, core.sync.atomic.Ordering.Release)
         // Never invoke an arbitrary parent waker while holding the mutex: it
         // can wake recursively or arrange a poll on another thread.
@@ -832,7 +832,7 @@ extend ScopeWake implements Wake {
     }
 }
 
-type ScopedPacket<T, F> { future: F; result: Arc<ResultSlot<T>> }
+type ScopedPacket<T, F> { future: F; result: Shared<ResultSlot<T>> }
 
 // Every allocation is pinned separately. The invariant brand and the Within
 // bounds on registration keep the erased future and its output within s.
@@ -878,7 +878,7 @@ fn release_scoped<T, F>(data: ptr<mut u8>): Unit {
 }
 
 fn erase_scoped<region s, T: Within<region s>, F: Future<Output = T> + Within<region s>>(
-    take future: F, take result: Arc<ResultSlot<T>>
+    take future: F, take result: Shared<ResultSlot<T>>
 ): ScopedFuture<region s> {
     let storage = boxed.new(ScopedPacket(future, result)).into_raw()
     ScopedFuture(storage.0.cast<u8>(), poll_scoped<T, F>, release_scoped<T, F>,
@@ -889,7 +889,7 @@ fn erase_scoped<region s, T: Within<region s>, F: Future<Output = T> + Within<re
 // scope's child registration; forced scope destruction marks pending results
 // cancelled. Results and the handle remain bounded by the scope region.
 pub type AsyncJoinHandle<region s, T> {
-    result: Arc<ResultSlot<T>>
+    result: Shared<ResultSlot<T>>
     brand: core.cell.Cell<Brand<region s>>
 }
 extend<region s, T> AsyncJoinHandle<region s, T> not Transferable
@@ -932,7 +932,7 @@ type DrainScoped<region s> {
 type ScopedPollGuard<region s> {
     children: ptr<mut Deque<ScopedFuture<region s>>>
     completed: ptr<mut bool>
-    wake: Arc<ScopeWake>
+    wake: Shared<ScopeWake>
     armed: bool
     drop {
         if self.armed {
@@ -949,7 +949,7 @@ type ScopedPollGuard<region s> {
 pub type AsyncScope<region s, T> {
     anchor: read T from s
     children: Deque<ScopedFuture<region s>>
-    wake: Arc<ScopeWake>
+    wake: Shared<ScopeWake>
     completed: bool
     brand: core.cell.Cell<Brand<region s>>
     drop {
@@ -992,7 +992,7 @@ extend<region s, T> AsyncScope<region s, T> implements Future {
         if me.completed { panic("async scope polled after completion") }
         me.wake.get().set_parent(read cx.waker())
         let _old = me.wake.get().ready.swap(false, core.sync.atomic.Ordering.AcqRel)
-        let child_waker = waker_from_arc(read me.wake)
+        let child_waker = waker_from_shared(read me.wake)
         var child_cx = Context.from_waker(read child_waker)
         var guard = ScopedPollGuard(core.ptr.from_mut(mut me.children),
                                     core.ptr.from_mut(mut me.completed),
