@@ -3,7 +3,6 @@
 
 import core.any
 import core.any.{Any, TypeId}
-import core.fmt.Formatter
 import core.text.Text
 
 fn bound_id<T: Any + unsized>(): TypeId { any.type_id<T>() }
@@ -11,7 +10,7 @@ fn bound_id<T: Any + unsized>(): TypeId { any.type_id<T>() }
 fn erased_id(read value: any Any): TypeId { value.type_id() }
 
 fn main(): i32 {
-    if bound_id<Formatter<region static>>() != any.type_id<Formatter<region static>>() {
+    if bound_id<i32>() != any.type_id<i32>() {
         return 1
     }
     let text: read Text = "unsized"
