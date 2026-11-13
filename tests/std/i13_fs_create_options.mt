@@ -23,6 +23,11 @@ fn run(): i32 throws Error {
     core.mem.drop(take file)
     var created = try std.fs.create(file_path)
     try created.write_all("created".as_bytes())
+    {
+        var viewed = read created
+        try viewed.write_all("!".as_bytes())
+    }
+    if try created.metadata().len() != 8u64 { return 16 }
     core.mem.drop(take created)
     try std.fs.write(file_path, "first".as_bytes())
 
