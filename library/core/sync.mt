@@ -1,8 +1,8 @@
-import package.core.clone.Clone
-import package.core.convert.From
-import package.core.default.Default
-import package.core.fmt.{Debug, Error, Formatter}
-import package.core.hash.{Hash, Hasher}
+import core.clone.Clone
+import core.convert.From
+import core.default.Default
+import core.fmt.{Debug, Error, Formatter}
+import core.hash.{Hash, Hasher}
 
 extend core.sync.atomic.Ordering implements Clone {
     fn clone(): core.sync.atomic.Ordering { self }

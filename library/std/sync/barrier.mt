@@ -1,7 +1,7 @@
 import super.mutex
 import super.condvar
-import package.core.clone.Clone
-import package.core.fmt.{Debug, Error, Formatter}
+import core.clone.Clone
+import core.fmt.{Debug, Error, Formatter}
 
 type State {
     count: usize

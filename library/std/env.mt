@@ -1,8 +1,8 @@
 // Process arguments, environment variables and the working directory. Names
 // and values are OS strings (arbitrary bytes), not text.
-import package.alloc.string.String
-import package.alloc.vec
-import package.alloc.vec.List
+import alloc.string.String
+import alloc.vec
+import alloc.vec.List
 import super.ffi
 import super.ffi.{OsStr, OsString}
 import super.io
@@ -84,19 +84,19 @@ pub fn temp_dir(): PathBuf {
 }
 
 fn validate_env(read name: OsStr, read value: OsStr): Unit {
-    if name.is_empty() { package.core.panic.panic("environment name is empty") }
+    if name.is_empty() { core.panic.panic("environment name is empty") }
     let bytes = name.as_bytes()
     var index = 0usize
     while index < bytes.len() {
         if bytes[index] == 0u8 || bytes[index] == 61u8 {
-            package.core.panic.panic("invalid environment name")
+            core.panic.panic("invalid environment name")
         }
         index += 1usize
     }
     let bytes = value.as_bytes()
     index = 0usize
     while index < bytes.len() {
-        if bytes[index] == 0u8 { package.core.panic.panic("invalid environment value") }
+        if bytes[index] == 0u8 { core.panic.panic("invalid environment value") }
         index += 1usize
     }
 }

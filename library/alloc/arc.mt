@@ -1,19 +1,19 @@
-import package.core.iter.{FromItems, OwnedIterable}
+import core.iter.{FromItems, OwnedIterable}
 // Atomically reference-counted shared owner. Counting is atomic; that makes
 // the handles themselves thread-safe, not the payload: an `Arc<T>` crosses or
 // is shared between threads only when `T` is both Transferable and Shareable.
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_array, extend_layout, handle_alloc_error, layout_unchecked}
-import package.core.any.Any
-import package.core.borrow.{AsRef, Borrow}
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.clone.Clone
-import package.core.convert.{From, TryFrom}
-import package.core.default.Default
-import package.core.error.Error
-import package.core.fmt
-import package.core.hash.{Hash, Hasher}
-import package.core.ops.Deref
-import package.core.text.Text
+import core.any.Any
+import core.borrow.{AsRef, Borrow}
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.clone.Clone
+import core.convert.{From, TryFrom}
+import core.default.Default
+import core.error.Error
+import core.fmt
+import core.hash.{Hash, Hasher}
+import core.ops.Deref
+import core.text.Text
 import super.vec.slice_ptr_mut
 
 type ArcHeader {
@@ -141,7 +141,7 @@ pub fn new_weak<T>(): Weak<T> {
     Weak(core.ptr.null_mut<T>(), core.ptr.null_mut<ArcHeader>(), Global())
 }
 
-extend<T> Weak<T> implements package.core.default.Default {
+extend<T> Weak<T> implements core.default.Default {
     static fn default(): Weak<T> { new_weak<T>() }
 }
 
@@ -284,7 +284,7 @@ pub fn try_copy_text_in<A: Allocator>(read value: Text, take allocator: A): Arc<
         core.ptr.write(h, ArcHeader(core.sync.atomic.AtomicUsize.new(1usize),
                                     core.sync.atomic.AtomicUsize.new(1usize),
                                     layout))
-        core.ptr.copy(package.core.slice.data(bytes), data, bytes.len())
+        core.ptr.copy(core.slice.data(bytes), data, bytes.len())
     }
     let slice = slice_ptr_mut(data, bytes.len())
     let text = unsafe { core.mem.transmute<ptr<mut Text>>(slice) }
@@ -828,24 +828,24 @@ extend<T: unsized, A: Allocator> Arc<T, A> implements From<super.boxed.Box<T, A>
         owner
     }
 }
-extend Arc<package.core.ffi.CStr> implements From<super.ffi.CString> {
-    static fn from(take value: super.ffi.CString): Arc<package.core.ffi.CStr> {
-        Arc<package.core.ffi.CStr>.(From<super.boxed.Box<package.core.ffi.CStr>>).from(
+extend Arc<core.ffi.CStr> implements From<super.ffi.CString> {
+    static fn from(take value: super.ffi.CString): Arc<core.ffi.CStr> {
+        Arc<core.ffi.CStr>.(From<super.boxed.Box<core.ffi.CStr>>).from(
             value.into_boxed_c_str()
         )
     }
 }
-extend<region r> Arc<package.core.ffi.CStr> implements From<read package.core.ffi.CStr from r> {
-    static fn from(take value: read package.core.ffi.CStr from r): Arc<package.core.ffi.CStr> {
-        Arc<package.core.ffi.CStr>.(From<super.ffi.CString>).from(value.to_owned())
+extend<region r> Arc<core.ffi.CStr> implements From<read core.ffi.CStr from r> {
+    static fn from(take value: read core.ffi.CStr from r): Arc<core.ffi.CStr> {
+        Arc<core.ffi.CStr>.(From<super.ffi.CString>).from(value.to_owned())
     }
 }
-extend<region r> Arc<package.core.ffi.CStr> implements From<mut package.core.ffi.CStr from r> {
-    static fn from(take value: mut package.core.ffi.CStr from r): Arc<package.core.ffi.CStr> {
-        Arc<package.core.ffi.CStr>.(From<super.ffi.CString>).from(value.to_owned())
+extend<region r> Arc<core.ffi.CStr> implements From<mut core.ffi.CStr from r> {
+    static fn from(take value: mut core.ffi.CStr from r): Arc<core.ffi.CStr> {
+        Arc<core.ffi.CStr>.(From<super.ffi.CString>).from(value.to_owned())
     }
 }
-extend<region r, B: package.core.borrow.ToOwned + unsized> Arc<B> implements From<super.borrow.BorrowedOrOwned<region r, B>> where Arc<B>: From<read B from r> + From<B.Owned> {
+extend<region r, B: core.borrow.ToOwned + unsized> Arc<B> implements From<super.borrow.BorrowedOrOwned<region r, B>> where Arc<B>: From<read B from r> + From<B.Owned> {
     static fn from(take value: super.borrow.BorrowedOrOwned<region r, B>): Arc<B> {
         match take value {
             super.borrow.BorrowedOrOwned.Borrowed(view) => Arc<B>.(From<read B from r>).from(view),

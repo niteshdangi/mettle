@@ -2,29 +2,29 @@
 // `PathBuf` the owner. Bytes are never reinterpreted, so non-Unicode names
 // round-trip losslessly. Separator is `/`; repeated separators and interior
 // `.` components are ignored, while a leading `.` in a relative path remains.
-import package.alloc.vec
-import package.alloc.vec.List
-import package.alloc.boxed.Box
-import package.alloc.arc.Arc
-import package.alloc.rc.Rc
-import package.alloc.borrow.BorrowedOrOwned
-import package.alloc.alloc.AllocError
-import package.alloc.string.String
-import package.alloc.string.FromUtf8Error
-import package.core.iter.{BidirectionalIterator, Iterator}
-import package.core.text.Text
-import package.core.slice
+import alloc.vec
+import alloc.vec.List
+import alloc.boxed.Box
+import alloc.arc.Arc
+import alloc.rc.Rc
+import alloc.borrow.BorrowedOrOwned
+import alloc.alloc.AllocError
+import alloc.string.String
+import alloc.string.FromUtf8Error
+import core.iter.{BidirectionalIterator, Iterator}
+import core.text.Text
+import core.slice
 import super.ffi
 import super.ffi.{OsStr, OsString}
-import package.core.clone.Clone
-import package.core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.convert.From
-import package.core.default.Default
-import package.core.hash.{Hash, Hasher}
-import package.core.iter.{FromItems, ExtendItems, OwnedIterable}
-import package.core.ops.{Deref, DerefMut}
-import package.core.fmt.{Debug, Formatter, Error}
+import core.clone.Clone
+import core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.convert.From
+import core.default.Default
+import core.hash.{Hash, Hasher}
+import core.iter.{FromItems, ExtendItems, OwnedIterable}
+import core.ops.{Deref, DerefMut}
+import core.fmt.{Debug, Formatter, Error}
 
 pub type Path { bytes: [u8] }
 
@@ -35,10 +35,10 @@ extend StripPrefixError implements Clone {
 extend StripPrefixError implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("StripPrefixError") }
 }
-extend StripPrefixError implements package.core.fmt.Display {
+extend StripPrefixError implements core.fmt.Display {
     fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("prefix not found") }
 }
-extend StripPrefixError implements package.core.error.Error {}
+extend StripPrefixError implements core.error.Error {}
 
 pub copy enum Component<region r> {
     RootDir,
@@ -110,7 +110,7 @@ fn has_leading_cur_dir(read bytes: [u8]): bool {
 fn checked_part(read bytes: [u8], start: usize, end: usize): read [u8] {
     match slice.subslice(bytes, start, end) {
         present(part) => part,
-        none => { package.core.panic.panic("path component bounds invariant failed") }
+        none => { core.panic.panic("path component bounds invariant failed") }
     }
 }
 
@@ -150,7 +150,7 @@ fn validate_extension(read extension: OsStr): Unit {
     let bytes = extension.as_bytes()
     var index = 0usize
     while index < bytes.len() {
-        if is_sep(bytes[index]) { package.core.panic.panic("path extension contains a separator") }
+        if is_sep(bytes[index]) { core.panic.panic("path extension contains a separator") }
         index += 1usize
     }
 }
@@ -252,7 +252,7 @@ extend<region r> Component<region r> {
     }
 }
 
-extend<region r> Component<region r> implements package.core.clone.Clone {
+extend<region r> Component<region r> implements core.clone.Clone {
     fn clone(): Component<region r> {
         match self {
             Component.RootDir => Component<region r>.RootDir,
@@ -314,7 +314,7 @@ extend<region r> Components<region r> {
     }
 }
 
-extend<region r> Components<region r> implements package.core.clone.Clone {
+extend<region r> Components<region r> implements core.clone.Clone {
     fn clone(): Components<region r> {
         Components(
             self.path,
@@ -330,7 +330,7 @@ extend<region r> Iter<region r> {
     pub fn as_path(): read Path from r { self.components.as_path() }
 }
 
-extend<region r> Iter<region r> implements package.core.clone.Clone {
+extend<region r> Iter<region r> implements core.clone.Clone {
     fn clone(): Iter<region r> {
         Iter(Components(
             self.components.path,
@@ -342,7 +342,7 @@ extend<region r> Iter<region r> implements package.core.clone.Clone {
     }
 }
 
-extend<region r> Ancestors<region r> implements package.core.clone.Clone {
+extend<region r> Ancestors<region r> implements core.clone.Clone {
     fn clone(): Ancestors<region r> { Ancestors(self.current, self.finished) }
 }
 
@@ -355,7 +355,7 @@ extend Path {
     pub mut fn as_mut_os_str(): mut OsStr from self { ffi.os_str_mut(self.bytes) }
     pub fn is_empty(): bool { self.bytes.len() == 0usize }
     pub fn to_str(): (read Text from self)? {
-        match package.core.text.from_utf8(read self.bytes) {
+        match core.text.from_utf8(read self.bytes) {
             success(text) => present(text),
             failure(_) => none
         }
@@ -604,7 +604,7 @@ extend Path implements Debug {
     }
 }
 
-extend<region r> Components<region r> implements package.core.iter.Iterator {
+extend<region r> Components<region r> implements core.iter.Iterator {
     type Item = Component<region r>
     mut fn next(): Component<region r>? {
         let bytes = self.path.as_bytes()
@@ -642,7 +642,7 @@ extend<region r> Components<region r> implements package.core.iter.Iterator {
     }
 }
 
-extend<region r> Components<region r> implements package.core.iter.BidirectionalIterator {
+extend<region r> Components<region r> implements core.iter.BidirectionalIterator {
     mut fn next_back(): Component<region r>? {
         let bytes = self.path.as_bytes()
         while true {
@@ -686,7 +686,7 @@ extend<region r> Components<region r> implements package.core.iter.Bidirectional
     }
 }
 
-extend<region r> Iter<region r> implements package.core.iter.Iterator {
+extend<region r> Iter<region r> implements core.iter.Iterator {
     type Item = read OsStr from r
     mut fn next(): (read OsStr from r)? {
         match take self.components.next() {
@@ -696,7 +696,7 @@ extend<region r> Iter<region r> implements package.core.iter.Iterator {
     }
 }
 
-extend<region r> Iter<region r> implements package.core.iter.BidirectionalIterator {
+extend<region r> Iter<region r> implements core.iter.BidirectionalIterator {
     mut fn next_back(): (read OsStr from r)? {
         match take self.components.next_back() {
             present(component) => present(component.as_os_str()),
@@ -705,7 +705,7 @@ extend<region r> Iter<region r> implements package.core.iter.BidirectionalIterat
     }
 }
 
-extend<region r> Ancestors<region r> implements package.core.iter.Iterator {
+extend<region r> Ancestors<region r> implements core.iter.Iterator {
     type Item = read Path from r
     mut fn next(): (read Path from r)? {
         if self.finished { return none }
@@ -789,7 +789,7 @@ extend PathBuf {
         let path_pointer = unsafe {
             core.mem.transmute<ptr<mut Path>>(raw.0)
         }
-        unsafe { package.alloc.boxed.from_raw_in(path_pointer, raw.1) }
+        unsafe { alloc.boxed.from_raw_in(path_pointer, raw.1) }
     }
     pub take fn leak(): mut Path from static {
         let bytes = self.v.into_encoded_bytes().leak()
@@ -955,7 +955,7 @@ extend OsStr implements AsRef<Path> {
 extend OsString implements AsRef<Path> {
     fn as_ref(): read Path from self { path(self.as_bytes()) }
 }
-extend PathBuf implements package.core.borrow.AsMut<Path> {
+extend PathBuf implements core.borrow.AsMut<Path> {
     mut fn as_mut(): mut Path from self { self.as_mut_path() }
 }
 extend PathBuf implements PartialEq {
@@ -1090,7 +1090,7 @@ extend PathBuf implements From<Box<Path>> {
             core.mem.transmute<ptr<mut [u8]>>(raw.0)
         }
         let byte_box: Box<[u8]> = unsafe {
-            package.alloc.boxed.from_raw_in(bytes_pointer, raw.1)
+            alloc.boxed.from_raw_in(bytes_pointer, raw.1)
         }
         PathBuf(ffi.os_string_from_vec(List<u8>.(From<Box<[u8]>>).from(take byte_box)))
     }
@@ -1230,7 +1230,7 @@ extend OsString implements From<PathBuf> {
         value.into_os_string()
     }
 }
-extend PathBuf implements package.core.text.FromStr {
+extend PathBuf implements core.text.FromStr {
     type Error = Never
     static fn from_str(read input: Text): PathBuf throws Never { path_buf_from_text(input) }
 }
@@ -1260,25 +1260,25 @@ extend PathBuf implements Debug {
         try debug.finish()
     }
 }
-extend package.alloc.string.String implements AsRef<Path> {
+extend alloc.string.String implements AsRef<Path> {
     fn as_ref(): read Path from self { path(self.as_bytes()) }
 }
-extend package.alloc.string.String implements PartialEq<Path> {
+extend alloc.string.String implements PartialEq<Path> {
     fn eq(read other: Path): bool {
         path_from_text(self.as_text()) == other
     }
 }
-extend package.alloc.string.String implements PartialEq<PathBuf> {
+extend alloc.string.String implements PartialEq<PathBuf> {
     fn eq(read other: PathBuf): bool {
         path_from_text(self.as_text()) == other.as_path()
     }
 }
-extend package.alloc.string.String implements PartialOrd<Path> {
+extend alloc.string.String implements PartialOrd<Path> {
     fn partial_cmp(read other: Path): Ordering? {
         present(path_from_text(self.as_text()).cmp(other))
     }
 }
-extend package.alloc.string.String implements PartialOrd<PathBuf> {
+extend alloc.string.String implements PartialOrd<PathBuf> {
     fn partial_cmp(read other: PathBuf): Ordering? {
         present(path_from_text(self.as_text()).cmp(other.as_path()))
     }

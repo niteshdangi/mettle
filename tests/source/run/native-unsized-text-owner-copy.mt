@@ -1,7 +1,7 @@
 import alloc.arc
 import alloc.rc
 import alloc.string.String
-import package.core.text.Text
+import core.text.Text
 
 fn main(): i32 {
     var source = String("valid UTF-8")

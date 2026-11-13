@@ -5,17 +5,17 @@
 // threads need a Transferable, Static closure and result;
 // scoped threads may borrow from the enclosing frame and are always joined
 // before `scope` returns, also when the scope body panics.
-import package.core.panic.panic
-import package.core.clone.Clone
-import package.core.cmp.{Eq, PartialEq}
-import package.core.fmt.{Debug, Error, Formatter}
-import package.core.hash.{Hash, Hasher}
-import package.alloc.string.String
-import package.alloc.vec
-import package.core.text.Text
-import package.core.option
-import package.std.time.Duration
-import package.std.sync.mutex
+import core.panic.panic
+import core.clone.Clone
+import core.cmp.{Eq, PartialEq}
+import core.fmt.{Debug, Error, Formatter}
+import core.hash.{Hash, Hasher}
+import alloc.string.String
+import alloc.vec
+import core.text.Text
+import core.option
+import std.time.Duration
+import std.sync.mutex
 import super.sys
 
 extern "C" {
@@ -87,9 +87,9 @@ pub fn current_thread(): Thread {
 pub fn panicking(): bool { unsafe { mettle_rt_panicking() != 0 } }
 pub fn yield_now(): Unit { unsafe { mettle_rt_thread_yield() } }
 pub fn sleep_nanos(nanoseconds: u64): Unit { unsafe { mettle_rt_thread_sleep(nanoseconds) } }
-pub fn sleep(duration: Duration): Unit { package.std.time.sleep(duration) }
+pub fn sleep(duration: Duration): Unit { std.time.sleep(duration) }
 pub fn sleep_ms(milliseconds: u64): Unit {
-    sleep(package.std.time.from_millis(milliseconds))
+    sleep(std.time.from_millis(milliseconds))
 }
 pub fn park(): Unit { unsafe { mettle_rt_thread_park() } }
 fn duration_nanos(duration: Duration): u64 {
@@ -104,7 +104,7 @@ pub fn park_timeout(duration: Duration): Unit {
     unsafe { mettle_rt_thread_park_timeout(duration_nanos(duration)) }
 }
 pub fn park_timeout_ms(milliseconds: u64): Unit {
-    park_timeout(package.std.time.from_millis(milliseconds))
+    park_timeout(std.time.from_millis(milliseconds))
 }
 pub fn available_parallelism(): usize { unsafe { mettle_rt_thread_parallelism() as usize } }
 
@@ -129,8 +129,8 @@ fn native_thread_name(raw: usize): String? {
     }
     if copied != length { return none }
     bytes.truncate(length as usize)
-    match package.core.text.from_utf8(bytes.as_slice()) {
-        success(text) => present(package.alloc.string.from_text(text)),
+    match core.text.from_utf8(bytes.as_slice()) {
+        success(text) => present(alloc.string.from_text(text)),
         failure(_) => none
     }
 }
@@ -150,7 +150,7 @@ extend Builder {
             if bytes[index] == 0u8 { panic("thread name contains NUL") }
             index += 1usize
         }
-        self.name = present(package.alloc.string.from_text(value))
+        self.name = present(alloc.string.from_text(value))
     }
 
     pub mut fn stack_size(bytes: usize): Unit { self.stack_size = bytes }
@@ -166,7 +166,7 @@ extend Builder {
                     if name.as_bytes().len() == 0usize {
                         core.ptr.from_ref(empty)
                     } else {
-                        package.core.slice.data(name.as_bytes())
+                        core.slice.data(name.as_bytes())
                     },
                     name.as_bytes().len(),
                     self.stack_size
@@ -246,8 +246,8 @@ fn release_packet<T, F: take fn(): T>(data: ptr<mut u8>): Unit {
     unsafe {
         let packet = data.cast<Packet<F, T>>()
         let slot = (*packet).slot
-        let _slot = package.alloc.boxed.from_raw_in(slot, package.alloc.alloc.Global())
-        let _packet = package.alloc.boxed.from_raw_in(packet, package.alloc.alloc.Global())
+        let _slot = alloc.boxed.from_raw_in(slot, alloc.alloc.Global())
+        let _packet = alloc.boxed.from_raw_in(packet, alloc.alloc.Global())
         if !(*packet).started { core.ptr.drop_in_place((*packet).f.as_mut_ptr()) }
         if (*slot).state.load(core.sync.atomic.Ordering.Acquire) == 1u32 {
             core.ptr.drop_in_place((*slot).value.as_mut_ptr())
@@ -258,7 +258,7 @@ fn release_packet<T, F: take fn(): T>(data: ptr<mut u8>): Unit {
 // Drops one reference; the last one frees the shared state.
 unsafe fn release(header: ptr<mut Header>): Unit {
     if (*header).refs.fetch_sub(1u32, core.sync.atomic.Ordering.AcqRel) == 1u32 {
-        let _header = package.alloc.boxed.from_raw_in(header, package.alloc.alloc.Global())
+        let _header = alloc.boxed.from_raw_in(header, alloc.alloc.Global())
         let release_data = (*header).release
         release_data((*header).data)
     }
@@ -286,9 +286,9 @@ unsafe fn start<T, F: take fn(): T>(
     name_length: usize,
     stack_size: usize
 ): (ptr<mut Header>, ptr<mut Slot<T>>) throws SpawnError {
-    let slot = package.alloc.boxed.new(Slot<T>(core.sync.atomic.AtomicU32.new(0u32), core.mem.MaybeUninit<T>.uninit())).into_raw().0
-    let packet = package.alloc.boxed.new(Packet<F, T>(core.mem.MaybeUninit.new(f), false, slot)).into_raw().0
-    let header = package.alloc.boxed.new(Header(run_packet<T, F>, release_packet<T, F>, packet.cast<u8>(),
+    let slot = alloc.boxed.new(Slot<T>(core.sync.atomic.AtomicU32.new(0u32), core.mem.MaybeUninit<T>.uninit())).into_raw().0
+    let packet = alloc.boxed.new(Packet<F, T>(core.mem.MaybeUninit.new(f), false, slot)).into_raw().0
+    let header = alloc.boxed.new(Header(run_packet<T, F>, release_packet<T, F>, packet.cast<u8>(),
                                           core.sync.atomic.AtomicU32.new(2u32), 0,
                                           0usize, core.sync.atomic.AtomicU32.new(0u32),
                                           core.sync.atomic.AtomicBool.new(false),
@@ -412,7 +412,7 @@ pub copy type Brand<region s> { pub unused: u8 }
 
 // Registration is serialized; the invariant brand keeps borrowed environments within the scope.
 pub type Scope<region s> {
-    threads: mutex.Mutex<package.alloc.vec.List<ptr<mut Header>>>
+    threads: mutex.Mutex<alloc.vec.List<ptr<mut Header>>>
     brand: core.cell.Cell<Brand<region s>>
 }
 unsafe extend<region s> Scope<region s> implements Transferable {}
@@ -543,7 +543,7 @@ extend<region s> Scope<region s> {
                     if name.as_bytes().len() == 0usize {
                         core.ptr.from_ref(empty)
                     } else {
-                        package.core.slice.data(name.as_bytes())
+                        core.slice.data(name.as_bytes())
                     },
                     name.as_bytes().len(),
                     config.stack_size
@@ -585,7 +585,7 @@ extend<region s> Scope<region s> {
 }
 
 pub fn scope<R, F: for<region s> fn(read Scope<region s>): R>(take f: F): R {
-    let state = Scope(mutex.new(package.alloc.vec.new<ptr<mut Header>>()), core.cell.Cell.new(Brand(0u8)))
+    let state = Scope(mutex.new(alloc.vec.new<ptr<mut Header>>()), core.cell.Cell.new(Brand(0u8)))
     let guard = ScopeGuard(read state, false)
     f(read state)
 }

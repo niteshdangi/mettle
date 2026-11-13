@@ -1,6 +1,6 @@
 // Hosted panic integration. Panics run their hook before unwinding; an
 // uncaught message panic ends the process with status 101.
-import package.core.text.Text
+import core.text.Text
 
 extern "C" {
     unsafe fn mettle_rt_set_panic_hook(hook: unsafe extern "C" fn(ptr<read u8>, u64): Unit): Unit;
@@ -26,8 +26,8 @@ extend PanicInfo {
     pub fn message(): read Text from self {
         var length = 0u64
         let data = unsafe { mettle_rt_panic_payload_message(self.payload, core.ptr.from_mut(length)) }
-        let bytes = unsafe { package.core.slice.from_raw_parts(data, length as usize) }
-        unsafe { package.core.text.from_utf8_unchecked(bytes) }
+        let bytes = unsafe { core.slice.from_raw_parts(data, length as usize) }
+        unsafe { core.text.from_utf8_unchecked(bytes) }
     }
 }
 

@@ -1,24 +1,24 @@
 // Synchronous POSIX TCP and UDP sockets, IPv4/IPv6 addresses, and DNS lookup.
-import package.core.outcome
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.convert.{From, Into}
-import package.core.fmt.{Debug, Display, Formatter, Write}
-import package.core.hash.{Hash, Hasher}
-import package.core.iter.{Copied, Iterator, Once, OwnedIterable}
-import package.core.ops.{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not}
-import package.core.slice
-import package.core.text.{FromStr, Text}
-import package.alloc.vec
-import package.alloc.vec.List
-import package.alloc.string.String
-import package.alloc.arc
-import package.alloc.arc.Arc
+import core.outcome
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.convert.{From, Into}
+import core.fmt.{Debug, Display, Formatter, Write}
+import core.hash.{Hash, Hasher}
+import core.iter.{Copied, Iterator, Once, OwnedIterable}
+import core.ops.{BitAnd, BitAndAssign, BitOr, BitOrAssign, Not}
+import core.slice
+import core.text.{FromStr, Text}
+import alloc.vec
+import alloc.vec.List
+import alloc.string.String
+import alloc.arc
+import alloc.arc.Arc
 import super.io
 import super.io.{Error, ErrorKind, Reader, Writer}
 import super.sys
 import super.task
 import super.time.Duration
-import package.core.clone.Clone
+import core.clone.Clone
 
 extern "C" {
     unsafe fn recv(fd: i32, buffer: ptr<mut u8>, count: usize, flags: i32): isize;
@@ -51,42 +51,42 @@ extend SocketAddr implements ToSocketAddrs {
     type Iter<region r> = Once<SocketAddr>
     fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
         let address: SocketAddr = self
-        package.core.iter.once(address)
+        core.iter.once(address)
     }
 }
 
 extend SocketAddrV4 implements ToSocketAddrs {
     type Iter<region r> = Once<SocketAddr>
     fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
-        package.core.iter.once(self.to_socket_addr())
+        core.iter.once(self.to_socket_addr())
     }
 }
 
 extend SocketAddrV6 implements ToSocketAddrs {
     type Iter<region r> = Once<SocketAddr>
     fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
-        package.core.iter.once(self.to_socket_addr())
+        core.iter.once(self.to_socket_addr())
     }
 }
 
 extend (IpAddr, u16) implements ToSocketAddrs {
     type Iter<region r> = Once<SocketAddr>
     fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
-        package.core.iter.once(socket_addr_ip(self.0, self.1))
+        core.iter.once(socket_addr_ip(self.0, self.1))
     }
 }
 
 extend (Ipv4Addr, u16) implements ToSocketAddrs {
     type Iter<region r> = Once<SocketAddr>
     fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
-        package.core.iter.once(socket_addr(self.0, self.1))
+        core.iter.once(socket_addr(self.0, self.1))
     }
 }
 
 extend (Ipv6Addr, u16) implements ToSocketAddrs {
     type Iter<region r> = Once<SocketAddr>
     fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
-        package.core.iter.once(socket_addr_v6(self.0, self.1, 0u32, 0u32))
+        core.iter.once(socket_addr_v6(self.0, self.1, 0u32, 0u32))
     }
 }
 
@@ -732,7 +732,7 @@ extend SocketAddrV6 {
     }
 }
 
-fn write_hex16(value: u16, mut f: Formatter): Unit throws package.core.fmt.Error {
+fn write_hex16(value: u16, mut f: Formatter): Unit throws core.fmt.Error {
     let digits = "0123456789abcdef".as_bytes()
     var shift = 12u32
     var started = false
@@ -747,7 +747,7 @@ fn write_hex16(value: u16, mut f: Formatter): Unit throws package.core.fmt.Error
     }
 }
 
-fn write_ipv6(value: Ipv6Addr, mut f: Formatter): Unit throws package.core.fmt.Error {
+fn write_ipv6(value: Ipv6Addr, mut f: Formatter): Unit throws core.fmt.Error {
     var mapped = true
     var byte_index = 0usize
     while byte_index < 10usize {
@@ -798,7 +798,7 @@ fn write_ipv6(value: Ipv6Addr, mut f: Formatter): Unit throws package.core.fmt.E
 }
 
 extend Ipv4Addr implements Display {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         let values = self.octets()
         var i = 0usize
         while i < 4usize {
@@ -809,22 +809,22 @@ extend Ipv4Addr implements Display {
     }
 }
 extend Ipv4Addr implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try Ipv4Addr.(Display).fmt(self, mut f)
     }
 }
 extend Ipv6Addr implements Display {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try write_ipv6(self, mut f)
     }
 }
 extend Ipv6Addr implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try write_ipv6(self, mut f)
     }
 }
 extend IpAddr implements Display {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         match self {
             IpAddr.V4(ip) => try Ipv4Addr.(Display).fmt(ip, mut f),
             IpAddr.V6(ip) => try Ipv6Addr.(Display).fmt(ip, mut f)
@@ -832,7 +832,7 @@ extend IpAddr implements Display {
     }
 }
 extend IpAddr implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         match self {
             IpAddr.V4(ip) => try Ipv4Addr.(Debug).fmt(ip, mut f),
             IpAddr.V6(ip) => try Ipv6Addr.(Debug).fmt(ip, mut f)
@@ -840,7 +840,7 @@ extend IpAddr implements Debug {
     }
 }
 extend SocketAddr implements Display {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         match self.ip {
             IpAddr.V4(ip) => try Ipv4Addr.(Display).fmt(ip, mut f),
             IpAddr.V6(ip) => {
@@ -858,7 +858,7 @@ extend SocketAddr implements Display {
     }
 }
 extend SocketAddr implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try SocketAddr.(Display).fmt(self, mut f)
     }
 }
@@ -1091,7 +1091,7 @@ pub type AsyncTcpListener {
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
 }
 
-fn debug_socket(name: read Text, fd: i32, mut f: Formatter): Unit throws package.core.fmt.Error {
+fn debug_socket(name: read Text, fd: i32, mut f: Formatter): Unit throws core.fmt.Error {
     try f.write_str(name)
     try f.write_str(" { fd: ")
     try i32.(Display).fmt(fd, mut f)
@@ -1099,13 +1099,13 @@ fn debug_socket(name: read Text, fd: i32, mut f: Formatter): Unit throws package
 }
 
 extend TcpListener implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try debug_socket("TcpListener", self.fd, mut f)
     }
 }
 
 extend TcpStream implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try debug_socket("TcpStream", self.fd, mut f)
     }
 }
@@ -1273,7 +1273,7 @@ extend TcpListener {
     }
 }
 
-extend<region r> Incoming<region r> implements package.core.iter.Iterator {
+extend<region r> Incoming<region r> implements core.iter.Iterator {
     type Item = (Outcome<TcpStream, Error>);
 
     mut fn next(): (Outcome<TcpStream, Error>)? {
@@ -1367,7 +1367,7 @@ extend TcpStream {
     pub fn set_ttl(ttl: u32): Unit throws Error { try set_socket_option(self.fd, OPTION_TTL, ttl) }
     pub fn ttl(): u32 throws Error { try get_socket_option(self.fd, OPTION_TTL) }
     pub fn wait_readable(limit: Duration): bool throws Error {
-        let started = package.std.time.now()
+        let started = std.time.now()
         loop {
             let remaining = limit.saturating_sub(started.elapsed())
             let nanos = remaining.as_nanos()
@@ -1412,7 +1412,7 @@ extend UdpSocket implements From<sys.OwnedFd> {
 }
 
 extend UdpSocket implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try debug_socket("UdpSocket", self.fd, mut f)
     }
 }

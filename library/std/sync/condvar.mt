@@ -1,9 +1,9 @@
 import super.mutex
 import super.mutex.{MutexGuard, PoisonError}
-import package.core.panic.panic
-import package.core.default.Default
-import package.core.fmt.{Debug, Error, Formatter}
-import package.std.time
+import core.panic.panic
+import core.default.Default
+import core.fmt.{Debug, Error, Formatter}
+import std.time
 
 extern "C" {
     unsafe fn mettle_rt_cond_new(): ptr<mut u8>;

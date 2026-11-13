@@ -1,13 +1,13 @@
 // Monotonic and wall-clock time. `Instant` never goes backwards; `SystemTime`
 // can (clock adjustments), so differences are fallible.
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.default.Default
-import package.core.hash.{Hash, Hasher}
-import package.core.ops.{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign}
-import package.core.fmt.{Debug, Display, Formatter}
-import package.core.outcome
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.default.Default
+import core.hash.{Hash, Hasher}
+import core.ops.{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign}
+import core.fmt.{Debug, Display, Formatter}
+import core.outcome
 import super.sys
-import package.core.clone.Clone
+import core.clone.Clone
 
 // A length of time: whole seconds plus nanoseconds below one second.
 pub copy type Duration { secs: u64; nanos: u32 }
@@ -15,7 +15,7 @@ pub copy type Duration { secs: u64; nanos: u32 }
 pub const fn duration(secs: u64, nanos: u32): Duration {
     let normalized_secs = match secs.checked_add((nanos / 1000000000u32) as u64) {
         present(value) => value,
-        none => package.core.panic.panic("overflow when constructing duration")
+        none => core.panic.panic("overflow when constructing duration")
     }
     Duration(normalized_secs, nanos % 1000000000u32)
 }
@@ -77,21 +77,21 @@ extend Duration {
     pub static const fn from_hours(hours: u64): Duration {
         match hours.checked_mul(3600u64) {
             present(secs) => Duration(secs, 0u32),
-            none => package.core.panic.panic("overflow when constructing duration")
+            none => core.panic.panic("overflow when constructing duration")
         }
     }
 
     pub static const fn from_mins(minutes: u64): Duration {
         match minutes.checked_mul(60u64) {
             present(secs) => Duration(secs, 0u32),
-            none => package.core.panic.panic("overflow when constructing duration")
+            none => core.panic.panic("overflow when constructing duration")
         }
     }
 
     pub static const fn from_nanos_u128(nanos: u128): Duration {
         let secs = nanos / 1000000000u128
         if secs > 18446744073709551615u128 {
-            package.core.panic.panic("overflow when constructing duration")
+            core.panic.panic("overflow when constructing duration")
         }
         Duration(secs as u64, (nanos % 1000000000u128) as u32)
     }
@@ -143,7 +143,7 @@ extend Duration {
     pub static fn from_secs_f64(seconds: f64): Duration {
         match Duration.try_from_secs_f64(seconds) {
             success(value) => value,
-            failure(error) => package.core.panic.panic("invalid floating-point duration")
+            failure(error) => core.panic.panic("invalid floating-point duration")
         }
     }
 
@@ -158,13 +158,13 @@ extend Duration {
 pub copy type TryFromFloatSecsError {}
 
 extend TryFromFloatSecsError implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("TryFromFloatSecsError")
     }
 }
 
 extend Duration implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("Duration { secs: ")
         try u64.(Display).fmt(self.secs, mut f)
         try f.write_str(", nanos: ")
@@ -175,7 +175,7 @@ extend Duration implements Debug {
 fn clock(which: i32): Duration {
     var out = [0i64; 2]
     let r = unsafe { sys.mettle_rt_clock(which, core.ptr.from_mut(out).cast<i64>()) }
-    if r != 0 { package.core.panic.panic("clock_gettime failed") }
+    if r != 0 { core.panic.panic("clock_gettime failed") }
     Duration(out[0usize] as u64, out[1usize] as u32)
 }
 
@@ -185,7 +185,7 @@ pub copy type Instant { since_start: Duration }
 pub fn now(): Instant { Instant(clock(0)) }
 
 extend Instant {
-    pub static fn now(): Instant { package.std.time.now() }
+    pub static fn now(): Instant { std.time.now() }
     pub fn elapsed(): Duration { now().duration_since(self) }
     // Zero if `earlier` is later (the clock is monotonic, so only for misuse).
     pub fn duration_since(earlier: Instant): Duration { self.since_start.saturating_sub(earlier.since_start) }
@@ -201,7 +201,7 @@ pub copy type SystemTime { secs: i64; nanos: u32 }
 pub fn system_time_from_parts(secs: i64, nanos: u32): SystemTime {
     let normalized = match secs.checked_add((nanos / 1000000000u32) as i64) {
         present(value) => value,
-        none => package.core.panic.panic("overflow when constructing system time")
+        none => core.panic.panic("overflow when constructing system time")
     }
     SystemTime(normalized, nanos % 1000000000u32)
 }
@@ -211,7 +211,7 @@ pub fn unix_epoch(): SystemTime { SystemTime(0i64, 0u32) }
 pub fn system_now(): SystemTime {
     var out = [0i64; 2]
     let r = unsafe { sys.mettle_rt_clock(1, core.ptr.from_mut(out).cast<i64>()) }
-    if r != 0 { package.core.panic.panic("clock_gettime failed") }
+    if r != 0 { core.panic.panic("clock_gettime failed") }
     SystemTime(out[0usize], out[1usize] as u32)
 }
 
@@ -268,14 +268,14 @@ pub fn sleep(d: Duration): Unit {
 fn add_durations(a: Duration, b: Duration): Duration {
     match a.checked_add(b) {
         present(d) => d,
-        none => package.core.panic.panic("overflow when adding durations")
+        none => core.panic.panic("overflow when adding durations")
     }
 }
 
 fn sub_durations(a: Duration, b: Duration): Duration {
     match a.checked_sub(b) {
         present(d) => d,
-        none => package.core.panic.panic("overflow when subtracting durations")
+        none => core.panic.panic("overflow when subtracting durations")
     }
 }
 
@@ -339,14 +339,14 @@ extend Duration implements Sub<Duration> {
 fn mul_durations(a: Duration, rhs: u32): Duration {
     match a.checked_mul(rhs) {
         present(d) => d,
-        none => package.core.panic.panic("overflow when multiplying duration by scalar")
+        none => core.panic.panic("overflow when multiplying duration by scalar")
     }
 }
 
 fn div_durations(a: Duration, rhs: u32): Duration {
     match a.checked_div(rhs) {
         present(d) => d,
-        none => package.core.panic.panic("divide by zero error when dividing duration by scalar")
+        none => core.panic.panic("divide by zero error when dividing duration by scalar")
     }
 }
 
@@ -461,7 +461,7 @@ extend SystemTime implements Hash {
 }
 
 extend Instant implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("Instant { since_start: ")
         try self.since_start.fmt(mut f)
         try f.write_str(" }")
@@ -469,7 +469,7 @@ extend Instant implements Debug {
 }
 
 extend SystemTime implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("SystemTime { secs: ")
         try i64.(Display).fmt(self.secs, mut f)
         try f.write_str(", nanos: ")
@@ -483,7 +483,7 @@ extend SystemTime implements Add<Duration> {
     fn add(read rhs: Duration): SystemTime {
         match self.checked_add(rhs) {
             present(t) => t,
-            none => package.core.panic.panic("overflow when adding duration to system time")
+            none => core.panic.panic("overflow when adding duration to system time")
         }
     }
 }
@@ -493,7 +493,7 @@ extend SystemTime implements Sub<Duration> {
     fn sub(read rhs: Duration): SystemTime {
         match self.checked_sub(rhs) {
             present(t) => t,
-            none => package.core.panic.panic("overflow when subtracting duration from system time")
+            none => core.panic.panic("overflow when subtracting duration from system time")
         }
     }
 }

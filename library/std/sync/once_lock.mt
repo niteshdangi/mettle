@@ -1,10 +1,10 @@
 // A value initialized at most once, with readers waiting only during init.
-import package.core.panic.panic
-import package.core.default.Default
-import package.core.clone.Clone
-import package.core.cmp.{Eq, PartialEq}
-import package.core.convert.From
-import package.core.fmt.{Debug, Error, Formatter}
+import core.panic.panic
+import core.default.Default
+import core.clone.Clone
+import core.cmp.{Eq, PartialEq}
+import core.convert.From
+import core.fmt.{Debug, Error, Formatter}
 
 extern "C" {
     unsafe fn mettle_rt_thread_yield(): Unit;

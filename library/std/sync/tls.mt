@@ -1,4 +1,4 @@
-import package.core.panic.panic
+import core.panic.panic
 
 extern "C" {
     unsafe fn mettle_rt_tls_key_new(destructor: extern "C" fn(ptr<mut u8>): Unit): usize;
@@ -61,7 +61,7 @@ fn check_replace<T>(raw: ptr<mut u8>): Unit {
 }
 
 fn drop_value<T>(raw: ptr<mut u8>): Unit {
-    let _owned = unsafe { package.alloc.boxed.from_raw_in(raw.cast<Value<T>>(), package.alloc.alloc.Global()) }
+    let _owned = unsafe { alloc.boxed.from_raw_in(raw.cast<Value<T>>(), alloc.alloc.Global()) }
 }
 
 pub fn new<T>(): OwnedLocalKey<T> {
@@ -85,10 +85,10 @@ extend<T> LocalKey<T> {
         var raw = unsafe { mettle_rt_tls_get(key) }
         if raw == core.ptr.null_mut<u8>() {
             let initialize = self.initialize
-            let value = package.alloc.boxed.new(Value(0usize, initialize())).into_raw().0
+            let value = alloc.boxed.new(Value(0usize, initialize())).into_raw().0
             raw = value.cast<u8>()
             if unsafe { mettle_rt_tls_set(key, raw) } != 0 {
-                let _owned = unsafe { package.alloc.boxed.from_raw_in(value, package.alloc.alloc.Global()) }
+                let _owned = unsafe { alloc.boxed.from_raw_in(value, alloc.alloc.Global()) }
                 panic("failed to set thread-local value")
             }
         }
@@ -99,10 +99,10 @@ extend<T> LocalKey<T> {
         let key = self.key()
         let old = unsafe { mettle_rt_tls_get(key) }
         check_replace<T>(old)
-        let raw = package.alloc.boxed.new(Value(0usize, value)).into_raw().0.cast<u8>()
+        let raw = alloc.boxed.new(Value(0usize, value)).into_raw().0.cast<u8>()
         unsafe {
             if mettle_rt_tls_set(key, raw) != 0 {
-                let _owned = package.alloc.boxed.from_raw_in(raw.cast<Value<T>>(), package.alloc.alloc.Global())
+                let _owned = alloc.boxed.from_raw_in(raw.cast<Value<T>>(), alloc.alloc.Global())
                 panic("failed to set thread-local value")
             }
             if old != core.ptr.null_mut<u8>() { drop_value<T>(old) }
@@ -153,10 +153,10 @@ extend<T> OwnedLocalKey<T> {
         if raw == core.ptr.null_mut<u8>() && initialize {
             match self.initialize {
                 present(make) => {
-                    let value = package.alloc.boxed.new(Value(0usize, make())).into_raw().0
+                    let value = alloc.boxed.new(Value(0usize, make())).into_raw().0
                     raw = value.cast<u8>()
                     if unsafe { mettle_rt_tls_set(key, raw) } != 0 {
-                        let _owned = unsafe { package.alloc.boxed.from_raw_in(value, package.alloc.alloc.Global()) }
+                        let _owned = unsafe { alloc.boxed.from_raw_in(value, alloc.alloc.Global()) }
                         panic("failed to set thread-local value")
                     }
                 },
@@ -170,10 +170,10 @@ extend<T> OwnedLocalKey<T> {
         let key = self.key()
         let old = unsafe { mettle_rt_tls_get(key) }
         check_replace<T>(old)
-        let raw = package.alloc.boxed.new(Value(0usize, value)).into_raw().0.cast<u8>()
+        let raw = alloc.boxed.new(Value(0usize, value)).into_raw().0.cast<u8>()
         unsafe {
             if mettle_rt_tls_set(key, raw) != 0 {
-                let _owned = package.alloc.boxed.from_raw_in(raw.cast<Value<T>>(), package.alloc.alloc.Global())
+                let _owned = alloc.boxed.from_raw_in(raw.cast<Value<T>>(), alloc.alloc.Global())
                 panic("failed to set thread-local value")
             }
             if old != core.ptr.null_mut<u8>() { drop_value<T>(old) }

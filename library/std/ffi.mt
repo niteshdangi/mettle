@@ -2,29 +2,29 @@
 // that round-trip losslessly. `OsStr` is the unsized view, `OsString` the
 // owner. Interior NUL bytes are representable here and rejected only where a
 // C string is required (`cstring`).
-import package.alloc.vec
-import package.alloc.vec.List
-import package.alloc.boxed.Box
-import package.alloc.arc.Arc
-import package.alloc.rc.Rc
-import package.alloc.borrow.BorrowedOrOwned
-import package.alloc.alloc.AllocError
-import package.alloc.string.String
-import package.alloc.string.FromUtf8Error
-import package.core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
-import package.core.clone.Clone
-import package.core.default.Default
-import package.core.convert.{From, TryFrom}
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.fmt
-import package.core.iter.{ExtendItems, FromItems, Iterator, OwnedIterable}
-import package.core.hash.{Hash, Hasher}
-import package.core.ops.Deref
-import package.core.text.{FromStr, Text}
+import alloc.vec
+import alloc.vec.List
+import alloc.boxed.Box
+import alloc.arc.Arc
+import alloc.rc.Rc
+import alloc.borrow.BorrowedOrOwned
+import alloc.alloc.AllocError
+import alloc.string.String
+import alloc.string.FromUtf8Error
+import core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
+import core.clone.Clone
+import core.default.Default
+import core.convert.{From, TryFrom}
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.fmt
+import core.iter.{ExtendItems, FromItems, Iterator, OwnedIterable}
+import core.hash.{Hash, Hasher}
+import core.ops.Deref
+import core.text.{FromStr, Text}
 import super.io
 import super.io.ErrorKind
-pub import package.core.ffi.{CStr, FromBytesWithNulError, FromBytesUntilNulError}
-pub import package.alloc.ffi.{CString, NulError, FromVecWithNulError, IntoStringError}
+pub import core.ffi.{CStr, FromBytesWithNulError, FromBytesUntilNulError}
+pub import alloc.ffi.{CString, NulError, FromVecWithNulError, IntoStringError}
 
 pub type OsStr { bytes: [u8] }
 pub type Display<region r> { value: read OsStr from r }
@@ -56,11 +56,11 @@ pub fn os_str_from_encoded_bytes_unchecked(read bytes: [u8]): read OsStr from by
 }
 
 pub fn lossy(read bytes: [u8]): String {
-    package.alloc.string.from_utf8_lossy(bytes)
+    alloc.string.from_utf8_lossy(bytes)
 }
 
 fn lossy_view<region r>(read bytes: [u8] from r): BorrowedOrOwned<region r, Text> {
-    match package.core.text.from_utf8(bytes) {
+    match core.text.from_utf8(bytes) {
         success(text) => BorrowedOrOwned<region r, Text>.Borrowed(text),
         failure(_) => BorrowedOrOwned<region r, Text>.Owned(lossy(bytes))
     }
@@ -85,7 +85,7 @@ extend OsStr {
     }
     // The text when the bytes are well-formed UTF-8.
     pub fn to_str(): (read Text from self)? {
-        match package.core.text.from_utf8(read self.bytes) {
+        match core.text.from_utf8(read self.bytes) {
             success(text) => present(text),
             failure(_) => none
         }
@@ -247,11 +247,11 @@ extend OsString {
         let raw = self.v.into_boxed_slice().into_raw()
         // OsStr preserves the boxed byte slice's layout and length metadata.
         let pointer = unsafe { core.mem.transmute<ptr<mut OsStr>>(raw.0) }
-        unsafe { package.alloc.boxed.from_raw_in(pointer, raw.1) }
+        unsafe { alloc.boxed.from_raw_in(pointer, raw.1) }
     }
     pub take fn leak(): mut OsStr from static { os_str_mut(self.v.leak()) }
     pub take fn into_string(): String throws FromUtf8Error {
-        try package.alloc.string.from_utf8(self.v)
+        try alloc.string.from_utf8(self.v)
     }
     pub fn same(read other: OsString): bool { bytes_equal(self.v.as_slice(), other.as_bytes()) }
 }
@@ -493,20 +493,20 @@ extend OsString implements Deref {
     fn deref(): read OsStr from self { self.as_os_str() }
 }
 
-extend OsString implements package.core.ops.DerefMut {
+extend OsString implements core.ops.DerefMut {
     mut fn deref_mut(): mut OsStr from self { self.as_mut_os_str() }
 }
 
-extend OsString implements package.core.ops.Index<package.core.iter.RangeFull> {
+extend OsString implements core.ops.Index<core.iter.RangeFull> {
     type Output = OsStr
-    fn index(read index: package.core.iter.RangeFull): read OsStr from self {
+    fn index(read index: core.iter.RangeFull): read OsStr from self {
         self.as_os_str()
     }
 }
 
-extend OsString implements package.core.ops.IndexMut<package.core.iter.RangeFull> {
+extend OsString implements core.ops.IndexMut<core.iter.RangeFull> {
     type Output = OsStr
-    mut fn index_mut(read index: package.core.iter.RangeFull): mut OsStr from self {
+    mut fn index_mut(read index: core.iter.RangeFull): mut OsStr from self {
         self.as_mut_os_str()
     }
 }
@@ -518,16 +518,16 @@ extend OsString implements FromStr {
     }
 }
 
-extend OsString implements package.core.convert.From<String> {
+extend OsString implements core.convert.From<String> {
     static fn from(take value: String): OsString {
         OsString(value.into_bytes())
     }
 }
 
 extend<region r> read Text from r implements TryFrom<read OsStr from r> {
-    type Error = package.core.text.Utf8Error
-    static fn try_from(take value: read OsStr from r): (Outcome<read Text from r, package.core.text.Utf8Error>) {
-        package.core.text.from_utf8(value.as_bytes())
+    type Error = core.text.Utf8Error
+    static fn try_from(take value: read OsStr from r): (Outcome<read Text from r, core.text.Utf8Error>) {
+        core.text.from_utf8(value.as_bytes())
     }
 }
 
@@ -539,24 +539,24 @@ extend String implements AsRef<OsStr> {
     fn as_ref(): read OsStr from self { os_str(self.as_bytes()) }
 }
 
-extend<region r, T: AsRef<OsStr> + unsized> OsString implements package.core.convert.From<read T from r> {
+extend<region r, T: AsRef<OsStr> + unsized> OsString implements core.convert.From<read T from r> {
     static fn from(take value: read T from r): OsString {
         os_string_from_bytes(T.(AsRef<OsStr>).as_ref(value).as_bytes())
     }
 }
 
-extend OsString implements package.core.convert.From<Box<OsStr>> {
+extend OsString implements core.convert.From<Box<OsStr>> {
     static fn from(take value: Box<OsStr>): OsString {
         let raw = value.into_raw()
         let pointer = unsafe { core.mem.transmute<ptr<mut [u8]>>(raw.0) }
-        let bytes: Box<[u8]> = unsafe { package.alloc.boxed.from_raw_in(pointer, raw.1) }
-        OsString(List<u8>.(package.core.convert.From<Box<[u8]>>).from(take bytes))
+        let bytes: Box<[u8]> = unsafe { alloc.boxed.from_raw_in(pointer, raw.1) }
+        OsString(List<u8>.(core.convert.From<Box<[u8]>>).from(take bytes))
     }
 }
 
 extend Box<OsStr> {
     pub take fn into_os_string(): OsString {
-        OsString.(package.core.convert.From<Box<OsStr>>).from(take self)
+        OsString.(core.convert.From<Box<OsStr>>).from(take self)
     }
 }
 
@@ -611,13 +611,13 @@ extend<region r> Arc<OsStr> implements From<mut OsStr from r> {
     }
 }
 
-extend<region r> OsString implements package.core.convert.From<BorrowedOrOwned<region r, OsStr>> {
+extend<region r> OsString implements core.convert.From<BorrowedOrOwned<region r, OsStr>> {
     static fn from(take value: BorrowedOrOwned<region r, OsStr>): OsString {
         value.into_owned()
     }
 }
 
-extend OsString implements package.core.convert.From<CString> {
+extend OsString implements core.convert.From<CString> {
     static fn from(take value: CString): OsString {
         OsString(value.into_bytes())
     }

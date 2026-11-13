@@ -2,7 +2,7 @@
 // are private implementation details, not a stable ABI.
 import super.alloc.Global
 import super.boxed
-import package.core.future.{Context, Future, Poll}
+import core.future.{Context, Future, Poll}
 
 // Owns a single, permanently located future. Moving this handle does not
 // move its payload. The constructor accepts only Static futures because the

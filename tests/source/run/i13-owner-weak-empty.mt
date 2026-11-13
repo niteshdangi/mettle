@@ -1,6 +1,6 @@
 import alloc.arc
 import alloc.rc
-import package.core.default.Default
+import core.default.Default
 
 fn default_value<T: Default>(): T { T.(Default).default() }
 

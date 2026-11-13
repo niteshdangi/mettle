@@ -1,9 +1,9 @@
-import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, Bound, RangeBounds, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
-import package.core.clone.Clone
-import package.core.default.Default
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.hash.{Hash, Hasher}
-import package.core.fmt
+import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, Bound, RangeBounds, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import core.clone.Clone
+import core.default.Default
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.hash.{Hash, Hasher}
+import core.fmt
 
 import super.alloc.{Allocator, Global, AllocError, PushError, layout_unchecked, handle_alloc_error, layout_of, dangling_for, free_block}
 
@@ -816,14 +816,14 @@ extend<T, A: Allocator + Default> Deque<T, A> implements Default {
     static fn default(): Deque<T, A> { new_in(A.(Default).default()) }
 }
 
-extend<T, A: Allocator> Deque<T, A> implements package.core.ops.Index<usize> {
+extend<T, A: Allocator> Deque<T, A> implements core.ops.Index<usize> {
     type Output = T
     fn index(read i: usize): read T from self {
         if i >= self.len { super.alloc.panic_precondition() }
         unsafe { read *self.buf.add(self.physical(i)) }
     }
 }
-extend<T, A: Allocator> Deque<T, A> implements package.core.ops.IndexMut<usize> {
+extend<T, A: Allocator> Deque<T, A> implements core.ops.IndexMut<usize> {
     type Output = T
     mut fn index_mut(read i: usize): mut T from self {
         if i >= self.len { super.alloc.panic_precondition() }
@@ -1255,23 +1255,23 @@ extend<T> Deque<T> implements FromItems<T> {
 unsafe extend<T: Transferable, A: Allocator + Transferable> Deque<T, A> implements Transferable {}
 unsafe extend<T: Shareable, A: Allocator + Shareable> Deque<T, A> implements Shareable {}
 
-extend<T, A: Allocator> Deque<T, A> implements package.core.convert.From<super.vec.List<T, A>> {
+extend<T, A: Allocator> Deque<T, A> implements core.convert.From<super.vec.List<T, A>> {
     static fn from(take source: super.vec.List<T, A>): Deque<T, A> {
         let parts = source.into_raw_parts_with_alloc()
         Deque(parts.0, parts.2, 0usize, parts.1, parts.3)
     }
 }
 
-extend<T, const N: usize> Deque<T> implements package.core.convert.From<[T; N]> {
+extend<T, const N: usize> Deque<T> implements core.convert.From<[T; N]> {
     static fn from(take items: [T; N]): Deque<T> {
-        let list = super.vec.List<T>.(package.core.convert.From<[T; N]>).from(items)
-        Deque<T>.(package.core.convert.From<super.vec.List<T>>).from(list)
+        let list = super.vec.List<T>.(core.convert.From<[T; N]>).from(items)
+        Deque<T>.(core.convert.From<super.vec.List<T>>).from(list)
     }
 }
 
 // The ring is rotated in place to start at slot zero, then its allocation is
 // adopted by the list (same layout, no element copies beyond the rotation).
-extend<T, A: Allocator> super.vec.List<T, A> implements package.core.convert.From<Deque<T, A>> {
+extend<T, A: Allocator> super.vec.List<T, A> implements core.convert.From<Deque<T, A>> {
     static fn from(take source: Deque<T, A>): super.vec.List<T, A> {
         var ring = take source
         ring.make_contiguous()

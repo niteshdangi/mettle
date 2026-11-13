@@ -17,7 +17,7 @@ type Record {
 
 copy type AuditedAllocator { record: ptr<mut Record> }
 
-extend AuditedAllocator implements package.core.clone.Clone {
+extend AuditedAllocator implements core.clone.Clone {
     fn clone(): AuditedAllocator { AuditedAllocator(self.record) }
 }
 

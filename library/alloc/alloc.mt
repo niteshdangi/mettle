@@ -120,8 +120,8 @@ pub const fn dangling_for<T>(): ptr<mut T> { dangling(core.mem.align_of<T>()).ca
 // The process-wide allocator. Stateless and freely copyable.
 pub copy type Global {}
 
-extend Global implements package.core.clone.Clone { fn clone(): Global { Global() } }
-extend Global implements package.core.default.Default { static fn default(): Global { Global() } }
+extend Global implements core.clone.Clone { fn clone(): Global { Global() } }
+extend Global implements core.default.Default { static fn default(): Global { Global() } }
 
 unsafe extend Global implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {

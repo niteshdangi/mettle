@@ -3,7 +3,7 @@
 import alloc.hash_map.Map
 import alloc.string.String
 import alloc.vec.List
-import package.core.text.Text
+import core.text.Text
 
 fn parse_number(read t: Text): i64? {
     let bytes = t.as_bytes()

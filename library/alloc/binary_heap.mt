@@ -1,11 +1,11 @@
-import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, FromItems, ExtendItems}
-import package.core.clone.Clone
-import package.core.default.Default
-import package.core.fmt
+import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, FromItems, ExtendItems}
+import core.clone.Clone
+import core.default.Default
+import core.fmt
 import super.alloc.{Allocator, Global, AllocError, PushError}
 import super.vec.List
-import package.core.cmp.{Ord, Ordering}
-import package.core.ops.{Deref, DerefMut}
+import core.cmp.{Ord, Ordering}
+import core.ops.{Deref, DerefMut}
 
 copy type HeapRetainEntry {
     index: usize
@@ -436,7 +436,7 @@ extend<T, A: Allocator> BinaryHeap<T, A> {
     }
 }
 
-extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements package.core.convert.From<List<T, A>> {
+extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements core.convert.From<List<T, A>> {
     static fn from(take items: List<T, A>): BinaryHeap<T, A> {
         var out = BinaryHeap(items)
         var i = out.data.len() / 2usize
@@ -448,10 +448,10 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements package.core.convert.Fr
     }
 }
 
-extend<T: Ord, const N: usize> BinaryHeap<T> implements package.core.convert.From<[T; N]> {
+extend<T: Ord, const N: usize> BinaryHeap<T> implements core.convert.From<[T; N]> {
     static fn from(take items: [T; N]): BinaryHeap<T> {
-        let list = super.vec.List<T>.(package.core.convert.From<[T; N]>).from(items)
-        BinaryHeap<T>.(package.core.convert.From<super.vec.List<T>>).from(take list)
+        let list = super.vec.List<T>.(core.convert.From<[T; N]>).from(items)
+        BinaryHeap<T>.(core.convert.From<super.vec.List<T>>).from(take list)
     }
 }
 
@@ -552,6 +552,6 @@ extend<T: Ord> BinaryHeap<T> implements FromItems<T> {
     }
 }
 
-extend<T, A: Allocator> List<T, A> implements package.core.convert.From<BinaryHeap<T, A>> {
+extend<T, A: Allocator> List<T, A> implements core.convert.From<BinaryHeap<T, A>> {
     static fn from(take source: BinaryHeap<T, A>): List<T, A> { source.into_vec() }
 }

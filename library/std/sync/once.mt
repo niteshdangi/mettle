@@ -1,9 +1,9 @@
 // Runs an initializer exactly once. A panic poisons the cell until a forced
 // initializer completes successfully.
-import package.core.panic.panic
-import package.core.default.Default
-import package.core.clone.Clone
-import package.core.fmt.{Debug, Error, Formatter}
+import core.panic.panic
+import core.default.Default
+import core.clone.Clone
+import core.fmt.{Debug, Error, Formatter}
 
 type Arm<region r> {
     state: read core.sync.atomic.AtomicU32 from r

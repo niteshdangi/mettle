@@ -1,9 +1,9 @@
-pub import package.core.borrow.{OwnedType, ToOwned}
-import package.core.borrow.{AsRef, Borrow}
-import package.core.clone.Clone
-import package.core.convert.From
-import package.core.ops.Deref
-import package.core.panic.panic
+pub import core.borrow.{OwnedType, ToOwned}
+import core.borrow.{AsRef, Borrow}
+import core.clone.Clone
+import core.convert.From
+import core.ops.Deref
+import core.panic.panic
 import super.vec.List
 
 extend<T> [T] implements OwnedType {

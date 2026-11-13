@@ -1,31 +1,31 @@
 // Synchronous byte I/O: `Reader`/`Writer` expose partial transfers (the count a
 // single call moved), the `*_all`/`read_exact`/`read_to_end` helpers loop over
 // them, and `Error` keeps the raw OS error number so it round-trips unchanged.
-import package.alloc.vec
-import package.alloc.vec.List
-import package.alloc.alloc.{AllocError, Allocator}
-import package.alloc.boxed.Box
-import package.alloc.arc.Arc
-import package.alloc.collections.Deque
-import package.core.text.Text
-import package.core.cmp.{Eq, PartialEq}
-import package.core.cmp.{Ord, Ordering, PartialOrd}
-import package.core.hash.{Hash, Hasher}
-import package.core.outcome
-import package.core.slice
-import package.core.borrow.{AsMut, AsRef}
-import package.core.default.Default
-import package.core.fmt
-import package.alloc.string.String
-import package.alloc.string.ToString
-import package.core.any.{TypeId, type_id}
+import alloc.vec
+import alloc.vec.List
+import alloc.alloc.{AllocError, Allocator}
+import alloc.boxed.Box
+import alloc.arc.Arc
+import alloc.collections.Deque
+import core.text.Text
+import core.cmp.{Eq, PartialEq}
+import core.cmp.{Ord, Ordering, PartialOrd}
+import core.hash.{Hash, Hasher}
+import core.outcome
+import core.slice
+import core.borrow.{AsMut, AsRef}
+import core.default.Default
+import core.fmt
+import alloc.string.String
+import alloc.string.ToString
+import core.any.{TypeId, type_id}
 import super.sys
 import super.path.PathInput
-import package.core.clone.Clone
-import package.core.convert.From
-import package.core.error.{Error as CoreError}
-import package.core.ops.DerefMut
-import package.std.sync.mutex.TryLockError
+import core.clone.Clone
+import core.convert.From
+import core.error.{Error as CoreError}
+import core.ops.DerefMut
+import std.sync.mutex.TryLockError
 
 pub copy enum ErrorKind {
     NotFound, PermissionDenied, ConnectionRefused, ConnectionReset, HostUnreachable,
@@ -175,7 +175,7 @@ fn kind_text(kind: ErrorKind): read Text from static {
     }
 }
 
-fn kind_description(kind: ErrorKind): String { package.alloc.string.from_text(kind_text(kind)) }
+fn kind_description(kind: ErrorKind): String { alloc.string.from_text(kind_text(kind)) }
 
 extend ErrorKind implements fmt.Display {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str(kind_text(self)) }
@@ -228,19 +228,19 @@ extend ErrorKind implements PartialEq {
     fn eq(read other: ErrorKind): bool { self.is(other) }
 }
 
-extend ErrorKind implements package.core.cmp.Eq {}
-extend ErrorKind implements package.core.cmp.PartialOrd {
-    fn partial_cmp(read other: ErrorKind): package.core.cmp.Ordering? {
+extend ErrorKind implements core.cmp.Eq {}
+extend ErrorKind implements core.cmp.PartialOrd {
+    fn partial_cmp(read other: ErrorKind): core.cmp.Ordering? {
         present((self as i32).cmp(read (other as i32)))
     }
 }
-extend ErrorKind implements package.core.cmp.Ord {
-    fn cmp(read other: ErrorKind): package.core.cmp.Ordering {
+extend ErrorKind implements core.cmp.Ord {
+    fn cmp(read other: ErrorKind): core.cmp.Ordering {
         (self as i32).cmp(read (other as i32))
     }
 }
-extend ErrorKind implements package.core.hash.Hash {
-    fn hash<H: package.core.hash.Hasher>(mut state: H): Unit {
+extend ErrorKind implements core.hash.Hash {
+    fn hash<H: core.hash.Hasher>(mut state: H): Unit {
         state.write_u8(self as u8)
     }
 }
@@ -341,19 +341,19 @@ extend Error {
         }
         let raw = erased.into_raw()
         // Safety: the stored type identity matches T before erasure is removed.
-        success(unsafe { package.alloc.boxed.from_raw<T>(raw.0.cast<T>()) })
+        success(unsafe { alloc.boxed.from_raw<T>(raw.0.cast<T>()) })
     }
 
     // Payload text takes precedence; OS errors use strerror and kind-only errors use their kind text.
     pub fn message(): String {
         match self.get_ref() {
             present(payload) => {
-                var output = package.alloc.string.new()
+                var output = alloc.string.new()
                 {
                     var formatter = fmt.formatter(mut output, fmt.spec())
                     match capture fmt_error(payload, mut formatter) {
                         success(_) => {},
-                        failure(_) => { package.alloc.alloc.panic_precondition() }
+                        failure(_) => { alloc.alloc.panic_precondition() }
                     }
                 }
                 return output
@@ -363,10 +363,10 @@ extend Error {
         if self.os {
             let p = unsafe { sys.strerror(self.code) }
             let bytes = unsafe { sys.bytes_from_c(p) }
-            let decoded = capture package.alloc.string.from_utf8(bytes)
+            let decoded = capture alloc.string.from_utf8(bytes)
             match take decoded {
                 success(s) => { return s },
-                failure(e) => { return package.alloc.string.from_text("unknown error") }
+                failure(e) => { return alloc.string.from_text("unknown error") }
             }
         }
         kind_description(self.kind)
@@ -381,8 +381,8 @@ extend Error implements From<AllocError> {
     static fn from(take error: AllocError): Error { from_kind(ErrorKind.OutOfMemory) }
 }
 
-extend Error implements From<package.alloc.ffi.NulError> {
-    static fn from(take error: package.alloc.ffi.NulError): Error {
+extend Error implements From<alloc.ffi.NulError> {
+    static fn from(take error: alloc.ffi.NulError): Error {
         Error.new(ErrorKind.InvalidInput, error)
     }
 }
@@ -465,7 +465,7 @@ pub interface Reader {
     mut fn read_to_string(mut out: String): usize throws Error {
         var bytes = vec.new<u8>()
         let count = try self.read_to_end(mut bytes)
-        match package.core.text.from_utf8(bytes.as_slice()) {
+        match core.text.from_utf8(bytes.as_slice()) {
             success(text) => { out.push_str(text); count },
             failure(_) => throw from_kind(ErrorKind.InvalidData)
         }
@@ -564,7 +564,7 @@ extend<R: Reader> Take<R> implements Reader {
     }
 }
 
-extend<R: Reader> Bytes<R> implements package.core.iter.Iterator {
+extend<R: Reader> Bytes<R> implements core.iter.Iterator {
     type Item = (Outcome<u8, Error>);
     mut fn next(): (Outcome<u8, Error>)? {
         if self.finished { return none }
@@ -636,7 +636,7 @@ pub interface BufRead: Reader {
     mut fn read_line(mut out: String): usize throws Error {
         var bytes = vec.new<u8>()
         let count = try self.read_until(10u8, mut bytes)
-        match package.core.text.from_utf8(bytes.as_slice()) {
+        match core.text.from_utf8(bytes.as_slice()) {
             success(text) => out.push_str(text),
             failure(_) => throw from_kind(ErrorKind.InvalidData)
         }
@@ -652,11 +652,11 @@ pub interface BufRead: Reader {
 pub type Lines<B: BufRead> { reader: B; finished: bool }
 pub type Split<B: BufRead> { reader: B; delimiter: u8; finished: bool }
 
-extend<B: BufRead> Lines<B> implements package.core.iter.Iterator {
+extend<B: BufRead> Lines<B> implements core.iter.Iterator {
     type Item = (Outcome<String, Error>);
     mut fn next(): (Outcome<String, Error>)? {
         if self.finished { return none }
-        var line = package.alloc.string.new()
+        var line = alloc.string.new()
         let result = capture self.reader.read_line(mut line)
         match take result {
             success(0usize) => {
@@ -697,7 +697,7 @@ unsafe extend Error implements Shareable {}
 unsafe extend<B: BufRead + Transferable> Lines<B> implements Transferable {}
 unsafe extend<B: BufRead + Shareable> Lines<B> implements Shareable {}
 
-extend<B: BufRead> Split<B> implements package.core.iter.Iterator {
+extend<B: BufRead> Split<B> implements core.iter.Iterator {
     type Item = (Outcome<List<u8>, Error>);
     mut fn next(): (Outcome<List<u8>, Error>)? {
         if self.finished { return none }
@@ -1255,7 +1255,7 @@ pub fn print(message: format fmt.Message): Unit {
         success(_) => {},
         failure(e) => {
             if e.kind().is(ErrorKind.BrokenPipe) { unsafe { sys.exit(141) } }
-            package.core.panic.panic("failed to write to standard output")
+            core.panic.panic("failed to write to standard output")
         }
     }
 }
@@ -1265,7 +1265,7 @@ pub fn eprint(message: format fmt.Message): Unit {
     let outcome = capture err.write(message)
     match take outcome {
         success(_) => {},
-        failure(e) => { package.core.panic.panic("failed to write to standard error") }
+        failure(e) => { core.panic.panic("failed to write to standard error") }
     }
 }
 
@@ -1548,7 +1548,7 @@ extend<R: Reader + Seek> BufferedReader<R> implements Seek {
         let position = try self.inner.stream_position()
         match position.checked_sub((self.filled - self.pos) as u64) {
             present(logical) => logical,
-            none => { package.core.panic.panic("buffered reader position precedes its buffer") }
+            none => { core.panic.panic("buffered reader position precedes its buffer") }
         }
     }
 
@@ -1707,7 +1707,7 @@ extend<W: Writer> IntoInnerError<W> implements fmt.Debug {
         try Error.(fmt.Debug).fmt(self.error, mut f)
     }
 }
-extend<W: Writer> IntoInnerError<W> implements package.core.error.Error {}
+extend<W: Writer> IntoInnerError<W> implements core.error.Error {}
 
 extend<W: Writer> Error implements From<IntoInnerError<W>> {
     static fn from(take value: IntoInnerError<W>): Error { value.error }

@@ -1,6 +1,6 @@
 import alloc.alloc.{Allocator, Global, Layout, AllocError}
 import alloc.arc.Arc
-import package.core.clone.Clone
+import core.clone.Clone
 
 type Tracker {
     size: ptr<mut usize>

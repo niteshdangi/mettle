@@ -1,6 +1,6 @@
 import alloc.hash_map.Map
 import core.hash.{Hash, Hasher}
-import package.core.cmp.PartialEq
+import core.cmp.PartialEq
 
 // Every key hashes to the same value, so all lookups walk one probe chain.
 copy type Same { id: i32 }

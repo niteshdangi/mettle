@@ -1,7 +1,7 @@
 import package.origin
 import package.relay
-import package.core.any
-import package.core.any.Any
+import core.any
+import core.any.Any
 
 fn main(): i32 {
     if any.type_id<origin.Shared>() != any.type_id<relay.Shared>() {

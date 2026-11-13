@@ -1,10 +1,10 @@
 // Files and directories on the POSIX layer shared by macOS and Linux. A
 // successful write is not a durability guarantee (`File.sync_all` is).
-import package.alloc.vec
-import package.alloc.vec.List
-import package.alloc.string.String
-import package.core.text.Text
-import package.core.outcome
+import alloc.vec
+import alloc.vec.List
+import alloc.string.String
+import core.text.Text
+import core.outcome
 import super.ffi
 import super.ffi.OsString
 import super.io
@@ -13,12 +13,12 @@ pub import super.io.SeekFrom
 import super.path.{Path, PathBuf, PathInput}
 import super.sys
 import super.time.SystemTime
-import package.core.clone.Clone
-import package.core.cmp.PartialEq
-import package.core.hash.{Hash, Hasher}
-import package.core.convert.From
-import package.core.fmt
-import package.core.error.{Error as CoreError}
+import core.clone.Clone
+import core.cmp.PartialEq
+import core.hash.{Hash, Hasher}
+import core.convert.From
+import core.fmt
+import core.error.{Error as CoreError}
 
 extern "C" {
     unsafe fn fsync(fd: i32): i32;
@@ -90,12 +90,12 @@ extend FileType {
 extend FileType implements PartialEq {
     fn eq(read other: FileType): bool { (self as i32) == (other as i32) }
 }
-extend FileType implements package.core.cmp.Eq {}
+extend FileType implements core.cmp.Eq {}
 extend FileType implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit { state.write_u8(self as u8) }
 }
-extend FileType implements package.core.fmt.Debug {
-    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+extend FileType implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
         match self {
             FileType.File => try f.write_str("File"),
             FileType.Directory => try f.write_str("Directory"),
@@ -399,8 +399,8 @@ extend sys.OwnedFd implements From<File> {
     }
 }
 
-extend File implements package.core.fmt.Debug {
-    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+extend File implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
         var debug = try f.debug_struct("File")
         try debug.field("fd", self.fd)
         try debug.finish()
@@ -496,7 +496,7 @@ extend File implements FileExt {
     fn write_at(read buf: [u8], offset: u64): usize throws Error {
         let native_offset = try checked_file_offset(offset)
         while true {
-            let count = unsafe { pwrite(self.fd, package.core.slice.data(buf), buf.len(), native_offset) }
+            let count = unsafe { pwrite(self.fd, core.slice.data(buf), buf.len(), native_offset) }
             if count >= 0isize { return count as usize }
             let error = io.last_os_error()
             if !error.kind().is(ErrorKind.Interrupted) { throw error }
@@ -518,7 +518,7 @@ pub fn `read`(read input: PathInput): List<u8> throws Error { try read_bytes(inp
 // The whole file as text; ill-formed UTF-8 fails with `InvalidData`.
 pub fn read_to_string(read input: PathInput): String throws Error {
     let bytes = try read_bytes(input)
-    let decoded = capture package.alloc.string.from_utf8(bytes)
+    let decoded = capture alloc.string.from_utf8(bytes)
     match take decoded {
         success(s) => s,
         failure(e) => throw io.from_kind(ErrorKind.InvalidData)
@@ -540,7 +540,7 @@ pub fn `copy`(read from: PathInput, read to: PathInput): u64 throws Error {
     while true {
         let count = try source.read_some(buffer)
         if count == 0usize { break }
-        let bytes = unsafe { package.core.slice.subslice_unchecked(buffer, 0usize, count) }
+        let bytes = unsafe { core.slice.subslice_unchecked(buffer, 0usize, count) }
         try destination.write_all(bytes)
         total = match total.checked_add(count as u64) {
             present(next) => next,
@@ -649,8 +649,8 @@ extend DirEntry {
     }
 }
 
-extend DirEntry implements package.core.fmt.Debug {
-    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+extend DirEntry implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
         var debug = try f.debug_struct("DirEntry")
         try debug.field("name", self.name.as_os_str())
         try debug.field("path", self.path().as_path().as_bytes())
@@ -698,8 +698,8 @@ extend ReadDir {
     }
 }
 
-extend ReadDir implements package.core.fmt.Debug {
-    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+extend ReadDir implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
         var debug = try f.debug_struct("ReadDir")
         try debug.field("path", self.dir.as_path().as_bytes())
         try debug.field("finished", self.finished)
@@ -708,7 +708,7 @@ extend ReadDir implements package.core.fmt.Debug {
 }
 
 // Yields each entry; a read failure is yielded once and ends the iteration.
-extend ReadDir implements package.core.iter.Iterator {
+extend ReadDir implements core.iter.Iterator {
     type Item = (Outcome<DirEntry, Error>);
     mut fn next(): (Outcome<DirEntry, Error>)? {
         let entry = capture self.next_entry()
@@ -786,16 +786,16 @@ extend Permissions implements Clone {
 extend Permissions implements PartialEq {
     fn eq(read other: Permissions): bool { self.mode == other.mode }
 }
-extend Permissions implements package.core.cmp.Eq {}
-extend Permissions implements package.core.fmt.Debug {
-    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+extend Permissions implements core.cmp.Eq {}
+extend Permissions implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
         var debug = try f.debug_struct("Permissions")
         try debug.field("mode", self.mode)
         try debug.finish()
     }
 }
-extend Metadata implements package.core.fmt.Debug {
-    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+extend Metadata implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
         var debug = try f.debug_struct("Metadata")
         try debug.field("size", self.size)
         try debug.field("kind", self.kind)
@@ -805,8 +805,8 @@ extend Metadata implements package.core.fmt.Debug {
         try debug.finish()
     }
 }
-extend OpenOptions implements package.core.fmt.Debug {
-    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+extend OpenOptions implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
         var debug = try f.debug_struct("OpenOptions")
         try debug.field("flags", self.flags)
         try debug.field("mode", self.mode)

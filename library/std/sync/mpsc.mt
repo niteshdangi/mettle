@@ -1,12 +1,12 @@
 import super.mutex
 import super.condvar
 import super.super.time
-import package.alloc.arc.Arc
-import package.alloc.vec.List
-import package.alloc.vec_deque.Deque
-import package.core.iter.Iterator
-import package.core.clone.Clone
-import package.core.fmt.{Debug, Error, Formatter}
+import alloc.arc.Arc
+import alloc.vec.List
+import alloc.vec_deque.Deque
+import core.iter.Iterator
+import core.clone.Clone
+import core.fmt.{Debug, Error, Formatter}
 
 extern "C" {
     unsafe fn mettle_rt_select_epoch(): u64;
@@ -75,7 +75,7 @@ pub type Sender<T> {
 pub type Receiver<T> {
     chan: Arc<Shared<T>>
     drop {
-        var discarded = package.alloc.vec_deque.new<Envelope<T>>()
+        var discarded = alloc.vec_deque.new<Envelope<T>>()
         {
             let locked = capture self.chan.get().queue.lock()
             var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
@@ -92,7 +92,7 @@ pub type Receiver<T> {
                     none => {}
                 }
             } else {
-                discarded = core.mem.replace(guard.get_mut(), package.alloc.vec_deque.new<Envelope<T>>())
+                discarded = core.mem.replace(guard.get_mut(), alloc.vec_deque.new<Envelope<T>>())
             }
             self.chan.get().ready.notify_all()
             self.chan.get().space.notify_all()
@@ -117,8 +117,8 @@ pub type SyncSender<T> {
 }
 
 fn new_shared<T>(bound: usize, rendezvous: bool): Arc<Shared<T>> {
-    package.alloc.arc.new(Shared(
-        mutex.new(package.alloc.vec_deque.new<Envelope<T>>()),
+    alloc.arc.new(Shared(
+        mutex.new(alloc.vec_deque.new<Envelope<T>>()),
         condvar.new(),
         condvar.new(),
         bound,
@@ -190,7 +190,7 @@ extend<T> SyncSender<T> {
             throw SendError(value)
         }
         let receipt: Arc<core.sync.atomic.AtomicBool>? = if rendezvous {
-            present(package.alloc.arc.new(core.sync.atomic.AtomicBool.new(false)))
+            present(alloc.arc.new(core.sync.atomic.AtomicBool.new(false)))
         } else { none }
         let queued_receipt = match receipt {
             present(flag) => present(flag.retain()),
@@ -265,7 +265,7 @@ extend<T> SyncSender<T> {
             guard = pair.0
         }
         let receipt: Arc<core.sync.atomic.AtomicBool>? = if rendezvous {
-            present(package.alloc.arc.new(core.sync.atomic.AtomicBool.new(false)))
+            present(alloc.arc.new(core.sync.atomic.AtomicBool.new(false)))
         } else { none }
         let queued_receipt = match receipt {
             present(flag) => present(flag.retain()),
@@ -521,7 +521,7 @@ pub type Select<region r, T> {
 }
 
 pub fn select<T, region r>(read source: Receiver<T> from r): Select<region r, T> {
-    var selected = Select(package.alloc.vec.new<read Receiver<T> from r>(), 0usize)
+    var selected = Select(alloc.vec.new<read Receiver<T> from r>(), 0usize)
     let _first = selected.add(source)
     selected
 }

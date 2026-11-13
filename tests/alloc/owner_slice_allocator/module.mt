@@ -13,7 +13,7 @@ pub type Record {
 pub copy type Probe { pub record: ptr<mut Record> }
 
 // Probe is confined to the scope of its live Record.
-extend Probe implements package.core.clone.Clone {
+extend Probe implements core.clone.Clone {
     fn clone(): Probe { Probe(self.record) }
 }
 

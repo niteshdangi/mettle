@@ -1,16 +1,16 @@
 import super.alloc.{ Allocator, Global, AllocError, Layout, layout_of, layout_unchecked, free_block, handle_alloc_error, panic_precondition, dangling_for }
-import package.core.clone.Clone
-import package.core.default.Default
-import package.core.cmp.{ Eq, Ord, Ordering, PartialEq, PartialOrd }
-import package.core.hash.{ Hash, Hasher }
-import package.core.fmt
-import package.core.ops.{ Deref, DerefMut, IndexRange, IndexRangeMut, RangeEnd }
-import package.core.iter.{ Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, Bound, RangeBounds, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems }
-import package.core.slice.{ SliceIter, SliceIterMut }
-import package.core.text.Text
-import package.core.borrow.{ AsMut, AsRef, Borrow, BorrowMut }
-import package.core.convert.{From, TryFrom}
-import package.core.ptr.NonNull
+import core.clone.Clone
+import core.default.Default
+import core.cmp.{ Eq, Ord, Ordering, PartialEq, PartialOrd }
+import core.hash.{ Hash, Hasher }
+import core.fmt
+import core.ops.{ Deref, DerefMut, IndexRange, IndexRangeMut, RangeEnd }
+import core.iter.{ Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, Bound, RangeBounds, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems }
+import core.slice.{ SliceIter, SliceIterMut }
+import core.text.Text
+import core.borrow.{ AsMut, AsRef, Borrow, BorrowMut }
+import core.convert.{From, TryFrom}
+import core.ptr.NonNull
 
 copy type RawSlice<T> { data: ptr<read T>; len: usize }
 
@@ -1107,14 +1107,14 @@ extend<T: Clone, A: Allocator + Clone> List<T, A> implements Clone {
     }
 }
 
-extend<T, A: Allocator> List<T, A> implements package.core.ops.Index<usize> {
+extend<T, A: Allocator> List<T, A> implements core.ops.Index<usize> {
     type Output = T
     fn index(read i: usize): read T from self {
         if i >= self.len { panic_precondition() }
         unsafe { read *self.ptr.add(i) }
     }
 }
-extend<T, A: Allocator> List<T, A> implements package.core.ops.IndexMut<usize> {
+extend<T, A: Allocator> List<T, A> implements core.ops.IndexMut<usize> {
     type Output = T
     mut fn index_mut(read i: usize): mut T from self {
         if i >= self.len { panic_precondition() }

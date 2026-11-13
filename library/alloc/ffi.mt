@@ -1,14 +1,14 @@
-pub import package.core.ffi.{CStr, FromBytesWithNulError, FromBytesUntilNulError}
-import package.core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
-import package.core.clone.Clone
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.convert.Into
-import package.core.default.Default
-import package.core.fmt
-import package.core.hash.{Hash, Hasher}
-import package.core.iter.{Iterator, OwnedIterable}
-import package.core.ops.Deref
-import package.core.text.{FromStr, Text, Utf8Error}
+pub import core.ffi.{CStr, FromBytesWithNulError, FromBytesUntilNulError}
+import core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
+import core.clone.Clone
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.convert.Into
+import core.default.Default
+import core.fmt
+import core.hash.{Hash, Hasher}
+import core.iter.{Iterator, OwnedIterable}
+import core.ops.Deref
+import core.text.{FromStr, Text, Utf8Error}
 import super.borrow.BorrowedOrOwned
 import super.boxed.Box
 import super.string.String
@@ -38,7 +38,7 @@ extend NulError implements fmt.Debug {
         try debug.finish()
     }
 }
-extend NulError implements package.core.error.Error {}
+extend NulError implements core.error.Error {}
 
 extend FromVecWithNulError {
     pub fn as_bytes(): read [u8] from self { self.bytes.as_slice() }
@@ -60,7 +60,7 @@ fn clone_bytes(read bytes: [u8]): List<u8> {
 }
 
 fn lossy_view<region r>(read bytes: [u8] from r): BorrowedOrOwned<region r, Text> {
-    match package.core.text.from_utf8(bytes) {
+    match core.text.from_utf8(bytes) {
         success(text) => BorrowedOrOwned<region r, Text>.Borrowed(text),
         failure(_) => BorrowedOrOwned<region r, Text>.Owned(super.string.from_utf8_lossy(bytes))
     }
@@ -129,10 +129,10 @@ extend CString {
         var bytes = self.v
         match bytes.pop() {
             present(terminator) => {
-                if terminator != 0u8 { package.core.panic.panic("invalid C string") }
+                if terminator != 0u8 { core.panic.panic("invalid C string") }
                 bytes
             },
-            none => package.core.panic.panic("invalid C string")
+            none => core.panic.panic("invalid C string")
         }
     }
     pub take fn into_boxed_c_str(): Box<CStr> {
@@ -148,10 +148,10 @@ extend CString {
         let bytes = vec.slice_ptr_mut(pointer.cast<u8>(), length)
         let view = unsafe { core.mem.transmute<ptr<mut CStr>>(bytes) }
         let boxed: Box<CStr> = unsafe { super.boxed.from_raw(view) }
-        CString.(package.core.convert.From<Box<CStr>>).from(take boxed)
+        CString.(core.convert.From<Box<CStr>>).from(take boxed)
     }
     pub take fn into_string(): String throws IntoStringError {
-        let invalid = match package.core.text.from_utf8(self.as_bytes()) {
+        let invalid = match core.text.from_utf8(self.as_bytes()) {
             success(_) => none,
             failure(error) => present(error)
         }
@@ -170,23 +170,23 @@ extend CStr {
     pub fn into_c_string(): CString { self.to_owned() }
 }
 
-extend CString implements package.core.convert.From<Box<CStr>> {
+extend CString implements core.convert.From<Box<CStr>> {
     static fn from(take value: Box<CStr>): CString {
         let raw = value.into_raw()
         let pointer = unsafe { core.mem.transmute<ptr<mut [u8]>>(raw.0) }
         let bytes: Box<[u8]> = unsafe { super.boxed.from_raw_in(pointer, raw.1) }
-        CString(List<u8>.(package.core.convert.From<Box<[u8]>>).from(take bytes))
+        CString(List<u8>.(core.convert.From<Box<[u8]>>).from(take bytes))
     }
 }
 extend Box<CStr> {
     pub take fn into_c_string(): CString {
-        CString.(package.core.convert.From<Box<CStr>>).from(take self)
+        CString.(core.convert.From<Box<CStr>>).from(take self)
     }
 }
-extend<region r> CString implements package.core.convert.From<BorrowedOrOwned<region r, CStr>> {
+extend<region r> CString implements core.convert.From<BorrowedOrOwned<region r, CStr>> {
     static fn from(take value: BorrowedOrOwned<region r, CStr>): CString { value.into_owned() }
 }
-extend String implements package.core.convert.TryFrom<CString> {
+extend String implements core.convert.TryFrom<CString> {
     type Error = IntoStringError
     static fn try_from(take value: CString): Outcome<String, IntoStringError> {
         capture value.into_string()
@@ -222,9 +222,9 @@ extend CStr implements OwnedType { type Owned = CString }
 extend CStr implements ToOwned {
     fn to_owned(): CString { CString(clone_bytes(self.to_bytes_with_nul())) }
 }
-extend CString implements package.core.ops.Index<package.core.iter.RangeFull> {
+extend CString implements core.ops.Index<core.iter.RangeFull> {
     type Output = CStr
-    fn index(read index: package.core.iter.RangeFull): read CStr from self { self.as_c_str() }
+    fn index(read index: core.iter.RangeFull): read CStr from self { self.as_c_str() }
 }
 extend CString implements PartialEq<CStr> {
     fn eq(read other: CStr): bool { CStr.(PartialEq).eq(self.as_c_str(), other) }
@@ -256,19 +256,19 @@ extend CString implements FromStr {
         try CString.new(clone_bytes(input.as_bytes()))
     }
 }
-extend<region r> CString implements package.core.convert.From<read CStr from r> {
+extend<region r> CString implements core.convert.From<read CStr from r> {
     static fn from(take value: read CStr from r): CString {
         CString(clone_bytes(value.to_bytes_with_nul()))
     }
 }
-extend CString implements package.core.convert.From<List<package.core.num.NonZero<u8>>> {
-    static fn from(take values: List<package.core.num.NonZero<u8>>): CString {
+extend CString implements core.convert.From<List<core.num.NonZero<u8>>> {
+    static fn from(take values: List<core.num.NonZero<u8>>): CString {
         var bytes = vec.new<u8>()
         var source = values.into_iter()
         while true {
             match take source.next() {
                 present(value) => {
-                    bytes.push(u8.(package.core.convert.From<package.core.num.NonZero<u8>>).from(value))
+                    bytes.push(u8.(core.convert.From<core.num.NonZero<u8>>).from(value))
                 },
                 none => { break }
             }
@@ -284,6 +284,6 @@ extend CString implements fmt.Debug {
         try debug.finish()
     }
 }
-extend List<u8> implements package.core.convert.From<CString> {
+extend List<u8> implements core.convert.From<CString> {
     static fn from(take value: CString): List<u8> { value.into_bytes() }
 }

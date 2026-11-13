@@ -1,19 +1,19 @@
-import package.core.borrow.{AsMut, AsRef, Borrow, BorrowMut}
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.convert.{From, TryFrom}
-import package.core.error.Error
-import package.core.fmt
-import package.core.hash.{Hash, Hasher}
-import package.core.any.Any
-import package.core.iter.{BidirectionalIterator, ExactSizeIterator, FusedIterator}
-import package.core.iter.{FromItems, Iterable, Iterator, MutableIterable, OwnedIterable}
-import package.core.ops.{Deref, DerefMut}
-import package.core.future.{Future, Context, Poll}
+import core.borrow.{AsMut, AsRef, Borrow, BorrowMut}
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.convert.{From, TryFrom}
+import core.error.Error
+import core.fmt
+import core.hash.{Hash, Hasher}
+import core.any.Any
+import core.iter.{BidirectionalIterator, ExactSizeIterator, FusedIterator}
+import core.iter.{FromItems, Iterable, Iterator, MutableIterable, OwnedIterable}
+import core.ops.{Deref, DerefMut}
+import core.future.{Future, Context, Poll}
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_of, layout_of_val, layout_array, extend_layout, layout_unchecked, free_block, handle_alloc_error}
-import package.core.clone.Clone
-import package.core.default.Default
-import package.core.slice.{SliceIter, SliceIterMut, drop_values}
-import package.core.text.Text
+import core.clone.Clone
+import core.default.Default
+import core.slice.{SliceIter, SliceIterMut, drop_values}
+import core.text.Text
 import super.vec.slice_ptr_mut
 import super.vec.slice_ptr
 
@@ -173,7 +173,7 @@ pub fn try_copy_text_in<A: Allocator>(
     let data = raw.cast<u8>()
     // Text is validated and the allocation covers its complete byte extent.
     unsafe {
-        core.ptr.copy(package.core.slice.data(bytes), data, bytes.len())
+        core.ptr.copy(core.slice.data(bytes), data, bytes.len())
     }
     let slice = slice_ptr_mut(data, bytes.len())
     // The slice metadata is the byte length required by Text's representation.
@@ -672,25 +672,25 @@ extend<T, const N: usize, A: Allocator> Box<[T; N], A> implements TryFrom<super.
 extend Box<Text> implements From<super.string.String> {
     static fn from(take value: super.string.String): Box<Text> { from_string(value) }
 }
-extend Box<package.core.ffi.CStr> implements From<super.ffi.CString> {
-    static fn from(take value: super.ffi.CString): Box<package.core.ffi.CStr> {
+extend Box<core.ffi.CStr> implements From<super.ffi.CString> {
+    static fn from(take value: super.ffi.CString): Box<core.ffi.CStr> {
         value.into_boxed_c_str()
     }
 }
-extend<region r> Box<package.core.ffi.CStr> implements From<read package.core.ffi.CStr from r> {
-    static fn from(take value: read package.core.ffi.CStr from r): Box<package.core.ffi.CStr> {
+extend<region r> Box<core.ffi.CStr> implements From<read core.ffi.CStr from r> {
+    static fn from(take value: read core.ffi.CStr from r): Box<core.ffi.CStr> {
         value.to_owned().into_boxed_c_str()
     }
 }
-extend<region r> Box<package.core.ffi.CStr> implements From<mut package.core.ffi.CStr from r> {
-    static fn from(take value: mut package.core.ffi.CStr from r): Box<package.core.ffi.CStr> {
+extend<region r> Box<core.ffi.CStr> implements From<mut core.ffi.CStr from r> {
+    static fn from(take value: mut core.ffi.CStr from r): Box<core.ffi.CStr> {
         value.to_owned().into_boxed_c_str()
     }
 }
-extend<region r> Box<package.core.ffi.CStr> implements From<super.borrow.BorrowedOrOwned<region r, package.core.ffi.CStr>> {
+extend<region r> Box<core.ffi.CStr> implements From<super.borrow.BorrowedOrOwned<region r, core.ffi.CStr>> {
     static fn from(
-        take value: super.borrow.BorrowedOrOwned<region r, package.core.ffi.CStr>
-    ): Box<package.core.ffi.CStr> { value.into_owned().into_boxed_c_str() }
+        take value: super.borrow.BorrowedOrOwned<region r, core.ffi.CStr>
+    ): Box<core.ffi.CStr> { value.into_owned().into_boxed_c_str() }
 }
 extend<region r> Box<Text> implements From<super.borrow.BorrowedOrOwned<region r, Text>> {
     static fn from(take value: super.borrow.BorrowedOrOwned<region r, Text>): Box<Text> {

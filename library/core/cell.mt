@@ -1,10 +1,10 @@
-import package.core.clone.Clone
-import package.core.borrow.AsRef
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.convert.From
-import package.core.default.Default
-import package.core.fmt
-import package.core.ops.{Deref, DerefMut}
+import core.clone.Clone
+import core.borrow.AsRef
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.convert.From
+import core.default.Default
+import core.fmt
+import core.ops.{Deref, DerefMut}
 
 extend<T: unsized> core.cell.Ref<T> {
     pub static fn map<region r, U: unsized, F: for<region s> take fn(
@@ -347,7 +347,7 @@ extend<T> OnceCell<T> {
         let value = initializer()
         match capture self.set(value) {
             success(_) => {},
-            failure(_) => package.core.panic.panic("reentrant OnceCell initialization")
+            failure(_) => core.panic.panic("reentrant OnceCell initialization")
         }
         match self.get() {
             present(value) => value,

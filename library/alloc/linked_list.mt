@@ -1,9 +1,9 @@
-import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
-import package.core.clone.Clone
-import package.core.default.Default
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.hash.{Hash, Hasher}
-import package.core.fmt
+import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import core.clone.Clone
+import core.default.Default
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.hash.{Hash, Hasher}
+import core.fmt
 
 import super.alloc.{Allocator, Global, AllocError, PushError, layout_of, handle_alloc_error}
 

@@ -1,10 +1,10 @@
-import package.core.panic.panic
-import package.core.convert.From
-import package.core.default.Default
-import package.core.error.{Error as CoreError}
-import package.core.borrow.Borrow
-import package.core.fmt.{Debug, Display, Error, Formatter}
-import package.core.ops.{Deref, DerefMut}
+import core.panic.panic
+import core.convert.From
+import core.default.Default
+import core.error.{Error as CoreError}
+import core.borrow.Borrow
+import core.fmt.{Debug, Display, Error, Formatter}
+import core.ops.{Deref, DerefMut}
 extern "C" {
     unsafe fn mettle_rt_mutex_new(): ptr<mut u8>;
     unsafe fn mettle_rt_mutex_free(mutex: ptr<mut u8>): Unit;

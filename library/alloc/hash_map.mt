@@ -1,14 +1,14 @@
-import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
-import package.core.clone.Clone
-import package.core.default.Default
-import package.core.cmp.Eq
-import package.core.fmt
+import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import core.clone.Clone
+import core.default.Default
+import core.cmp.Eq
+import core.fmt
 import super.alloc.{Allocator, Global, AllocError, Layout, layout_unchecked, handle_alloc_error, layout_of}
-import package.core.hash.{BuildHasher, Hash, SipHasher, sip13}
+import core.hash.{BuildHasher, Hash, SipHasher, sip13}
 import super.vec.List
-import package.core.cmp.PartialEq
-import package.core.borrow.KeyView
-import package.core.ops.{BitAnd, BitOr, BitXor, Sub}
+import core.cmp.PartialEq
+import core.borrow.KeyView
+import core.ops.{BitAnd, BitOr, BitXor, Sub}
 
 fn empty(): usize { 0xffffffffffffffffusize }
 
@@ -401,13 +401,13 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
     ): (mut V from self, mut V from self) where K: KeyView<Q> + KeyView<R> {
         let i = match self.find_entry(first) {
             present(index) => index,
-            none => package.core.panic.unreachable()
+            none => core.panic.unreachable()
         }
         let j = match self.find_entry(second) {
             present(index) => index,
-            none => package.core.panic.unreachable()
+            none => core.panic.unreachable()
         }
-        if i == j { package.core.panic.unreachable() }
+        if i == j { core.panic.unreachable() }
         let entries = self.entries.as_mut_ptr()
         (mut (*entries.add(i)).value, mut (*entries.add(j)).value)
     }
@@ -506,12 +506,12 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
     mut fn remove_index(s: usize): (K, V) {
         let hash = match self.entries.get(s) {
             present(entry) => entry.hash,
-            none => package.core.panic.unreachable()
+            none => core.panic.unreachable()
         }
         let mask = self.icap - 1usize
         var pos = (hash as usize) & mask
         while self.slot(pos) != s {
-            if self.slot(pos) == empty() { package.core.panic.unreachable() }
+            if self.slot(pos) == empty() { core.panic.unreachable() }
             pos = (pos + 1usize) & mask
         }
         self.remove_at(s, pos)
@@ -552,7 +552,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
 extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
     pub fn hasher(): read S from self { read self.builder }
 }
-extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher, Q: Hash + PartialEq + unsized> Map<K, V, A, S> implements package.core.ops.Index<Q> where K: KeyView<Q> {
+extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher, Q: Hash + PartialEq + unsized> Map<K, V, A, S> implements core.ops.Index<Q> where K: KeyView<Q> {
     type Output = V
     fn index(read key: Q): read V from self {
         match self.get(key) {
@@ -1368,7 +1368,7 @@ extend<K: Hash + PartialEq, V> Map<K, V> implements FromItems<(K, V)> {
     }
 }
 
-extend<K: Hash + PartialEq, V, const N: usize> Map<K, V> implements package.core.convert.From<[(K, V); N]> {
+extend<K: Hash + PartialEq, V, const N: usize> Map<K, V> implements core.convert.From<[(K, V); N]> {
     static fn from(take items: [(K, V); N]): Map<K, V> {
         var out = new<K, V>()
         for item in take items { let _ = out.insert(item.0, item.1) }
@@ -1491,7 +1491,7 @@ extend<K: Hash + PartialEq> Set<K> implements FromItems<K> {
     }
 }
 
-extend<K: Hash + PartialEq, const N: usize> Set<K> implements package.core.convert.From<[K; N]> {
+extend<K: Hash + PartialEq, const N: usize> Set<K> implements core.convert.From<[K; N]> {
     static fn from(take items: [K; N]): Set<K> {
         var out = set_new<K>()
         for item in take items { let _ = out.insert(item) }

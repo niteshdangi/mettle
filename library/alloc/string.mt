@@ -1,21 +1,21 @@
-import package.core.iter.{Iterator, BidirectionalIterator}
+import core.iter.{Iterator, BidirectionalIterator}
 import super.alloc.{Allocator, Global, AllocError, panic_precondition}
-import package.core.clone.Clone
-import package.core.default.Default
-import package.core.fmt
-import package.core.ops.{Deref, IndexRange, IndexRangeMut, RangeEnd}
-import package.core.hash.{Hash, Hasher}
-import package.core.borrow.KeyView
-import package.core.borrow.{AsRef, AsMut, Borrow, OwnedType, ToOwned}
+import core.clone.Clone
+import core.default.Default
+import core.fmt
+import core.ops.{Deref, IndexRange, IndexRangeMut, RangeEnd}
+import core.hash.{Hash, Hasher}
+import core.borrow.KeyView
+import core.borrow.{AsRef, AsMut, Borrow, OwnedType, ToOwned}
 import super.vec.{List, slice_ptr}
-import package.core.cmp.{Ordering, PartialEq, Eq, PartialOrd, Ord}
-import package.core.text.{
+import core.cmp.{Ordering, PartialEq, Eq, PartialOrd, Ord}
+import core.text.{
     Text,
     from_utf8_unchecked,
     from_utf8_unchecked_mut
 }
-extend<A: Allocator> String implements ExtendItems<package.alloc.boxed.Box<Text, A>> {
-    mut fn extend<I: OwnedIterable<Item = package.alloc.boxed.Box<Text, A>>>(
+extend<A: Allocator> String implements ExtendItems<alloc.boxed.Box<Text, A>> {
+    mut fn extend<I: OwnedIterable<Item = alloc.boxed.Box<Text, A>>>(
         take items: I
     ): Unit {
         var source = items.into_iter()
@@ -27,19 +27,19 @@ extend<A: Allocator> String implements ExtendItems<package.alloc.boxed.Box<Text,
         }
     }
 }
-extend<A: Allocator> String implements FromItems<package.alloc.boxed.Box<Text, A>> {
-    static fn from_iter<I: OwnedIterable<Item = package.alloc.boxed.Box<Text, A>>>(
+extend<A: Allocator> String implements FromItems<alloc.boxed.Box<Text, A>> {
+    static fn from_iter<I: OwnedIterable<Item = alloc.boxed.Box<Text, A>>>(
         take items: I
     ): String {
         var result = new()
-        String.(ExtendItems<package.alloc.boxed.Box<Text, A>>).extend(mut result, take items)
+        String.(ExtendItems<alloc.boxed.Box<Text, A>>).extend(mut result, take items)
         result
     }
 }
-import package.core.iter.{OwnedIterable, FromItems, ExtendItems}
-import package.core.convert.{From, TryFrom}
-import package.core.text.FromStr
-import package.core.ops.{Add, AddAssign}
+import core.iter.{OwnedIterable, FromItems, ExtendItems}
+import core.convert.{From, TryFrom}
+import core.text.FromStr
+import core.ops.{Add, AddAssign}
 import super.borrow.BorrowedOrOwned
 
 // Owned, growable UTF-8 text: a `List<u8>` whose bytes are always well formed.
@@ -185,7 +185,7 @@ pub fn from_text_in<A: Allocator>(read t: Text, take a: A): String<A> {
 
 // Validates `bytes`; on failure the buffer comes back in the error.
 pub fn from_utf8<A: Allocator>(take bytes: List<u8, A>): String<A> throws FromUtf8Error<A> {
-    let invalid = match package.core.text.from_utf8(bytes.as_slice()) {
+    let invalid = match core.text.from_utf8(bytes.as_slice()) {
         success(_) => none,
         failure(error) => present(error.valid_up_to())
     }
@@ -202,22 +202,22 @@ extend String {
         self.push_str(text)
     }
     pub static fn from_utf16(read units: [u16]): String throws FromUtf16Error {
-        try package.alloc.string.from_utf16(units)
+        try alloc.string.from_utf16(units)
     }
     pub static fn from_utf16_lossy(read units: [u16]): String {
-        package.alloc.string.from_utf16_lossy(units)
+        alloc.string.from_utf16_lossy(units)
     }
     pub static fn from_utf16be(read bytes: [u8]): String throws FromUtf16Error {
-        try package.alloc.string.from_utf16be(bytes)
+        try alloc.string.from_utf16be(bytes)
     }
     pub static fn from_utf16le(read bytes: [u8]): String throws FromUtf16Error {
-        try package.alloc.string.from_utf16le(bytes)
+        try alloc.string.from_utf16le(bytes)
     }
     pub static fn from_utf16be_lossy(read bytes: [u8]): String {
-        package.alloc.string.from_utf16be_lossy(bytes)
+        alloc.string.from_utf16be_lossy(bytes)
     }
     pub static fn from_utf16le_lossy(read bytes: [u8]): String {
-        package.alloc.string.from_utf16le_lossy(bytes)
+        alloc.string.from_utf16le_lossy(bytes)
     }
     // Safety: the pointer and capacity must satisfy List's Global allocation
     // invariants, and the initialized bytes must be well-formed UTF-8.
@@ -236,13 +236,13 @@ extend String {
     pub static fn from_utf8<A: Allocator>(
         take bytes: List<u8, A>
     ): String<A> throws FromUtf8Error<A> {
-        try package.alloc.string.from_utf8(take bytes)
+        try alloc.string.from_utf8(take bytes)
     }
     pub static fn from_utf8_lossy(read bytes: [u8]): String {
-        package.alloc.string.from_utf8_lossy(bytes)
+        alloc.string.from_utf8_lossy(bytes)
     }
     pub static fn from_utf8_lossy_owned(take bytes: List<u8>): String {
-        package.alloc.string.from_utf8_lossy_owned(take bytes)
+        alloc.string.from_utf8_lossy_owned(take bytes)
     }
     // Safety: every byte must be well-formed UTF-8.
     pub unsafe static fn from_utf8_unchecked<A: Allocator>(
@@ -341,18 +341,18 @@ pub fn from_utf8_lossy(read bytes: [u8]): String {
     while index < bytes.len() {
         let width = valid_utf8_width(bytes, index)
         if width != 0usize {
-            let part = match package.core.slice.subslice(bytes, index, index + width) {
+            let part = match core.slice.subslice(bytes, index, index + width) {
                 present(value) => value,
                 none => { panic_precondition() }
             }
-            let text = match package.core.text.from_utf8(part) {
+            let text = match core.text.from_utf8(part) {
                 success(value) => value,
                 failure(_) => { panic_precondition() }
             }
             result.push_str(text)
             index += width
         } else {
-            result.push(match package.core.char.from_u32(0xfffdu32) {
+            result.push(match core.char.from_u32(0xfffdu32) {
                 present(value) => value,
                 none => { panic_precondition() }
             })
@@ -387,7 +387,7 @@ pub fn from_utf16(read units: [u16]): String throws FromUtf16Error {
         } else if first >= 0xdc00u32 && first <= 0xdfffu32 {
             throw FromUtf16Error(index, units[index])
         }
-        result.push(match package.core.char.from_u32(scalar) {
+        result.push(match core.char.from_u32(scalar) {
             present(value) => value,
             none => { throw FromUtf16Error(index, units[index]) }
         })
@@ -408,19 +408,19 @@ pub fn from_utf16_lossy(read units: [u16]): String {
             let second = units[index + 1usize] as u32
             let scalar = 0x10000u32 + ((first - 0xd800u32) << 10u32) +
                 (second - 0xdc00u32)
-            result.push(match package.core.char.from_u32(scalar) {
+            result.push(match core.char.from_u32(scalar) {
                 present(value) => value,
                 none => { panic_precondition() }
             })
             index += 2usize
         } else if first >= 0xd800u32 && first <= 0xdfffu32 {
-            result.push(match package.core.char.from_u32(0xfffdu32) {
+            result.push(match core.char.from_u32(0xfffdu32) {
                 present(value) => value,
                 none => { panic_precondition() }
             })
             index += 1usize
         } else {
-            result.push(match package.core.char.from_u32(first) {
+            result.push(match core.char.from_u32(first) {
                 present(value) => value,
                 none => { panic_precondition() }
             })
@@ -499,7 +499,7 @@ extend<A: Allocator> String<A> {
     // Borrowed text view; while it lives the string cannot change.
     pub const fn as_text(): read Text from self { unsafe { from_utf8_unchecked(self.v.as_slice()) } }
     pub mut const fn as_mut_str(): mut Text from self {
-        match take package.core.text.from_utf8_mut(self.v.as_mut_slice()) {
+        match take core.text.from_utf8_mut(self.v.as_mut_slice()) {
             success(text) => text,
             failure(_) => { panic_precondition() }
         }
@@ -531,11 +531,11 @@ extend<A: Allocator> String<A> {
     ): (mut Text from self, mut Text from self)? {
         self.as_mut_str().split_at_mut_checked(mid)
     }
-    pub fn substr_range(read substring: Text): package.core.iter.Range<usize>? {
+    pub fn substr_range(read substring: Text): core.iter.Range<usize>? {
         self.as_text().substr_range(substring)
     }
-    pub take fn into_boxed_str(): package.alloc.boxed.Box<Text, A> {
-        package.alloc.boxed.from_string(take self)
+    pub take fn into_boxed_str(): alloc.boxed.Box<Text, A> {
+        alloc.boxed.from_string(take self)
     }
     pub take fn leak(): mut Text from static {
         let bytes = self.into_bytes().leak()
@@ -833,7 +833,7 @@ extend<A: Allocator> String<A> implements Deref {
     type Target = Text
     const fn deref(): read Text from self { self.as_text() }
 }
-extend<A: Allocator> String<A> implements package.core.ops.DerefMut {
+extend<A: Allocator> String<A> implements core.ops.DerefMut {
     mut const fn deref_mut(): mut Text from self { self.as_mut_str() }
 }
 extend<A: Allocator> String<A> implements IndexRange {
@@ -988,20 +988,20 @@ extend String implements From<char> {
         result
     }
 }
-extend<A: Allocator> String<A> implements From<package.alloc.boxed.Box<Text, A>> {
+extend<A: Allocator> String<A> implements From<alloc.boxed.Box<Text, A>> {
     static fn from(
-        take value: package.alloc.boxed.Box<Text, A>
+        take value: alloc.boxed.Box<Text, A>
     ): String<A> {
         let raw = value.into_raw()
         // Text and byte slices share length metadata and retain the allocator.
         let bytes_pointer = unsafe {
             core.mem.transmute<ptr<mut [u8]>>(raw.0)
         }
-        let byte_box: package.alloc.boxed.Box<[u8], A> = unsafe {
-            package.alloc.boxed.from_raw_in(bytes_pointer, raw.1)
+        let byte_box: alloc.boxed.Box<[u8], A> = unsafe {
+            alloc.boxed.from_raw_in(bytes_pointer, raw.1)
         }
         let bytes = List<u8, A>.(
-            From<package.alloc.boxed.Box<[u8], A>>
+            From<alloc.boxed.Box<[u8], A>>
         ).from(take byte_box)
         from_valid_bytes(take bytes)
     }
@@ -1152,6 +1152,6 @@ extend Text {
     }
 }
 
-extend<A: Allocator> List<u8, A> implements package.core.convert.From<String<A>> {
+extend<A: Allocator> List<u8, A> implements core.convert.From<String<A>> {
     static fn from(take text: String<A>): List<u8, A> { text.into_bytes() }
 }

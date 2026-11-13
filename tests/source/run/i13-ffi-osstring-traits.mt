@@ -49,7 +49,7 @@ fn main(): i32 {
     if !view_partial(view, owned) { return 20 }
     if !owned.cmp(os_string_from_text("alpha")).is_eq() { return 2 }
     let from_text = OsString.(From<read Text from static>).from("alpha")
-    let string_input = package.alloc.string.from_text("alpha")
+    let string_input = alloc.string.from_text("alpha")
     let from_string_view = copy_os(read string_input)
     let from_string = OsString.(From<String>).from(string_input)
     let from_view = OsString.(From<read OsStr from static>).from(OsStr.new("alpha".as_bytes()))

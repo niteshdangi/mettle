@@ -5,15 +5,15 @@
 // on. The compiler re-lexes and re-parses the text; every generated token is
 // attributed to the invocation. The wire format is documented in
 // compiler/expansion/procedural.h; a different major version is rejected.
-import package.alloc.vec
-import package.alloc.vec.List
-import package.alloc.string
-import package.alloc.string.String
-import package.core.cmp.PartialEq
-import package.core.fmt
-import package.core.fmt.Debug
-import package.core.iter.Iterator
-import package.core.text.Text
+import alloc.vec
+import alloc.vec.List
+import alloc.string
+import alloc.string.String
+import core.cmp.PartialEq
+import core.fmt
+import core.fmt.Debug
+import core.iter.Iterator
+import core.text.Text
 import super.io
 import super.io.{Error, ErrorKind, Reader, Writer}
 
@@ -50,7 +50,7 @@ fn read_request(): String throws Error {
     var bytes = vec.new<u8>()
     var input = io.stdin()
     let n = try input.read_to_end(bytes)
-    let decoded = capture package.alloc.string.from_utf8(bytes)
+    let decoded = capture alloc.string.from_utf8(bytes)
     match take decoded {
         success(s) => s,
         failure(e) => throw invalid()
@@ -72,7 +72,7 @@ fn unescape(read text: Text): String throws Error {
         }
         i += 1usize
     }
-    let decoded = capture package.alloc.string.from_utf8(out)
+    let decoded = capture alloc.string.from_utf8(out)
     match take decoded {
         success(s) => s,
         failure(e) => throw invalid()
@@ -195,7 +195,7 @@ fn debug_text<T: Debug>(read value: T): String {
         var formatter = fmt.formatter(mut output, options)
         match capture T.(Debug).fmt(read value, mut formatter) {
             success(_) => {},
-            failure(_) => { package.core.panic.panic("debug formatting failed") }
+            failure(_) => { core.panic.panic("debug formatting failed") }
         }
     }
     output
@@ -227,7 +227,7 @@ pub fn format_message(message: format fmt.Message): String {
     var output = string.new()
     match capture output.write_fmt(message) {
         success(_) => {},
-        failure(_) => { package.core.panic.panic("formatting failed") }
+        failure(_) => { core.panic.panic("formatting failed") }
     }
     output
 }
@@ -264,9 +264,9 @@ fn panic_with_prefix(read prefix: Text, message: format fmt.Message): Never {
     var output = string.from_text(prefix)
     match capture output.write_fmt(message) {
         success(_) => {},
-        failure(_) => { package.core.panic.panic("formatting failed") }
+        failure(_) => { core.panic.panic("formatting failed") }
     }
-    package.core.panic.panic(output.as_text())
+    core.panic.panic(output.as_text())
 }
 
 fn assertion_values<T: Debug, U: Debug>(read left: T, read right: U): String {
@@ -290,7 +290,7 @@ fn assertion_failure<T: Debug, U: Debug>(
     output.push_str(" right")
     let values = assertion_values(left, right)
     output.push_str(values.as_text())
-    package.core.panic.panic(output.as_text())
+    core.panic.panic(output.as_text())
 }
 
 fn assertion_failure_with_message<T: Debug, U: Debug>(
@@ -305,7 +305,7 @@ fn assertion_failure_with_message<T: Debug, U: Debug>(
     output.push_str(message.as_text())
     let values = assertion_values(left, right)
     output.push_str(values.as_text())
-    package.core.panic.panic(output.as_text())
+    core.panic.panic(output.as_text())
 }
 
 fn assert_values<T: PartialEq<U> + Debug, U: Debug>(
@@ -350,11 +350,11 @@ pub macro assert_ne {
 }
 
 pub macro todo {
-    () => { package.core.panic.panic("not yet implemented") };
+    () => { core.panic.panic("not yet implemented") };
     ($message:expr $(,)?) => { panic_with_prefix("not yet implemented: ", $message) };
 }
 
 pub macro unimplemented {
-    () => { package.core.panic.panic("not implemented") };
+    () => { core.panic.panic("not implemented") };
     ($message:expr $(,)?) => { panic_with_prefix("not implemented: ", $message) };
 }

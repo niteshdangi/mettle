@@ -2,7 +2,7 @@
 import alloc.hash_map.Map
 import alloc.string.String
 import alloc.vec.List
-import package.core.text.Text
+import core.text.Text
 
 fn parse_number(read text: Text): i64? {
     if text.is_empty() { return none }

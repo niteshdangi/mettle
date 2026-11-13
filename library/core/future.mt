@@ -7,11 +7,11 @@
 // `cx.waker()`) or `Ready(value)`. Spurious wake-ups are allowed; concurrent
 // polls are not. Polling after `Ready` is outside the protocol: compiler
 // generated futures panic with a defined message.
-import package.core.clone.Clone
-import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import package.core.convert.From
-import package.core.fmt.{Debug, Formatter}
-import package.core.hash.{Hash, Hasher}
+import core.clone.Clone
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import core.convert.From
+import core.fmt.{Debug, Formatter}
+import core.hash.{Hash, Hasher}
 
 pub copy enum Poll<T> { Ready(T); Pending }
 
@@ -77,7 +77,7 @@ extend<T: Hash> Poll<T> implements Hash {
     }
 }
 extend<T: Debug> Poll<T> implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         match self {
             Poll.Ready(value) => {
                 try f.write_str("Ready(")
@@ -206,7 +206,7 @@ extend Waker implements Clone {
 }
 
 extend Waker implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("Waker")
     }
 }
@@ -249,7 +249,7 @@ extend<region c> Context<region c> {
 }
 
 extend<region c> Context<region c> implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("Context { waker: ")
         try self.waker().fmt(mut f)
         try f.write_str(" }")

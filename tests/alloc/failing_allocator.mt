@@ -27,7 +27,7 @@ extend Retained implements core.cmp.Ord {
     fn cmp(read other: Retained): core.cmp.Ordering { self.id.cmp(read other.id) }
 }
 
-extend Limited implements package.core.clone.Clone {
+extend Limited implements core.clone.Clone {
     fn clone(): Limited {
         Limited(self.budget, self.live, self.alignment_errors)
     }

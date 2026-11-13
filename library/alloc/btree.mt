@@ -1,12 +1,12 @@
-import package.core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
-import package.core.clone.Clone
-import package.core.default.Default
-import package.core.cmp.{Eq, PartialEq, PartialOrd}
-import package.core.hash.{Hash, Hasher}
-import package.core.fmt
+import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import core.clone.Clone
+import core.default.Default
+import core.cmp.{Eq, PartialEq, PartialOrd}
+import core.hash.{Hash, Hasher}
+import core.fmt
 import super.alloc.{Allocator, Global, AllocError, layout_unchecked, layout_of, handle_alloc_error, dangling_for, free_block}
-import package.core.cmp.{Ord, Ordering}
-import package.core.borrow.KeyView
+import core.cmp.{Ord, Ordering}
+import core.borrow.KeyView
 
 pub type Bucket<K, V> {
     pub key: K
@@ -630,7 +630,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                 }
                 node = next
             }
-            package.core.panic.unreachable()
+            core.panic.unreachable()
         }
     }
     pub mut fn try_insert(take key: K, take value: V): V? throws AllocError {
@@ -1748,7 +1748,7 @@ extend<K: PartialEq, V: PartialEq, A: Allocator> SortedMap<K, V, A> implements P
     }
 }
 extend<K: Eq, V: Eq, A: Allocator> SortedMap<K, V, A> implements Eq {}
-extend<K: Ord, V, A: Allocator, Q: Ord + unsized> SortedMap<K, V, A> implements package.core.ops.Index<Q> where K: KeyView<Q> {
+extend<K: Ord, V, A: Allocator, Q: Ord + unsized> SortedMap<K, V, A> implements core.ops.Index<Q> where K: KeyView<Q> {
     type Output = V
     fn index(read key: Q): read V from self {
         match self.get(key) {
@@ -1873,7 +1873,7 @@ extend<K: Ord, V> SortedMap<K, V> implements FromItems<(K, V)> {
     }
 }
 
-extend<K: Ord, V, const N: usize> SortedMap<K, V> implements package.core.convert.From<[(K, V); N]> {
+extend<K: Ord, V, const N: usize> SortedMap<K, V> implements core.convert.From<[(K, V); N]> {
     static fn from(take items: [(K, V); N]): SortedMap<K, V> {
         var out = new<K, V>()
         for item in take items { let _ = out.insert(item.0, item.1) }
@@ -1932,7 +1932,7 @@ extend<K: Ord> SortedSet<K> implements FromItems<K> {
     }
 }
 
-extend<K: Ord, const N: usize> SortedSet<K> implements package.core.convert.From<[K; N]> {
+extend<K: Ord, const N: usize> SortedSet<K> implements core.convert.From<[K; N]> {
     static fn from(take items: [K; N]): SortedSet<K> {
         var out = set_new<K>()
         for item in take items { let _ = out.insert(item) }
@@ -1980,7 +1980,7 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
 
 // The operators build new sets from clones of the operands' elements, as the
 // `&a | &b` forms of the baseline do.
-extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.core.ops.BitOr<SortedSet<K, A>> {
+extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements core.ops.BitOr<SortedSet<K, A>> {
     type Output = SortedSet<K, A>
     fn bitor(read rhs: SortedSet<K, A>): SortedSet<K, A> {
         var out = self.clone()
@@ -1988,7 +1988,7 @@ extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.
         out
     }
 }
-extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.core.ops.BitAnd<SortedSet<K, A>> {
+extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements core.ops.BitAnd<SortedSet<K, A>> {
     type Output = SortedSet<K, A>
     fn bitand(read rhs: SortedSet<K, A>): SortedSet<K, A> {
         var out = set_new_in<K, A>(self.map.a.clone())
@@ -1998,7 +1998,7 @@ extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.
         out
     }
 }
-extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.core.ops.Sub<SortedSet<K, A>> {
+extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements core.ops.Sub<SortedSet<K, A>> {
     type Output = SortedSet<K, A>
     fn sub(read rhs: SortedSet<K, A>): SortedSet<K, A> {
         var out = set_new_in<K, A>(self.map.a.clone())
@@ -2008,7 +2008,7 @@ extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.
         out
     }
 }
-extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements package.core.ops.BitXor<SortedSet<K, A>> {
+extend<K: Ord + Clone, A: Allocator + Clone> SortedSet<K, A> implements core.ops.BitXor<SortedSet<K, A>> {
     type Output = SortedSet<K, A>
     fn bitxor(read rhs: SortedSet<K, A>): SortedSet<K, A> {
         var out = set_new_in<K, A>(self.map.a.clone())

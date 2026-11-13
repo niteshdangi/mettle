@@ -12,16 +12,16 @@ import super.sync.mutex
 import super.sys
 import super.time.{Duration, Instant}
 import super.thread.{Brand, Within}
-import package.alloc.arc
-import package.alloc.arc.Arc
-import package.alloc.boxed
-import package.alloc.alloc.Global
-import package.alloc.vec.List
-import package.alloc.vec_deque.Deque
-import package.core.future.{Future, Poll, Context, Waker, RawWaker, RawWakerVTable}
-import package.core.clone.Clone
-import package.core.convert.From
-import package.core.panic.panic
+import alloc.arc
+import alloc.arc.Arc
+import alloc.boxed
+import alloc.alloc.Global
+import alloc.vec.List
+import alloc.vec_deque.Deque
+import core.future.{Future, Poll, Context, Waker, RawWaker, RawWakerVTable}
+import core.clone.Clone
+import core.convert.From
+import core.panic.panic
 
 extern "C" {
     unsafe fn mettle_rt_catch(context: ptr<mut u8>, body: extern "C" fn(ptr<mut u8>): Unit): i32;
@@ -65,7 +65,7 @@ unsafe fn waker_release<W: Wake + Transferable + Shareable + Static>(data: ptr<m
 pub fn waker_from_arc<W: Wake + Transferable + Shareable + Static>(read handle: Arc<W>): Waker {
     let dup = boxed.new(handle.retain())
     let parts = dup.into_raw()
-    unsafe { package.core.future.waker_from_raw(RawWaker(parts.0.cast<u8>(), waker_table<W>())) }
+    unsafe { core.future.waker_from_raw(RawWaker(parts.0.cast<u8>(), waker_table<W>())) }
 }
 
 extend<W: Wake + Transferable + Shareable + Static> Waker implements From<Arc<W>> {
@@ -83,7 +83,7 @@ unsafe extend Reactor implements Shareable {}
 fn new_reactor(): Arc<Reactor> {
     let reactor = unsafe { sys.mettle_rt_reactor_new() }
     if reactor == core.ptr.null_mut<u8>() {
-        package.core.panic.panic("async reactor creation failed")
+        core.panic.panic("async reactor creation failed")
     }
     arc.new(Reactor(reactor))
 }
@@ -116,7 +116,7 @@ extend Signal {
                 }
             }
             if waiting && unsafe { sys.mettle_rt_reactor_wait(self.reactor.get().handle) } < 0 {
-                package.core.panic.panic("async reactor wait failed")
+                core.panic.panic("async reactor wait failed")
             }
         }
     }
@@ -249,7 +249,7 @@ extend Sleep implements Future {
         if me.remaining.is_zero() { return Poll.Ready(()) }
         let reactor = match take reactor_from_waker(read cx.waker()) {
             present(value) => value,
-            none => package.core.panic.panic("sleep requires the std.task executor")
+            none => core.panic.panic("sleep requires the std.task executor")
         }
         let raw = cx.waker().clone().into_raw()
         let wake = unsafe {
@@ -266,7 +266,7 @@ extend Sleep implements Future {
         }
         if token == 0u64 {
             unsafe { (raw.vtable.release)(raw.data) }
-            package.core.panic.panic("async reactor timer registration failed")
+            core.panic.panic("async reactor timer registration failed")
         }
         me.last = now
         me.registration = present(Registration(reactor, token))
@@ -517,11 +517,11 @@ type CancelRest {
 }
 
 pub fn executor(): Executor {
-    let queue = Queue(package.alloc.vec_deque.new<ptr<mut u8>>(), false)
+    let queue = Queue(alloc.vec_deque.new<ptr<mut u8>>(), false)
     Executor(arc.new(Shared(mutex.new(queue), new_reactor(),
                              core.sync.atomic.AtomicUsize.new(0usize),
                              core.sync.atomic.AtomicBool.new(false))),
-             core.cell.UnsafeCell.new(package.alloc.vec.new<ptr<mut u8>>()))
+             core.cell.UnsafeCell.new(alloc.vec.new<ptr<mut u8>>()))
 }
 
 fn erase<T, F: Future<Output = T>>(take future: F, take result: Arc<ResultSlot<T>>): ErasedFuture {
@@ -639,7 +639,7 @@ fn next_task(read hub: Shared, block: bool): Arc<Task>? {
             return none
         }
         if unsafe { sys.mettle_rt_reactor_wait(hub.reactor.get().handle) } < 0 {
-            package.core.panic.panic("async reactor wait failed")
+            core.panic.panic("async reactor wait failed")
         }
     }
 }
@@ -962,7 +962,7 @@ extend<region s, T> AsyncScope<region s, T> not Shareable
 
 pub fn async_scope<region s, T>(read anchor: T from s): AsyncScope<region s, T> {
     let brand: core.cell.Cell<Brand<region s>> = core.cell.Cell.new(Brand(0u8))
-    AsyncScope(read anchor, package.alloc.vec_deque.new<ScopedFuture<region s>>(),
+    AsyncScope(read anchor, alloc.vec_deque.new<ScopedFuture<region s>>(),
                arc.new(ScopeWake(core.sync.atomic.AtomicBool.new(true), mutex.new(none))),
                false, brand)
 }

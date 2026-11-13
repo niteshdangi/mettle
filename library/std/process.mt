@@ -2,24 +2,24 @@
 // (missing program, bad directory) fails `spawn` with the OS error reported by
 // the child before it ran; a child that runs and fails is a nonzero
 // `ExitStatus`, or one ended by a signal, not an `Error`.
-import package.alloc.vec
-import package.alloc.vec.List
-import package.core.outcome
-import package.core.option
-import package.core.convert.From
+import alloc.vec
+import alloc.vec.List
+import core.outcome
+import core.option
+import core.convert.From
 import super.env
 import super.ffi
 import super.ffi.{OsStr, OsString}
 import super.io
 import super.io.{Error, ErrorKind, Reader, Writer}
 import super.path.{Path, PathBuf, PathInput}
-import package.core.iter.{ExactSizeIterator, Iterator, OwnedIterable}
-import package.core.text.Text
+import core.iter.{ExactSizeIterator, Iterator, OwnedIterable}
+import core.text.Text
 import super.sys
-import package.core.clone.Clone
-import package.core.borrow.AsRef
-import package.core.cmp.{Eq, PartialEq}
-import package.core.fmt.{Debug, Formatter}
+import core.clone.Clone
+import core.borrow.AsRef
+import core.cmp.{Eq, PartialEq}
+import core.fmt.{Debug, Formatter}
 
 extern "C" {
     unsafe fn getpid(): i32;
@@ -66,13 +66,13 @@ extend ExitStatus implements PartialEq {
 }
 extend ExitStatus implements Eq {}
 extend ExitStatus implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("ExitStatus { raw: ")
-        try i32.(package.core.fmt.Display).fmt(self.raw, mut f)
+        try i32.(core.fmt.Display).fmt(self.raw, mut f)
         try f.write_str(" }")
     }
 }
-extend ExitStatus implements package.core.default.Default {
+extend ExitStatus implements core.default.Default {
     static fn default(): ExitStatus { ExitStatus(0) }
 }
 
@@ -93,25 +93,25 @@ fn signal_name(signal: i32): read Text from static {
 
 // "exit status: N" for a normal exit, "signal: N (NAME)" (and " (core dumped)")
 // for a signal, matching the reference Unix display.
-extend ExitStatus implements package.core.fmt.Display {
-    fn fmt(mut f: package.core.fmt.Formatter): Unit throws package.core.fmt.Error {
+extend ExitStatus implements core.fmt.Display {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
         match self.code() {
             present(code) => {
                 try f.write_str("exit status: ")
-                return try i32.(package.core.fmt.Display).fmt(code, mut f)
+                return try i32.(core.fmt.Display).fmt(code, mut f)
             },
             none => {}
         }
         match self.signal() {
             present(signal) => {
                 try f.write_str("signal: ")
-                try i32.(package.core.fmt.Display).fmt(signal, mut f)
+                try i32.(core.fmt.Display).fmt(signal, mut f)
                 try f.write_str(signal_name(signal))
                 if (self.raw & 128) != 0 { try f.write_str(" (core dumped)") }
             },
             none => {
                 try f.write_str("unrecognised wait status: ")
-                try i32.(package.core.fmt.Display).fmt(self.raw, mut f)
+                try i32.(core.fmt.Display).fmt(self.raw, mut f)
             }
         }
     }
@@ -242,7 +242,7 @@ extend<region r> CommandArgs<region r> implements Iterator {
 }
 extend<region r> CommandArgs<region r> implements ExactSizeIterator {}
 extend<region r> CommandArgs<region r> implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("CommandArgs(")
         try fmt_os_strings(self.values.split_at(self.index).1, mut f)
         try f.write_char(')')
@@ -266,7 +266,7 @@ extend<region r> CommandEnvs<region r> implements Iterator {
 }
 extend<region r> CommandEnvs<region r> implements ExactSizeIterator {}
 extend<region r> CommandEnvs<region r> implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("CommandEnvs([")
         var index = self.index
         while index < self.values.len() {
@@ -564,7 +564,7 @@ extend Output implements PartialEq {
 }
 extend Output implements Eq {}
 extend Output implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("Output { status: ")
         try self.status.fmt(mut f)
         try f.write_str(", stdout: ")
@@ -575,12 +575,12 @@ extend Output implements Debug {
     }
 }
 
-fn fmt_bytes(read bytes: [u8], mut f: Formatter): Unit throws package.core.fmt.Error {
+fn fmt_bytes(read bytes: [u8], mut f: Formatter): Unit throws core.fmt.Error {
     try f.write_char('[')
     var i = 0usize
     while i < bytes.len() {
         if i != 0usize { try f.write_str(", ") }
-        try u8.(package.core.fmt.Debug).fmt(bytes[i], mut f)
+        try u8.(core.fmt.Debug).fmt(bytes[i], mut f)
         i += 1usize
     }
     try f.write_char(']')
@@ -629,7 +629,7 @@ extend Stdio implements From<ChildStderr> {
     }
 }
 extend Stdio implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         match self {
             Stdio.Inherit => try f.write_str("Inherit"),
             Stdio.Piped => try f.write_str("Piped"),
@@ -646,15 +646,15 @@ extend Stdio implements Debug {
 }
 
 extend Child implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("Child { id: ")
-        try i32.(package.core.fmt.Display).fmt(self.pid, mut f)
+        try i32.(core.fmt.Display).fmt(self.pid, mut f)
         try f.write_str(" }")
     }
 }
 
 extend Command implements Debug {
-    fn fmt(mut f: Formatter): Unit throws package.core.fmt.Error {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("Command { program: ")
         try fmt_os_string(self.program.as_os_str(), mut f)
         try f.write_str(", args: ")
@@ -663,7 +663,7 @@ extend Command implements Debug {
     }
 }
 
-fn fmt_os_string(read value: OsStr, mut f: Formatter): Unit throws package.core.fmt.Error {
+fn fmt_os_string(read value: OsStr, mut f: Formatter): Unit throws core.fmt.Error {
     match value.to_str() {
         present(text) => try Text.(Debug).fmt(text, mut f),
         none => {
@@ -674,7 +674,7 @@ fn fmt_os_string(read value: OsStr, mut f: Formatter): Unit throws package.core.
     }
 }
 
-fn fmt_os_strings(read values: [OsString], mut f: Formatter): Unit throws package.core.fmt.Error {
+fn fmt_os_strings(read values: [OsString], mut f: Formatter): Unit throws core.fmt.Error {
     try f.write_char('[')
     var i = 0usize
     while i < values.len() {

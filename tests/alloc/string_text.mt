@@ -1,4 +1,4 @@
-import package.core.cmp.Ord
+import core.cmp.Ord
 import alloc.vec.List
 
 fn main(): i32 {

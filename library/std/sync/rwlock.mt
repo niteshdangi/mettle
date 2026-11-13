@@ -1,9 +1,9 @@
-import package.core.panic.panic
-import package.core.convert.From
-import package.core.default.Default
-import package.core.borrow.Borrow
-import package.core.fmt.{Debug, Display, Error, Formatter}
-import package.core.ops.{Deref, DerefMut}
+import core.panic.panic
+import core.convert.From
+import core.default.Default
+import core.borrow.Borrow
+import core.fmt.{Debug, Display, Error, Formatter}
+import core.ops.{Deref, DerefMut}
 import super.mutex.{PoisonError, TryLockError}
 
 extern "C" {
