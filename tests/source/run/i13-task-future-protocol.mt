@@ -10,7 +10,17 @@ import core.outcome
 import alloc.arc.Arc
 import std.task.Wake
 
-fn debug<T: Debug>(read value: T): Unit {}
+fn debug<T: Debug>(read value: T): alloc.string.String {
+    var output = alloc.string.new()
+    {
+        var formatter = core.fmt.formatter(mut output, core.fmt.spec())
+        match capture T.(Debug).fmt(value, mut formatter) {
+            success(_) => {},
+            failure(_) => { panic("Debug formatting failed") }
+        }
+    }
+    output
+}
 
 type WakeTarget { wakes: core.sync.atomic.AtomicUsize }
 extend WakeTarget implements Wake {
@@ -37,8 +47,7 @@ fn main(): i32 {
     if !(ready < Poll<u8>.Pending) { return 3 }
     if ready.clone() != ready.to_owned() { return 4 }
     if hash_one(read ready) != hash_one(read copied) { return 5 }
-    debug(read ready)
-    debug(read Poll<u8>.Pending)
+    if debug(read ready).as_text() != "Ready(3)" || debug(read Poll<u8>.Pending).as_text() != "Pending" { return 27 }
     if take ready.map(fn(take value: u8): u16 { value as u16 + 1u16 }) !=
        Poll<u16>.Ready(4u16) {
         return 6
@@ -80,9 +89,9 @@ fn main(): i32 {
     if release_observer.strong_count() != 1usize { return 19 }
     var context = Context.from_waker(read waker)
     if !context.waker().will_wake(read waker) { return 10 }
-    debug(read context)
+    if debug(read context).as_text() != "Context { waker: Waker }" { return 24 }
     let owned: Waker = waker.to_owned()
-    debug(read owned)
+    if debug(read owned).as_text() != "Waker" { return 25 }
 
     var future = core.pin.pin(ReadyFuture())
     match take future.as_mut().poll(mut context) {
@@ -100,7 +109,7 @@ fn main(): i32 {
     cloned_waker.wake()
     if observer.get().wakes.load(core.sync.atomic.Ordering.Relaxed) != 2usize ||
         observer.strong_count() != 2usize { return 22 }
-    debug(read owned_waker)
+    if debug(read owned_waker).as_text() != "Waker" { return 26 }
     owned_waker.wake()
     if observer.get().wakes.load(core.sync.atomic.Ordering.Relaxed) != 3usize ||
         observer.strong_count() != 1usize { return 23 }
