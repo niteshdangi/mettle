@@ -428,14 +428,24 @@ Checker::AnnotationRegions &Checker::functionRegions(const Function &function) {
           add(owner.genericParameters, owner.constraints);
         break;
       }
-  } else if (!copiedParameters && !function.owner.empty())
+  } else if (!copiedParameters && !function.owner.empty()) {
+    // The resolved definition wins over a same-spelled type of another module.
+    const auto qualified = typeName(function.owner, function.span);
+    const Module::Product *selected = nullptr;
     for (const auto &owner : module.products)
-      if (owner.name == function.owner ||
-          definitionName(owner.span, owner.name) ==
-              typeName(function.owner, function.span)) {
-        add(owner.genericParameters, owner.constraints);
+      if (definitionName(owner.span, owner.name) == qualified) {
+        selected = &owner;
         break;
       }
+    if (!selected)
+      for (const auto &owner : module.products)
+        if (owner.name == function.owner) {
+          selected = &owner;
+          break;
+        }
+    if (selected)
+      add(selected->genericParameters, selected->constraints);
+  }
   if (!copiedParameters)
     add(function.genericParameters, function.constraints);
   for (const auto &name : function.regions)

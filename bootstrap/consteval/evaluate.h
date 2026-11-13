@@ -126,6 +126,8 @@ public:
   virtual Type resolveType(const TypeSyntax &type, Span) {
     return builtinType(type.name);
   }
+  // The type a declared alias names, or Unknown when `type` is not an alias.
+  virtual Type resolveAlias(const TypeSyntax &, Span) { return Type::Unknown; }
   virtual bool enumeration(Type) { return false; }
   virtual Lookup variant(Type, std::string_view, Span) { return {}; }
   virtual Lookup floatingValue(Type, std::string_view, Span) { return {}; }

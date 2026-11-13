@@ -605,6 +605,14 @@ public:
       return Type::Unknown;
     return substitute(checker.annotation(syntax, span));
   }
+  Type resolveAlias(const TypeSyntax &syntax, Span span) override {
+    auto canonical = checker.checked.namespaces().lookup(
+        checker.nameModule(span, syntax.context), syntax.name,
+        resolution::Namespace::Type, span);
+    if (!canonical || !checker.aliases.contains(*canonical))
+      return Type::Unknown;
+    return substitute(checker.annotation(syntax, span));
+  }
   bool enumeration(Type type) override {
     if (!checker.typeStore().isSum(type))
       return false;

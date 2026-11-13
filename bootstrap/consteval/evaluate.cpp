@@ -3236,7 +3236,7 @@ private:
     TypeSyntax syntax;
     syntax.name = callee.text.substr(0, separator);
     syntax.context = callee.context;
-    auto resolved = host.resolveType(syntax, callee.span);
+    auto resolved = host.resolveAlias(syntax, callee.span);
     return isFloating(resolved) ? resolved : Type::Unknown;
   }
   Opt call(const Node &node, const Shape *want) {
