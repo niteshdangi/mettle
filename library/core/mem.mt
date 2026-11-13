@@ -103,7 +103,8 @@ extend<T> [core.mem.MaybeUninit<T>] {
             self[index].write(value)
             index += 1usize
         }
-        let prefix = mut self[..source.len()]
+        // Safety: the length check above bounds the prefix by the destination.
+        let prefix = unsafe { super.slice.sub_mut<core.mem.MaybeUninit<T>>(mut self, 0usize, source.len()) }
         unsafe { prefix.assume_init_mut() }
     }
 

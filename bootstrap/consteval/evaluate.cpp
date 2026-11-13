@@ -1387,9 +1387,9 @@ private:
         return std::nullopt;
       return *found;
     }
-    auto result = uninitialized(shape);
     if (layout->size > options.stepBudget - steps)
       return fail("limit", span, "constant read exceeds the step budget");
+    auto result = uninitialized(shape, true);
     for (std::uint64_t i = 0; i < layout->size; ++i) {
       auto byte =
           storageByte(*root, address.storageType, address.offset + i, span);
@@ -1818,7 +1818,8 @@ private:
         return unsupported(pattern.span, "this borrowed constant pattern");
       bool binding = pattern.kind == PatternKind::Binding ||
                      pattern.kind == PatternKind::At;
-      if (!binding || host.copy(target->type)) {
+      // A binding keeps the view itself; destructuring looks through it.
+      if (!binding) {
         auto loaded = readAddress(value, pattern.span);
         if (!loaded)
           return std::nullopt;
@@ -2445,7 +2446,9 @@ private:
                 "no match arm matched the value in constant evaluation");
   }
 
-  Value uninitialized(const Shape &shape) {
+  // `expandArrays` also builds the element slots of sized arrays, which byte
+  // storage needs in order to address them.
+  Value uninitialized(const Shape &shape, bool expandArrays = false) {
     Value value;
     value.type = shape.type;
     value.kind = Value::Kind::Uninitialized;
@@ -2454,7 +2457,14 @@ private:
       value.kind = shape.kind == Shape::Kind::Product ? Value::Kind::Product
                                                       : Value::Kind::Tuple;
       for (const auto &field : shape.elements)
-        value.elements.push_back(uninitialized(field));
+        value.elements.push_back(uninitialized(field, expandArrays));
+    } else if (expandArrays && shape.kind == Shape::Kind::Array &&
+               shape.count != UINT64_MAX && !shape.elements.empty() &&
+               shape.count <= options.stepBudget - steps) {
+      value.kind = Value::Kind::Array;
+      value.elements.assign(
+          static_cast<std::size_t>(shape.count),
+          uninitialized(shape.elements.front(), expandArrays));
     }
     return value;
   }
@@ -2549,6 +2559,26 @@ private:
           receiver->elements.size() != 1 || !arguments.empty())
         return unsupported(node.span, "this constant storage extraction");
       return receiver->elements.front();
+    }
+    if (name == "storage.write") {
+      auto storage = receiver && receiver->kind == Value::Kind::Reference
+                         ? pointee(*receiver)
+                         : std::nullopt;
+      auto layout = storage ? host.layout(storage->type) : std::nullopt;
+      if (!storage || storage->kind != Shape::Kind::Product ||
+          storage->elements.size() != 1 || !layout ||
+          layout->fields.size() != 1 || arguments.size() != 1)
+        return unsupported(node.span, "this constant storage write");
+      const auto &slot = storage->elements.front();
+      auto payload = arguments.front();
+      auto destination = *receiver;
+      destination.kind = Value::Kind::Reference;
+      destination.offset += layout->fields.front();
+      destination.type = host.referenceType(slot.type, true, false);
+      if (!coerce(payload, slot, node.span) ||
+          !writeMemory(destination, payload, slot.type, node.span))
+        return std::nullopt;
+      return destination;
     }
     if (name == "cell.as_ptr") {
       if (!receiver || receiver->kind != Value::Kind::Reference ||
@@ -3466,7 +3496,15 @@ private:
     return value;
   }
 
+  // A node that stops without a diagnostic or control signal is unsupported.
   Opt eval(const Node &node, const Shape *want) {
+    auto value = evaluateNode(node, want);
+    if (!value && !failed && signal == Signal::None)
+      unsupported(node.span, "this expression");
+    return value;
+  }
+
+  Opt evaluateNode(const Node &node, const Shape *want) {
     if (failed)
       return std::nullopt;
     if (!step(node.span))
@@ -3584,7 +3622,25 @@ private:
         return eval(*node.children[0], want);
       }
       if (node.text == "read" || node.text == "mut") {
-        auto where = place(*node.children[0]);
+        const Node &operand = *node.children[0];
+        auto where = place(operand);
+        // `place` evaluates nothing for these kinds, so the operand is still
+        // unevaluated and a shared borrow may bind its value to a temporary.
+        const bool unevaluated =
+            operand.kind != Kind::Group && operand.kind != Kind::Text &&
+            operand.kind != Kind::Unary && operand.kind != Kind::Name &&
+            operand.kind != Kind::Field && operand.kind != Kind::Index;
+        if (!where.value && !where.address && !failed && node.text == "read" &&
+            unevaluated) {
+          auto temporary = eval(operand, nullptr);
+          if (!temporary)
+            return std::nullopt;
+          frame().locals.emplace_back("<temporary>", std::move(*temporary),
+                                      false, nullptr);
+          const auto &local = frame().locals.back();
+          where = {local.value.get(), local.value.get(), {}, false,
+                   local.name,        local.value};
+        }
         if (!where.value && !where.address)
           return fail("constant", node.span,
                       "constant borrow requires a live place");

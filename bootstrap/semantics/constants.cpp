@@ -603,6 +603,13 @@ public:
             checker.nameModule(span, syntax.context), syntax.name,
             resolution::Namespace::Type, span))
       return Type::Unknown;
+    // A bare generic type name used as a path owner names no concrete type.
+    if (syntax.form == TypeForm::Named && syntax.arguments.empty() &&
+        !generic && !builtin && syntax.name != "Self")
+      for (const auto *product : checker.productsNamed(
+               checker.typeName(syntax.name, span, {}, syntax.context)))
+        if (!checker.productGenerics.at(product).parameters.empty())
+          return Type::Unknown;
     return substitute(checker.annotation(syntax, span));
   }
   Type resolveAlias(const TypeSyntax &syntax, Span span) override {
@@ -1086,7 +1093,9 @@ std::optional<evaluation::Shape> Checker::constantShape(Type type) {
   }
   if (record.kind == AggregateKind::Product ||
       record.kind == AggregateKind::Cell ||
-      record.kind == AggregateKind::UnsafeCell) {
+      record.kind == AggregateKind::UnsafeCell ||
+      record.kind == AggregateKind::Uninit ||
+      record.kind == AggregateKind::ManualDrop) {
     shape.kind = evaluation::Shape::Kind::Product;
     for (const auto &field : record.fields) {
       auto element = constantShape(field.type);
