@@ -1,5 +1,6 @@
 // profiles: debug release
-// expect-error: constant 8:14 constant write requires exclusive access
+// expect-error-source: core/ptr.mt
+// expect-error: constant 79:18 constant exclusive borrow requires writable provenance
 // expect-error-count: 1
 import core.ptr.NonNull
 const fn forbidden_write(): i32 {
