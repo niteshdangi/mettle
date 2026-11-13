@@ -2270,6 +2270,27 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
           typeBindings[i + 1].argument = arguments[i];
           fixedParameters.insert(typeBindings[i + 1].parameter);
         }
+        if (facts(node).selectionNeedsRegionProof) {
+          std::vector<interfaces::Obligation> assumptions;
+          for (const auto &[type, bound] : currentFacts->interfaceBounds)
+            assumptions.push_back({type, bound});
+          interfaces::Solver proof(types, interfaceData, diagnostics,
+                                   std::move(assumptions),
+                                   current->context.environment);
+          proof.setEqualities(currentFacts->genericEqualities);
+          std::vector<RegionId> staticRegions;
+          proof.collectStaticRegions(&staticRegions);
+          const auto subject = typeBindings[0].argument;
+          const bool holds =
+              proof.prove({subject, interface}, node.span, false);
+          for (auto region : staticRegions)
+            require(region, RegionId::Static, node.span);
+          if (!holds)
+            error(node.span,
+                  "interface bound does not hold after region inference: " +
+                      displayType(types, subject) + " requires " +
+                      displayType(types, interface));
+        }
       }
     } else if (!callee.ownerGenericArguments.empty()) {
       TypeSyntax owner;
@@ -4139,6 +4160,10 @@ void RegionPass::run() {
   for (auto &[origin, rule] : interfaceData.unpinImplementations) {
     (void)origin;
     decorateRule(rule);
+  }
+  for (auto &[key, declaration] : interfaceData.concurrencyDeclarations) {
+    (void)key;
+    decorateRule(declaration.implementation);
   }
   if (!diagnostics.empty())
     return;

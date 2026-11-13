@@ -311,8 +311,10 @@ int Checker::call(Node &n, bool reachable) {
       auto self = annotation(qualified.elements[0], n.span, current->owner);
       auto interface =
           interfaceBound(qualified.elements[1], n.span, current->owner, self);
-      if (!interfaceObligation(self, interface, n.span))
+      std::vector<RegionId> staticRegions;
+      if (!interfaceObligation(self, interface, n.span, &staticRegions))
         return result;
+      facts(n).selectionNeedsRegionProof = !staticRegions.empty();
       const auto &definition =
           checked.interfaceData
               ->definitions[checked.types->erased(interface).declaration];

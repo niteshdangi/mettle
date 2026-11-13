@@ -354,7 +354,10 @@ private:
                           std::span<const RegionBinding> regions = {},
                           const Node *call = nullptr);
   bool interfaceObligation(Type actual, const TypeSyntax &bound, Span span);
-  bool interfaceObligation(Type actual, Type interfaceType, Span span);
+  // With `staticRegions`, a `Static` bound on a borrowed argument records its
+  // region for the region pass instead of failing.
+  bool interfaceObligation(Type actual, Type interfaceType, Span span,
+                           std::vector<RegionId> *staticRegions = nullptr);
   Type normalizeGenericType(Type type, std::span<const TypeBinding> bindings,
                             Span span);
   Type normalizeCallType(Type type, std::span<const TypeBinding> bindings,

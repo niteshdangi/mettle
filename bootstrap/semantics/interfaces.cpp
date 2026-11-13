@@ -498,12 +498,15 @@ bool Checker::interfaceObligation(Type actual, const TypeSyntax &bound,
         "add `extend " + subject + " implements " + interface + " { ... }`"}});
   return false;
 }
-bool Checker::interfaceObligation(Type actual, Type interfaceType, Span span) {
+bool Checker::interfaceObligation(Type actual, Type interfaceType, Span span,
+                                  std::vector<RegionId> *staticRegions) {
   auto assumptions = interfaceAssumptions();
   if (checked.types->isErased(actual))
     assumptions.push_back({actual, actual});
   interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
                             std::move(assumptions), regionEnvironment());
+  if (staticRegions)
+    solver.collectStaticRegions(staticRegions);
   if (solver.prove({actual, interfaceType}, span, false))
     return true;
   // An f-string hole is filled through core::fmt::Hole; say what is missing in
