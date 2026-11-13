@@ -14,7 +14,7 @@ import package.alloc.string.FromUtf8Error
 import package.core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
 import package.core.clone.Clone
 import package.core.default.Default
-import package.core.convert.From
+import package.core.convert.{From, TryFrom}
 import package.core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import package.core.fmt
 import package.core.iter.{ExtendItems, FromItems, Iterator, OwnedIterable}
@@ -521,6 +521,13 @@ extend OsString implements FromStr {
 extend OsString implements package.core.convert.From<String> {
     static fn from(take value: String): OsString {
         OsString(value.into_bytes())
+    }
+}
+
+extend<region r> read Text from r implements TryFrom<read OsStr from r> {
+    type Error = package.core.text.Utf8Error
+    static fn try_from(take value: read OsStr from r): (Outcome<read Text from r, package.core.text.Utf8Error>) {
+        package.core.text.from_utf8(value.as_bytes())
     }
 }
 

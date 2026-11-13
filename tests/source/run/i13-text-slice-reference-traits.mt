@@ -1,11 +1,18 @@
 // profiles: debug release
 import core.borrow.{AsMut, AsRef}
+import core.convert.TryFrom
 import core.text.Text
 import std.ffi.OsStr
 import std.path.Path
 
 fn same_ref<T: unsized>(read value: T): read T from value { T.(AsRef<T>).as_ref(value) }
 fn same_mut<T: unsized>(mut value: T): mut T from value { T.(AsMut<T>).as_mut(value) }
+
+alias TextView<region r> = read Text from r
+
+fn checked_text<region r>(take value: read OsStr from r): (Outcome<read Text from r, core.text.Utf8Error>) {
+    TextView<region r>.(TryFrom<read OsStr from r>).try_from(value)
+}
 
 fn main(): i32 {
     let text = "path/leaf"
@@ -21,6 +28,11 @@ fn main(): i32 {
     let slice: mut [i32] = mut values
     same_mut(slice)[0usize] = 7
     if values[0usize] != 7 || same_ref(read values[1usize..]).len() != 2usize { return 5 }
+
+    match checked_text(os) {
+        success(converted) => { if converted != "path/leaf" { return 7 } },
+        failure(error) => { return 6 }
+    }
 
     var storage = [97u8, 98u8, 99u8, 100u8]
     var editable: mut Text = unsafe { core.text.from_utf8_unchecked_mut(mut storage) }

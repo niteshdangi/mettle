@@ -14,7 +14,12 @@ alias A_peekable = core.iter.Peekable<core.iter.Range<i32>>
 alias A_pinned = alloc.boxed.Pinned<i32>
 alias A_lines = std.io.Lines<std.io.BufferedReader<std.io.Stdin>>
 alias A_drop = core.mem.ManuallyDrop<i32>
+fn owned_slice_iterators<region r>(read items: [i32] from r): Unit {
+    owned_ok<core.slice.SliceChunks<region r, i32>>()
+    owned_ok<core.slice.SliceWindows<region r, i32>>()
+}
 fn main(): i32 {
+    owned_slice_iterators([1, 2, 3])
     borrow_ok<A_cursor>()
     owned_ok<A_cursor>()
     from_ok<A_cursor>()
