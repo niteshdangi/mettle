@@ -9,7 +9,7 @@ import package.core.iter.{ Iterator, BidirectionalIterator, ExactSizeIterator, F
 import package.core.slice.{ SliceIter, SliceIterMut }
 import package.core.text.Text
 import package.core.borrow.{ AsMut, AsRef, Borrow, BorrowMut }
-import package.core.convert.From
+import package.core.convert.{From, TryFrom}
 import package.core.ptr.NonNull
 
 copy type RawSlice<T> { data: ptr<read T>; len: usize }
@@ -1168,6 +1168,17 @@ extend<T, A: Allocator> List<T, A> implements Borrow<[T]> {
 }
 extend<T, A: Allocator> List<T, A> implements BorrowMut<[T]> {
     mut fn borrow_mut(): mut [T] from self { self.as_mut_slice() }
+}
+
+extend<T, const N: usize, A: Allocator> [T; N] implements TryFrom<List<T, A>> {
+    type Error = List<T, A>
+    static fn try_from(take value: List<T, A>): (Outcome<[T; N], List<T, A>>) {
+        if value.len() != N { return failure(value) }
+        var list = value
+        let array = unsafe { core.ptr.`read`(list.as_ptr().cast<[T; N]>()) }
+        unsafe { list.set_len(0usize) }
+        success(array)
+    }
 }
 
 // The boxed slice's allocation becomes the list's buffer; nothing is copied.

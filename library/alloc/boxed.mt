@@ -625,6 +625,9 @@ extend<T, const N: usize> Box<[T]> implements From<[T; N]> {
 extend<T, A: Allocator> Box<[T], A> implements From<super.vec.List<T, A>> {
     static fn from(take items: super.vec.List<T, A>): Box<[T], A> { items.into_boxed_slice() }
 }
+extend<T, A: Allocator> Box<[T], A> {
+    pub take fn into_vec(): super.vec.List<T, A> { super.vec.List<T, A>.(From<Box<[T], A>>).from(self) }
+}
 extend<A: Allocator> Box<Text, A> {
     pub take fn into_boxed_bytes(): Box<[u8], A> { Box<[u8], A>.(From<Box<Text, A>>).from(self) }
     pub take fn into_string(): super.string.String<A> {
