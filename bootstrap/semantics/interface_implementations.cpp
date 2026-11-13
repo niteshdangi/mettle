@@ -8,7 +8,7 @@ namespace {
 bool specializesBounds(const GenericParameter &parameter) {
   return std::any_of(parameter.bounds.begin(), parameter.bounds.end(),
                      [](const auto &bound) {
-                       return bound.name != "unsized" && bound.name != "?Sized";
+                       return bound.name != "unsized";
                      });
 }
 } // namespace

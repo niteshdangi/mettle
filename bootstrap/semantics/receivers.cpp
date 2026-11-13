@@ -519,8 +519,7 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
     if (bounds == environment.bounds.end())
       continue;
     for (const auto &bound : bounds->second) {
-      if (bound.form == TypeForm::Callable || bound.name == "?Sized" ||
-          bound.name == "unsized" ||
+      if (bound.form == TypeForm::Callable || bound.name == "unsized" ||
           propertyBound(bound, environment.declarationSpan))
         continue;
       auto required = checked.types->substitute(
