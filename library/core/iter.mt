@@ -604,6 +604,49 @@ extend<T, E, C: FromItems<T>> (Outcome<C, E>) implements FromItems<(Outcome<T, E
     }
 }
 
+extend Unit implements FromItems<Unit> {
+    static fn from_iter<I: OwnedIterable<Item = Unit>>(take items: I): Unit {
+        var source: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(items)
+        while source.next().is_present() {}
+    }
+}
+extend Unit implements ExtendItems<Unit> {
+    mut fn extend<I: OwnedIterable<Item = Unit>>(take items: I): Unit {
+        Unit.(FromItems<Unit>).from_iter(items)
+    }
+}
+
+type UnwrappedSingles<T, I: Iterator<Item = (T,)>> { iter: I }
+extend<T, I: Iterator<Item = (T,)>> UnwrappedSingles<T, I> implements Iterator {
+    type Item = T
+    mut fn next(): T? {
+        match take self.iter.next() {
+            present(single) => {
+                let (item,): (T,) = single
+                present(item)
+            },
+            none => none
+        }
+    }
+}
+fn extend_singles<T, E: ExtendItems<T>, I: OwnedIterable<Item = (T,)>>(mut target: E, take items: I): Unit {
+    let iter: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(items)
+    var singles: UnwrappedSingles<T, I.(OwnedIterable).IntoIter> = UnwrappedSingles(iter)
+    target.extend(mut singles)
+}
+extend<T, E: ExtendItems<T>> (E,) implements ExtendItems<(T,)> {
+    mut fn extend<I: OwnedIterable<Item = (T,)>>(take items: I): Unit {
+        extend_singles<T, E, I>(mut self.0, items)
+    }
+}
+extend<T, E: Default + ExtendItems<T>> (E,) implements FromItems<(T,)> {
+    static fn from_iter<I: OwnedIterable<Item = (T,)>>(take items: I): (E,) {
+        var inner = E.(Default).default()
+        extend_singles<T, E, I>(mut inner, items)
+        (inner,)
+    }
+}
+
 // `let v: List<i32> = collect(items)`.
 pub fn collect<T, I: OwnedIterable<Item = T>, C: FromItems<T>>(take items: I): C {
     C.(FromItems<T>).from_iter(items)
