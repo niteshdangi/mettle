@@ -27,9 +27,10 @@ bool memberAccess(const Token &token) {
   return symbol(token, ".") || symbol(token, "?.");
 }
 bool modifier(std::string_view text) {
-  return text == "pub" || text == "copy" || text == "unsafe" ||
-         text == "extern" || text == "const" || text == "static" ||
-         text == "async" || text == "mut" || text == "read" || text == "take";
+  return text == "pub" || text == "internal" || text == "copy" ||
+         text == "unsafe" || text == "extern" || text == "const" ||
+         text == "static" || text == "async" || text == "mut" ||
+         text == "read" || text == "take";
 }
 // One line of text for hover and symbol details.
 std::string squeeze(std::string_view raw, std::size_t limit = 240) {
@@ -217,7 +218,10 @@ private:
         return false;
     }
     auto first = i;
-    while (first > 0 && word(t[first - 1]) && modifier(t[first - 1].text))
+    while (first > 0 && word(t[first - 1]) &&
+           (modifier(t[first - 1].text) ||
+            (t[first - 1].text == "parent" && first > 1 && word(t[first - 2]) &&
+             t[first - 2].text == "pub")))
       --first;
     std::size_t body = n, stop = n;
     if (kind == SymbolKind::Alias || kind == SymbolKind::Static ||
@@ -415,7 +419,8 @@ private:
     const Token &before = t[i - 1];
     if (!(symbol(before, "{") || symbol(before, ";") || symbol(before, ",") ||
           before.kind == TokenKind::Newline ||
-          (word(before) && before.text == "pub")))
+          (word(before) &&
+           (before.text == "pub" || before.text == "internal"))))
       return;
     if (field && !(i + 1 < n && symbol(t[i + 1], ":")))
       return;

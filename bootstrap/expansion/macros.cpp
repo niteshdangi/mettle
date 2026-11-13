@@ -94,8 +94,9 @@ std::size_t itemExtent(const Pieces &in, const std::vector<std::size_t> &close,
       body = true;
       break;
     }
-    if (word != "pub" && word != "unsafe" && word != "const" &&
-        word != "async" && word != "copy")
+    if (word != "pub" && word != "internal" && word != "unsafe" &&
+        word != "const" && word != "async" && word != "copy" &&
+        !(word == "parent" && k > start && in[k - 1].text == "pub"))
       break;
   }
   while (j < end && !closer(in[j])) {
@@ -1406,8 +1407,14 @@ public:
           if (depth == 0)
             prefix = open;
         }
-        if (prefix > 0 && pieces[prefix - 1].kind == TokenKind::Word &&
-            pieces[prefix - 1].text == "pub")
+        auto word = [&](std::size_t at, std::string_view text) {
+          return at < pieces.size() && pieces[at].kind == TokenKind::Word &&
+                 pieces[at].text == text;
+        };
+        if (prefix > 1 && word(prefix - 1, "parent") && word(prefix - 2, "pub"))
+          begin = prefix - 2;
+        else if (prefix > 0 &&
+                 (word(prefix - 1, "pub") || word(prefix - 1, "internal")))
           begin = prefix - 1;
         auto attribute = begin;
         while (attribute > 0) {
@@ -1610,29 +1617,14 @@ private:
       package.resize(1);
     else
       package.clear();
-    boundary = scope;
-    std::size_t position = 0;
-    if (visibility.restriction == packageVisibility ||
-        (configuration &&
-         visibility.restriction.front() == configuration->packageName)) {
-      boundary = package;
-      ++position;
-    } else if (visibility.restriction.front() == "self") {
-      ++position;
-    } else if (visibility.restriction.front() != "super") {
-      boundary = package;
+    if (visibility.restriction == packageVisibility) {
+      boundary = std::move(package);
+      return true;
     }
-    while (position < visibility.restriction.size()) {
-      const auto &part = visibility.restriction[position++];
-      if (part == "super") {
-        if (boundary == package)
-          return false;
-        boundary.pop_back();
-      } else {
-        boundary.push_back(part);
-      }
-    }
-    return !visibility.restriction.empty() && startsWith(scope, boundary);
+    if (scope == package)
+      return false;
+    boundary.pop_back();
+    return true;
   }
 
   void define(std::size_t begin, std::size_t at, std::size_t last) {
@@ -1662,44 +1654,34 @@ private:
           declaration.item.scope.begin(),
           declaration.item.scope.begin() +
               static_cast<std::ptrdiff_t>(modulePath.size()));
-    if (begin < at && pieces[begin].text == "pub") {
-      declaration.item.visibility.publicItem = true;
-      declaration.item.visibility.span = pieces[begin].origin;
-      if (begin + 1 == at) {
-        macro.publicItem = true;
+    if (begin < at &&
+        (pieces[begin].text == "pub" || pieces[begin].text == "internal")) {
+      auto &visibility = declaration.item.visibility;
+      bool removedForm = false;
+      visibility.publicItem = true;
+      visibility.span = pieces[begin].origin;
+      if (pieces[begin].text == "internal") {
+        visibility.restriction = packageVisibility;
+      } else if (begin + 2 == at && pieces[begin + 1].text == "parent") {
+        visibility.restriction = parentVisibility;
+        visibility.span.end = pieces[begin + 1].origin.end;
+      } else if (begin + 1 != at) {
+        removedForm = true;
+        failed = true;
+        diagnostics.error("parse", pieces[begin].origin,
+                          "'pub(path)' visibility was removed; use "
+                          "'internal' for package visibility or 'pub parent' "
+                          "for the parent module");
+      }
+      if (visibility.restriction.empty()) {
+        macro.publicItem = !removedForm;
       } else {
-        auto position = begin + 2;
-        auto end = at - 1;
-        bool valid = symbol(pieces[begin + 1], "(") &&
-                     symbol(pieces[end], ")") && position < end;
-        if (symbol(pieces[end], ")"))
-          declaration.item.visibility.span.end = pieces[end].origin.end;
-        bool separator = false;
-        while (valid && position < end) {
-          if (separator) {
-            if (!symbol(pieces[position], ".")) {
-              valid = false;
-              break;
-            }
-            ++position;
-          }
-          if (position == end || pieces[position].kind != TokenKind::Word) {
-            valid = false;
-            break;
-          }
-          declaration.item.visibility.restriction.push_back(
-              pieces[position].text);
-          ++position;
-          separator = true;
-        }
         std::vector<std::string> boundary;
-        if (!valid ||
-            !visibilityBoundary(macro.definitionScope,
-                                declaration.item.visibility, boundary)) {
+        if (!visibilityBoundary(macro.definitionScope, visibility, boundary)) {
           failed = true;
           diagnostics.error("name", pieces[begin].origin,
-                            "restricted visibility must name an enclosing "
-                            "module");
+                            "'pub parent' needs a parent module; the package "
+                            "root has none");
         } else {
           macro.visibilityBoundary = std::move(boundary);
         }
@@ -1893,43 +1875,26 @@ private:
     } while (changed);
   }
 
-  static std::vector<std::string> tokenPath(const Pieces &in, std::size_t begin,
-                                            std::size_t end, bool &valid) {
-    std::vector<std::string> result;
-    valid = begin < end && in[begin].kind == TokenKind::Word;
-    if (!valid)
-      return result;
-    result.push_back(in[begin++].text);
-    while (begin < end) {
-      if (!symbol(in[begin], ".") || begin + 1 == end ||
-          in[begin + 1].kind != TokenKind::Word) {
-        valid = false;
-        return {};
-      }
-      result.push_back(in[begin + 1].text);
-      begin += 2;
-    }
-    return result;
-  }
-
   void importDeclaration(std::size_t at, const std::vector<std::string> &scope,
                          std::size_t &after) {
     VisibilitySyntax visibility;
     visibility.span = pieces[at].origin;
     auto import = at;
-    if (pieces[at].kind == TokenKind::Word && pieces[at].text == "pub") {
+    auto word = [&](std::size_t index, std::string_view text) {
+      return index < pieces.size() && pieces[index].kind == TokenKind::Word &&
+             pieces[index].text == text;
+    };
+    if (word(at, "internal")) {
       visibility.publicItem = true;
-      visibility.span = pieces[at].origin;
+      visibility.restriction = packageVisibility;
       ++import;
-      if (import < pieces.size() && symbol(pieces[import], "(") &&
-          close[import] != none) {
-        bool valid = false;
-        auto restriction = tokenPath(pieces, import + 1, close[import], valid);
-        if (valid)
-          visibility.restriction = std::move(restriction);
-        else
-          visibility.restriction.push_back("__invalid_visibility__");
-        import = close[import] + 1;
+    } else if (word(at, "pub")) {
+      visibility.publicItem = true;
+      ++import;
+      if (word(import, "parent") && import + 1 < pieces.size() &&
+          pieces[import + 1].kind == TokenKind::Word) {
+        visibility.restriction = parentVisibility;
+        ++import;
       }
     }
     if (import >= pieces.size() || pieces[import].kind != TokenKind::Word ||
@@ -2017,7 +1982,8 @@ private:
         continue;
       }
       if (pieces[i].kind == TokenKind::Word &&
-          (pieces[i].text == "import" || pieces[i].text == "pub")) {
+          (pieces[i].text == "import" || pieces[i].text == "pub" ||
+           pieces[i].text == "internal")) {
         auto after = i;
         importDeclaration(i, scopeAt(pieces[i].origin.begin), after);
         if (after > i) {

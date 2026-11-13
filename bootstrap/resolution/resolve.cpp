@@ -416,43 +416,16 @@ private:
       return module;
     if (visibility.restriction.empty())
       return publicBoundary;
-    auto path = visibility.restriction;
-    ModuleId current = module;
     ModuleId package = result.packageRoot(module);
-    std::size_t position = 0;
-    auto own = result.packageNames.find(
-        package == 0 ? "" : result.moduleInfos[package].name);
-    if (path == packageVisibility ||
-        (own != result.packageNames.end() && path[0] == own->second)) {
-      current = package;
-      ++position;
-    } else if (path[0] == "self") {
-      ++position;
-    } else if (path[0] != "super") {
-      current = package;
-    }
-    while (position < path.size() && path[position] == "super") {
-      if (current == package) {
-        diagnostics.error("name", span,
-                          "visibility restriction escapes the package root");
-        return module;
-      }
-      current = result.moduleInfos[current].parent;
-      ++position;
-    }
-    auto canonical = result.moduleInfos[current].canonical;
-    for (; position < path.size(); ++position) {
-      if (!canonical.empty())
-        canonical += "::";
-      canonical += path[position];
-    }
-    auto found = moduleNames.find(canonical);
-    if (found == moduleNames.end() || !result.inside(module, found->second)) {
-      diagnostics.error("name", visibility.span,
-                        "restricted visibility must name an enclosing module");
+    if (visibility.restriction == packageVisibility)
+      return package;
+    if (module == package) {
+      diagnostics.error("name", span,
+                        "'pub parent' needs a parent module; the package root "
+                        "has none");
       return module;
     }
-    return found->second;
+    return result.moduleInfos[module].parent;
   }
 
   void duplicate(Span span, std::string_view name) {

@@ -20,7 +20,7 @@ bool isReservedWord(std::string_view word) {
        "extern", "static",    "const",   "init",    "drop",       "heap",
        "shared", "weak",      "local",   "pinned",  "as",         "alias",
        "label",  "union",     "where",   "region",  "implements", "receiver",
-       "macro",  "_"},
+       "macro",  "internal",  "_"},
       word);
 }
 bool isUnsupportedExpressionWord(std::string_view word) {

@@ -224,13 +224,13 @@ bool spacedOperator(const Piece &piece) {
 // The leading keyword of a line after any visibility and `unsafe` prefix.
 std::string_view leadingKeyword(const Line &line) {
   std::size_t k = 0;
-  if (k < line.size() && line[k].text == "pub") {
+  if (k < line.size() && line[k].text == "internal") {
     ++k;
-    if (k < line.size() && symbol(line[k], "(")) {
-      while (k < line.size() && !symbol(line[k], ")"))
-        ++k;
+  } else if (k < line.size() && line[k].text == "pub") {
+    ++k;
+    if (k + 1 < line.size() && line[k].text == "parent" &&
+        line[k + 1].kind == TokenKind::Word)
       ++k;
-    }
   }
   if (k < line.size() && line[k].text == "unsafe")
     ++k;
@@ -451,9 +451,9 @@ std::vector<Signature> signature(const Source &source,
 
 // Wrap at token boundaries where the grammar continues: after list
 // separators and binary operators. A line starting with `.` would not continue
-// the previous expression (language-grammar section 14.3), so chains stay unbroken.
-// Macro token trees and multiline tokens are left untouched because their
-// trivia matters.
+// the previous expression (language-grammar section 14.3), so chains stay
+// unbroken. Macro token trees and multiline tokens are left untouched because
+// their trivia matters.
 std::string wrap(const Source &source, const std::vector<Token> &tokens) {
   for (std::size_t i = 0; i < tokens.size(); ++i) {
     const auto &token = tokens[i];
