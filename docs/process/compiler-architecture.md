@@ -514,8 +514,10 @@ diagnostic explicitly concerns them. The support path formatter chooses short
 nominal names unless two names in the same diagnostic collide.
 
 `types/regions` owns compilation-local region identities, declaration binders,
-universe ancestry and intersection regions. Names resolve to identities within
-each declaration; equal source spellings do not equate independent binders.
+universe ancestry and intersection regions; an unspecified source adds no
+constraint to an intersection. A `from` clause on an owner parameter's plain
+payload (`heap T from r`) names the parameter's backing region. Names resolve
+to identities within each declaration; equal source spellings do not equate independent binders.
 Syntax retains each lexical region/source occurrence's span and syntax context.
 Semantics binds its spelling and expansion identity, including nested result
 sources; only resolved `RegionId`s cross into the type store and region solver.
