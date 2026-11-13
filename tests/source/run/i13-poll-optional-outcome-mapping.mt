@@ -44,7 +44,7 @@ fn main(): i32 {
             core.panic.panic("map_ok called on failure")
         }) {
             Poll.Ready(result) => {
-                let error = result.unwrap().unwrap_err()
+                let error = result.unwrap().unwrap_failure()
                 if error.value != 7 || drops != 0usize { return 7 }
             },
             Poll.Pending => { return 8 }

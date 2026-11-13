@@ -28,7 +28,7 @@ extend<T> T? implements From<T> {
 
 extend<region r, T> (read T from r)? implements From<read (T?) from r> {
     static fn from(take value: read (T?) from r): (read T from r)? {
-        value.as_ref()
+        value.as_view()
     }
 }
 

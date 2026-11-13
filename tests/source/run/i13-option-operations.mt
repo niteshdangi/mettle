@@ -16,9 +16,9 @@ fn checks_construction_and_queries(): i32 {
     let absent: i32? = none
     if !present_value.is_present() || absent.is_present() { return 10 }
     if present_value.is_none() || !absent.is_none() { return 11 }
-    if !some(5).is_some_and(fn(value: i32): bool { value == 5 }) { return 12 }
-    if some(5).is_some_and(fn(value: i32): bool { value == 6 }) { return 13 }
-    if nothing().is_some_and(fn(value: i32): bool { true }) { return 14 }
+    if !some(5).is_present_and(fn(value: i32): bool { value == 5 }) { return 12 }
+    if some(5).is_present_and(fn(value: i32): bool { value == 6 }) { return 13 }
+    if nothing().is_present_and(fn(value: i32): bool { true }) { return 14 }
     if !nothing().is_none_or(fn(value: i32): bool { false }) { return 15 }
     if !some(2).is_none_or(fn(value: i32): bool { value == 2 }) { return 16 }
     if some(2).is_none_or(fn(value: i32): bool { value == 3 }) { return 17 }
@@ -27,8 +27,8 @@ fn checks_construction_and_queries(): i32 {
 
 fn checks_views(): i32 {
     var value: i32? = present(9)
-    match value.as_ref() { present(view) => { if *view != 9 { return 20 } }, none => { return 21 } }
-    if nothing().as_ref().is_present() { return 22 }
+    match value.as_view() { present(view) => { if *view != 9 { return 20 } }, none => { return 21 } }
+    if nothing().as_view().is_present() { return 22 }
     match take value.as_mut() { present(view) => { *view = 10 }, none => { return 23 } }
     if value != present(10) { return 24 }
     let boxed: (heap i32)? = present(heap 5)
@@ -87,8 +87,8 @@ fn checks_transformations(): i32 {
     let outer_none: (i32?)? = none
     if outer_none.flatten().is_present() { return 62 }
     let view_source: i32? = present(14)
-    let copied = view_source.as_ref().copied()
-    let cloned = view_source.as_ref().cloned()
+    let copied = view_source.as_view().copied()
+    let cloned = view_source.as_view().cloned()
     if copied != present(14) || cloned != present(14) { return 63 }
     0
 }

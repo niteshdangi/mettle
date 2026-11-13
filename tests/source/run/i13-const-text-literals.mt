@@ -8,11 +8,11 @@ const fn three_bytes(read bytes: [u8; 3]): bool {
 }
 
 const fn literal_scalars(): bool {
-    match capture num.from_str_radix<i32>("+7f", 16u32) {
+    match capture num.parse_radix<i32>("+7f", 16u32) {
         success(value) => { if value != 127i32 { return false } },
         failure(_) => { return false }
     }
-    match capture num.from_str_radix<i32>("\u{e9}", 10u32) {
+    match capture num.parse_radix<i32>("\u{e9}", 10u32) {
         failure(error) => {
             if (error.kind as u8) != (IntErrorKind.InvalidDigit as u8) {
                 return false

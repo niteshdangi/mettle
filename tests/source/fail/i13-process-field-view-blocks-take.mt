@@ -3,7 +3,7 @@ import core.option
 import std.process.Child
 
 fn conflict(mut child: Child): bool {
-    let input = child.stdin.as_ref()
+    let input = child.stdin.as_view()
     if input.is_none() { return false }
     child.take_stdin()
     input.is_present()

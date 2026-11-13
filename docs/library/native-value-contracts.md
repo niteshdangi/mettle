@@ -49,7 +49,7 @@ These queries read `T?`:
 | --- | --- |
 | `is_present(): bool` | True exactly for `present` |
 | `is_none(): bool` | True exactly for `none` |
-| `as_view()` / `as_ref()` | `present(read payload from self)` or `none` |
+| `as_view()` | `present(read payload from self)` or `none` |
 | `as_slice()` | A borrowed slice of length one over the payload, or length zero |
 | `iter()` | Borrowed iteration over that zero-or-one payload |
 
@@ -129,7 +129,7 @@ a consuming callback; a discarded payload is destroyed.
 | `map_or_default(f)` with `U: Default` | `f(take payload)` | Construct U's default |
 | `and_then(f)` | Return `f(take payload): U?` | `none` |
 | `or_else(make)` | Preserve the owned present value | Return `make(): T?` |
-| `is_some_and(test)` | Return `test(take payload)` | False |
+| `is_present_and(test)` | Return `test(take payload)` | False |
 | `is_none_or(test)` | Return `test(take payload)` | True |
 | `ok_or(error: take E)` | `success(payload)` | `failure(error)` |
 | `ok_or_else(make_error)` | `success(payload)` | `failure(make_error())` |
@@ -165,7 +165,7 @@ an owned optional T under `T: Copy`. Consuming `cloned()` does the same using
 `T: Clone`, invoking Clone only on presence. These methods consume the view,
 not its backing owner. Clone effects are not hidden by the optional operation.
 
-`bool.then_some(value: take T)` returns `present(value)` for true and `none`
+`bool.then_present(value: take T)` returns `present(value)` for true and `none`
 for false. The input is eager in both cases and is destroyed on false.
 `bool.then(make)` instead accepts a consume-callable `make(): T`, invokes it
 once on true and returns `present` of its result; on false it returns `none`
@@ -179,7 +179,7 @@ These queries read `(Outcome<T, E>)`:
 | --- | --- |
 | `is_success(): bool` | True exactly for `success` |
 | `is_failure(): bool` | True exactly for `failure` |
-| `as_view()` / `as_ref()` | Preserve the alternative, replacing its payload with a read view from self |
+| `as_view()` | Preserve the alternative, replacing its payload with a read view from self |
 | `iter()` | Borrowed zero-or-one iteration over the success payload; failure yields no element |
 
 `as_mut()` preserves the alternative and returns its exclusive payload view.
@@ -202,14 +202,14 @@ These operations consume `(Outcome<T, E>)`:
 | `err()` | Destroy T; return `none` | `present(error)` |
 | `unwrap()` | Transfer T | Panic with an error diagnostic |
 | `expect(message: read Text)` | Transfer T | Panic reporting message and error |
-| `unwrap_err()` | Panic with a success diagnostic | Transfer E |
-| `expect_err(message: read Text)` | Panic reporting message and success payload | Transfer E |
+| `unwrap_failure()` | Panic with a success diagnostic | Transfer E |
+| `expect_failure(message: read Text)` | Panic reporting message and success payload | Transfer E |
 | `unwrap_or(fallback: take T)` | Transfer T; destroy unused fallback | Destroy E; transfer fallback |
 | `unwrap_or_else(make)` | Transfer T | Return `make(take error): T` |
 | `unwrap_or_default()` with `T: Default` | Transfer T | Destroy E; construct T's default |
 
 Checked success extraction (`unwrap`, `expect`) requires `E: Debug`;
-checked failure extraction (`unwrap_err`, `expect_err`)
+checked failure extraction (`unwrap_failure`, `expect_failure`)
 requires `T: Debug`. Wrong-alternative diagnostics expose the rejected payload
 through that capability. Payload formatting may invoke user code and panic;
 ordinary panic/cleanup rules apply. Exact diagnostic punctuation is not an API
@@ -233,8 +233,8 @@ These operations consume the receiver:
 | `map_or_default(f)` with `U: Default` | Return `f(take payload)` | Destroy E; construct U's default |
 | `and_then(f)` | Return `f(take payload): (U throws E)` | Preserve owned E |
 | `or_else(f)` | Preserve owned T | Return `f(take error): (T throws F)` |
-| `is_ok_and(test)` | Return `test(take payload)` | Destroy E; false |
-| `is_err_and(test)` | Destroy T; false | Return `test(take error)` |
+| `is_success_and(test)` | Return `test(take payload)` | Destroy E; false |
+| `is_failure_and(test)` | Destroy T; false | Return `test(take error)` |
 
 `and(other: take (U throws E))` returns `other` when successful, otherwise the
 original failure. `or(other: take (T throws F))` preserves success, otherwise
@@ -242,7 +242,7 @@ returns `other`. Both eagerly supplied outcomes are consumed; all unreturned
 payloads are destroyed.
 
 `inspect(f)` invokes `f(read payload): Unit` only on success and preserves the
-original outcome. `inspect_err(f)` invokes `f(read error): Unit` only on failure
+original outcome. `inspect_failure(f)` invokes `f(read error): Unit` only on failure
 and preserves the original outcome. Borrowed callback inputs do not escape
 their declared regions.
 
@@ -267,8 +267,8 @@ their input values, payload operations and regions satisfy the
 
 | Receiver | Required constant-callable operations |
 | --- | --- |
-| Optional | `is_present`, `is_none`, `as_view`, `as_ref`, `as_mut`, `as_pin_ref`, `as_pin_mut`, `as_slice`, `as_mut_slice`, `expect`, `unwrap`, `unwrap_unchecked`, `copied`, `flatten`, `replace`, escaped `take`, `take_value`, `transpose` |
-| Stored outcome | `is_success`, `is_failure`, `as_view`, `as_ref`, `as_mut`, `copied`, `flatten`, `transpose` |
+| Optional | `is_present`, `is_none`, `as_view`, `as_mut`, `as_pin_ref`, `as_pin_mut`, `as_slice`, `as_mut_slice`, `expect`, `unwrap`, `unwrap_unchecked`, `copied`, `flatten`, `replace`, escaped `take`, `take_value`, `transpose` |
+| Stored outcome | `is_success`, `is_failure`, `as_view`, `as_mut`, `copied`, `flatten`, `transpose` |
 
 This is not a promise that arbitrary destructors, Clone, Default, dereference
 implementations or callbacks can execute at compile time. A panic during

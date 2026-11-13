@@ -19,13 +19,13 @@ macro parser_constants {
             var maximum = [0x66u8; ($type.BITS / 4u32) as usize]
             if signed { maximum[0usize] = 0x37u8 }
             let maximum_text = unsafe { from_utf8_unchecked(maximum) }
-            match capture num.from_str_radix<$type>(maximum_text, 16u32) {
+            match capture num.parse_radix<$type>(maximum_text, 16u32) {
                 success(value) => { if value != $type.MAX { return 1 } },
                 failure(_) => { return 1 }
             }
             let zero_bytes = [0x30u8]
             let zero = unsafe { from_utf8_unchecked(zero_bytes) }
-            match capture num.from_str_radix<$type>(zero, 10u32) {
+            match capture num.parse_radix<$type>(zero, 10u32) {
                 success(value) => { if value != 0 as $type { return 2 } },
                 failure(_) => { return 2 }
             }
@@ -41,25 +41,25 @@ macro parser_constants {
                 success(value) => { if value != 35 as $type { return 5 } },
                 failure(_) => { return 5 }
             }
-            match capture num.from_str_radix<$type>("101", 2u32) {
+            match capture num.parse_radix<$type>("101", 2u32) {
                 success(value) => { if value != 5 as $type { return 6 } },
                 failure(_) => { return 6 }
             }
 
-            if !has_kind(capture num.from_str_radix<$type>("", 10u32), IntErrorKind.Empty) ||
-               !has_kind(capture num.from_str_radix<$type>("+", 10u32), IntErrorKind.InvalidDigit) ||
-               !has_kind(capture num.from_str_radix<$type>("-", 10u32), IntErrorKind.InvalidDigit) {
+            if !has_kind(capture num.parse_radix<$type>("", 10u32), IntErrorKind.Empty) ||
+               !has_kind(capture num.parse_radix<$type>("+", 10u32), IntErrorKind.InvalidDigit) ||
+               !has_kind(capture num.parse_radix<$type>("-", 10u32), IntErrorKind.InvalidDigit) {
                 return 7
             }
-            if !has_kind(capture num.from_str_radix<$type>("1_0", 10u32), IntErrorKind.InvalidDigit) ||
-               !has_kind(capture num.from_str_radix<$type>(" 1", 10u32), IntErrorKind.InvalidDigit) ||
-               !has_kind(capture num.from_str_radix<$type>("0x1", 16u32), IntErrorKind.InvalidDigit) ||
-               !has_kind(capture num.from_str_radix<$type>("\u{e9}", 36u32), IntErrorKind.InvalidDigit) ||
-               !has_kind(capture num.from_str_radix<$type>("2", 2u32), IntErrorKind.InvalidDigit) {
+            if !has_kind(capture num.parse_radix<$type>("1_0", 10u32), IntErrorKind.InvalidDigit) ||
+               !has_kind(capture num.parse_radix<$type>(" 1", 10u32), IntErrorKind.InvalidDigit) ||
+               !has_kind(capture num.parse_radix<$type>("0x1", 16u32), IntErrorKind.InvalidDigit) ||
+               !has_kind(capture num.parse_radix<$type>("\u{e9}", 36u32), IntErrorKind.InvalidDigit) ||
+               !has_kind(capture num.parse_radix<$type>("2", 2u32), IntErrorKind.InvalidDigit) {
                 return 8
             }
             if signed {
-                match capture num.from_str_radix<$type>("-0", 10u32) {
+                match capture num.parse_radix<$type>("-0", 10u32) {
                     success(value) => { if value != 0 as $type { return 9 } },
                     failure(_) => { return 9 }
                 }
@@ -67,30 +67,30 @@ macro parser_constants {
                 minimum[0usize] = 0x2du8
                 minimum[1usize] = 0x38u8
                 let minimum_text = unsafe { from_utf8_unchecked(minimum) }
-                match capture num.from_str_radix<$type>(minimum_text, 16u32) {
+                match capture num.parse_radix<$type>(minimum_text, 16u32) {
                     success(value) => { if value != $type.MIN { return 10 } },
                     failure(_) => { return 10 }
                 }
                 var below = minimum
                 below[($type.BITS / 4u32) as usize] = 0x31u8
                 let below_text = unsafe { from_utf8_unchecked(below) }
-                if !has_kind(capture num.from_str_radix<$type>(below_text, 16u32), IntErrorKind.NegOverflow) {
+                if !has_kind(capture num.parse_radix<$type>(below_text, 16u32), IntErrorKind.NegOverflow) {
                     return 11
                 }
                 var above = [0x30u8; ($type.BITS / 4u32) as usize]
                 above[0usize] = 0x38u8
                 let above_text = unsafe { from_utf8_unchecked(above) }
-                if !has_kind(capture num.from_str_radix<$type>(above_text, 16u32), IntErrorKind.PosOverflow) {
+                if !has_kind(capture num.parse_radix<$type>(above_text, 16u32), IntErrorKind.PosOverflow) {
                     return 12
                 }
             } else {
-                if !has_kind(capture num.from_str_radix<$type>("-0", 10u32), IntErrorKind.InvalidDigit) {
+                if !has_kind(capture num.parse_radix<$type>("-0", 10u32), IntErrorKind.InvalidDigit) {
                     return 14
                 }
                 var above = [0x30u8; ($type.BITS / 4u32) as usize + 1usize]
                 above[0usize] = 0x31u8
                 let above_text = unsafe { from_utf8_unchecked(above) }
-                if !has_kind(capture num.from_str_radix<$type>(above_text, 16u32), IntErrorKind.PosOverflow) {
+                if !has_kind(capture num.parse_radix<$type>(above_text, 16u32), IntErrorKind.PosOverflow) {
                     return 15
                 }
             }
@@ -98,7 +98,7 @@ macro parser_constants {
             invalid[0usize] = 0x31u8
             invalid[($type.BITS / 4u32) as usize + 1usize] = 0x67u8
             let invalid_text = unsafe { from_utf8_unchecked(invalid) }
-            if !has_kind(capture num.from_str_radix<$type>(invalid_text, 16u32), IntErrorKind.InvalidDigit) {
+            if !has_kind(capture num.parse_radix<$type>(invalid_text, 16u32), IntErrorKind.InvalidDigit) {
                 return 13
             }
             0
@@ -121,11 +121,11 @@ parser_constants!(parse_u128, U128_RESULT, u128)
 parser_constants!(parse_usize, USIZE_RESULT, usize)
 
 const fn literal_extrema(): bool {
-    match capture num.from_str_radix<u128>("340282366920938463463374607431768211455", 10u32) {
+    match capture num.parse_radix<u128>("340282366920938463463374607431768211455", 10u32) {
         success(value) => { if value != u128.MAX { return false } },
         failure(_) => { return false }
     }
-    match capture num.from_str_radix<i128>("-170141183460469231731687303715884105728", 10u32) {
+    match capture num.parse_radix<i128>("-170141183460469231731687303715884105728", 10u32) {
         success(value) => value == i128.MIN,
         failure(_) => false
     }

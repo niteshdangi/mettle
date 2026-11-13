@@ -2,8 +2,8 @@ import core.option
 import core.outcome
 
 fn main(): i32 {
-    if true.then_some(7).unwrap() != 7 { return 1 }
-    if false.then_some(7).is_present() { return 2 }
+    if true.then_present(7).unwrap() != 7 { return 1 }
+    if false.then_present(7).is_present() { return 2 }
 
     match present(3i32).xor(none) {
         present(value) => { if value != 3 { return 3 } },
@@ -14,7 +14,7 @@ fn main(): i32 {
         present(value) => { if value != 5 { return 5 } },
         none => { return 5 }
     }
-    if !present(6i32).is_some_and(fn(take value: i32): bool { value == 6 }) {
+    if !present(6i32).is_present_and(fn(take value: i32): bool { value == 6 }) {
         return 6
     }
     let absent_for_none_or: i32? = none
