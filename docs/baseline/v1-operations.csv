@@ -7982,9 +7982,9 @@ B36116f05c8fdd91167e2ddfe,operation:convert::TryInto,https://doc.rust-lang.org/1
 Bfe089ff6c639ca598b885ccb,operation:convert::TryInto::Error,https://doc.rust-lang.org/1.99.1/core/convert/trait.TryInto.html#associatedtype.Error,core.convert.TryInto.Error,evidenced,tests/source/run/i13-coretraits-convert-borrow.mt
 Ba6a82c489ac44a96de6184d6,operation:convert::TryInto::try_into,https://doc.rust-lang.org/1.99.1/core/convert/trait.TryInto.html#tymethod.try_into,core.convert.TryInto.try_into,evidenced,tests/source/run/i13-coretraits-convert-borrow.mt
 Bcbb965304262ed1a6954092c,operation:dbg,https://doc.rust-lang.org/1.99.1/std/macro.dbg.html,library/std/macros.mt,evidenced,tests/source/run/i13-macro-debug-matches-boundaries.mt
-B3ebb78029a4c8c403d9a2512,operation:debug_assert,https://doc.rust-lang.org/1.99.1/core/macro.debug_assert.html,,missing,
-B812da1b4f34d9e2c0755811c,operation:debug_assert_eq,https://doc.rust-lang.org/1.99.1/core/macro.debug_assert_eq.html,,missing,
-Ba181d2e897c5cd98d3af1da4,operation:debug_assert_ne,https://doc.rust-lang.org/1.99.1/core/macro.debug_assert_ne.html,,missing,
+B3ebb78029a4c8c403d9a2512,operation:debug_assert,https://doc.rust-lang.org/1.99.1/core/macro.debug_assert.html,,not-applicable,
+B812da1b4f34d9e2c0755811c,operation:debug_assert_eq,https://doc.rust-lang.org/1.99.1/core/macro.debug_assert_eq.html,,not-applicable,
+Ba181d2e897c5cd98d3af1da4,operation:debug_assert_ne,https://doc.rust-lang.org/1.99.1/core/macro.debug_assert_ne.html,,not-applicable,
 Be7d42b817f9d1a72d40b050f,operation:default::Default,https://doc.rust-lang.org/1.99.1/core/default/trait.Default.html,,evidenced,tests/source/run/i13-core-wrapper-trait-matrix.mt
 B1b842ed831dd6bdd49dd3d00,operation:default::Default::default,https://doc.rust-lang.org/1.99.1/core/default/trait.Default.html#tymethod.default,,evidenced,tests/source/run/i13-arc-operations.mt;tests/source/run/i13-cell-operations.mt;tests/source/run/i13-collection-iteration-hints.mt;tests/source/run/i13-collections-borrowed-defaults.mt;tests/source/run/i13-collections-deque-operations.mt;tests/source/run/i13-collections-heap-operations.mt;tests/source/run/i13-collections-map-operations.mt;tests/source/run/i13-collections-set-operations.mt;tests/source/run/i13-coremisc-collect-adapters.mt;tests/source/run/i13-coremisc-option-result-traits.mt;tests/source/run/i13-coremisc-range-traits.mt;tests/source/run/i13-prim-mem-manually-drop.mt;tests/source/run/i13-prim-mem-operations.mt;tests/source/run/i13-primitive-array-operations.mt;tests/source/run/i13-rc-trait-impls.mt;tests/source/run/i13-refcell-operations.mt;tests/source/run/i13-string-traits-and-utf16.mt
 Bfa3f27a4eeb13e18daa356fd,operation:env::args,https://doc.rust-lang.org/1.99.1/std/env/fn.args.html,std.env,evidenced,tests/std/i13_env_var_temp.mt
@@ -8343,7 +8343,7 @@ B15d53e71266cb4855faaac78,operation:io::Write::by_ref,https://doc.rust-lang.org/
 B24450536b2be27b062c4f04a,operation:io::Write::flush,https://doc.rust-lang.org/1.99.1/std/io/trait.Write.html#tymethod.flush,,evidenced,tests/std/i13_io_box_deque.mt;tests/std/i13_io_buffered.mt
 B4f789486ec39dba02fac6392,operation:io::Write::write,https://doc.rust-lang.org/1.99.1/std/io/trait.Write.html#tymethod.write,,evidenced,tests/std/fs-operations.mt;tests/std/fs_basic.mt
 B390922cbb9b03163fac3c80f,operation:io::Write::write_all,https://doc.rust-lang.org/1.99.1/std/io/trait.Write.html#method.write_all,,evidenced,tests/std/io-core.mt
-B24d09ececb5127f250e99bd6,operation:io::Write::write_fmt,https://doc.rust-lang.org/1.99.1/std/io/trait.Write.html#method.write_fmt,,missing,
+B24d09ececb5127f250e99bd6,operation:io::Write::write_fmt,https://doc.rust-lang.org/1.99.1/std/io/trait.Write.html#method.write_fmt,,not-applicable,
 B83390619c338ad84df739823,operation:io::Write::write_vectored,https://doc.rust-lang.org/1.99.1/std/io/trait.Write.html#method.write_vectored,,evidenced,tests/std/i13_io_cursor_vectored.mt
 Bfd7a209bfaff785bb5972611,operation:io::copy,https://doc.rust-lang.org/1.99.1/std/io/fn.copy.html,library/std/io.mt,evidenced,tests/std/i13_io_copy.mt;tests/std/i13_io_closure_invalid_counts.mt
 B08f20698fcd3a1c406eced2d,operation:io::stderr,https://doc.rust-lang.org/1.99.1/std/io/fn.stderr.html,,evidenced,tests/std/i13_io_traits.mt
@@ -13292,5 +13292,5 @@ Bc93bb0968b8e10e59ee7f4c1,operation:vec::Vec::windows,https://doc.rust-lang.org/
 Be5cb3e746a74cc2699eea79e,operation:vec::Vec::windows,https://doc.rust-lang.org/1.99.1/std/vec/struct.Vec.html#method.windows,,evidenced,tests/source/run/i13-vec-slice-views-through-deref.mt
 B38a414960209711770a328e8,operation:vec::Vec::with_capacity,https://doc.rust-lang.org/1.99.1/alloc/vec/struct.Vec.html#method.with_capacity,alloc.vec.List.with_capacity,evidenced,tests/source/run/i13-list-operations.mt
 Be98a72004d7c3fce840a9d61,operation:vec::Vec::with_capacity,https://doc.rust-lang.org/1.99.1/std/vec/struct.Vec.html#method.with_capacity,alloc.vec.List.with_capacity,evidenced,tests/source/run/i13-list-operations.mt
-B05d4e60cbf7f1c51a0f5c354,operation:write,https://doc.rust-lang.org/1.99.1/core/macro.write.html,,missing,
-Bb504d69221c95b76cef91b71,operation:writeln,https://doc.rust-lang.org/1.99.1/core/macro.writeln.html,,missing,
+B05d4e60cbf7f1c51a0f5c354,operation:write,https://doc.rust-lang.org/1.99.1/core/macro.write.html,,not-applicable,
+Bb504d69221c95b76cef91b71,operation:writeln,https://doc.rust-lang.org/1.99.1/core/macro.writeln.html,,not-applicable,
