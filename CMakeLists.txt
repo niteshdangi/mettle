@@ -390,8 +390,45 @@ if(BUILD_TESTING)
                      sanitizers "$<TARGET_FILE:mettle>" "${CMAKE_CXX_COMPILER}"
                      ${METTLE_LINKER_FLAGS})
   endif()
+  # Checked-library interfaces and library objects are keyed by every compiler
+  # flag the suites pass, and parallel cold workers each rebuild them (~26 s
+  # for core alone). One build per key before the shards start leaves them warm.
+  function(mettle_add_cache_prime fixture config library)
+    add_test(NAME cache.prime.${config}.${library}
+             COMMAND mettle build "${PROJECT_SOURCE_DIR}/tests/cache_prime/${library}.mt"
+                     -o "${PROJECT_BINARY_DIR}/cache-prime-${config}-${library}" ${ARGN})
+    set_tests_properties(cache.prime.${config}.${library} PROPERTIES
+                         FIXTURES_SETUP ${fixture} PROCESSORS 1)
+  endfunction()
+  foreach(profile debug release)
+    foreach(library core alloc std)
+      mettle_add_cache_prime(mettle-cache-${library} ${profile} ${library} --profile ${profile})
+    endforeach()
+  endforeach()
+  # Flag sets of the source cases that differ from the plain profiles; release
+  # already defaults to overflow checks off and debug to on.
+  mettle_add_cache_prime(mettle-cache-variants debug-overflow-off core
+                         --profile debug --overflow-checks off)
+  mettle_add_cache_prime(mettle-cache-variants release-overflow-on core
+                         --profile release --overflow-checks on)
+  mettle_add_cache_prime(mettle-cache-variants debug-address core
+                         --profile debug --sanitize address)
+  mettle_add_cache_prime(mettle-cache-variants release-address core
+                         --profile release --sanitize address)
   # Test builds never use the user's build cache.
   get_property(METTLE_TESTS DIRECTORY PROPERTY TESTS)
+  foreach(library core alloc std)
+    set(primed ${METTLE_TESTS})
+    list(FILTER primed INCLUDE REGEX "^library\\.${library}\\.")
+    set_property(TEST ${primed} APPEND PROPERTY FIXTURES_REQUIRED mettle-cache-${library})
+  endforeach()
+  set(primed ${METTLE_TESTS})
+  list(FILTER primed INCLUDE REGEX "^(source\\.|probe\\.|compiler\\.modules-source$)")
+  set_property(TEST ${primed} APPEND PROPERTY FIXTURES_REQUIRED
+               mettle-cache-core mettle-cache-alloc mettle-cache-std)
+  set(primed ${METTLE_TESTS})
+  list(FILTER primed INCLUDE REGEX "^source\\.run\\.")
+  set_property(TEST ${primed} APPEND PROPERTY FIXTURES_REQUIRED mettle-cache-variants)
   set_property(TEST ${METTLE_TESTS} APPEND PROPERTY ENVIRONMENT
                "METTLE_CACHE_DIR=${PROJECT_BINARY_DIR}/test-cache")
   set(METTLE_TEST_CACHE_LIMIT_KIB 2097152 CACHE STRING
