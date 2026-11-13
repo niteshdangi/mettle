@@ -9,5 +9,8 @@ fn main(): i32 {
     let offset = 20
     let shifted = boxed.new(fn(x: i32): i32 { x + offset })
     if shifted(1) != 21 { return 3 }
+    var count = 0
+    var counter = boxed.new(fn(): i32 { count += 1; count })
+    if counter() != 1 || counter() != 2 { return 4 }
     0
 }
