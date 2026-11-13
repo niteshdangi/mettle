@@ -1,4 +1,4 @@
-// expect-error: region 5:69 erased owner payload borrow does not outlive
+// expect-error: region 5:69 erased owner payload view does not outlive
 import alloc.boxed.Box
 interface Show { fn value(): i32; }
 

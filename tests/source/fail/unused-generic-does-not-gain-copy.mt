@@ -1,3 +1,3 @@
-// expect-error: ownership 2:20 cannot move out of a borrowed place
+// expect-error: ownership 2:20 cannot move out of a viewed place
 fn f<T>(x: T): T { x }
 fn main() { 0 }

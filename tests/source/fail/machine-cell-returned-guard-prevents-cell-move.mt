@@ -1,4 +1,4 @@
-// expect-error: ownership 9:17 access or storage lifetime conflicts with a live read loan
+// expect-error: ownership 9:17 access or storage conflicts with a live read loan
 
 fn borrow<T>(read cell: core.cell.RefCell<T>): core.cell.Ref<T> from cell {
     cell.borrow()

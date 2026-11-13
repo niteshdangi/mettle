@@ -32,7 +32,7 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
       copy |= interfaceProperty(bound, "Copy", parameter.span);
       unpin |= interfaceProperty(bound, "Unpin", parameter.span);
       requiredSized |= interfaceProperty(bound, "Sized", parameter.span);
-      if (bound.name == "?Sized" || bound.name == "unsized")
+      if (bound.name == "unsized")
         sized = false;
     }
     for (const auto &constraint : constraints)
@@ -42,7 +42,7 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
           copy |= interfaceProperty(bound, "Copy", parameter.span);
           unpin |= interfaceProperty(bound, "Unpin", parameter.span);
           requiredSized |= interfaceProperty(bound, "Sized", parameter.span);
-          if (bound.name == "?Sized" || bound.name == "unsized")
+          if (bound.name == "unsized")
             sized = false;
         }
     sized |= requiredSized;
@@ -195,7 +195,7 @@ void Checker::validateGenericEnvironment(
           error("type", environment.declarationSpan,
                 "incompatible declared callable bounds");
       } else if (!propertyBound(bound, environment.declarationSpan) &&
-                 bound.name != "unsized" && bound.name != "?Sized")
+                 bound.name != "unsized")
         interfaceBound(bound, environment.declarationSpan, {}, subject);
     }
   for (const auto &constraint : constraints) {
@@ -752,8 +752,7 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
           }
         }
         valid &= interfaceObligation(binding.argument, bound, span);
-      } else if (!property && bound.name != "?Sized" &&
-                 bound.name != "unsized") {
+      } else if (!property && bound.name != "unsized") {
         genericEnvironment = const_cast<GenericEnvironment *>(&environment);
         if (bound.form == TypeForm::Callable) {
           auto contract =
@@ -800,7 +799,7 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
     if (checked.types->isParameter(subject))
       continue;
     for (const auto &bound : bounds) {
-      if (bound.name == "unsized" || bound.name == "?Sized")
+      if (bound.name == "unsized")
         continue;
       genericEnvironment = const_cast<GenericEnvironment *>(&environment);
       auto property = propertyBound(bound, environment.declarationSpan)

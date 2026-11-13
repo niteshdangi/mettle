@@ -1,4 +1,4 @@
-// expect-error: ownership 20:5 access or storage lifetime conflicts with a live read loan
+// expect-error: ownership 20:5 access or storage conflicts with a live read loan
 import core.future.{Future, Poll, Context, noop_waker}
 
 interface Sized2 {

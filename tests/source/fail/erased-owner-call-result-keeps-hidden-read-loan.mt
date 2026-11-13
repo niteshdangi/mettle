@@ -1,4 +1,4 @@
-// expect-error: ownership 15:5 access or storage lifetime conflicts with a live read loan
+// expect-error: ownership 15:5 access or storage conflicts with a live read loan
 interface Show { fn value(): i32; }
 type Held<region r> { value: read i32 from r; drop {} }
 extend<region r> Held<region r> implements Show {

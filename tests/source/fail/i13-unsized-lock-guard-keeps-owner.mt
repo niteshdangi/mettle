@@ -1,4 +1,4 @@
-// expect-error: ownership 10:17 access or storage lifetime conflicts
+// expect-error: ownership 10:17 access or storage conflicts
 import std.sync.mutex
 
 fn main(): i32 {

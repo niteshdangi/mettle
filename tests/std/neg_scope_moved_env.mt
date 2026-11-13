@@ -1,4 +1,4 @@
-// expect-error: region 8:13 borrowed source does not outlive the required region
+// expect-error: region 8:13 viewed source does not outlive the required region
 import std.thread
 
 // A `take` scope closure owns `data`; its environment dies when it returns.

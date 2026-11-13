@@ -323,7 +323,7 @@ package. Other strings must be valid version requirements; there is no
 file-existence-based guessing. Additional source/feature options use an object,
 for example `parser { path: "../parser", features: ["text"] }`.
 
-Imports discover supporting modules from `name.mt` or `name/main.mt`, relative
+Imports discover supporting modules from `name.mt` or `name/module.mt`, relative
 to the importing module, without a separate file of `pub module` declarations.
 Matching both source forms is an ambiguity error. Intermediate directories can
 group modules without their own entry file. Existing explicit module declarations

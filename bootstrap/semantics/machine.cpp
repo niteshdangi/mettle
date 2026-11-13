@@ -262,13 +262,13 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
         requireMutablePlace(*callee.children[0]);
       if (mode == ParameterMode::Take && dereferences)
         error("ownership", call.span,
-              "cannot consume storage through a borrowed receiver");
+              "cannot consume storage through a viewed receiver");
     }
     if (mode == ParameterMode::Take && checked.types->isCopy(self))
       mode = ParameterMode::Value;
     if (mode == ParameterMode::Take && dereferences)
       error("ownership", call.span,
-            "cannot consume a primitive receiver through a borrowed handle");
+            "cannot consume a primitive receiver through a viewed handle");
     operands.push_back(mode == ParameterMode::Read || mode == ParameterMode::Mut
                            ? checked.types->viewType(self, mode)
                            : self);

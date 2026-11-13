@@ -322,6 +322,13 @@ def main(executable, directory, only=None, *, jobs=4, pattern=None,
         "child.mt": "fn unused() { 1 }\n",
         "child/module.mt": "fn unused() { 2 }\n"},
          "name", "external module 'child' matches both", (1, 1))
+    case("imported-directory-module", {
+        "main.mt": "import child.value;\nfn main(): i32 { value() - 42 }\n",
+        "child/module.mt": "pub fn value(): i32 { 42 }\n"})
+    case("imported-directory-main-not-discovered", {
+        "main.mt": "import child.value;\nfn main(): i32 { value() - 42 }\n",
+        "child/main.mt": "pub fn value(): i32 { 42 }\n"},
+         "name", "unresolved, inaccessible, ambiguous or cyclic import 'child::value'", (1, 1))
     case("external-file-diagnostic", {
         "main.mt": "module child;\nfn main() { 0 }\n",
         "child.mt": "fn broken() { missing() }\n"},

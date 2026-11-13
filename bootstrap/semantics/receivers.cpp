@@ -519,8 +519,7 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
     if (bounds == environment.bounds.end())
       continue;
     for (const auto &bound : bounds->second) {
-      if (bound.form == TypeForm::Callable || bound.name == "?Sized" ||
-          bound.name == "unsized" ||
+      if (bound.form == TypeForm::Callable || bound.name == "unsized" ||
           propertyBound(bound, environment.declarationSpan))
         continue;
       auto required = checked.types->substitute(
@@ -640,7 +639,7 @@ std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
       if (selected) {
         if (mode == ParameterMode::Take && !plan.steps.empty())
           error("ownership", call.span,
-                "cannot move out of a borrowed place for the selected "
+                "cannot move out of a viewed place for the selected "
                 "consuming receiver");
         if (mode == ParameterMode::Mut) {
           requireMutablePlace(*call.children[0]->children[0]);
@@ -784,7 +783,7 @@ bool Checker::borrowCoercion(Node &node, int actual, Type target,
     if (mode == ParameterMode::Mut && checked.types->isView(source) &&
         checked.types->isView(target)) {
       error("type", node.span,
-            "mutable borrowed view handles require an invariant payload type");
+            "mutable view handles require an invariant payload type");
       return true;
     }
     return false;

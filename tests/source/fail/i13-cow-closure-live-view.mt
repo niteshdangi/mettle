@@ -1,4 +1,4 @@
-// expect-error: ownership 11:5 access or storage lifetime conflicts
+// expect-error: ownership 11:5 access or storage conflicts
 import alloc.borrow.BorrowedOrOwned
 import alloc.string
 import core.text.Text

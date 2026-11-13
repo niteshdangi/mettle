@@ -1,4 +1,4 @@
-// expect-error: ownership 26:5 access or storage lifetime conflicts
+// expect-error: ownership 26:5 access or storage conflicts
 import alloc.boxed.Box
 interface Show { fn value(): i32; }
 type Held<region r> { value: read i32 from r; drop {} }

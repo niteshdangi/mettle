@@ -14,11 +14,11 @@ fn main(): i32 {
     if saved < 0i32 { return 2 }
     if unsafe { sys.close(2i32) } != 0i32 { return 3 }
     let message_result = catch_panic(fn(): i32 {
-        eprintln!("must fail")
+        eprintln("must fail")
         0
     })
     let newline_result = catch_panic(fn(): i32 {
-        eprintln!("")
+        eprintln("")
         0
     })
     if unsafe { dup2(saved, 2i32) } != 2i32 { return 4 }
@@ -36,6 +36,6 @@ fn main(): i32 {
         },
         CatchResult.Returned(_) => { return 9 }
     }
-    eprintln!("restored")
+    eprintln("restored")
     0
 }

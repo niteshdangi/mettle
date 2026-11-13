@@ -1,4 +1,4 @@
-// expect-error: ownership 11:5 access or storage lifetime conflicts
+// expect-error: ownership 11:5 access or storage conflicts
 import core.iter
 import core.iter.Iterator
 

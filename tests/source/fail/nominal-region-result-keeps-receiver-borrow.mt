@@ -1,4 +1,4 @@
-// expect-error: ownership 10:5 access or storage lifetime conflicts
+// expect-error: ownership 10:5 access or storage conflicts
 type Borrowed<region r> { value: read i32 from r }
 type Holder { value: i32 }
 extend Holder {

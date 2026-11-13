@@ -1,6 +1,6 @@
 // profiles: debug release
 // expect-error-count: 1
-// expect-error: region 7:55 borrowed source does not outlive the required region
+// expect-error: region 7:55 viewed source does not outlive the required region
 import core.any
 import core.any.TypeId
 

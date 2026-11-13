@@ -197,7 +197,7 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
       return false;
     };
     const bool borrowedRoot = borrowed(closure.parent, capture.source.root);
-    // A copy of a borrowed place is only equivalent to the borrow when the
+    // A copy of a viewed place is only equivalent to the borrow when the
     // closure does not write through it.
     capture.viaView = syntax.flag && capture.mode != ParameterMode::Take &&
                       borrowedRoot &&
@@ -271,7 +271,7 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
       closure.function.resultSources = eligible;
     else if (final && !unresolved)
       error("ownership", syntax.span,
-            "borrowed closure result requires an unambiguous from contract");
+            "closure view result requires an unambiguous from contract");
   } else if (checked.types->containsViews(closure.function.abiResult, true)) {
     std::vector<std::pair<NameKey, const TypeSyntax *>> parameters;
     for (const auto &parameter : syntax.parameters)

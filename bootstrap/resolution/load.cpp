@@ -783,10 +783,9 @@ private:
       auto name = path[length - 1];
       auto firstPath =
           (directory / (name + ".mt")).lexically_normal().generic_string();
-      auto secondPath =
-          (directory / name / (imported ? "main.mt" : "module.mt"))
-              .lexically_normal()
-              .generic_string();
+      auto secondPath = (directory / name / "module.mt")
+                            .lexically_normal()
+                            .generic_string();
       auto first = provider(firstPath);
       auto second = provider(secondPath);
       if (first && second)
@@ -1421,8 +1420,9 @@ private:
           auto first = provider((directory / (path[i] + ".mt"))
                                     .lexically_normal()
                                     .generic_string());
-          auto second = provider(
-              (childDirectory / "main.mt").lexically_normal().generic_string());
+          auto second = provider((childDirectory / "module.mt")
+                                     .lexically_normal()
+                                     .generic_string());
           if (first && second) {
             diagnostics.error("name", imported.span,
                               "imported module '" + path[i] +

@@ -1,4 +1,4 @@
-// expect-error: ownership 9:17 access or storage lifetime conflicts with a live read loan
+// expect-error: ownership 9:17 access or storage conflicts with a live read loan
 
 import core.cell
 

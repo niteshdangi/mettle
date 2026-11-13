@@ -1,4 +1,4 @@
-// expect-error: ownership 11:8 access or storage lifetime conflicts with a live exclusive loan
+// expect-error: ownership 11:8 access or storage conflicts with a live exclusive loan
 import alloc.hash_map.Entry
 
 fn main(): i32 {

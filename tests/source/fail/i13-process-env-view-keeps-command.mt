@@ -1,4 +1,4 @@
-// expect-error: ownership 10:5 access or storage lifetime conflicts
+// expect-error: ownership 10:5 access or storage conflicts
 import core.iter.ExactSizeIterator
 import std.ffi
 import std.process.Command

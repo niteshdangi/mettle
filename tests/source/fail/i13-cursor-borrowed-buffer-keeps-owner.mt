@@ -1,4 +1,4 @@
-// expect-error: ownership 8:5 access or storage lifetime conflicts
+// expect-error: ownership 8:5 access or storage conflicts
 import std.io.{BufRead, Cursor, Error}
 
 fn check(): Unit throws Error {

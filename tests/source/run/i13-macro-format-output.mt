@@ -5,7 +5,7 @@
 import core.fmt
 import std.io
 import std.io.Writer
-import std.macros.{eprintln, format, format_args, println}
+import std.macros.{eprintln, format, println}
 import std.panic.{catch_panic, CatchResult}
 import std.thread
 
@@ -65,7 +65,7 @@ fn check_line_lock(stderr: bool): bool {
         }
         0
     })
-    if stderr { eprintln!(f"{LockProbe()}") } else { println!(f"{LockProbe()}") }
+    if stderr { eprintln(f"{LockProbe()}") } else { println(f"{LockProbe()}") }
     match take capture worker.join() {
         success(code) => {
             code == 0 && ACQUIRED.load(core.sync.atomic.Ordering.Acquire) &&
@@ -82,21 +82,21 @@ fn next(mut count: i32): i32 {
 
 fn main(): i32 {
     var count = 0i32
-    let text = format!(f"{next(mut count)}:{next(mut count)}",)
+    let text = format(f"{next(mut count)}:{next(mut count)}",)
     if count != 2 || text.as_text() != "1:2" { return 1 }
-    let plain = format!("plain")
+    let plain = format("plain")
     if plain.as_text() != "plain" { return 2 }
 
-    println!()
-    println!(f"value={next(mut count)}",)
-    println!(format_args!(f"forward={next(mut count)}",))
-    eprintln!()
-    eprintln!(f"error={next(mut count)}",)
+    println("")
+    println(f"value={next(mut count)}",)
+    println(f"forward={next(mut count)}",)
+    eprintln("")
+    eprintln(f"error={next(mut count)}",)
     if count != 5 { return 3 }
 
     if !check_line_lock(false) || !check_line_lock(true) { return 5 }
     match take catch_panic(fn(): i32 {
-        let _ = format!(f"{BrokenDisplay()}")
+        let _ = format(f"{BrokenDisplay()}")
         0
     }) {
         CatchResult.Panicked(_) => {},

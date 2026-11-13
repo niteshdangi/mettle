@@ -53,7 +53,7 @@ heading a multi-component path always means that package, so no import has two
 meanings. `package` is not a path head; `package.x` is rejected with the package
 name to use instead.
 An import can discover an undeclared source module through `name.mt` or
-`name/main.mt`; finding both is an ambiguity error. Intermediate directories
+`name/module.mt`; finding both is an ambiguity error. Intermediate directories
 need no handwritten aggregator. Package entry selection is owned by
 tooling-and-packages.md; its default is `src/main.mt` for both dependency APIs
 and executable entry checking.

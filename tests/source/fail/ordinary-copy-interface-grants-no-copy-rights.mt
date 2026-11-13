@@ -1,4 +1,4 @@
-// expect-error: ownership 4:39 cannot move out of a borrowed place
+// expect-error: ownership 4:39 cannot move out of a viewed place
 
 module fake { pub interface Copy {} }
 fn wrong<T: fake.Copy>(value: T): T { value }

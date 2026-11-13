@@ -1,4 +1,4 @@
-// expect-error: ownership 8:5 access or storage lifetime conflicts
+// expect-error: ownership 8:5 access or storage conflicts
 import core.option
 import std.process.Child
 
