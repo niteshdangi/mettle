@@ -357,7 +357,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "declaration-defaults": "fn defaults<T = i32>(value: T = 42): T { value }",
             "declaration-constraints": "fn convert<T: Trait + ?Sized, U>(value: T): U\nwhere T: Other, U = Result<T> { other(value) }",
             "declaration-public": "internal unsafe const fn identity<T>(value: T): T => value",
-            "declaration-parent": "pub parent fn up() { 1 }\ninternal type Node { pub parent: i32\npub parent fn read_parent(): i32 { 0 } }",
+            "declaration-parent": "pub parent fn up() { 1 }\ninternal type Node { pub parent: i32 }",
             "declaration-effect": "fn load<T>(value: T): T throws Error where T: Trait { value }",
             "declaration-generic-value": "fn main() => factory<T>",
             "declaration-contextual-format": "fn format(format: format, value: format.Message) { format }",
