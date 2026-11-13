@@ -7,6 +7,7 @@ import super.char
 import super.iter.{Iterator, BidirectionalIterator}
 import super.fmt.{Debug, Formatter, Error}
 import super.ops.RangeEnd
+import super.borrow.AsRef
 
 // Unsized, validated UTF-8 view; the view metadata is the byte count. Only
 // the checked constructors below create views of Text, which keeps the
@@ -1566,4 +1567,8 @@ extend Text implements Ord {
         }
         self.bytes.len().cmp(other.bytes.len())
     }
+}
+
+extend Text implements AsRef<[u8]> {
+    fn as_ref(): read [u8] from self { self.as_bytes() }
 }

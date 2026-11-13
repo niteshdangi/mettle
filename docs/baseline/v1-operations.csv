@@ -6234,8 +6234,8 @@ Ba32c0699c6916ba2ca625caf,impl:primitive::slice:cmp::PartialEq,https://doc.rust-
 Be5ef3cfccf5d798e31f7ce5a,impl:primitive::slice:cmp::PartialEq,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#impl-PartialEq%3C%5BU;+N%5D%3E-for-%26%5BT%5D,,evidenced,tests/source/run/i13-primitive-slice-array-tuple.mt
 Bc71ec7d69555e7e04c5915fb,impl:primitive::slice:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#impl-PartialOrd-for-%5BT%5D,,evidenced,tests/source/run/i13-primitive-slice-array-tuple.mt
 Bf4fb332bb10453fe7f53d13f,impl:primitive::slice:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#impl-PartialOrd-for-%5BT%5D,,evidenced,tests/source/run/i13-primitive-slice-array-tuple.mt
-B1eb436c6d884629e1fa0e77e,impl:primitive::slice:convert::AsMut,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#impl-AsMut%3C%5BT%5D%3E-for-%5BT%5D,,missing,
-B84b97de0ac5f2fc4de3ee3d3,impl:primitive::slice:convert::AsRef,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#impl-AsRef%3C%5BT%5D%3E-for-%5BT%5D,,missing,
+B1eb436c6d884629e1fa0e77e,impl:primitive::slice:convert::AsMut,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#impl-AsMut%3C%5BT%5D%3E-for-%5BT%5D,,evidenced,tests/source/run/i13-text-slice-reference-traits.mt
+B84b97de0ac5f2fc4de3ee3d3,impl:primitive::slice:convert::AsRef,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#impl-AsRef%3C%5BT%5D%3E-for-%5BT%5D,,evidenced,tests/source/run/i13-text-slice-reference-traits.mt
 B1e1f22840c5e11f063b00f8c,impl:primitive::slice:default::Default,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#impl-Default-for-%26%5BT%5D,,missing,
 B492d88bf15f998250a4a451b,impl:primitive::slice:default::Default,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#impl-Default-for-%26mut+%5BT%5D,,missing,
 B86e84e7edbdcd5078a1c2b5b,impl:primitive::slice:fmt::Debug,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#impl-Debug-for-%5BT%5D,,evidenced,tests/source/run/i13-primitive-traits-compound.mt
@@ -6270,10 +6270,10 @@ Bf64d799d83af0b3abdc12cea,impl:primitive::str:cmp::PartialEq,https://doc.rust-la
 Bf86ec07f79d2bfb21be82a5f,impl:primitive::str:cmp::PartialEq,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#impl-PartialEq%3COsString%3E-for-%26str,,evidenced,tests/source/run/i13-primitive-str-operations.mt
 B696eafa7c4313088258098ff,impl:primitive::str:cmp::PartialOrd,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#impl-PartialOrd-for-str,,evidenced,tests/source/run/i13-primitive-traits-compound.mt
 Bd14652d1e30753f54b0d569f,impl:primitive::str:convert::AsMut,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#impl-AsMut%3Cstr%3E-for-str,,missing,
-B62532f78dd51f5f98d8641d3,impl:primitive::str:convert::AsRef,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#impl-AsRef%3COsStr%3E-for-str,,missing,
-B6628ebcc0e16dbba8ed1a487,impl:primitive::str:convert::AsRef,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#impl-AsRef%3C%5Bu8%5D%3E-for-str,,missing,
-Bad53cbab991d29fc04b1d10b,impl:primitive::str:convert::AsRef,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#impl-AsRef%3CPath%3E-for-str,,missing,
-Bd7907708479bf6b196804014,impl:primitive::str:convert::AsRef,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#impl-AsRef%3Cstr%3E-for-str,,missing,
+B62532f78dd51f5f98d8641d3,impl:primitive::str:convert::AsRef,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#impl-AsRef%3COsStr%3E-for-str,,evidenced,tests/source/run/i13-text-slice-reference-traits.mt
+B6628ebcc0e16dbba8ed1a487,impl:primitive::str:convert::AsRef,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#impl-AsRef%3C%5Bu8%5D%3E-for-str,,evidenced,tests/source/run/i13-text-slice-reference-traits.mt
+Bad53cbab991d29fc04b1d10b,impl:primitive::str:convert::AsRef,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#impl-AsRef%3CPath%3E-for-str,,evidenced,tests/source/run/i13-text-slice-reference-traits.mt
+Bd7907708479bf6b196804014,impl:primitive::str:convert::AsRef,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#impl-AsRef%3Cstr%3E-for-str,,evidenced,tests/source/run/i13-text-slice-reference-traits.mt
 B6bf95591b4090c8a7811d711,impl:primitive::str:convert::TryFrom,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#impl-TryFrom%3C%26OsStr%3E-for-%26str,,missing,
 Bba30d1b06a3da064d9b48b97,impl:primitive::str:default::Default,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#impl-Default-for-%26str,,evidenced,tests/source/run/i13-primitive-traits-compound.mt
 Bd0459e3ddbae2913ab7dacb7,impl:primitive::str:default::Default,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#impl-Default-for-%26mut+str,,evidenced,tests/source/run/i13-primitive-traits-compound.mt

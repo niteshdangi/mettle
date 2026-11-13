@@ -909,6 +909,9 @@ extend<region r, const N: usize> read [u8; N] from r implements PathInput {
 extend<const N: usize> [u8; N] implements PathInput {
     fn as_path(): read Path from self { path(self.as_slice()) }
 }
+extend Text implements AsRef<Path> {
+    fn as_ref(): read Path from self { path(self.as_bytes()) }
+}
 extend Text implements PathInput {
     fn as_path(): read Path from self { path(self.as_bytes()) }
 }
