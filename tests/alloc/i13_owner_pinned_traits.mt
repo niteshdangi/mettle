@@ -28,17 +28,18 @@ unsafe extend OtherAllocator implements Allocator {
 }
 
 type Different { value: i32 }
-extend i32 implements PartialEq<Different> {
-    fn eq(read other: Different): bool { self == other.value }
+type Other { value: i32 }
+extend Other implements PartialEq<Different> {
+    fn eq(read other: Different): bool { self.value == other.value }
 }
-extend i32 implements PartialOrd<Different> {
-    fn partial_cmp(read other: Different): Ordering? { self.partial_cmp(read other.value) }
+extend Other implements PartialOrd<Different> {
+    fn partial_cmp(read other: Different): Ordering? { self.value.partial_cmp(read other.value) }
 }
-extend Different implements PartialEq<i32> {
-    fn eq(read other: i32): bool { self.value == other }
+extend Different implements PartialEq<Other> {
+    fn eq(read other: Other): bool { self.value == other.value }
 }
-extend Different implements PartialOrd<i32> {
-    fn partial_cmp(read other: i32): Ordering? { self.value.partial_cmp(other) }
+extend Different implements PartialOrd<Other> {
+    fn partial_cmp(read other: Other): Ordering? { self.value.partial_cmp(read other.value) }
 }
 
 fn compares<L: PartialEq<R> + PartialOrd<R>, R>(read left: L, read right: R, expected: Ordering): Unit {
@@ -80,28 +81,31 @@ fn main(): i32 {
     let b = boxed.pin(11)
     let r = rc.pin(11)
     let a = arc.pin(11)
+    let bo = boxed.pin(Other(11))
+    let ro = rc.pin(Other(11))
+    let ao = arc.pin(Other(11))
     let bd = boxed.pin(Different(11))
     let rd = rc.pin(Different(11))
     let ad = arc.pin(Different(11))
-    compares(b, bd, Ordering.Equal)
-    compares(b, rd, Ordering.Equal)
-    compares(b, ad, Ordering.Equal)
-    compares(r, bd, Ordering.Equal)
-    compares(r, rd, Ordering.Equal)
-    compares(r, ad, Ordering.Equal)
-    compares(a, bd, Ordering.Equal)
-    compares(a, rd, Ordering.Equal)
-    compares(a, ad, Ordering.Equal)
-    compares(bd, b, Ordering.Equal)
-    compares(rd, r, Ordering.Equal)
-    compares(ad, a, Ordering.Equal)
+    compares(bo, bd, Ordering.Equal)
+    compares(bo, rd, Ordering.Equal)
+    compares(bo, ad, Ordering.Equal)
+    compares(ro, bd, Ordering.Equal)
+    compares(ro, rd, Ordering.Equal)
+    compares(ro, ad, Ordering.Equal)
+    compares(ao, bd, Ordering.Equal)
+    compares(ao, rd, Ordering.Equal)
+    compares(ao, ad, Ordering.Equal)
+    compares(bd, bo, Ordering.Equal)
+    compares(rd, ro, Ordering.Equal)
+    compares(ad, ao, Ordering.Equal)
     let alternate = boxed.new_in(Different(12), OtherAllocator()).into_pinned()
-    compares(b, alternate, Ordering.Less)
-    compares(r, alternate, Ordering.Less)
-    compares(a, alternate, Ordering.Less)
-    compares(alternate, b, Ordering.Greater)
-    compares(alternate, r, Ordering.Greater)
-    compares(alternate, a, Ordering.Greater)
+    compares(bo, alternate, Ordering.Less)
+    compares(ro, alternate, Ordering.Less)
+    compares(ao, alternate, Ordering.Less)
+    compares(alternate, bo, Ordering.Greater)
+    compares(alternate, ro, Ordering.Greater)
+    compares(alternate, ao, Ordering.Greater)
     ordered(b, boxed.pin(12))
     ordered(r, rc.pin(12))
     ordered(a, arc.pin(12))
@@ -112,21 +116,21 @@ fn main(): i32 {
     formatted(a, "11", "11")
 
     let borrowed = bd.as_ref()
-    compares(b, borrowed, Ordering.Equal)
-    compares(r, borrowed, Ordering.Equal)
-    compares(a, borrowed, Ordering.Equal)
-    compares(borrowed, b, Ordering.Equal)
-    compares(borrowed, r, Ordering.Equal)
-    compares(borrowed, a, Ordering.Equal)
+    compares(bo, borrowed, Ordering.Equal)
+    compares(ro, borrowed, Ordering.Equal)
+    compares(ao, borrowed, Ordering.Equal)
+    compares(borrowed, bo, Ordering.Equal)
+    compares(borrowed, ro, Ordering.Equal)
+    compares(borrowed, ao, Ordering.Equal)
     var exclusive_owner = boxed.pin(Different(11))
     {
         let exclusive = exclusive_owner.as_mut()
-        compares(b, exclusive, Ordering.Equal)
-        compares(r, exclusive, Ordering.Equal)
-        compares(a, exclusive, Ordering.Equal)
-        compares(exclusive, b, Ordering.Equal)
-        compares(exclusive, r, Ordering.Equal)
-        compares(exclusive, a, Ordering.Equal)
+        compares(bo, exclusive, Ordering.Equal)
+        compares(ro, exclusive, Ordering.Equal)
+        compares(ao, exclusive, Ordering.Equal)
+        compares(exclusive, bo, Ordering.Equal)
+        compares(exclusive, ro, Ordering.Equal)
+        compares(exclusive, ao, Ordering.Equal)
     }
     let empty_box = boxed.copy_text("").into_pinned()
     let empty_rc = rc.Pinned<Text>.default()
