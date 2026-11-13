@@ -184,7 +184,10 @@ std::optional<std::size_t> Checker::receiverCandidate(
           !propertyBound(bound, call.span))
         consider(interfaceBound(bound, call.span, {}, self));
   }
-  if (!checked.types->isErased(self)) {
+  // A where-clause bound that supplies the method takes precedence over
+  // blanket implementations for a generic parameter.
+  if (!checked.types->isErased(self) &&
+      !(checked.types->isParameter(self) && !candidates.empty())) {
     auto caller = accessModule(call);
     auto visible = [&](const interfaces::Definition &definition) {
       if (protocol)

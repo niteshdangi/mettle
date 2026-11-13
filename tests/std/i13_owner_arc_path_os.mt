@@ -8,7 +8,7 @@ import std.ffi.{OsStr, OsString, bytes_equal, os_string_from_bytes}
 import std.path.{Path, PathBuf, path_buf_from_bytes}
 
 fn copy_path<region r>(read value: Path from r): Arc<Path> {
-    Arc<Path>.(From<read Path from r>).from(value)
+    Arc<Path>.(From<read Path from r>).from(read value)
 }
 
 fn copy_mut_path<region r>(mut value: Path from r): Arc<Path> {
@@ -16,7 +16,7 @@ fn copy_mut_path<region r>(mut value: Path from r): Arc<Path> {
 }
 
 fn copy_os<region r>(read value: OsStr from r): Arc<OsStr> {
-    Arc<OsStr>.(From<read OsStr from r>).from(value)
+    Arc<OsStr>.(From<read OsStr from r>).from(read value)
 }
 
 fn copy_mut_os<region r>(mut value: OsStr from r): Arc<OsStr> {
@@ -24,8 +24,8 @@ fn copy_mut_os<region r>(mut value: OsStr from r): Arc<OsStr> {
 }
 
 fn box_rc_path<region r>(read value: Path from r): (Box<Path>, Rc<Path>) {
-    (Box<Path>.(From<read Path from r>).from(value),
-        Rc<Path>.(From<read Path from r>).from(value))
+    (Box<Path>.(From<read Path from r>).from(read value),
+        Rc<Path>.(From<read Path from r>).from(read value))
 }
 
 fn box_rc_mut_path<region r>(mut value: Path from r): (Box<Path>, Rc<Path>) {
@@ -34,8 +34,8 @@ fn box_rc_mut_path<region r>(mut value: Path from r): (Box<Path>, Rc<Path>) {
 }
 
 fn box_rc_os<region r>(read value: OsStr from r): (Box<OsStr>, Rc<OsStr>) {
-    (Box<OsStr>.(From<read OsStr from r>).from(value),
-        Rc<OsStr>.(From<read OsStr from r>).from(value))
+    (Box<OsStr>.(From<read OsStr from r>).from(read value),
+        Rc<OsStr>.(From<read OsStr from r>).from(read value))
 }
 
 fn box_rc_mut_os<region r>(mut value: OsStr from r): (Box<OsStr>, Rc<OsStr>) {
@@ -66,12 +66,12 @@ fn boxed_and_rc(read bytes: [u8]): Unit {
     let owned_path = Rc<Path>.(From<PathBuf>).from(path_buf_from_bytes(bytes))
     let owned_os = Rc<OsStr>.(From<OsString>).from(os_string_from_bytes(bytes))
     let sibling = owned_path.clone()
-    let weak = sibling.downgrade()
+    let observer = sibling.downgrade()
     core.mem.drop(owned_path)
     assert(bytes_equal(sibling.get().as_bytes(), bytes) &&
         bytes_equal(owned_os.get().as_bytes(), bytes), "owned Rc conversions preserve dynamic byte tails")
     core.mem.drop(sibling)
-    assert(weak.upgrade().is_none(), "Rc path payload retires on the last strong drop")
+    assert(observer.upgrade().is_none(), "Rc path payload retires on the last strong drop")
 
     let os_owner = os_string_from_bytes(bytes)
     let boxed_os = Box<OsStr>.(From<OsString>).from(os_owner)
@@ -91,8 +91,8 @@ fn boxed_and_rc(read bytes: [u8]): Unit {
 }
 
 fn borrowed_cow_boxes<region r>(read path: Path from r, read os: OsStr from r): Unit {
-    let path_cow: BorrowedOrOwned<region r, Path> = BorrowedOrOwned.Borrowed(path)
-    let os_cow: BorrowedOrOwned<region r, OsStr> = BorrowedOrOwned.Borrowed(os)
+    let path_cow: BorrowedOrOwned<region r, Path> = BorrowedOrOwned.Borrowed(read path)
+    let os_cow: BorrowedOrOwned<region r, OsStr> = BorrowedOrOwned.Borrowed(read os)
     let boxed_path = Box<Path>.(From<BorrowedOrOwned<region r, Path>>).from(path_cow)
     let boxed_os = Box<OsStr>.(From<BorrowedOrOwned<region r, OsStr>>).from(os_cow)
     assert(bytes_equal(boxed_path.get().as_bytes(), path.as_bytes()) &&
@@ -115,12 +115,12 @@ fn main(): i32 {
     let owned_path = Arc<Path>.(From<PathBuf>).from(path_owner)
     assert(bytes_equal(owned_path.get().as_bytes(), read bytes), "owned path conversion retains slice-tail length")
     let sibling = owned_path.clone()
-    let weak = sibling.downgrade()
+    let observer = sibling.downgrade()
     core.mem.drop(owned_path)
     assert(sibling.strong_count() == 1usize && bytes_equal(sibling.get().as_bytes(), read bytes),
         "retained path survives the original owner")
     core.mem.drop(sibling)
-    assert(weak.upgrade().is_none(), "last path strong drop prevents resurrection")
+    assert(observer.upgrade().is_none(), "last path strong drop prevents resurrection")
 
     var os = os_string_from_bytes(read bytes)
     let shared_os = copy_os(os.as_os_str())
