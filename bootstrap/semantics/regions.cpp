@@ -595,6 +595,9 @@ private:
   std::unordered_map<std::uint32_t, CallableType> closureDescriptors;
   std::vector<Type> *inferredReturns = nullptr;
   unsigned captureDepth = 0;
+  // Locals of the current closure that hold a copied access-parameter
+  // reference.
+  std::map<std::size_t, ParameterMode> copiedAccess;
   std::vector<Type> decorating;
   std::vector<Type> substituting;
   std::vector<Type> wellformedActive;
@@ -2621,6 +2624,8 @@ Type RegionPass::closure(const Node &node) {
   auto *outerReturns = inferredReturns;
   auto outerCaptureDepth = captureDepth;
   captureDepth = 0;
+  auto outerCopiedAccess = std::move(copiedAccess);
+  copiedAccess.clear();
   RegionSignature nested;
   nested.span = node.span;
   nested.context = outer->context;
@@ -2663,13 +2668,27 @@ Type RegionPass::closure(const Node &node) {
     auto captured =
         projectedType(types, outerLocals[root], capture.source.fields);
     auto type = captured.value_or(capture.type);
-    auto lifetime = node.flag
+    // Moving an access parameter copies its reference, which keeps the
+    // parameter's source region instead of the closure environment's.
+    auto accessMode = ParameterMode::Value;
+    if (auto copied = outerCopiedAccess.find(root);
+        copied != outerCopiedAccess.end())
+      accessMode = copied->second;
+    else if (outerFacts && root < outerFacts->locals.size())
+      accessMode = outerFacts->locals[root].mode;
+    const bool copiesReference =
+        node.flag && !types.isView(type) &&
+        (accessMode == ParameterMode::Read || accessMode == ParameterMode::Mut);
+    auto lifetime = copiesReference ? outerStorage[root]
+                    : node.flag
                         ? store.bound(nested.context.scope, "<environment>")
                         : outerStorage[root];
     if (capture.proxy.root >= 0 &&
         static_cast<std::size_t>(capture.proxy.root) < locals.size()) {
       locals[capture.proxy.root] = outerLocals[root];
       storage[capture.proxy.root] = lifetime;
+      if (copiesReference)
+        copiedAccess[static_cast<std::size_t>(capture.proxy.root)] = accessMode;
     }
     if (!node.flag)
       type = types.viewType(type,
@@ -2677,14 +2696,8 @@ Type RegionPass::closure(const Node &node) {
                                 ? ParameterMode::Mut
                                 : ParameterMode::Read,
                             lifetime);
-    else if (!types.isView(type) && outerFacts &&
-             root < outerFacts->locals.size() &&
-             (outerFacts->locals[root].mode == ParameterMode::Read ||
-              outerFacts->locals[root].mode == ParameterMode::Mut))
-      // Moving an access parameter copies its reference, which keeps the
-      // parameter's source region.
-      type = types.viewType(type, outerFacts->locals[root].mode,
-                            outerStorage[root]);
+    else if (copiesReference)
+      type = types.viewType(type, accessMode, outerStorage[root]);
     captures.push_back({"<capture>", type});
   }
   for (std::size_t i = 0; i < node.parameters.size(); ++i) {
@@ -2838,6 +2851,7 @@ Type RegionPass::closure(const Node &node) {
   currentFacts = outerFacts;
   inferredReturns = outerReturns;
   captureDepth = outerCaptureDepth;
+  copiedAccess = std::move(outerCopiedAccess);
   locals = std::move(outerLocals);
   storage = std::move(outerStorage);
   expressions = std::move(outerExpressions);

@@ -180,15 +180,30 @@ void Checker::completeClosure(ClosureFacts &closure, bool final) {
     if (final && !syntax.flag && capture.mode == ParameterMode::Take)
       error("ownership", capture.span,
             "moving a captured place requires a take closure");
-    auto rootMode = facts(*closure.parent).locals[capture.source.root].mode;
+    // A capture proxy is as borrowed as the place it captures. The parent's
+    // own capture decision is not consulted: it depends on this closure's use.
+    std::function<bool(const Function *, int)> borrowed =
+        [&](const Function *function, int slot) -> bool {
+      const auto mode = facts(*function).locals[slot].mode;
+      if (mode == ParameterMode::Read || mode == ParameterMode::Mut)
+        return true;
+      auto found = closureFunctions.find(function);
+      if (found == closureFunctions.end())
+        return false;
+      const auto &outer = *checked.closureBodies.at(found->second);
+      for (const auto &parentCapture : outer.captures)
+        if (parentCapture.proxy.root == slot)
+          return borrowed(outer.parent, parentCapture.source.root);
+      return false;
+    };
+    const bool borrowedRoot = borrowed(closure.parent, capture.source.root);
     // A copy of a borrowed place is only equivalent to the borrow when the
     // closure does not write through it.
-    capture.viaView =
-        syntax.flag && capture.mode != ParameterMode::Take &&
-        (rootMode == ParameterMode::Read || rootMode == ParameterMode::Mut) &&
-        (capture.mode == ParameterMode::Mut ||
-         !checked.types->isCopy(capture.type) ||
-         !checked.types->isSized(capture.type));
+    capture.viaView = syntax.flag && capture.mode != ParameterMode::Take &&
+                      borrowedRoot &&
+                      (capture.mode == ParameterMode::Mut ||
+                       !checked.types->isCopy(capture.type) ||
+                       !checked.types->isSized(capture.type));
     capture.storedType =
         syntax.flag && !capture.viaView
             ? capture.type
@@ -574,7 +589,8 @@ void Checker::inferCaptures(ClosureFacts &closure) {
       const auto &nested = *checked.closureBodies.at(facts(node).closure);
       for (const auto &capture : nested.captures)
         record(capture.source,
-               node.flag && !checked.types->isCopy(capture.type)
+               node.flag && !capture.viaView &&
+                       !checked.types->isCopy(capture.type)
                    ? ParameterMode::Take
                    : capture.mode,
                capture.span);
