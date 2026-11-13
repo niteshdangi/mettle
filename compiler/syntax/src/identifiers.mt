@@ -28,7 +28,7 @@ pub fn is_continue(scalar: u32): bool {
 }
 
 // Source UTF-8 is validated before this decoder is called.
-pub(super) fn scalar_at(read bytes: [u8], offset: usize): (u32, usize) {
+pub parent fn scalar_at(read bytes: [u8], offset: usize): (u32, usize) {
     let first = bytes[offset]
     let width = if first < 128u8 { 1usize } else if first < 0xe0u8 { 2usize } else if first <
         0xf0u8 { 3usize } else { 4usize }

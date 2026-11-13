@@ -415,7 +415,7 @@ extend char {
 
     pub fn escape_debug(): Escape { self.escape_debug_ext(true, true, true) }
 
-    pub(super) fn escape_debug_ext(
+    pub parent fn escape_debug_ext(
         escape_single_quote: bool,
         escape_double_quote: bool,
         escape_grapheme_extend: bool

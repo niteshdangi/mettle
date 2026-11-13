@@ -157,7 +157,7 @@ pub fn bytes_equal(read a: [u8], read b: [u8]): bool {
     true
 }
 
-pub type OsString { pub(super) v: List<u8> }
+pub type OsString { pub parent v: List<u8> }
 
 pub fn new_os_string(): OsString { OsString(vec.new<u8>()) }
 pub fn os_string_with_capacity(capacity: usize): OsString {
