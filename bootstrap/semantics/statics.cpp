@@ -879,7 +879,9 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
   case Kind::Binary:
   case Kind::Name:
   case Kind::Unary:
-    if ((scalar && !isInteger(type)) || aggregate)
+    if ((scalar && (!isInteger(type) ||
+                    (node.kind == Kind::Unary && node.text == "*"))) ||
+        aggregate)
       return evaluatedStatic(node, type);
     break;
   default:

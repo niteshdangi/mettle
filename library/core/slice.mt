@@ -1204,7 +1204,7 @@ unsafe const fn sub<T>(read xs: [T], start: usize, end: usize): read [T] from xs
 }
 
 // Safety: start <= end <= xs.len().
-unsafe fn sub_mut<T>(mut xs: [T], start: usize, end: usize): mut [T] from xs {
+pub unsafe const fn sub_mut<T>(mut xs: [T], start: usize, end: usize): mut [T] from xs {
     let base = mutable_data_pointer(mut xs)
     let part = unsafe { core.mem.transmute<ptr<mut [T]>>(RawMut(base.add(start), end - start)) }
     unsafe { mut *part }
