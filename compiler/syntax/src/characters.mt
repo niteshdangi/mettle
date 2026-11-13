@@ -91,31 +91,9 @@ pub fn character_value(read literal: [u8], byte: bool, span: Span, mut diagnosti
 
 pub fn validate_text(read literal: [u8], span: Span, mut diagnostics: Diagnostics): Unit {
     let bytes = literal.len() != 0 && literal[0usize] == b'b'
-    var start = if bytes { 1usize } else { 0usize }
-    if start < literal.len() && literal[start] == b'r' {
-        start += 1
-        let fence_begin = start
-        while start < literal.len() && literal[start] == b'#' { start += 1 }
-        let fence = start - fence_begin
-        if start >= literal.len() || literal[start] != b'"' || literal.len() < start + fence + 2 {
-            diagnostics.report(Phase.Lex, span, "unterminated raw text literal")
-            return
-        }
-        let end = literal.len() - fence - 1
-        if literal[end] != b'"' {
-            diagnostics.report(Phase.Lex, span, "unterminated raw text literal")
-            return
-        }
-        var index = end + 1
-        while index < literal.len() {
-            if literal[index] != b'#' { diagnostics.report(Phase.Lex, span, "unterminated raw text literal"); return }
-            index += 1
-        }
-        index = start + 1
-        while bytes && index < end {
-            if literal[index] >= 128u8 { diagnostics.report(Phase.Lex, span, "byte text must contain only ASCII characters"); return }
-            index += 1
-        }
+    let start = if bytes { 1usize } else { 0usize }
+    if literal.len() >= start + 3 && literal[start] == b'"' && literal[start + 1] == b'"' && literal[start + 2] == b'"' {
+        validate_block(read literal, bytes, span, mut diagnostics)
         return
     }
     if literal.len() < start + 2 || literal[start] != b'"' || literal[literal.len() - 1] != b'"' {
@@ -123,6 +101,58 @@ pub fn validate_text(read literal: [u8], span: Span, mut diagnostics: Diagnostic
         return
     }
     validate_content(read literal, start + 1, literal.len() - 1, bytes, span, mut diagnostics)
+}
+
+fn line_break(byte: u8): bool { byte == 10u8 || byte == 13u8 }
+
+fn validate_block(read literal: [u8], bytes: bool, span: Span, mut diagnostics: Diagnostics): Unit {
+    if bytes { diagnostics.report(Phase.Lex, span, "byte text blocks are reserved"); return }
+    let count = literal.len()
+    if count < 6 || literal[count - 1] != b'"' || literal[count - 2] != b'"' || literal[count - 3] != b'"' {
+        diagnostics.report(Phase.Lex, span, "unterminated text block")
+        return
+    }
+    let end = count - 3
+    var first = 3usize
+    while first < end && !line_break(literal[first]) { first += 1 }
+    if first == end { diagnostics.report(Phase.Lex, span, "unterminated text block"); return }
+    let crlf = literal[first] == 13u8 && first + 1 < end && literal[first + 1] == 10u8
+    let content = if crlf { first + 2 } else { first + 1 }
+    var last = end
+    while last > content && !line_break(literal[last - 1]) { last -= 1 }
+    if last == content { return }
+    var scan = last
+    while scan < end {
+        if literal[scan] != 32u8 && literal[scan] != 9u8 { diagnostics.report(Phase.Lex, span, "unterminated text block"); return }
+        scan += 1
+    }
+    var content_end = last - 1
+    if literal[content_end] == 10u8 && content_end > content && literal[content_end - 1] == 13u8 { content_end -= 1 }
+    let width = end - last
+    var line = content
+    while true {
+        var stop = line
+        while stop < content_end && !line_break(literal[stop]) { stop += 1 }
+        var indented = stop - line >= width
+        var offset = 0usize
+        while indented && offset < width {
+            if literal[line + offset] != literal[last + offset] { indented = false }
+            offset += 1
+        }
+        if !indented {
+            var cursor = line
+            while cursor < stop {
+                if literal[cursor] != 32u8 && literal[cursor] != 9u8 {
+                    diagnostics.report(Phase.Lex, span, "text block line is indented less than its closing \"\"\"")
+                    return
+                }
+                cursor += 1
+            }
+        }
+        if stop == content_end { break }
+        let pair = literal[stop] == 13u8 && stop + 1 < content_end && literal[stop + 1] == 10u8
+        line = if pair { stop + 2 } else { stop + 1 }
+    }
 }
 
 pub fn validate_fragment(read literal: [u8], span: Span, mut diagnostics: Diagnostics): Unit {

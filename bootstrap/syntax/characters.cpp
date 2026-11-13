@@ -1,5 +1,4 @@
 #include "syntax/lexer.h"
-#include <algorithm>
 #include <charconv>
 
 namespace mettle {
@@ -106,21 +105,46 @@ std::optional<std::string> textLiteral(std::string_view text,
   const bool bytes = !text.empty() && text.front() == 'b';
   if (bytes)
     text.remove_prefix(1);
-  if (!text.empty() && text.front() == 'r') {
-    text.remove_prefix(1);
-    auto fence = text.find_first_not_of('#');
-    if (fence == std::string_view::npos || text.size() < 2 * fence + 2 ||
-        text[fence] != '"' || text[text.size() - fence - 1] != '"' ||
-        text.substr(text.size() - fence).find_first_not_of('#') !=
-            std::string_view::npos)
-      return fail("unterminated raw text literal");
-    auto body =
-        std::string(text.substr(fence + 1, text.size() - 2 * fence - 2));
-    if (bytes && std::any_of(body.begin(), body.end(), [](char c) {
-          return static_cast<unsigned char>(c) >= 0x80;
-        }))
-      return fail("byte text must contain only ASCII characters");
-    return body;
+  if (text.starts_with("\"\"\"")) {
+    if (bytes)
+      return fail("byte text blocks are reserved");
+    if (text.size() < 6 || !text.ends_with("\"\"\""))
+      return fail("unterminated text block");
+    text = text.substr(3, text.size() - 6);
+    constexpr auto terminators = std::string_view("\r\n");
+    auto first = text.find_first_of(terminators);
+    if (first == std::string_view::npos)
+      return fail("unterminated text block");
+    text.remove_prefix(first + (text.compare(first, 2, "\r\n") == 0 ? 2 : 1));
+    auto last = text.find_last_of(terminators);
+    if (last == std::string_view::npos)
+      return std::string();
+    auto indent = text.substr(last + 1);
+    if (indent.find_first_not_of(" \t") != std::string_view::npos)
+      return fail("unterminated text block");
+    auto content = text.substr(0, last);
+    if (content.ends_with('\r') && text[last] == '\n')
+      content.remove_suffix(1);
+    std::string result;
+    for (bool firstLine = true; true; firstLine = false) {
+      auto end = content.find_first_of(terminators);
+      auto line = content.substr(0, end);
+      if (!firstLine)
+        result.push_back('\n');
+      if (line.starts_with(indent))
+        line.remove_prefix(indent.size());
+      else if (line.find_first_not_of(" \t") == std::string_view::npos)
+        line = {};
+      else
+        return fail("text block line is indented less than its closing "
+                    "\"\"\"");
+      result.append(line);
+      if (end == std::string_view::npos)
+        break;
+      content.remove_prefix(end +
+                            (content.compare(end, 2, "\r\n") == 0 ? 2 : 1));
+    }
+    return result;
   }
   if (text.size() < 2 || text.front() != '"' || text.back() != '"')
     return fail("unterminated text literal");
