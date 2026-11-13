@@ -11928,7 +11928,7 @@ B49a06080b93d6921003d4313,operation:primitive::slice::is_sorted,https://doc.rust
 B5bbd4bd14e4b942e6535bc16,operation:primitive::slice::is_sorted_by,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.is_sorted_by,core.slice,evidenced,tests/source/run/i13-slice-search-sort.mt
 Bf8cf2089cd75b21614b99417,operation:primitive::slice::is_sorted_by_key,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.is_sorted_by_key,core.slice,evidenced,tests/source/run/i13-slice-search-sort.mt
 B9823af0f2603507080993fdc,operation:primitive::slice::iter,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.iter,,evidenced,tests/source/run/i13-any-static-views.mt
-B81b58ee2be6aa9ac2b649943,operation:primitive::slice::iter_mut,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.iter_mut,,missing,
+B81b58ee2be6aa9ac2b649943,operation:primitive::slice::iter_mut,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.iter_mut,,evidenced,tests/source/run/i13-slice-str-mutation-operations.mt
 B5a0df64553d0a0907e38862e,operation:primitive::slice::join,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.join,,evidenced,tests/source/run/i13-primitive-slice-operations-more.mt
 B807bdb3f4b6aed132fafb1c5,operation:primitive::slice::last,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.last,,evidenced,tests/source/run/i13-primitive-slice-array-tuple.mt
 B77a2083c0325150629cac1d7,operation:primitive::slice::last_chunk,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.last_chunk,core.slice,evidenced,tests/source/run/i13-slice-chunks-windows.mt
@@ -12003,8 +12003,8 @@ Bf783c3ecddee994c15050999,operation:primitive::slice::strip_suffix,https://doc.r
 B4efc4b082857174d8ff2122b,operation:primitive::slice::subslice_range,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.subslice_range,,evidenced,tests/source/run/i13-vec-slice-address-queries.mt
 B122f4860a6aac3c10df450be,operation:primitive::slice::swap,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.swap,core.slice,evidenced,tests/source/run/i13-slice-search-sort.mt
 B32e8b932d3145e46e6b02e57,operation:primitive::slice::swap_with_slice,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.swap_with_slice,core.slice,evidenced,tests/source/run/i13-slice-search-sort.mt
-B87defae81b1fce0eb2e5c9a3,operation:primitive::slice::to_ascii_lowercase,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.to_ascii_lowercase,,missing,
-Baa138f7f1efbc2638cc4d6c3,operation:primitive::slice::to_ascii_uppercase,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.to_ascii_uppercase,,missing,
+B87defae81b1fce0eb2e5c9a3,operation:primitive::slice::to_ascii_lowercase,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.to_ascii_lowercase,,evidenced,tests/source/run/i13-slice-str-mutation-operations.mt
+Baa138f7f1efbc2638cc4d6c3,operation:primitive::slice::to_ascii_uppercase,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.to_ascii_uppercase,,evidenced,tests/source/run/i13-slice-str-mutation-operations.mt
 B92d40affb940c8e12ff70ed9,operation:primitive::slice::to_vec,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.to_vec,,evidenced,tests/source/run/i13-primitive-slice-operations-more.mt
 B4dfbbc5ad516e9b2b0f1da21,operation:primitive::slice::trim_ascii,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.trim_ascii,core.slice,evidenced,tests/source/run/i13-slice-search-sort.mt
 B8ebbbe19a71b84027c2cce32,operation:primitive::slice::trim_ascii,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.trim_ascii,core.slice,evidenced,tests/source/run/i13-slice-search-sort.mt
@@ -12041,7 +12041,7 @@ Bdc870c1de714d3a974873781,operation:primitive::str::floor_char_boundary,https://
 B3901b53e08bb02c9dea3a505,operation:primitive::str::from_utf8,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.from_utf8,,evidenced,tests/source/run/i13-primitive-str-operations.mt
 Befb73317b9238bf10a3963a3,operation:primitive::str::from_utf8_mut,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.from_utf8_mut,,evidenced,tests/source/run/i13-text-search-split-replace-double-ended.mt
 B554269eb4a893447951d7bf1,operation:primitive::str::from_utf8_unchecked,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.from_utf8_unchecked,,evidenced,tests/source/run/i13-text-core-operations.mt
-B4d42146002eb7cda0b0976ed,operation:primitive::str::from_utf8_unchecked_mut,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.from_utf8_unchecked_mut,,missing,
+B4d42146002eb7cda0b0976ed,operation:primitive::str::from_utf8_unchecked_mut,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.from_utf8_unchecked_mut,,evidenced,tests/source/run/i13-slice-str-mutation-operations.mt
 B11820ea3a2b32b1637db51b9,operation:primitive::str::get,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.get,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
 Bfcd1af31a03c405a389a246d,operation:primitive::str::get,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#method.get,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
 B4c59adda5e9d10fe496c977c,operation:primitive::str::get_mut,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#method.get_mut,,evidenced,tests/source/run/i13-box-trait-impls.mt
@@ -12087,7 +12087,7 @@ Bc8bf42c2dfa90dab3a0d0d7f,operation:primitive::str::split,https://doc.rust-lang.
 B3a6818a1e23f35113c56e66e,operation:primitive::str::split_ascii_whitespace,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.split_ascii_whitespace,Text.split_ascii_whitespace,evidenced,tests/source/run/i13-text-whitespace-splits-boundaries.mt
 Bbe344ffe25be80070eb9bafa,operation:primitive::str::split_at,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.split_at,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
 Bc87662e4d79e804a9def7953,operation:primitive::str::split_at_checked,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.split_at_checked,core.text.Text,evidenced,tests/source/run/i13-text-core-operations.mt
-B2eae250207deb296e90e4fb0,operation:primitive::str::split_at_mut,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.split_at_mut,,missing,
+B2eae250207deb296e90e4fb0,operation:primitive::str::split_at_mut,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.split_at_mut,,evidenced,tests/source/run/i13-slice-str-mutation-operations.mt
 B4a0a4c0a5adf4e47b21e4db0,operation:primitive::str::split_at_mut_checked,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.split_at_mut_checked,,evidenced,tests/source/run/i13-text-iterator-traits.mt
 B65c866c71be31f8bf71fcff3,operation:primitive::str::split_inclusive,https://doc.rust-lang.org/1.99.1/std/primitive.str.html#method.split_inclusive,,evidenced,tests/source/run/i13-primitive-str-operations.mt
 Bc2de477ee5e885b49a015da1,operation:primitive::str::split_inclusive,https://doc.rust-lang.org/1.99.1/core/primitive.str.html#method.split_inclusive,,evidenced,tests/source/run/i13-primitive-str-operations.mt
