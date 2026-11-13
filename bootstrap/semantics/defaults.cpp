@@ -34,6 +34,7 @@ void Checker::parameterDefaults(Function &function) {
            (facts(function).parameterBindings.contains(facts(*place).slot) &&
             facts(function).parameterBindings.at(facts(*place).slot) < i));
       Type output = type, target = type;
+      bool unsupported = false;
       if (borrowed && checked.types->isView(actual) &&
           checked.types->view(actual).payload == type) {
         output = actual;
@@ -57,9 +58,17 @@ void Checker::parameterDefaults(Function &function) {
         output = checked.types->viewType(type, mode);
         facts(function).defaultBorrowed[i] = true;
       } else if (borrowed && !checked.types->isSized(type)) {
-        output = checked.types->viewType(type, mode);
-        target = output;
-        facts(function).defaultBorrowed[i] = true;
+        if (!checked.types->isView(actual)) {
+          error(
+              "type", parameter.span,
+              "default of a borrowed unsized parameter must be a literal or a "
+              "view of static storage; an array literal is not static");
+          unsupported = true;
+        } else {
+          output = checked.types->viewType(type, mode);
+          target = output;
+          facts(function).defaultBorrowed[i] = true;
+        }
       }
       if (checked.types->isView(type) && actual == type) {
         const auto *expression = parameter.defaultValue.get();
@@ -76,8 +85,9 @@ void Checker::parameterDefaults(Function &function) {
           }
         }
       }
-      coerce(*parameter.defaultValue, value, inference.fresh(target),
-             parameter.span);
+      if (!unsupported)
+        coerce(*parameter.defaultValue, value, inference.fresh(target),
+               parameter.span);
       facts(function).defaultValueTypes[i] = output;
       facts(function).defaultAbiResults[i] =
           facts(function).error == Type::Unknown
