@@ -23,8 +23,8 @@ fn main(): i32 {
             panic("observed transferred child")
         })
         let joiner = scope.spawn(take fn(): Unit {
-            let child = scope.spawn(fn(): Unit {
-                let grandchild = scope.spawn(fn(): Unit {
+            let child = scope.spawn(take fn(): Unit {
+                let grandchild = scope.spawn(take fn(): Unit {
                     let _old = nested_ref.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
                 })
             })
@@ -61,10 +61,14 @@ fn main(): i32 {
     }
     if hits.load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 3 }
 
+    let child_done = core.sync.atomic.AtomicBool.new(false)
     let result = thread.scope(fn(read scope: thread.Scope): i32 {
-        let child = scope.spawn(fn(): core.cell.Cell<i32> { core.cell.Cell.new(42) })
+        let child = scope.spawn(fn(): core.cell.Cell<i32> {
+            child_done.store(true, core.sync.atomic.Ordering.Release)
+            core.cell.Cell.new(42)
+        })
         let observer = scope.spawn(fn(): Unit {
-            while !child.is_finished() { thread.yield_now() }
+            while !child_done.load(core.sync.atomic.Ordering.Acquire) { thread.yield_now() }
         })
         match take capture observer.join() {
             success(_) => {},
