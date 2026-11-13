@@ -235,8 +235,8 @@ int Checker::checkNode(Node &n, bool reachable) {
       error("type", n.span,
             "a 'format' parameter can only be forwarded to another 'format' "
             "parameter or used as a method receiver");
-    else if (formatVariables.contains(found.variable) &&
-             closureFunctions.contains(current))
+    if (formatVariables.contains(found.variable) &&
+        closureFunctions.contains(current))
       error("type", n.span, "a closure cannot capture a 'format' parameter");
     break;
   }
