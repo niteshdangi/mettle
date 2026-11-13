@@ -219,7 +219,7 @@ type Packet<F, T> {
 
 // Where the thread leaves its result.
 type Slot<T> {
-    filled: bool
+    state: core.sync.atomic.AtomicU32 // 0: pending, 1: filled, 2: abandoned before filling, 3: taken or dropped.
     value: core.mem.MaybeUninit<T>
 }
 
@@ -231,7 +231,14 @@ fn run_packet<T, F: take fn(): T>(data: ptr<mut u8>): Unit {
         let result = f()
         let slot = (*packet).slot
         core.ptr.write((*slot).value.as_mut_ptr(), result)
-        (*slot).filled = true
+        let published = (*slot).state.compare_exchange(
+            0u32, 1u32, core.sync.atomic.Ordering.AcqRel, core.sync.atomic.Ordering.Acquire
+        )
+        // The handle was dropped first: nobody can claim the result, so drop it here.
+        if !published.is_success() {
+            (*slot).state.store(3u32, core.sync.atomic.Ordering.Release)
+            core.ptr.drop_in_place((*slot).value.as_mut_ptr())
+        }
     }
 }
 
@@ -242,7 +249,9 @@ fn release_packet<T, F: take fn(): T>(data: ptr<mut u8>): Unit {
         let _slot = package.alloc.boxed.from_raw_in(slot, package.alloc.alloc.Global())
         let _packet = package.alloc.boxed.from_raw_in(packet, package.alloc.alloc.Global())
         if !(*packet).started { core.ptr.drop_in_place((*packet).f.as_mut_ptr()) }
-        if (*slot).filled { core.ptr.drop_in_place((*slot).value.as_mut_ptr()) }
+        if (*slot).state.load(core.sync.atomic.Ordering.Acquire) == 1u32 {
+            core.ptr.drop_in_place((*slot).value.as_mut_ptr())
+        }
     }
 }
 
@@ -277,7 +286,7 @@ unsafe fn start<T, F: take fn(): T>(
     name_length: usize,
     stack_size: usize
 ): (ptr<mut Header>, ptr<mut Slot<T>>) throws SpawnError {
-    let slot = package.alloc.boxed.new(Slot<T>(false, core.mem.MaybeUninit<T>.uninit())).into_raw().0
+    let slot = package.alloc.boxed.new(Slot<T>(core.sync.atomic.AtomicU32.new(0u32), core.mem.MaybeUninit<T>.uninit())).into_raw().0
     let packet = package.alloc.boxed.new(Packet<F, T>(core.mem.MaybeUninit.new(f), false, slot)).into_raw().0
     let header = package.alloc.boxed.new(Header(run_packet<T, F>, release_packet<T, F>, packet.cast<u8>(),
                                           core.sync.atomic.AtomicU32.new(2u32), 0,
@@ -356,8 +365,10 @@ type HeaderOwner {
 unsafe fn finish<T>(header: ptr<mut Header>, slot: ptr<mut Slot<T>>): T throws Panicked {
     (*header).observed.store(true, core.sync.atomic.Ordering.Release)
     join_header(header)
-    if (*header).code != 0 || !(*slot).filled { throw Panicked((*header).code) }
-    (*slot).filled = false
+    if (*header).code != 0 || (*slot).state.load(core.sync.atomic.Ordering.Acquire) != 1u32 {
+        throw Panicked((*header).code)
+    }
+    (*slot).state.store(3u32, core.sync.atomic.Ordering.Release)
     core.ptr.`read`((*slot).value.as_ptr())
 }
 
@@ -464,7 +475,23 @@ pub type ScopedJoinHandle<T> {
     header: ptr<mut Header>
     slot: ptr<mut Slot<T>>
     thread: Thread
-    drop { unsafe { release(self.header) } }
+    // An unclaimed result is dropped as soon as both the thread and the handle are done with it,
+    // so the scope never waits on a sibling that only a result destructor can release.
+    drop {
+        unsafe {
+            let slot = self.slot
+            let _owner = HeaderOwner(self.header)
+            let pending = (*slot).state.compare_exchange(
+                0u32, 2u32, core.sync.atomic.Ordering.AcqRel, core.sync.atomic.Ordering.Acquire
+            )
+            if !pending.is_success() &&
+               (*slot).state.compare_exchange(
+                   1u32, 3u32, core.sync.atomic.Ordering.AcqRel, core.sync.atomic.Ordering.Acquire
+               ).is_success() {
+                core.ptr.drop_in_place((*slot).value.as_mut_ptr())
+            }
+        }
+    }
 }
 unsafe extend<T: Transferable> ScopedJoinHandle<T> implements Transferable {}
 unsafe extend<T: Transferable> ScopedJoinHandle<T> implements Shareable {}
