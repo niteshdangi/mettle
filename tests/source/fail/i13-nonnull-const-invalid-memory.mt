@@ -1,12 +1,12 @@
 // profiles: debug release
 // expect-error-count: 6
 // expect-error-source: core/ptr.mt
-// expect-error: constant 236:26 constant pointer is dangling, misaligned or out of bounds
-// expect-error: constant 326:13 constant nonoverlapping copy has overlapping ranges
-// expect-error: constant 276:18 constant write requires exclusive writable provenance
-// expect-error: constant 251:18 constant pointer distance requires common provenance
-// expect-error: constant 261:18 constant value is not fully initialized
-// expect-error: constant 256:18 constant pointer distance is outside its result domain
+// expect-error: constant 237:26 constant pointer is dangling, misaligned or out of bounds
+// expect-error: constant 327:13 constant nonoverlapping copy has overlapping ranges
+// expect-error: constant 277:18 constant write requires exclusive writable provenance
+// expect-error: constant 252:18 constant pointer distance requires common provenance
+// expect-error: constant 262:18 constant value is not fully initialized
+// expect-error: constant 257:18 constant pointer distance is outside its result domain
 
 import core.ptr.NonNull
 

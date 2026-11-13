@@ -1,10 +1,12 @@
 // profiles: debug release
-// expect-error: constant 9:29 constant result cannot retain a pointer or view of local storage
+// expect-error: constant 11:21 constant result cannot retain a pointer or view of local storage
 // expect-error-count: 1
 import core.ptr.NonNull
-const fn escaping(): NonNull<i32> {
+type Leak { pointer: NonNull<i32> }
+unsafe extend Leak implements Shareable {}
+const fn escaping(): Leak {
     let value = 7i32
-    NonNull.from_ref(read value)
+    Leak(NonNull.from_ref(read value))
 }
-static LEAK: NonNull<i32> = escaping()
+static LEAK: Leak = escaping()
 fn main(): i32 { 0 }
