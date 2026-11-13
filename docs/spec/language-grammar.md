@@ -75,7 +75,7 @@ and executable entry checking.
 ```ebnf
 path          = path_head, { ".", IDENT } ;
 path_head     = IDENT | "self" | "super" ;
-visibility    = "pub", [ "(", path, ")" ] ;
+visibility    = "pub" | "pub", "parent" | "internal" ;
 module        = [ visibility ], "module", IDENT, [ ";" ]
               | [ visibility ], "module", IDENT, "{", items, "}" ;
 import        = [ visibility ], "import", path,
@@ -106,8 +106,13 @@ Item-level `import`, `module`, `const`, `static`, `alias`, and negative
 `extend` declarations may end at an unsuppressed newline without a semicolon.
 `pub import` reexports rather than creating a second module identity; a private
 import is not reexported. Explicit imports bind names in the distinct type,
-value and macro namespaces. Visibility is module-private by default; restricted
-`pub(path)` applies to all item kinds and names an enclosing module boundary.
+value and macro namespaces. Visibility is module-private by default. Three
+wider levels apply to all item kinds and members: `pub parent` (the parent module
+and its descendants; diagnosed in a package root), `internal` (any module of the
+declaring package) and `pub` (everyone). `internal` is a reserved word; `parent`
+is read as a visibility only after `pub` and before another word, so a field
+named `parent` stays `pub parent: T`. A parenthesized `pub(path)` is not part of
+the language and diagnoses toward `internal` and `pub parent`.
 
 Name resolution uses distinct type, value and macro namespaces. Reject ambiguous
 imports; import order cannot change implementation selection. Dependency package
@@ -546,9 +551,7 @@ an ordinary stored type or a facility available to non-foreign native functions.
 Only foreign callable types permit a final `...` in parameter_types.
 
 A package name (own or dependency) names that package's root; self and super
-select the current and parent module. A `pub(path)` restriction may start with
-the own package name (`pub(app)`, `pub(app.family)`) or name a module from the
-package root. `_` is an inference placeholder only where local inference is
+select the current and parent module. `_` is an inference placeholder only where local inference is
 permitted. Optional result annotations are a separate rule; they do not enable
 placeholder inference for public parameters, fields or bodyless signatures.
 The unsized bound removes
@@ -847,7 +850,7 @@ block comment still participate in statement separation when not suppressed by
 an enclosing delimiter. Comments cannot concatenate adjacent identifier tokens.
 
 Core reserved words: `fn`, `type`, `copy`, `let`, `var`, `read`, `mut`, `take`,
-`if`, `else`, `while`, `loop`, `break`, `continue`, `return`, `true`, `false`.
+`if`, `else`, `while`, `loop`, `break`, `continue`, `return`, `true`, `false`, `internal`.
 `Copy` names a predeclared capability, not a keyword.
 Advanced-language keywords will be reserved when their grammar is specified;
 this list is not a promise that all other names remain usable forever.
