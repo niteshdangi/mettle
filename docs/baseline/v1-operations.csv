@@ -3152,8 +3152,8 @@ B8b94c58108184ef61c8a373e,impl:pin::Pin:future::Future,https://doc.rust-lang.org
 Bdca3057c6258df066f6a098c,impl:pin::Pin:future::Future,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-Future-for-Pin%3CP%3E,,evidenced,tests/source/run/i13-pinned-box-default-future.mt
 B62704072441966368320a885,impl:pin::Pin:hash::Hash,https://doc.rust-lang.org/1.99.1/std/pin/struct.Pin.html#impl-Hash-for-Pin%3CPtr%3E,,evidenced,tests/source/run/i13-pinned-view-trait-matrix.mt
 B7f2549e2672df5a2f59a2c90,impl:pin::Pin:hash::Hash,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-Hash-for-Pin%3CPtr%3E,,evidenced,tests/source/run/i13-pinned-view-trait-matrix.mt
-B4ac8e9c72dab537b00cadc16,impl:pin::Pin:marker::Copy,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-Copy-for-Pin%3CPtr%3E,,missing,
-B69d167564fb4cc43e320c031,impl:pin::Pin:marker::Copy,https://doc.rust-lang.org/1.99.1/std/pin/struct.Pin.html#impl-Copy-for-Pin%3CPtr%3E,,missing,
+B4ac8e9c72dab537b00cadc16,impl:pin::Pin:marker::Copy,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-Copy-for-Pin%3CPtr%3E,,evidenced,tests/source/run/i13-pinned-view-trait-matrix.mt
+B69d167564fb4cc43e320c031,impl:pin::Pin:marker::Copy,https://doc.rust-lang.org/1.99.1/std/pin/struct.Pin.html#impl-Copy-for-Pin%3CPtr%3E,,evidenced,tests/source/run/i13-pinned-view-trait-matrix.mt
 B479e52e06153d7d262eebbdd,impl:pin::Pin:marker::Send,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-Send-for-Pin%3CPtr%3E,,evidenced,tests/source/run/i13-blanket-cursor-pin-core.mt
 Bb59e9c687fb094d92c0dfcb4,impl:pin::Pin:marker::Sync,https://doc.rust-lang.org/1.99.1/core/pin/struct.Pin.html#impl-Sync-for-Pin%3CPtr%3E,,evidenced,tests/source/run/i13-blanket-cursor-pin-core.mt
 B80554c27edc74834aa8753dd,impl:pin::Pin:ops::Deref,https://doc.rust-lang.org/1.99.1/std/pin/struct.Pin.html#impl-Deref-for-Pin%3CPtr%3E,,evidenced,tests/source/run/i13-pinned-view-trait-matrix.mt

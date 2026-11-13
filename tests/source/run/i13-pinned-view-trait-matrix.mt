@@ -43,6 +43,8 @@ fn main(): i32 {
     let pinned_low = core.pin.Pin.new(read low)
     let pinned_high = core.pin.Pin.new(read high)
     let pinned_same = core.pin.Pin.new(read same)
+    let pinned_twin = pinned_same
+    if pinned_twin != pinned_same { return 11 }
     if pinned_low != pinned_same || pinned_low == pinned_high { return 1 }
     if !(pinned_low < pinned_high) || pinned_high.cmp(pinned_low) != Ordering.Greater { return 2 }
     if pinned_low.cmp(pinned_same) != Ordering.Equal || pinned_low.partial_cmp(pinned_high) != present(Ordering.Less) { return 3 }
