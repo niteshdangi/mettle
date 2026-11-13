@@ -30,6 +30,8 @@ fn main(): i32 {
     sync_ok<A_lines>()
     owned_ok<A_peekable>()
     owned_ok<A_drop>()
+    owned_ok<core.future.Poll<i32>>()
+    owned_ok<core.future.Waker>()
     any_ok<A_pinned>()
     borrow_ok<A_pinned>()
     owned_ok<A_pinned>()
