@@ -131,7 +131,7 @@ Bdd91982fa7e313e7abfc001b,impl:boxed::Box:iter::FromIterator,https://doc.rust-la
 B67088c5fff89d1c70ce5d828,impl:boxed::Box:iter::IntoIterator,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-IntoIterator-for-%26Box%3C%5BI%5D,+A%3E",,evidenced,tests/std/i13_box_io_iteration.mt
 Bb3a8a7b528c8cf7f0ef2c952,impl:boxed::Box:iter::IntoIterator,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-IntoIterator-for-Box%3C%5BT;+N%5D,+A%3E",,evidenced,tests/std/i13_box_io_iteration.mt
 Bc8e66521cbf959249359d4ab,impl:boxed::Box:iter::IntoIterator,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-IntoIterator-for-Box%3C%5BI%5D,+A%3E",,evidenced,tests/std/i13_box_io_iteration.mt
-Bcec0152076b3058a5f45189a,impl:boxed::Box:iter::IntoIterator,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-IntoIterator-for-%26mut+Box%3C%5BT;+N%5D,+A%3E",,missing,
+Bcec0152076b3058a5f45189a,impl:boxed::Box:iter::IntoIterator,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-IntoIterator-for-%26mut+Box%3C%5BT;+N%5D,+A%3E",,evidenced,tests/std/i13_box_io_iteration.mt
 Bd53cdf6c9e50e29b70e27924,impl:boxed::Box:iter::IntoIterator,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-IntoIterator-for-%26mut+Box%3C%5BI%5D,+A%3E",,evidenced,tests/std/i13_box_io_iteration.mt
 Bdc1032ca1d43b3e29af066b3,impl:boxed::Box:iter::IntoIterator,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-IntoIterator-for-%26Box%3C%5BT;+N%5D,+A%3E",,evidenced,tests/std/i13_box_io_iteration.mt
 B0e3f70d080eae96921ffc420,impl:boxed::Box:iter::Iterator,"https://doc.rust-lang.org/1.99.1/std/boxed/struct.Box.html#impl-Iterator-for-Box%3CI,+A%3E",alloc.boxed.Box,evidenced,tests/source/run/i13-box-operations.mt
@@ -11882,8 +11882,8 @@ B904ad04cba571b18e1539ba7,operation:primitive::slice::as_rchunks_mut,https://doc
 Badf6288ba3a8ee3615381f92,operation:primitive::slice::assume_init,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.assume_init,,evidenced,tests/source/run/i13-owner-boxed-slices.mt
 B14e07afa6a3e4e27590840ca,operation:primitive::slice::assume_init_drop,https://doc.rust-lang.org/1.99.1/std/primitive.slice.html#method.assume_init_drop,,evidenced,tests/source/run/i13-core-uninit-slice-cleanup.mt
 Bbd448107ebbefb8e86324735,operation:primitive::slice::assume_init_drop,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.assume_init_drop,,evidenced,tests/source/run/i13-core-uninit-slice-cleanup.mt
-B2238232bc9816ae76af69cfd,operation:primitive::slice::assume_init_mut,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.assume_init_mut,,missing,
-Bc3914e4a49e2e4916066d25f,operation:primitive::slice::assume_init_ref,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.assume_init_ref,,missing,
+B2238232bc9816ae76af69cfd,operation:primitive::slice::assume_init_mut,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.assume_init_mut,,evidenced,tests/source/run/i13-slice-assume-init-runtime.mt
+Bc3914e4a49e2e4916066d25f,operation:primitive::slice::assume_init_ref,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.assume_init_ref,,evidenced,tests/source/run/i13-slice-assume-init-runtime.mt
 B43f24e74ed4506a2730c05b8,operation:primitive::slice::binary_search,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.binary_search,core.slice,evidenced,tests/source/run/i13-slice-search-sort.mt
 Bed4577247efe8fd54ba392d9,operation:primitive::slice::binary_search_by,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.binary_search_by,core.slice,evidenced,tests/source/run/i13-slice-search-sort.mt
 Bc2f051570149c647147b9a44,operation:primitive::slice::binary_search_by_key,https://doc.rust-lang.org/1.99.1/core/primitive.slice.html#method.binary_search_by_key,core.slice,evidenced,tests/source/run/i13-slice-search-sort.mt

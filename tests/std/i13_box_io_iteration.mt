@@ -24,7 +24,10 @@ fn run(): i32 throws Error {
     for value in Box<[i32]>.(OwnedIterable).into_iter(mutable) { total += value }
     if total != 6 + 9 { return 1 }
 
-    let fixed = boxed.new([4, 5])
+    var fixed = boxed.new([4, 5])
+    for value in mut fixed { *value += 1 }
+    if fixed.get()[0usize] != 5 { return 7 }
+    for value in mut fixed { *value -= 1 }
     var sum = 0
     for value in read fixed { sum += *value }
     for value in Box<[i32; 2]>.(OwnedIterable).into_iter(fixed) { sum += value }
