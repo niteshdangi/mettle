@@ -7,7 +7,7 @@ import core.panic.unreachable
 import core.fmt
 import alloc.string.String
 import std.io
-import std.macros.{dbg, format_args, matches, todo, unimplemented}
+import std.macros.{dbg, matches, todo, unimplemented}
 import std.panic.{catch_panic, CatchResult}
 
 type BrokenDisplay {}
@@ -54,7 +54,7 @@ fn main(): i32 {
     if matches!(present(3i32), present(value) if value == 4) { return 47 }
     if match_calls != 1 || guard_calls != 1 { return 48 }
     var formatted = String("")
-    match take capture formatted.write_fmt(format_args!(f"count={3}\n")) {
+    match take capture formatted.write_fmt(f"count={3}\n") {
         success(_) => {},
         failure(_) => { return 40 }
     }
@@ -62,7 +62,7 @@ fn main(): i32 {
     io.print("plain ")
     io.print(f"count={3}\n")
     io.eprint(f"diagnostic={4}\n")
-    io.print(format_args!(f"forwarded={5}\n"))
+    io.print(f"forwarded={5}\n")
 
     let failed_assert = catch_panic(fn(): i32 {
         assert(false, "boom")
@@ -109,7 +109,7 @@ fn main(): i32 {
     if panic_message(todo_formatted, "not yet implemented: step 3") != 0 || message_calls.get() != 3 { return 90 }
 
     let unimplemented_formatted = catch_panic(fn(): i32 {
-        unimplemented!(format_args!(f"step {next(read message_calls)}: {String("owned")}"),)
+        unimplemented!(f"step {next(read message_calls)}: {String("owned")}",)
         0
     })
     if panic_message(unimplemented_formatted, "not implemented: step 4: owned") != 0 || message_calls.get() != 4 { return 91 }

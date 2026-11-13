@@ -219,11 +219,7 @@ pub macro matches {
     ($value:expr, $pattern:pat $(,)?) => { match $value { $pattern => true, _ => false } };
 }
 
-pub macro format_args {
-    ($message:expr $(,)?) => { $message };
-}
-
-pub fn format_message(message: format fmt.Message): String {
+pub fn format(message: format fmt.Message): String {
     var output = string.new()
     match capture output.write_fmt(message) {
         success(_) => {},
@@ -232,32 +228,18 @@ pub fn format_message(message: format fmt.Message): String {
     output
 }
 
-pub macro format {
-    ($message:expr $(,)?) => { format_message($message) };
-}
-
-pub fn print_line(message: format fmt.Message): Unit {
+pub fn println(message: format fmt.Message): Unit {
     let guard = io.stdout().lock()
     io.print(message)
     io.print("\n")
     core.mem.drop(take guard)
 }
 
-pub fn eprint_line(message: format fmt.Message): Unit {
+pub fn eprintln(message: format fmt.Message): Unit {
     let guard = io.stderr().lock()
     io.eprint(message)
     io.eprint("\n")
     core.mem.drop(take guard)
-}
-
-pub macro println {
-    () => { io.print("\n") };
-    ($message:expr $(,)?) => { print_line($message) };
-}
-
-pub macro eprintln {
-    () => { io.eprint("\n") };
-    ($message:expr $(,)?) => { eprint_line($message) };
 }
 
 fn panic_with_prefix(read prefix: Text, message: format fmt.Message): Never {
@@ -328,7 +310,7 @@ pub macro assert_eq {
             let left = read $left
             let right = read $right
             if !(*left == *right) {
-                assertion_failure_with_message(*left, *right, "==", format_message($message))
+                assertion_failure_with_message(*left, *right, "==", format($message))
             }
         }
     };
@@ -343,7 +325,7 @@ pub macro assert_ne {
             let left = read $left
             let right = read $right
             if *left == *right {
-                assertion_failure_with_message(*left, *right, "!=", format_message($message))
+                assertion_failure_with_message(*left, *right, "!=", format($message))
             }
         }
     };

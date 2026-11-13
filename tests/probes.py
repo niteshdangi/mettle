@@ -860,7 +860,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
     def broken_pipe():
         programs = (
             ("print-to-closed-pipe", "import std.io;", 'io.print(f"line {i}\\n")'),
-            ("println-to-closed-pipe", "import std.macros.println;", 'println!(f"line {i}")'),
+            ("println-to-closed-pipe", "import std.macros.println;", 'println(f"line {i}")'),
         )
         for name, imports, output in programs:
             program = source(name, f"{imports}\nfn main(): i32 {{\n"

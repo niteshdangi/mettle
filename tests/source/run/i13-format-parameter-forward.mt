@@ -3,11 +3,10 @@
 
 import core.fmt.Message
 import std.io
-import std.macros.format_args
 
 fn forward(message: format Message): Unit {
-    io.eprint(format_args!(message,))
-    io.eprint(message: format_args!(format_args!(message,)))
+    io.eprint(message,)
+    io.eprint(message: message)
     io.eprint((message))
 }
 
