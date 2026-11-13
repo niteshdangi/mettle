@@ -193,7 +193,9 @@ bool TypeInference::equal(int a, int b, Span span, bool coercion) {
     variables[a].parent = b;
     return true;
   }
-  if (at != Type::Unknown && bt != Type::Unknown && at != bt) {
+  // Region relations are proven by the region phase, not by shape inference.
+  if (at != Type::Unknown && bt != Type::Unknown && at != bt &&
+      types.eraseRegions(at) != types.eraseRegions(bt)) {
     reportMismatch(bt, at);
     return false;
   }

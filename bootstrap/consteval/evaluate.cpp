@@ -3228,6 +3228,17 @@ private:
       return std::nullopt;
     return value;
   }
+  // A float type named directly or through an alias.
+  Type floatingOwner(const Node &callee, std::size_t separator) {
+    auto owner = builtinType(callee.text.substr(0, separator));
+    if (owner != Type::Unknown || !callee.ownerGenericArguments.empty())
+      return owner;
+    TypeSyntax syntax;
+    syntax.name = callee.text.substr(0, separator);
+    syntax.context = callee.context;
+    auto resolved = host.resolveType(syntax, callee.span);
+    return isFloating(resolved) ? resolved : Type::Unknown;
+  }
   Opt call(const Node &node, const Shape *want) {
     const Node &callee = *node.children[0];
     Type floating = Type::Unknown;
@@ -3241,7 +3252,7 @@ private:
     } else if (callee.kind == Kind::Name) {
       auto separator = callee.text.rfind("::");
       if (separator != std::string::npos)
-        floating = builtinType(callee.text.substr(0, separator));
+        floating = floatingOwner(callee, separator);
     }
     if (!isFloating(floating))
       return aggregateCall(node, want);
@@ -3269,7 +3280,7 @@ private:
       if (separator != std::string::npos) {
         // Only a float owner changes how the call evaluates; resolving any other
         // owner here would reject generic types named without arguments.
-        owner = builtinType(callee.text.substr(0, separator));
+        owner = floatingOwner(callee, separator);
         method = callee.text.substr(separator + 2);
       }
       if (!isFloating(owner))
