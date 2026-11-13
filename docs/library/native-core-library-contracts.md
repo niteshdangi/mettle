@@ -270,7 +270,7 @@ product plus the supplied digit additions. They never overflow internally.
 Bit operations are O(1); exponentiation, integer logarithm and square root
 require at most O(N + log exponent) word operations with constant storage.
 
-`from_str_radix(read Text, radix)` accepts radix 2..36, optional leading +,
+`parse_radix(read Text, radix)` accepts radix 2..36, optional leading +,
 and leading - only for signed types. At least one digit is required; digits
 are ASCII 0..9/a..z/A..Z with value < radix. Whitespace, separators and prefixes
 are not skipped. Bad radix panics; bad input returns ParseIntError with kind
@@ -308,7 +308,7 @@ not implementations for arbitrary non-integer generic T.
 ### 3.2. Bool, char and ASCII
 
 Bool supports not/and/or/xor, comparisons and explicit integer conversion.
-`then_some(take T)` returns present(T) on true and destroys T on false.
+`then_present(take T)` returns present(T) on true and destroys T on false.
 `then(make: take fn(): T)` calls make only on true. Bool `ok_or`/`ok_or_else`
 return success(Unit) on true, otherwise the supplied/generated error.
 No truthiness conversion is introduced.

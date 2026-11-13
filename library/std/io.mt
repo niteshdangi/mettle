@@ -189,7 +189,7 @@ fn fmt_error<E: CoreError + unsized>(read value: E, mut f: fmt.Formatter): Unit 
 
 extend Error implements fmt.Display {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
-        match self.payload.as_ref() {
+        match self.payload.as_view() {
             present(payload) => { return try fmt_error(payload.get(), mut f) },
             none => {}
         }
@@ -320,7 +320,7 @@ extend Error {
     pub fn raw_os_error(): i32? { if self.os { present(self.code) } else { none } }
     pub fn is_os(): bool { self.os }
     pub fn get_ref(): (read any CoreError from self)? {
-        match self.payload.as_ref() {
+        match self.payload.as_view() {
             present(payload) => present(payload.get()),
             none => none
         }
@@ -976,7 +976,7 @@ extend StdinLock implements BufRead {
         }
         if available == 0usize { return "".as_bytes() }
         self.loan = present(input_state().borrow())
-        match self.loan.as_ref() {
+        match self.loan.as_view() {
             present(borrowed) => borrowed.get_ref().buffer(),
             none => { core.intrinsics.abort() }
         }

@@ -10,11 +10,11 @@ fn panics(body: fn(): Unit): bool {
 }
 
 fn main(): i32 {
-    if !panics(fn(): Unit { let _result = capture num.from_str_radix<i32>("1", 37u32) }) { return 1 }
-    if !panics(fn(): Unit { let _result = capture num.from_str_radix<i32>("1", 1u32) }) { return 2 }
-    if !panics(fn(): Unit { let _result = capture num.from_str_radix<i64>("1", 37u32) }) { return 3 }
-    if !panics(fn(): Unit { let _result = capture num.from_str_radix<i64>("1", 1u32) }) { return 4 }
-    if !panics(fn(): Unit { let _result = capture num.from_str_radix<u128>("1", 37u32) }) { return 5 }
-    if !panics(fn(): Unit { let _result = capture num.from_str_radix<u128>("1", 1u32) }) { return 6 }
+    if !panics(fn(): Unit { let _result = capture num.parse_radix<i32>("1", 37u32) }) { return 1 }
+    if !panics(fn(): Unit { let _result = capture num.parse_radix<i32>("1", 1u32) }) { return 2 }
+    if !panics(fn(): Unit { let _result = capture num.parse_radix<i64>("1", 37u32) }) { return 3 }
+    if !panics(fn(): Unit { let _result = capture num.parse_radix<i64>("1", 1u32) }) { return 4 }
+    if !panics(fn(): Unit { let _result = capture num.parse_radix<u128>("1", 37u32) }) { return 5 }
+    if !panics(fn(): Unit { let _result = capture num.parse_radix<u128>("1", 1u32) }) { return 6 }
     0
 }

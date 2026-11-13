@@ -1295,31 +1295,31 @@ fn group11() {
     if !(u128.MAX.carrying_mul(340282366920938463463374607431768211454u128, 7u128).0 == 9u128 && u128.MAX.carrying_mul(340282366920938463463374607431768211454u128, 7u128).1 == 340282366920938463463374607431768211453u128) { panic("carrying_mul #1412") }
     if !(u128.MAX.carrying_mul_add(340282366920938463463374607431768211454u128, 7u128, 3u128).0 == 12u128 && u128.MAX.carrying_mul_add(340282366920938463463374607431768211454u128, 7u128, 3u128).1 == 340282366920938463463374607431768211453u128) { panic("carrying_mul_add #1413") }
     if !(u128.MAX.checked_signed_diff(340282366920938463463374607431768211454u128) == present(1i128)) { panic("checked_signed_diff #1414") }
-    if !(parsed(capture num.from_str_radix<u128>("340282366920938463463374607431768211455", 10u32)) == present(u128.MAX)) { panic("from_str_radix #1415") }
-    if !(parsed(capture num.from_str_radix<u128>("ffffffffffffffffffffffffffffffff", 16u32)) == present(u128.MAX)) { panic("from_str_radix #1416") }
-    if !(parsed(capture num.from_str_radix<u128>("11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111", 2u32)) == present(u128.MAX)) { panic("from_str_radix #1417") }
-    if !(parsed(capture num.from_str_radix<u128>("f5lxx1zz5pnorynqglhzmsp33", 36u32)) == present(u128.MAX)) { panic("from_str_radix #1418") }
-    if !(parsed(capture num.from_str_radix<u128>("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", 16u32)) == present(u128.MAX)) { panic("from_str_radix #1419") }
-    if !(parsed(capture num.from_str_radix<u128>("0", 10u32)) == present(0u128)) { panic("from_str_radix #1420") }
-    if !(parsed(capture num.from_str_radix<u128>("0", 16u32)) == present(0u128)) { panic("from_str_radix #1421") }
-    if !(parsed(capture num.from_str_radix<u128>("0", 2u32)) == present(0u128)) { panic("from_str_radix #1422") }
-    if !(parsed(capture num.from_str_radix<u128>("0", 36u32)) == present(0u128)) { panic("from_str_radix #1423") }
-    if !(parsed(capture num.from_str_radix<u128>("7", 10u32)) == present(7u128)) { panic("from_str_radix #1425") }
-    if !(parsed(capture num.from_str_radix<u128>("7", 16u32)) == present(7u128)) { panic("from_str_radix #1426") }
-    if !(parsed(capture num.from_str_radix<u128>("111", 2u32)) == present(7u128)) { panic("from_str_radix #1427") }
-    if !(parsed(capture num.from_str_radix<u128>("7", 36u32)) == present(7u128)) { panic("from_str_radix #1428") }
-    if !(parsed(capture num.from_str_radix<u128>("+7", 10u32)) == present(7u128)) { panic("from_str_radix #1435") }
-    if !(kind(capture num.from_str_radix<u128>("", 10u32)) == present(IntErrorKind.Empty)) { panic("from_str_radix #1436") }
-    if !(kind(capture num.from_str_radix<u128>("-", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1437") }
-    if !(kind(capture num.from_str_radix<u128>("+", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1438") }
-    if !(kind(capture num.from_str_radix<u128>("1_0", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1439") }
-    if !(kind(capture num.from_str_radix<u128>("12", 2u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1440") }
+    if !(parsed(capture num.parse_radix<u128>("340282366920938463463374607431768211455", 10u32)) == present(u128.MAX)) { panic("parse_radix #1415") }
+    if !(parsed(capture num.parse_radix<u128>("ffffffffffffffffffffffffffffffff", 16u32)) == present(u128.MAX)) { panic("parse_radix #1416") }
+    if !(parsed(capture num.parse_radix<u128>("11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111", 2u32)) == present(u128.MAX)) { panic("parse_radix #1417") }
+    if !(parsed(capture num.parse_radix<u128>("f5lxx1zz5pnorynqglhzmsp33", 36u32)) == present(u128.MAX)) { panic("parse_radix #1418") }
+    if !(parsed(capture num.parse_radix<u128>("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF", 16u32)) == present(u128.MAX)) { panic("parse_radix #1419") }
+    if !(parsed(capture num.parse_radix<u128>("0", 10u32)) == present(0u128)) { panic("parse_radix #1420") }
+    if !(parsed(capture num.parse_radix<u128>("0", 16u32)) == present(0u128)) { panic("parse_radix #1421") }
+    if !(parsed(capture num.parse_radix<u128>("0", 2u32)) == present(0u128)) { panic("parse_radix #1422") }
+    if !(parsed(capture num.parse_radix<u128>("0", 36u32)) == present(0u128)) { panic("parse_radix #1423") }
+    if !(parsed(capture num.parse_radix<u128>("7", 10u32)) == present(7u128)) { panic("parse_radix #1425") }
+    if !(parsed(capture num.parse_radix<u128>("7", 16u32)) == present(7u128)) { panic("parse_radix #1426") }
+    if !(parsed(capture num.parse_radix<u128>("111", 2u32)) == present(7u128)) { panic("parse_radix #1427") }
+    if !(parsed(capture num.parse_radix<u128>("7", 36u32)) == present(7u128)) { panic("parse_radix #1428") }
+    if !(parsed(capture num.parse_radix<u128>("+7", 10u32)) == present(7u128)) { panic("parse_radix #1435") }
+    if !(kind(capture num.parse_radix<u128>("", 10u32)) == present(IntErrorKind.Empty)) { panic("parse_radix #1436") }
+    if !(kind(capture num.parse_radix<u128>("-", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("parse_radix #1437") }
+    if !(kind(capture num.parse_radix<u128>("+", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("parse_radix #1438") }
+    if !(kind(capture num.parse_radix<u128>("1_0", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("parse_radix #1439") }
+    if !(kind(capture num.parse_radix<u128>("12", 2u32)) == present(IntErrorKind.InvalidDigit)) { panic("parse_radix #1440") }
 }
 
 fn group12() {
-    if !(kind(capture num.from_str_radix<u128>(" 1", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1441") }
-    if !(kind(capture num.from_str_radix<u128>("340282366920938463463374607431768211456", 10u32)) == present(IntErrorKind.PosOverflow)) { panic("from_str_radix #1442") }
-    if !(kind(capture num.from_str_radix<u128>("-1", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("from_str_radix #1445") }
+    if !(kind(capture num.parse_radix<u128>(" 1", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("parse_radix #1441") }
+    if !(kind(capture num.parse_radix<u128>("340282366920938463463374607431768211456", 10u32)) == present(IntErrorKind.PosOverflow)) { panic("parse_radix #1442") }
+    if !(kind(capture num.parse_radix<u128>("-1", 10u32)) == present(IntErrorKind.InvalidDigit)) { panic("parse_radix #1445") }
 }
 
 fn main(): i32 {

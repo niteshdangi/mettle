@@ -1,6 +1,5 @@
-// Integer parsing from `Text` without allocation. Like Rust's `from_str_radix`:
-// an optional leading `+` (and `-` for signed types), then at least one digit;
-// no whitespace and no separators.
+// Integer parsing from `Text` without allocation: an optional leading `+` (and `-` for
+// signed types), then at least one digit; no whitespace and no separators.
 
 import super.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import super.clone.Clone
@@ -2827,12 +2826,6 @@ pub const fn parse<T: FromText>(read text: Text): T throws ParseIntError {
 }
 pub const fn parse_radix<T: FromText>(read text: Text, radix: u32): T throws ParseIntError {
     try T.(FromText).from_text_radix(text, radix)
-}
-
-pub const fn from_str_radix<T: FromText>(
-    read text: Text, radix: u32
-): T throws ParseIntError {
-    try parse_radix<T>(text, radix)
 }
 
 extend i8 implements FromText {

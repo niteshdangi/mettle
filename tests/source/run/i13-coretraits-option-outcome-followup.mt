@@ -28,7 +28,7 @@ fn borrowed_failure<region r>(
 
 fn main(): i32 {
     let source = 7i32
-    match present(source).as_ref() {
+    match present(source).as_view() {
         present(value) => { if *value != 7 { return 1 } },
         none => { return 1 }
     }
@@ -97,7 +97,7 @@ fn main(): i32 {
     if unchecked != 11 { return 16 }
 
     let outcome: (Outcome<i32, i32>) = success(12)
-    match outcome.as_ref() {
+    match outcome.as_view() {
         success(value) => { if *value != 12 { return 17 } },
         failure(_) => { return 17 }
     }
@@ -124,11 +124,11 @@ fn main(): i32 {
         failure(_) => { return 22 }
     }
     let checked_success: (Outcome<i32, i32>) = success(13i32)
-    if !checked_success.is_ok_and(fn(take value: i32): bool { value == 13 }) {
+    if !checked_success.is_success_and(fn(take value: i32): bool { value == 13 }) {
         return 23
     }
     let checked_failure: (Outcome<i32, i32>) = failure(14i32)
-    if !checked_failure.is_err_and(fn(take error: i32): bool { error == 14 }) {
+    if !checked_failure.is_failure_and(fn(take error: i32): bool { error == 14 }) {
         return 24
     }
     let inspected_success: (Outcome<i32, i32>) = success(15i32)
@@ -142,9 +142,9 @@ fn main(): i32 {
     }
     if inspect_calls != 1 { return 29 }
     let unwrapped_failure: (Outcome<i32, i32>) = failure(16i32)
-    if unwrapped_failure.unwrap_err() != 16 { return 26 }
+    if unwrapped_failure.unwrap_failure() != 16 { return 26 }
     let expected_failure: (Outcome<i32, i32>) = failure(17i32)
-    if expected_failure.expect_err("expected failure") != 17 { return 27 }
+    if expected_failure.expect_failure("expected failure") != 17 { return 27 }
     let unchecked_failure: (Outcome<i32, i32>) = failure(18i32)
     let unchecked_error = unsafe { unchecked_failure.unwrap_err_unchecked() }
     if unchecked_error != 18 { return 28 }

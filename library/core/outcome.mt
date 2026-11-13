@@ -18,12 +18,6 @@ extend<T, E> (Outcome<T, E>) {
             failure(error) => failure(read error)
         }
     }
-    pub fn as_ref(): (Outcome<(read T from self), (read E from self)>) {
-        match self {
-            success(value) => success(read value),
-            failure(error) => failure(read error)
-        }
-    }
     pub mut fn as_mut(): (Outcome<(mut T from self), (mut E from self)>) {
         match mut self {
             success(value) => success(mut value),
@@ -57,19 +51,7 @@ extend<T, E> (Outcome<T, E>) {
         match take self { success(value) => value, failure(error) => super.panic.panic(message) }
     }
     pub unsafe fn unwrap_unchecked(receiver take self: (Outcome<T, E>)): T { self.unwrap() }
-    pub take fn unwrap_err(): E {
-        match take self {
-            success(value) => super.panic.panic("called `unwrap_err` on a successful outcome"),
-            failure(error) => error
-        }
-    }
-    pub take fn expect_err(read message: Text): E {
-        match take self {
-            success(value) => super.panic.panic(message),
-            failure(error) => error
-        }
-    }
-    pub unsafe fn unwrap_err_unchecked(receiver take self: (Outcome<T, E>)): E { self.unwrap_err() }
+    pub unsafe fn unwrap_err_unchecked(receiver take self: (Outcome<T, E>)): E { self.unwrap_failure() }
     pub take fn unwrap_failure(): E {
         match take self { success(value) => super.panic.panic("called `unwrap_failure` on a successful outcome"), failure(error) => error }
     }
@@ -98,10 +80,10 @@ extend<T, E> (Outcome<T, E>) {
     pub take fn map_or_default<U: Default, F: take fn(take T): U>(take f: F): U {
         match take self { success(value) => f(value), failure(_) => U.(Default).default() }
     }
-    pub take fn is_ok_and<F: take fn(take T): bool>(take test: F): bool {
+    pub take fn is_success_and<F: take fn(take T): bool>(take test: F): bool {
         match take self { success(value) => test(value), failure(error) => false }
     }
-    pub take fn is_err_and<F: take fn(take E): bool>(take test: F): bool {
+    pub take fn is_failure_and<F: take fn(take E): bool>(take test: F): bool {
         match take self { success(value) => false, failure(error) => test(error) }
     }
     pub take fn inspect<F: take fn(read T): Unit>(take f: F): (Outcome<T, E>) {
@@ -110,7 +92,7 @@ extend<T, E> (Outcome<T, E>) {
             failure(error) => failure(error)
         }
     }
-    pub take fn inspect_err<F: take fn(read E): Unit>(take f: F): (Outcome<T, E>) {
+    pub take fn inspect_failure<F: take fn(read E): Unit>(take f: F): (Outcome<T, E>) {
         match take self {
             success(value) => success(value),
             failure(error) => { f(read error); failure(error) }

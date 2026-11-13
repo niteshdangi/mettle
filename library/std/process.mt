@@ -527,11 +527,11 @@ fn collect_output(mut child: Child): Output throws Error {
     core.mem.drop(child.take_stdin())
     var stdout = child.take_stdout()
     var stderr = child.take_stderr()
-    var stdout_fd = match stdout.as_ref() {
+    var stdout_fd = match stdout.as_view() {
         present(pipe) => pipe.descriptor.as_raw_fd(),
         none => -1i32
     }
-    var stderr_fd = match stderr.as_ref() {
+    var stderr_fd = match stderr.as_view() {
         present(pipe) => pipe.descriptor.as_raw_fd(),
         none => -1i32
     }

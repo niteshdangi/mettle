@@ -11,7 +11,7 @@ import super.ops.DerefMut
 extend bool {
     // The value is evaluated before this method is called, whether or not it
     // is retained.
-    pub fn then_some<T>(take value: T): T? {
+    pub fn then_present<T>(take value: T): T? {
         if self { present(value) } else { none }
     }
 }
@@ -21,9 +21,6 @@ extend<T> T? {
     pub fn is_none(): bool { match self { present(value) => false, none => true } }
 
     pub fn as_view(): (read T from self)? {
-        match self { present(value) => present(read value), none => none }
-    }
-    pub fn as_ref(): (read T from self)? {
         match self { present(value) => present(read value), none => none }
     }
     pub mut fn as_mut(): (mut T from self)? {
@@ -83,7 +80,7 @@ extend<T> T? {
             none => T.(Default).default()
         }
     }
-    pub take fn is_some_and<F: take fn(take T): bool>(take test: F): bool {
+    pub take fn is_present_and<F: take fn(take T): bool>(take test: F): bool {
         match take self { present(value) => test(value), none => false }
     }
     pub take fn is_none_or<F: take fn(take T): bool>(take test: F): bool {
