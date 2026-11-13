@@ -4,7 +4,7 @@
 // Race freedom here is not a promise of fairness or deadlock freedom.
 pub module mutex
 pub module rwlock
-pub module condvar
+pub module condition
 pub module barrier
 pub module once
 pub module once_lock

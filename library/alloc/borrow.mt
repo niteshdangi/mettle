@@ -19,8 +19,6 @@ pub enum BorrowedOrOwned<region r, B: OwnedType + unsized> {
     Owned(B.Owned)
 }
 
-pub alias Cow<region r, T> = BorrowedOrOwned<region r, [T]>
-
 extend<region r, B: OwnedType + unsized> BorrowedOrOwned<region r, B> {
     pub fn is_borrowed(): bool {
         match self {
@@ -81,8 +79,8 @@ extend<region r, B: ToOwned + unsized> BorrowedOrOwned<region r, B> implements C
     }
 }
 
-extend<region r, T: Clone> List<T> implements From<Cow<region r, T>> {
-    static fn from(take value: Cow<region r, T>): List<T> {
+extend<region r, T: Clone> List<T> implements From<BorrowedOrOwned<region r, [T]>> {
+    static fn from(take value: BorrowedOrOwned<region r, [T]>): List<T> {
         value.into_owned()
     }
 }

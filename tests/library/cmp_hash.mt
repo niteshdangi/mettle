@@ -39,7 +39,7 @@ fn main(): i32 {
     if cmp.min(3, 2) != 2 || cmp.max(3, 2) != 3 || cmp.clamp(9, 0, 5) != 5 || cmp.clamp(-9, 0, 5) != 0 || cmp.clamp(3, 0, 5) != 3 { return 6 }
     if cmp.max(1, 1) != 1 { return 7 }
     if Ordering.Less.reverse() != Ordering.Greater || Ordering.Equal.then(Ordering.Less) != Ordering.Less || Ordering.Greater.then(Ordering.Less) != Ordering.Greater { return 8 }
-    if !(cmp.Reverse(1) > cmp.Reverse(2)) { return 9 }
+    if !(cmp.Descending(1) > cmp.Descending(2)) { return 9 }
     if 'a'.cmp(read 'b') != Ordering.Less || true.cmp(read false) != Ordering.Greater { return 10 }
     // Known vectors: SipHash-2-4 reference output and FNV-1a of "a"
     var h = hash.sip24(0x0706050403020100u64, 0x0f0e0d0c0b0a0908u64)
@@ -56,7 +56,7 @@ fn main(): i32 {
     if hash.hash_one(read p) != hash.hash_one(read present(1)) || hash.hash_one(read p) == hash.hash_one(read n) { return 17 }
     // text and bytes are length-delimited: ("ab","c") differs from ("a","bc")
     if pair_hash("ab", "c") == pair_hash("a", "bc") { return 18 }
-    if hash.hash_one(read cmp.Reverse(42)) != hash.hash_one(read 42) { return 24 }
+    if hash.hash_one(read cmp.Descending(42)) != hash.hash_one(read 42) { return 24 }
     let low = -170141183460469231731687303715884105728i128
     let same_low = -170141183460469231731687303715884105728i128
     let high = 340282366920938463463374607431768211455u128

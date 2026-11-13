@@ -341,7 +341,7 @@ coherent implementation selection, with the specified operand sequencing.
 Native optionals/outcomes are Copy exactly when every possible payload is Copy,
 as are tuples/fixed arrays. Named product/enum types retain explicit opt-in;
 a generic `copy` type whose fields are Copy only when its unbounded type
-parameters are Copy (`copy type Reverse<T> { value: T }`) is Copy exactly when
+parameters are Copy (`copy type Descending<T> { value: T }`) is Copy exactly when
 all its type arguments are.
 Zero-sized values have no payload bytes but retain initialization, alignment,
 destructor multiplicity and ownership obligations. A zero-sized destructor

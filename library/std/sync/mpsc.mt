@@ -1,5 +1,5 @@
 import super.mutex
-import super.condvar
+import super.condition
 import super.super.time
 import alloc.arc.Arc
 import alloc.vec.List
@@ -36,8 +36,8 @@ fn receive<T>(take envelope: Envelope<T>): T {
 
 type Shared<T> {
     queue: mutex.Mutex<Deque<Envelope<T>>>
-    ready: condvar.Condvar
-    space: condvar.Condvar
+    ready: condition.Condition
+    space: condition.Condition
     bound: usize
     rendezvous: bool
     waiting_receivers: core.sync.atomic.AtomicUsize
@@ -119,8 +119,8 @@ pub type SyncSender<T> {
 fn new_shared<T>(bound: usize, rendezvous: bool): Arc<Shared<T>> {
     alloc.arc.new(Shared(
         mutex.new(alloc.vec_deque.new<Envelope<T>>()),
-        condvar.new(),
-        condvar.new(),
+        condition.new(),
+        condition.new(),
         bound,
         rendezvous,
         core.sync.atomic.AtomicUsize.new(0usize),

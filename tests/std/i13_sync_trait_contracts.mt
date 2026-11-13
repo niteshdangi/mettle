@@ -1,4 +1,4 @@
-import std.sync.{ barrier, condvar, mutex, once, once_lock, rwlock }
+import std.sync.{ barrier, condition, mutex, once, once_lock, rwlock }
 import core.borrow.Borrow
 import core.clone.Clone
 import core.convert.From
@@ -91,8 +91,8 @@ fn main(): i32 {
     let from_rwlock: rwlock.RwLock<i32> = from_value(71)
     require_debug(read from_rwlock, "RwLock {")
 
-    let condition = condvar.new()
-    require_debug(read condition, "Condvar")
+    let signal = condition.new()
+    require_debug(read signal, "Condition")
     let gate = barrier.new(1usize)
     require_debug(read gate, "Barrier {")
     let barrier_result = gate.wait()

@@ -1,6 +1,6 @@
 // profiles: debug release
 import core.clone.Clone
-import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd, Reverse}
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd, Descending}
 import core.convert.From
 import core.default.Default
 import core.fmt
@@ -78,10 +78,10 @@ fn main(): i32 {
     if !ordered(core.mem.ManuallyDrop.new(1), core.mem.ManuallyDrop.new(2)) { return 13 }
     if hash_of(held) != hash_of(8) || !debug_is(held, "8") { return 14 }
 
-    let low = Reverse(1)
-    let high = Reverse(2)
-    if !ordered(high, low) || hash_of(low) != hash_of(Reverse(1)) { return 15 }
-    let defaulted: Reverse<i32> = default_of()
-    if defaulted.value != 0 || !debug_is(low, "Reverse(1)") { return 16 }
+    let low = Descending(1)
+    let high = Descending(2)
+    if !ordered(high, low) || hash_of(low) != hash_of(Descending(1)) { return 15 }
+    let defaulted: Descending<i32> = default_of()
+    if defaulted.value != 0 || !debug_is(low, "Descending(1)") { return 16 }
     0
 }

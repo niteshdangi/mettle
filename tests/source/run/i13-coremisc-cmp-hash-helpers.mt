@@ -1,11 +1,11 @@
 // profiles: debug release
-// Evidence for the comparison free functions, Reverse, and the Hash, Hasher
+// Evidence for the comparison free functions, Descending, and the Hash, Hasher
 // and BuildHasher helpers.
 
 import core.clone.Clone
 import core.default.Default
 import core.cmp
-import core.cmp.{Ord, Ordering, PartialEq, PartialOrd, Reverse}
+import core.cmp.{Ord, Ordering, PartialEq, PartialOrd, Descending}
 import core.hash.{BuildHasher, Fnv1a, Hash, Hasher, fnv1a, hash_one}
 import std.panic.{catch_panic, CatchResult}
 
@@ -30,16 +30,16 @@ fn checks_cmp(): i32 {
         CatchResult.Panicked(info) => { if info.code() != 101 { return 12 } },
         CatchResult.Returned(_) => { return 12 }
     }
-    let low = Reverse(2i32)
-    let high = Reverse(9i32)
-    if !(high < low) || low < high || !(low.clone() == Reverse(2i32)) { return 4 }
-    let defaulted: Reverse<i32> = Reverse<i32>.(Default).default()
+    let low = Descending(2i32)
+    let high = Descending(9i32)
+    if !(high < low) || low < high || !(low.clone() == Descending(2i32)) { return 4 }
+    let defaulted: Descending<i32> = Descending<i32>.(Default).default()
     if defaulted.value != 0 { return 10 }
     if hash_one(read low) != hash_one(read 2i32) { return 11 }
     if low.cmp(read high) != Ordering.Greater { return 5 }
     if low.partial_cmp(read high) != present(Ordering.Greater) { return 6 }
     if low.value != 2 || high.value != 9 { return 7 }
-    let move_only = Reverse(NotCopy(1))
+    let move_only = Descending(NotCopy(1))
     if move_only.value.value != 1 { return 13 }
     if !(2i32.lt(read 3)) || !(3i32.le(read 3)) || 3i32.gt(read 3) || 3i32.ge(read 4) { return 8 }
     if 3i32.ne(read 4) != true || 3i32.ne(read 3) { return 9 }

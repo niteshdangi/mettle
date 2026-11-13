@@ -132,8 +132,10 @@ randomized builder; the capability remains required. Do not describe the
 deterministic default as collision-attack resistant.
 
 Owner amendment D31: general borrowed-or-owned identities map to
-`BorrowedOrOwned<region r,B>`. Existing slice `Cow<region r,T>` is the alias
-for `BorrowedOrOwned<region r,[T]>`, preserving one underlying type/implementation.
+`BorrowedOrOwned<region r,B>`. The slice `Cow<'a, [T]>` identity maps to
+`BorrowedOrOwned<region r,[T]>`; no alias exists, preserving one underlying
+type/implementation. `cmp::Reverse` maps to `core.cmp.Descending` and
+`sync::Condvar` to `std.sync.condition.Condition`.
 This resolves the generic identity collision without reinterpreting T as both
 an element type and a borrowed payload type.
 
@@ -280,7 +282,7 @@ contract conflicts affecting selected V1 operations still block their acceptance
   push/entry/cursor helpers and other members outside the native selectors.
 - Type-specific implementation relations, compiler facilities and supporting
   protocol substitutions not completely defined by the assigned native rules.
-- Slice Cow alias eligibility for the existing non-Clone borrowed/read extension;
+- Slice `BorrowedOrOwned` eligibility for the existing non-Clone borrowed/read extension;
   D31 does not authorize silently narrowing that native behavior.
 - Uncommon OS error-code classifications and extension members/aliases outside
   the hosted and OS definitions.

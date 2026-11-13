@@ -197,8 +197,8 @@ entropy. It does not promise collision-attack resistance; applications with
 untrusted keys explicitly select a randomized builder. Hash algorithm/output
 and iteration order are not stabilized by that default.
 Decision D31: general borrowed-or-owned values use
-`BorrowedOrOwned<region r,B>`; slice `Cow<region r,T>` remains its
-`BorrowedOrOwned<region r,[T]>` alias, not a parallel implementation.
+`BorrowedOrOwned<region r,B>`; slices spell `BorrowedOrOwned<region r,[T]>`; no
+alias or parallel implementation exists.
 
 ## 4. Optional, outcomes and errors
 

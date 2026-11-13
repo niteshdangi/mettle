@@ -1,4 +1,4 @@
-import alloc.borrow.Cow
+import alloc.borrow.BorrowedOrOwned
 import core.clone.Clone
 import core.panic.panic
 import std.panic.CatchResult
@@ -22,7 +22,7 @@ extend Value implements Clone {
 }
 
 fn copy_with_panic<region r>(read values: [Value] from r): i32 {
-    var cow: Cow<region r, Value> = Cow.Borrowed(read values)
+    var cow: BorrowedOrOwned<region r, [Value]> = BorrowedOrOwned.Borrowed(read values)
     let result = std.panic.catch_panic(fn(): Unit { let _ = cow.to_mut() })
     match take result {
         CatchResult.Panicked(info) => {

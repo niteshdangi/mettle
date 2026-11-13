@@ -15,7 +15,7 @@ fn send_ok<T: unsized + Transferable>(): Unit {}
 fn sync_ok<T: unsized + Shareable>(): Unit {}
 alias A_sync_Arc = alloc.arc.Arc<i32>
 alias A_sync_Barrier = std.sync.barrier.Barrier
-alias A_sync_Condvar = std.sync.condvar.Condvar
+alias A_sync_Condvar = std.sync.condition.Condition
 alias A_sync_Mutex = std.sync.mutex.Mutex<i32>
 alias A_sync_MutexGuard = std.sync.mutex.MutexGuard<i32, region static>
 alias A_sync_Once = std.sync.once.Once

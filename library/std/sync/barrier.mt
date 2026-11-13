@@ -1,5 +1,5 @@
 import super.mutex
-import super.condvar
+import super.condition
 import core.clone.Clone
 import core.fmt.{Debug, Error, Formatter}
 
@@ -27,13 +27,13 @@ extend BarrierWaitResult implements Debug {
 pub type Barrier {
     parties: usize
     state: mutex.Mutex<State>
-    arrived: condvar.Condvar
+    arrived: condition.Condition
 }
 unsafe extend Barrier implements Transferable {}
 unsafe extend Barrier implements Shareable {}
 
 pub fn new(parties: usize): Barrier {
-    Barrier(parties, mutex.new(State(0usize, 0usize)), condvar.new())
+    Barrier(parties, mutex.new(State(0usize, 0usize)), condition.new())
 }
 
 extend Barrier {

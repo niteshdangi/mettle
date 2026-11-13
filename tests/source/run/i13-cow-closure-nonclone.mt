@@ -1,4 +1,4 @@
-import alloc.borrow.Cow
+import alloc.borrow.BorrowedOrOwned
 import alloc.vec.List
 
 type Value {
@@ -8,7 +8,7 @@ type Value {
 }
 
 fn borrowed<region r>(read values: [Value] from r): i32 {
-    let cow: Cow<region r, Value> = Cow.Borrowed(read values)
+    let cow: BorrowedOrOwned<region r, [Value]> = BorrowedOrOwned.Borrowed(read values)
     if !cow.is_borrowed() || cow.as_ref().len() != 2usize { return 1 }
     if cow.as_ref()[0usize].number != 7 || cow.as_ref()[1usize].number != 9 {
         return 2
@@ -24,11 +24,11 @@ fn owned<region r>(read anchor: i32 from r, drops: ptr<mut i32>): i32 {
     values.push(Value(13, drops))
     let address = values.as_ptr()
     let capacity = values.capacity()
-    let cow: Cow<region r, Value> = Cow.Owned(values)
+    let cow: BorrowedOrOwned<region r, [Value]> = BorrowedOrOwned.Owned(values)
     if cow.is_borrowed() || cow.as_ref()[1usize].number != 13 { return 3 }
     let moved: List<Value> = match take cow {
-        Cow.Borrowed(_) => { return 4 },
-        Cow.Owned(items) => items
+        BorrowedOrOwned.Borrowed(_) => { return 4 },
+        BorrowedOrOwned.Owned(items) => items
     }
     if moved.as_ptr() != address || moved.capacity() != capacity { return 5 }
     if moved.len() != 2usize || moved[0usize].number != 11 { return 6 }

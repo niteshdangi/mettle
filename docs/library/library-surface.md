@@ -546,7 +546,9 @@ spelling-based special cases.
 | --- | --- |
 | `Vec`, `HashMap`, `HashSet` | `List`, `Map`, `Set` from `alloc.collections` |
 | General `Cow<region r,B>` | `BorrowedOrOwned<region r,B>` in `alloc.borrow`; borrowed payload and associated owned type remain distinct |
-| `Cow<'a, [T]>` for `Vec<T>: From` | Slice `Cow<region r, T>` in `alloc.borrow`; conversion clones borrowed items and moves owned Lists |
+| `Cow<'a, [T]>` for `Vec<T>: From` | `BorrowedOrOwned<region r, [T]>` in `alloc.borrow`; conversion clones borrowed items and moves owned Lists |
+| `cmp::Reverse` | `Descending` in `core.cmp` |
+| `sync::Condvar` | `Condition` in `std.sync.condition` |
 | `NonNull<T>` | `core.ptr.NonNull<T>`; compiler-owned raw-pointer operations remain in `core.ptr` |
 | `BTreeMap`, `BTreeSet` | `SortedMap`, `SortedSet` |
 | `IntoIterator`, `IterableMut` | `OwnedIterable`, `MutableIterable` |
@@ -557,9 +559,9 @@ spelling-based special cases.
 | Named optional/result wrappers | None introduced: use `T?` and `(Outcome<T, E>)` |
 
 The hosted I/O names refer to `std.io`; `core.fmt.Write` retains its name.
-Under D31, slice Cow is an alias of `BorrowedOrOwned<region r,[T]>`.
+Under D31, slices use `BorrowedOrOwned<region r,[T]>` directly.
 `core.borrow.OwnedType` supplies the associated owner independently of copying;
-`ToOwned` supplies copying into it. Borrowed/read Cow usage does not require
+`ToOwned` supplies copying into it. Borrowed/read `BorrowedOrOwned` usage does not require
 Clone merely to name the owned branch.
 Under D30, the alloc Map default is deterministic; randomized hashing requires
 an explicit builder and must not introduce a hidden OS dependency into alloc.

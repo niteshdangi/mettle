@@ -1,11 +1,11 @@
 // profiles: debug release
 // Clone for tuples of every arity up to twelve (field by field), the stored
-// outcome (success and failure), Reverse and NonNull; the ToOwned blanket then
+// outcome (success and failure), Descending and NonNull; the ToOwned blanket then
 // applies to each.
 import core.clone.Clone
 import core.borrow.ToOwned
 import core.cmp
-import core.cmp.{PartialEq, Reverse}
+import core.cmp.{PartialEq, Descending}
 import core.ptr.NonNull
 import core.outcome
 
@@ -29,7 +29,7 @@ fn main(): i32 {
     match good.clone() { success(c) => if c.value != 5 { return 4 }, failure(_) => { return 5 } }
     let bad: (Outcome<Counted, Counted>) = failure(Counted(8))
     match bad.clone() { success(_) => { return 6 }, failure(c) => if c.value != 9 { return 7 } }
-    let reversed = Reverse(Counted(20))
+    let reversed = Descending(Counted(20))
     if reversed.clone().value.value != 21 { return 8 }
     var target = 5
     match NonNull.new(core.ptr.from_mut(target)) {
@@ -38,7 +38,7 @@ fn main(): i32 {
     }
     owned_ok<(i32, bool, char)>()
     owned_ok<(Outcome<i32, bool>)>()
-    owned_ok<Reverse<i32>>()
+    owned_ok<Descending<i32>>()
     owned_ok<NonNull<i32>>()
     0
 }

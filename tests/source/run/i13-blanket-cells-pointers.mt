@@ -9,7 +9,7 @@ import core.convert.Into
 import core.convert.{TryFrom, TryInto}
 import alloc.string.ToString
 import alloc.boxed.Box
-import core.cmp.Reverse
+import core.cmp.Descending
 import core.num.Wrapping
 import core.ptr.NonNull
 import alloc.rc.Rc
@@ -59,15 +59,15 @@ fn main(): i32 {
     into_ok<core.cell.RefCell<i32>>()
     send_ok<core.cell.RefCell<i32>>()
 
-    // core.cmp.Reverse: Any Borrow From Into Send Sync ToOwned
-    any_ok<Reverse<i32>>()
-    borrow_ok<Reverse<i32>>()
-    from_ok<Reverse<i32>>()
-    tryfrom_ok<Reverse<i32>>()
-    tryinto_ok<Reverse<i32>>()
-    into_ok<Reverse<i32>>()
-    send_ok<Reverse<i32>>()
-    sync_ok<Reverse<i32>>()
+    // core.cmp.Descending: Any Borrow From Into Send Sync ToOwned
+    any_ok<Descending<i32>>()
+    borrow_ok<Descending<i32>>()
+    from_ok<Descending<i32>>()
+    tryfrom_ok<Descending<i32>>()
+    tryinto_ok<Descending<i32>>()
+    into_ok<Descending<i32>>()
+    send_ok<Descending<i32>>()
+    sync_ok<Descending<i32>>()
 
     // core.mem.ManuallyDrop: Any Borrow From Into Send Sync ToOwned
     any_ok<core.mem.ManuallyDrop<i32>>()

@@ -804,7 +804,7 @@ Construction/conversion/raw reconstruction costs O(bytes) when a scan is
 needed. Default is an empty terminated C string, not an unterminated zero-
 capacity byte list.
 
-### 10.3. Cow
+### 10.3. BorrowedOrOwned
 
 Decision D31 names general borrowed-or-owned storage
 `alloc.borrow.BorrowedOrOwned<region r,B>`.
@@ -824,9 +824,8 @@ CStr it is CString. Hosted Path/OsStr implementations associate PathBuf/
 OsString in std; mentioning those instantiations adds no std dependency to
 alloc. User-defined B retains its declared associated owner and bounds.
 
-The selected slice spelling `Cow<region r,T>` is the alias for
-`BorrowedOrOwned<region r,[T]>`, not a duplicate implementation.
-Its into_owned requires T: Clone, copies borrowed items, and moves an owned
+The slice instantiation `BorrowedOrOwned<region r,[T]>` has no separate alias or
+implementation. Its into_owned requires T: Clone, copies borrowed items, and moves an owned
 List without cloning. Reading and extracting an already-owned variant do not
 require an element Clone bound.
 
@@ -891,7 +890,7 @@ The authored runtime coverage is the explicit groups in sections 1..11:
 | Set/SortedSet | Membership/representatives/algebra/traversal, ordered endpoints/range/split/append |
 | `alloc.string.String` | UTF encoding/conversion, byte capacity/mutation, view delegation, drain, owned search replacement/case/repeat/raw operations |
 | `alloc.ffi.CString` and error types | Termination validation, owned recovery/UTF conversion, borrowed/boxed/raw conversions |
-| `alloc.borrow` | ToOwned, general BorrowedOrOwned branch/projection/owning conversion and the selected slice Cow alias |
+| `alloc.borrow` | ToOwned, general BorrowedOrOwned branch/projection/owning conversion and the slice instantiation |
 | allocation-backed slice methods | Cloning/concat/join/repeat and stable/cached-key sorting |
 
 This table is a selector boundary for the named operations, not a wildcard

@@ -76,7 +76,7 @@ uses `mut fn(read T): K`. Unreturned operands and temporary keys are destroyed.
 `Ord.min/max` follow the same tie rules. `clamp(take value, take low, take high)`
 first requires `low <= high`, panicking otherwise even if value is already in
 range; it returns low, high, or value according to the comparison. Bounds are
-consumed and unreturned bounds destroyed. `Reverse<T>` reverses comparison,
+consumed and unreturned bounds destroyed. `Descending<T>` reverses comparison,
 not equality, hashing, representation, or ownership.
 
 Primitive integers, bool and char compare by numerical value; false precedes

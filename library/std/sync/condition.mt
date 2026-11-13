@@ -25,25 +25,25 @@ type WaitBinding<region r> {
 }
 
 // Waits release and reacquire their mutex; callbacks must recheck after spurious wakeups.
-pub type Condvar {
+pub type Condition {
     raw: ptr<mut u8>
     binding: mutex.Mutex<Binding>
     drop { unsafe { mettle_rt_cond_free(self.raw) } }
 }
-unsafe extend Condvar implements Transferable {}
-unsafe extend Condvar implements Shareable {}
+unsafe extend Condition implements Transferable {}
+unsafe extend Condition implements Shareable {}
 
-pub fn new(): Condvar {
+pub fn new(): Condition {
     let raw = unsafe { mettle_rt_cond_new() }
     if raw == core.ptr.null_mut<u8>() { core.intrinsics.abort() }
-    Condvar(raw, mutex.new(Binding(core.ptr.null_mut<u8>(), 0usize)))
+    Condition(raw, mutex.new(Binding(core.ptr.null_mut<u8>(), 0usize)))
 }
-extend Condvar implements Default {
-    static fn default(): Condvar { new() }
+extend Condition implements Default {
+    static fn default(): Condition { new() }
 }
-extend Condvar implements Debug {
+extend Condition implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
-        try f.write_str("Condvar { .. }")
+        try f.write_str("Condition { .. }")
     }
 }
 
@@ -53,7 +53,7 @@ extend TimedOut {
     pub fn timed_out(): bool { self.expired }
 }
 
-extend Condvar {
+extend Condition {
     fn bind(raw: ptr<mut u8>): WaitBinding<region self> {
         // A live waiter owns a mutex guard, so this native mutex cannot be recycled.
         let locked = capture self.binding.lock()

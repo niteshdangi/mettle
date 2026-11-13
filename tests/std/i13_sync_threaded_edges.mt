@@ -1,5 +1,5 @@
 import std.thread
-import std.sync.{ barrier, condvar, mutex, rwlock }
+import std.sync.{ barrier, condition, mutex, rwlock }
 import std.panic.{ catch_panic, CatchResult }
 import alloc.arc
 
@@ -15,7 +15,7 @@ fn main(): i32 {
     if !thread.current_thread().id().same(thread.current()) { return 17 }
 
     let state = arc.new(mutex.new(false))
-    let changed = arc.new(condvar.new())
+    let changed = arc.new(condition.new())
     let entered = arc.new(core.sync.atomic.AtomicBool.new(false))
     let worker_state = state.retain()
     let worker_changed = changed.retain()

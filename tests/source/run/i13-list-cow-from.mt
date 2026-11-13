@@ -1,11 +1,11 @@
-import alloc.borrow.Cow
+import alloc.borrow.BorrowedOrOwned
 import alloc.vec.List
 import core.convert.From
 
 fn copy_borrowed<region r>(read items: [i32] from r): i32 {
-    let cow: Cow<region r, i32> = Cow.Borrowed(read items)
+    let cow: BorrowedOrOwned<region r, [i32]> = BorrowedOrOwned.Borrowed(read items)
     if !cow.is_borrowed() || cow.as_ref().len() != 3usize { return 5 }
-    var list = List<i32>.(From<Cow<region r, i32>>).from(cow)
+    var list = List<i32>.(From<BorrowedOrOwned<region r, [i32]>>).from(cow)
     if list.len() != 3usize { return 1 }
     if list[0usize] != 4 || list[1usize] != 7 || list[2usize] != 9 { return 2 }
     list[0usize] = 99
@@ -17,9 +17,9 @@ fn move_owned<region r>(read anchor: i32 from r): i32 {
     var items = alloc.vec.new<i32>()
     items.push(12)
     items.push(15)
-    let cow: Cow<region r, i32> = Cow.Owned(items)
+    let cow: BorrowedOrOwned<region r, [i32]> = BorrowedOrOwned.Owned(items)
     if cow.is_borrowed() || cow.as_ref()[1usize] != 15 { return 6 }
-    let list = List<i32>.(From<Cow<region r, i32>>).from(cow)
+    let list = List<i32>.(From<BorrowedOrOwned<region r, [i32]>>).from(cow)
     if list.len() != 2usize { return 3 }
     if list[0usize] != 12 || list[1usize] != 15 { return 4 }
     0

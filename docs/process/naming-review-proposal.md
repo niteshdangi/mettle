@@ -86,8 +86,8 @@ Counts are lib / tests / docs / ledger rows (examples are 0 throughout).
 | 16 | `write_str` (`fmt.Write`) | `write_text` | 280 | 42 | 1 | 4 | B4 | no |
 | 17 | `FromStr` / `from_str` | `FromText` / `from_text` (after renaming num `FromText` to `FromTextRadix`) | 24 / 16 | 46 / 30 | 4 / 0 | 27 / 1 | B4 | no (1 code ref) |
 | 18 | `to_str` (CStr/OsStr/Path) | `to_text` | 10 | 42 | 2 | 6 | B4 | no |
-| 19 | `Reverse` | `Descending` | 18 | 42 | 4 | 29 | B5 | no |
-| 20 | `Condvar` | `ConditionVariable` | 13 | 8 | 3 | 18 | B5 | no |
+| 19 | `Descending` | `Descending` | 18 | 42 | 4 | 29 | B5 | no |
+| 20 | `Condition` | `ConditionVariable` | 13 | 8 | 3 | 18 | B5 | no |
 | 21 | `Cow` (slice alias) | `BorrowedOrOwnedSlice` | 5 | 58 | 14 | 0 (catalog row key is Rust) | B5 | no, needs D31 amendment |
 | 22 | `Box` | `Heap` | 250 | 1281 | 28 | 196 | B6 | yes |
 | 23 | `Arc` | `Shared` | 216 | 158 | 20 | 142 | B6 | yes |
@@ -157,7 +157,7 @@ either.
   the proposal; if the owner prefers to defer, B1, B2 and B4 are independent of it.
 - Conflicts: `or_panic`, `value_or*`, `value_unchecked`, `failure_unchecked` are
   all unused today. Do not use bare `value()` (collides with the public `value`
-  fields of `Reverse`/`Wrapping` in reading and with the `value` pattern binders).
+  fields of `Descending`/`Wrapping` in reading and with the `value` pattern binders).
 - Related, optional: `Rc/Arc.try_unwrap` to `try_into_inner` (lib 5, tests 12,
   docs 2, ledger 4) and `unwrap_or_clone` to `into_value_or_clone` (2/6/1/4).
   Weaker case: Rust-derived but short and descriptive; do only with this batch.
@@ -190,19 +190,19 @@ Left-over `str` members read as Rust.
 
 ### B5. Two standalone type renames and one alias
 
-- `core.cmp.Reverse` to `Descending`. Why: `Reverse` (comparison wrapper) and
+- `core.cmp.Descending` to `Descending`. Why: `Descending` (comparison wrapper) and
   `core.iter.Reversed` (adapter) differ by two letters and mean different things.
   `Descending` says what the wrapper does for sort/heap order. Zero existing
   uses of the new name.
-- `std.sync.Condvar` to `ConditionVariable`. Why: abbreviation with no
+- `std.sync.Condition` to `ConditionVariable`. Why: abbreviation with no
   precedent in the Mettle table; the table spells words out (`BufferedReader`,
   `OwnedIterable`, `SortedMap`). Methods (`wait`, `notify_one`, `notify_all`)
   stay.
-- `alloc.borrow.Cow<region r, T>` alias to `BorrowedOrOwnedSlice<region r, T>`.
+- `alloc.borrow.BorrowedOrOwned<region r, [T]>` alias to `BorrowedOrOwnedSlice<region r, T>`.
   Why: D21/D31 already provide the native `BorrowedOrOwned`; an alias spelled
   with a Rust nickname is the second spelling the working rule forbids. Needs
   owner amendment of library-surface.md section 9 (the table currently lists
-  the alias as `Cow<region r, T>`) and 58 test mentions are mechanical. If the
+  the alias as `BorrowedOrOwned<region r, [T]>`) and 58 test mentions are mechanical. If the
   owner wants the alias retained for catalog identity, keep `Cow` and skip this row.
 
 ### B6. Owner nominal types (needs compiler change and owner approval)

@@ -2,7 +2,7 @@
 module source_helpers;
 import alloc.boxed
 import alloc.boxed.Box
-import alloc.borrow.Cow
+import alloc.borrow.BorrowedOrOwned
 import alloc.string
 import alloc.vec.{List, IntoIter}
 import core.borrow.{AsMut, AsRef, Borrow, BorrowMut}
@@ -36,8 +36,8 @@ fn equal<T: Eq>(read left: T, read right: T): bool { left == right }
 
 fn as_view<V: AsRef<[i32]>>(read value: V): read [i32] from value { V.(AsRef<[i32]>).as_ref(value) }
 
-fn from_cow<region r>(take value: Cow<region r, i32>): Box<[i32]> {
-    Box<[i32]>.(From<Cow<region r, i32>>).from(value)
+fn from_cow<region r>(take value: BorrowedOrOwned<region r, [i32]>): Box<[i32]> {
+    Box<[i32]>.(From<BorrowedOrOwned<region r, [i32]>>).from(value)
 }
 
 fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
@@ -116,9 +116,10 @@ fn main(): i32 {
     if mut_box.get()[0usize] != 8 { return 15 }
     let list_box = Box<[i32]>.(From<List<i32>>).from(List<i32>.(From<[i32; 2]>).from([10, 11]))
     if list_box.get()[1usize] != 11 { return 16 }
-    let cow_box = from_cow(Cow.Owned(List<i32>.(From<[i32; 1]>).from([12])))
+    let cow_box = from_cow(BorrowedOrOwned.Owned(List<i32>.(From<[i32; 1]>).from([12])))
     if cow_box.get()[0usize] != 12 { return 17 }
-    let cow_box_borrowed = from_cow(Cow.Borrowed(read [13, 14]))
+    let borrowed_items: read [i32] = read [13, 14]
+    let cow_box_borrowed = from_cow(BorrowedOrOwned.Borrowed(borrowed_items))
     if cow_box_borrowed.get()[1usize] != 14 { return 61 }
 
     let text_box = Box<Text>.(From<read Text>).from("hi")

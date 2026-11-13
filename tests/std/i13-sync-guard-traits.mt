@@ -1,7 +1,7 @@
 // expect-exit: 0
 // Evidence for Mutex/RwLock formatting, guard Deref/DerefMut/Drop, and the
-// Debug forms of Once, Barrier and Condvar.
-import std.sync.{ mutex, rwlock, once, once_lock, barrier, condvar }
+// Debug forms of Once, Barrier and Condition.
+import std.sync.{ mutex, rwlock, once, once_lock, barrier, condition }
 import core.cmp.Eq
 import core.fmt
 import core.fmt.{Debug, Display}
@@ -98,7 +98,7 @@ fn checks_rwlock_guards(): i32 {
 fn checks_sync_object_debug(): i32 {
     if debug_text(read once.new()).as_text() != "Once { .. }" { return 40 }
     if debug_text(read barrier.new(2usize)).as_text() != "Barrier { .. }" { return 41 }
-    if debug_text(read condvar.new()).as_text() != "Condvar { .. }" { return 42 }
+    if debug_text(read condition.new()).as_text() != "Condition { .. }" { return 42 }
     let cell = once_lock.new<i32>()
     require_eq(read cell)
     if !debug_text(read cell).as_text().starts_with("OnceLock") { return 43 }

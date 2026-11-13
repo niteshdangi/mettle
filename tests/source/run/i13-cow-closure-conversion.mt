@@ -1,4 +1,4 @@
-import alloc.borrow.Cow
+import alloc.borrow.BorrowedOrOwned
 import alloc.vec.List
 import core.clone.Clone
 import core.convert.From
@@ -18,8 +18,8 @@ extend Value implements Clone {
 }
 
 fn borrowed<region r>(read values: [Value] from r): i32 {
-    let cow: Cow<region r, Value> = Cow.Borrowed(read values)
-    var owned = List<Value>.(From<Cow<region r, Value>>).from(cow)
+    let cow: BorrowedOrOwned<region r, [Value]> = BorrowedOrOwned.Borrowed(read values)
+    var owned = List<Value>.(From<BorrowedOrOwned<region r, [Value]>>).from(cow)
     if owned.len() != 2usize || owned[1usize].number != 9 { return 1 }
     if owned.as_ptr() == core.ptr.from_ref(values[0usize]) { return 2 }
     owned[0usize].number = 99
@@ -38,7 +38,7 @@ fn owned<region r>(
     let address = values.as_ptr()
     let capacity = values.capacity()
     let before = unsafe { *clones }
-    let cow: Cow<region r, Value> = Cow.Owned(values)
+    let cow: BorrowedOrOwned<region r, [Value]> = BorrowedOrOwned.Owned(values)
     let moved = cow.into_owned()
     if moved.as_ptr() != address || moved.capacity() != capacity { return 4 }
     if moved.len() != 1usize || moved[0usize].number != 11 { return 5 }
@@ -47,14 +47,14 @@ fn owned<region r>(
 }
 
 fn empty<region r>(read values: [Value] from r): i32 {
-    let cow: Cow<region r, Value> = Cow.Borrowed(read values)
+    let cow: BorrowedOrOwned<region r, [Value]> = BorrowedOrOwned.Borrowed(read values)
     let owned = cow.into_owned()
     if owned.len() != 0usize || owned.capacity() != 0usize { return 7 }
     0
 }
 
 fn clone_and_mutate<region r>(read values: [Value] from r): i32 {
-    var cow: Cow<region r, Value> = Cow.Borrowed(read values)
+    var cow: BorrowedOrOwned<region r, [Value]> = BorrowedOrOwned.Borrowed(read values)
     let borrowed_clone = cow.clone()
     if !borrowed_clone.is_borrowed() || unsafe { *values[0usize].clones } != 2 {
         return 12

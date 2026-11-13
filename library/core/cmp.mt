@@ -71,22 +71,22 @@ pub fn clamp<T: Ord>(take value: T, take low: T, take high: T): T {
 }
 
 // Inverts the order of the wrapped value.
-pub copy type Reverse<T> { pub value: T }
-extend<T: PartialEq> Reverse<T> implements PartialEq { fn eq(read other: Reverse<T>): bool { other.value == self.value } }
-extend<T: Eq> Reverse<T> implements Eq {}
-extend<T: super.clone.Clone> Reverse<T> implements super.clone.Clone {
-    fn clone(): Reverse<T> { Reverse(self.value.clone()) }
+pub copy type Descending<T> { pub value: T }
+extend<T: PartialEq> Descending<T> implements PartialEq { fn eq(read other: Descending<T>): bool { other.value == self.value } }
+extend<T: Eq> Descending<T> implements Eq {}
+extend<T: super.clone.Clone> Descending<T> implements super.clone.Clone {
+    fn clone(): Descending<T> { Descending(self.value.clone()) }
 }
-extend<T: PartialOrd> Reverse<T> implements PartialOrd {
-    fn partial_cmp(read other: Reverse<T>): Ordering? { other.value.partial_cmp(read self.value) }
+extend<T: PartialOrd> Descending<T> implements PartialOrd {
+    fn partial_cmp(read other: Descending<T>): Ordering? { other.value.partial_cmp(read self.value) }
 }
-extend<T: Ord> Reverse<T> implements Ord { fn cmp(read other: Reverse<T>): Ordering { other.value.cmp(read self.value) } }
-extend<T: Default> Reverse<T> implements Default {
-    static fn default(): Reverse<T> { Reverse(T.(Default).default()) }
+extend<T: Ord> Descending<T> implements Ord { fn cmp(read other: Descending<T>): Ordering { other.value.cmp(read self.value) } }
+extend<T: Default> Descending<T> implements Default {
+    static fn default(): Descending<T> { Descending(T.(Default).default()) }
 }
-extend<T: Debug> Reverse<T> implements Debug {
+extend<T: Debug> Descending<T> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
-        var debug = try f.debug_tuple("Reverse")
+        var debug = try f.debug_tuple("Descending")
         try debug.field(read self.value)
         try debug.finish()
     }

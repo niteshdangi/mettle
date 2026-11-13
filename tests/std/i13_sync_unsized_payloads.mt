@@ -1,4 +1,4 @@
-import std.sync.{mutex, rwlock, condvar}
+import std.sync.{mutex, rwlock, condition}
 import core.fmt.{Debug, Display}
 import core.ops.{Deref, DerefMut}
 
@@ -33,7 +33,7 @@ type Tracked {
 
 fn main(): i32 {
     var sized_mutex = mutex.new([1, 2, 3])
-    let condition = condvar.new()
+    let signal = condition.new()
     {
         let lock: read mutex.Mutex<[i32]> = read sized_mutex
         let locked = capture lock.lock()
@@ -41,7 +41,7 @@ fn main(): i32 {
         if guard.deref().len() != 3usize { return 1 }
         guard.deref_mut()[1usize] = 7
         if debug(guard).as_text() != "[1, 7, 3]" { return 2 }
-        let waited = capture condition.wait_timeout(guard, std.time.from_nanos(0u64))
+        let waited = capture signal.wait_timeout(guard, std.time.from_nanos(0u64))
         let result = match take waited { success(v) => v, failure(e) => e.into_inner() }
         if !result.1.timed_out() || result.0.get().len() != 3usize { return 3 }
         core.mem.drop(result.0)

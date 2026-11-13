@@ -1,5 +1,5 @@
 import std.thread
-import std.sync.{mutex, condvar, rwlock, once, once_lock, barrier, mpsc, tls}
+import std.sync.{mutex, condition, rwlock, once, once_lock, barrier, mpsc, tls}
 import std.panic.{catch_panic, CatchResult}
 import alloc.arc
 import core.iter.Iterator
@@ -348,9 +348,9 @@ fn main(): i32 {
     failure(error) => { return 37 }
   }
 
-  // condvar: a waiter wakes on notification
+  // condition: a waiter wakes on notification
   let state = arc.new(mutex.new(false))
-  let cv = arc.new(condvar.new())
+  let cv = arc.new(condition.new())
   let s2 = state.retain()
   let c2 = cv.retain()
   let waiter = thread.spawn(take fn(): i32 {

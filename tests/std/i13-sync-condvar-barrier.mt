@@ -1,10 +1,10 @@
 // expect-exit: 0
-// Evidence for the V1 Condvar and Barrier operations. Waits are checked for
+// Evidence for the V1 Condition and Barrier operations. Waits are checked for
 // predicate handoff across threads, expiry and immediate return; barrier
 // rounds are checked for exactly one leader per round.
 import std.thread
 import std.time
-import std.sync.{ barrier, condvar, mutex }
+import std.sync.{ barrier, condition, mutex }
 import alloc.arc
 import core.clone.Clone
 import core.default.Default
@@ -15,7 +15,7 @@ fn default_value<T: Default>(): T { T.(Default).default() }
 // wakes every waiter; notify_one and default construction are exercised too.
 fn checks_condvar_handoff(): i32 {
     let state = arc.new(mutex.new(false))
-    let signal = arc.new(condvar.new())
+    let signal = arc.new(condition.new())
     var waiters = alloc.vec.new<thread.JoinHandle<i32>>()
     var spawned = 0
     while spawned < 2 {
@@ -93,7 +93,7 @@ fn checks_condvar_handoff(): i32 {
     if !stuck_wait.1.timed_out() { return 13 }
     core.mem.drop(stuck_wait.0)
 
-    let fallback = condvar.new()
+    let fallback = condition.new()
     let fallback_lock = mutex.new(0)
     let fallback_locked = capture fallback_lock.lock()
     let fallback_guard = match take fallback_locked { success(g) => g, failure(e) => e.into_inner() }
@@ -101,7 +101,7 @@ fn checks_condvar_handoff(): i32 {
     let short = match take short_result { success(value) => value, failure(e) => e.into_inner() }
     if !short.1.timed_out() { return 14 }
     core.mem.drop(short.0)
-    let defaulted: condvar.Condvar = default_value<condvar.Condvar>()
+    let defaulted: condition.Condition = default_value<condition.Condition>()
     defaulted.notify_all()
     0
 }

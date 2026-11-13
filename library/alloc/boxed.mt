@@ -642,8 +642,8 @@ extend<A: Allocator> Box<[u8], A> implements From<Box<Text, A>> {
         unsafe { from_raw_in(bytes, raw.1) }
     }
 }
-extend<region r, T: Clone> Box<[T]> implements From<super.borrow.Cow<region r, T>> {
-    static fn from(take value: super.borrow.Cow<region r, T>): Box<[T]> { value.into_owned().into_boxed_slice() }
+extend<region r, T: Clone> Box<[T]> implements From<super.borrow.BorrowedOrOwned<region r, [T]>> {
+    static fn from(take value: super.borrow.BorrowedOrOwned<region r, [T]>): Box<[T]> { value.into_owned().into_boxed_slice() }
 }
 extend<region r> Box<Text> implements From<read Text from r> {
     static fn from(take value: read Text from r): Box<Text> { copy_text(value) }
