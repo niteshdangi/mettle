@@ -355,6 +355,11 @@ extend Duration implements Mul<u32> {
     fn mul(read rhs: u32): Duration { mul_durations(self, rhs) }
 }
 
+extend u32 implements Mul<Duration> {
+    type Output = Duration
+    fn mul(read rhs: Duration): Duration { mul_durations(rhs, self) }
+}
+
 extend Duration implements Div<u32> {
     type Output = Duration
     fn div(read rhs: u32): Duration { div_durations(self, rhs) }

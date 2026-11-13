@@ -1708,6 +1708,9 @@ extend Ipv4Addr implements FromStr {
 extend Ipv4Addr implements From<u32> {
     static fn from(take value: u32): Ipv4Addr { Ipv4Addr(value) }
 }
+extend u32 implements From<Ipv4Addr> {
+    static fn from(take value: Ipv4Addr): u32 { value.to_bits() }
+}
 extend Ipv4Addr implements From<[u8; 4]> {
     static fn from(take value: [u8; 4]): Ipv4Addr { Ipv4Addr.from_octets(value) }
 }
@@ -1763,6 +1766,9 @@ extend Ipv6Addr implements FromStr {
 }
 extend Ipv6Addr implements From<u128> {
     static fn from(take value: u128): Ipv6Addr { Ipv6Addr.from_bits(value) }
+}
+extend u128 implements From<Ipv6Addr> {
+    static fn from(take value: Ipv6Addr): u128 { value.to_bits() }
 }
 extend Ipv6Addr implements From<[u8; 16]> {
     static fn from(take value: [u8; 16]): Ipv6Addr { Ipv6Addr.from_octets(value) }
