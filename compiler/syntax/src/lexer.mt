@@ -65,26 +65,56 @@ extend<region r> Scanner<region r> {
             }
         }
     }
-    fn raw_quote(prefix: usize): usize? {
-        var index = self.pos + prefix
-        while index < self.bytes.len() && self.bytes[index] == b'#' { index += 1 }
-        if index < self.bytes.len() && self.bytes[index] == b'"' { present(index) } else { none }
+    fn quote_at(index: usize): bool {
+        index + 3 <= self.bytes.len() && self.bytes[index] == b'"' && self.bytes[index + 1] == b'"' && self.bytes[index + 2] == b'"'
     }
-    mut fn raw_text(quote: usize, begin: usize): Unit {
-        let prefix = if self.bytes[begin] == b'b' { 2usize } else { 1usize }
-        let fence = quote - begin - prefix
-        self.pos = quote + 1
-        var closed = false
-        while self.pos < self.bytes.len() {
-            let byte = self.bytes[self.pos]
-            self.pos += 1
-            if byte != b'"' { continue }
-            var seen = 0usize
-            while seen < fence && self.pos + seen < self.bytes.len() && self.bytes[self.pos + seen] == b'#' { seen += 1 }
-            if seen == fence { self.pos += fence; closed = true; break }
+    fn block_quote(): usize? {
+        let prefixed = self.bytes[self.pos] == b'b' || self.bytes[self.pos] == b'f'
+        let index = if prefixed { self.pos + 1 } else { self.pos }
+        if self.quote_at(index) { present(index) } else { none }
+    }
+    fn removed_raw(): bool {
+        var index = self.pos
+        if self.bytes[index] == b'b' { index += 1 }
+        if index >= self.bytes.len() || self.bytes[index] != b'r' { return false }
+        index += 1
+        while index < self.bytes.len() && self.bytes[index] == b'#' { index += 1 }
+        index < self.bytes.len() && self.bytes[index] == b'"'
+    }
+    fn skip_blank(index: usize): usize {
+        var cursor = index
+        while cursor < self.bytes.len() && (self.bytes[cursor] == 32u8 || self.bytes[cursor] == 9u8) { cursor += 1 }
+        cursor
+    }
+    mut fn removed_raw_text(begin: usize): Unit {
+        if self.bytes[begin] == b'b' { self.pos += 1 }
+        self.pos += 1
+        while self.bytes[self.pos] == b'#' { self.pos += 1 }
+        self.error(Phase.Lex, begin, self.pos, "raw text literals were removed; use a \"\"\" text block")
+        self.add(Kind.Word, begin)
+    }
+    mut fn text_block(quote: usize, begin: usize): Unit {
+        self.pos = quote + 3
+        if quote != begin {
+            if self.bytes[begin] == b'b' { self.error(Phase.Lex, begin, self.pos, "byte text blocks are reserved") }
+            else { self.error(Phase.Lex, begin, self.pos, "interpolated text blocks are reserved") }
         }
-        if !closed { self.error(Phase.Lex, begin, self.pos, "unterminated raw text literal") }
-        self.add(Kind.PrefixedText, begin)
+        self.pos = self.skip_blank(self.pos)
+        var closed = false
+        if self.pos < self.bytes.len() && !newline(self.bytes[self.pos]) {
+            self.error(Phase.Lex, begin, self.pos, "a text block's opening \"\"\" must end its line")
+            closed = true
+        }
+        while !closed && self.pos < self.bytes.len() {
+            let terminator = self.bytes[self.pos]
+            self.pos += 1
+            if terminator == 13u8 && self.pos < self.bytes.len() && self.bytes[self.pos] == 10u8 { self.pos += 1 }
+            let indent = self.skip_blank(self.pos)
+            if self.quote_at(indent) { self.pos = indent + 3; closed = true }
+            else { while self.pos < self.bytes.len() && !newline(self.bytes[self.pos]) { self.pos += 1 } }
+        }
+        if !closed { self.error(Phase.Lex, begin, self.pos, "unterminated text block") }
+        self.add(Kind.Text, begin)
     }
     mut fn quoted(quote: u8): bool {
         var escaped = false
@@ -233,8 +263,10 @@ extend<region r> Scanner<region r> {
                 } else { self.pos += 1 }
                 if !valid || self.pos == content { self.error(Phase.Lex, begin, self.pos, "backtick contents must be an identifier") }
                 self.add(Kind.QuotedWord, begin)
-            } else if (byte == b'r' || self.at("br")) && self.raw_quote(if byte == b'b' { 2usize } else { 1usize }).is_present() {
-                if let present(quote) = self.raw_quote(if byte == b'b' { 2usize } else { 1usize }) { self.raw_text(quote, begin) }
+            } else if self.removed_raw() {
+                self.removed_raw_text(begin)
+            } else if self.block_quote().is_present() {
+                if let present(quote) = self.block_quote() { self.text_block(quote, begin) }
             } else if self.at("f\"") {
                 self.pos += 2
                 self.add(Kind.FormatOpen, begin)

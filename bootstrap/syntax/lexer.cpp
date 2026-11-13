@@ -7,9 +7,26 @@ bool wordStart(unsigned char c) {
   return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
 }
 bool digit(unsigned char c) { return c >= '0' && c <= '9'; }
-bool rawTextStart(const std::string &s, std::size_t i) {
-  while (i < s.size() && s[i] == '#')
+bool horizontalSpace(char c) { return c == ' ' || c == '\t'; }
+bool lineEnd(const std::string &s, std::size_t i) {
+  return i >= s.size() || s[i] == '\n' || s[i] == '\r';
+}
+// Position of the `"""` that follows an optional `b` or `f` prefix at `i`.
+std::optional<std::size_t> blockQuote(const std::string &s, std::size_t i) {
+  if (s[i] == 'b' || s[i] == 'f')
     ++i;
+  if (s.compare(i, 3, "\"\"\"") == 0)
+    return i;
+  return std::nullopt;
+}
+// Whether a removed `r"`, `r#"`, `br"` or `br#"` literal starts at `i`.
+bool removedRawText(const std::string &s, std::size_t i) {
+  if (s[i] == 'b')
+    ++i;
+  if (i >= s.size() || s[i] != 'r')
+    return false;
+  while (++i < s.size() && s[i] == '#') {
+  }
   return i < s.size() && s[i] == '"';
 }
 } // namespace
@@ -139,32 +156,44 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
         diagnostics.error("lex", {start, i},
                           "backtick contents must be an identifier");
       add(TokenKind::QuotedWord, start);
-    } else if ((c == 'r' ||
-                (c == 'b' && i + 1 < s.size() && s[i + 1] == 'r')) &&
-               rawTextStart(s, i + (c == 'b' ? 2 : 1))) {
-      // r"..." / r#"..."# with matched fences; br for raw byte text.
+    } else if (removedRawText(s, i)) {
       i += c == 'b' ? 2 : 1;
-      std::size_t fence = 0;
-      while (s[i] == '#') {
-        ++fence;
+      while (s[i] == '#')
         ++i;
-      }
-      ++i;
+      diagnostics.error(
+          "lex", {start, i},
+          "raw text literals were removed; use a \"\"\" text block");
+      add(TokenKind::Word, start);
+    } else if (auto quote = blockQuote(s, i)) {
+      i = *quote + 3;
+      if (*quote != start)
+        diagnostics.error("lex", {start, i},
+                          c == 'b' ? "byte text blocks are reserved"
+                                   : "interpolated text blocks are reserved");
+      while (i < s.size() && horizontalSpace(s[i]))
+        ++i;
       bool closed = false;
-      while (i < s.size() && !closed) {
-        if (s[i++] != '"')
-          continue;
-        std::size_t seen = 0;
-        while (seen < fence && i + seen < s.size() && s[i + seen] == '#')
-          ++seen;
-        if (seen == fence) {
-          i += fence;
+      if (!lineEnd(s, i)) {
+        diagnostics.error("lex", {start, i},
+                          "a text block's opening \"\"\" must end its line");
+        closed = true;
+      }
+      while (!closed && i < s.size()) {
+        if (s[i++] == '\r' && i < s.size() && s[i] == '\n')
+          ++i;
+        auto indent = i;
+        while (indent < s.size() && horizontalSpace(s[indent]))
+          ++indent;
+        if (s.compare(indent, 3, "\"\"\"") == 0) {
+          i = indent + 3;
           closed = true;
-        }
+        } else
+          while (!lineEnd(s, i))
+            ++i;
       }
       if (!closed)
-        diagnostics.error("lex", {start, i}, "unterminated raw text literal");
-      add(TokenKind::PrefixedText, start);
+        diagnostics.error("lex", {start, i}, "unterminated text block");
+      add(TokenKind::Text, start);
     } else if (c == 'f' && i + 1 < s.size() && s[i + 1] == '"') {
       i += 2;
       tokens.push_back({TokenKind::FormatOpen, {start, i, source.id}, "f\""});

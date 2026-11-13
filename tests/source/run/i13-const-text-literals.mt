@@ -25,11 +25,13 @@ const fn literal_scalars(): bool {
     if escaped.len() != 5usize || bytes[0usize] != 0xc3u8 ||
         bytes[1usize] != 0xa9u8 || bytes[2usize] != 10u8 ||
         bytes[3usize] != 0u8 || bytes[4usize] != 92u8 { return false }
-    let raw = r"x\y"
-    let raw_view = raw.as_bytes()
-    if raw.len() != 3usize || raw_view[1usize] != 92u8 { return false }
-    let raw_bytes: read [u8; 3] = br"x\y"
-    if raw_bytes[1usize] != 92u8 || !three_bytes(b"\x00\xff\n") { return false }
+    let block = """
+        x\y
+        """
+    let block_view = block.as_bytes()
+    if block.len() != 3usize || block_view[1usize] != 92u8 { return false }
+    let escaped_bytes: read [u8; 3] = b"x\\y"
+    if escaped_bytes[1usize] != 92u8 || !three_bytes(b"\x00\xff\n") { return false }
     let text = "a\u{e9}z"
     if text.is_char_boundary(2usize) || !text.is_char_boundary(3usize) {
         return false

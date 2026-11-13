@@ -19,7 +19,7 @@ namespace mettle {
 // written), trailing whitespace is removed, blank lines are collapsed to at
 // most one and the file ends in exactly one newline. Long lines may break at
 // commas, selected binary operators and chained member access. Comments, text
-// literals (including multi-line raw text) and f-strings keep their bytes
+// literals (including multi-line text blocks) and f-strings keep their bytes
 // (line comments lose trailing whitespace).
 //
 // The result is checked before it is returned: it must lex and parse, have

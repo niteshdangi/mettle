@@ -1417,7 +1417,7 @@ def package_options_need_package():
 
 def fmt_normalizes_layout_only():
     # Indentation, spacing, trailing whitespace and blank runs change; the
-    # comments, the multi-line raw text and the line structure do not.
+    # comments, the multi-line text block and the line structure do not.
     messy = (
         "// header comment   \n"
         "fn   double(value:i32):i32=>value  *  2\n"
@@ -1435,8 +1435,10 @@ def fmt_normalizes_layout_only():
         "/* block\n"
         "     comment */\n"
         "fn main(): i32 {\n"
-        "  let text = r\"raw one\n"
-        "   raw two  \"\n"
+        "  let text = \"\"\"\n"
+        "   raw one\n"
+        "   raw two  \n"
+        "   \"\"\"\n"
         "\tlet total = add( 1,2 )    // note  \n"
         "  let list = [1,\n"
         "  2,\n"
@@ -1467,8 +1469,10 @@ def fmt_normalizes_layout_only():
         "/* block\n"
         "     comment */\n"
         "fn main(): i32 {\n"
-        "    let text = r\"raw one\n"
-        "   raw two  \"\n"
+        "    let text = \"\"\"\n"
+        "   raw one\n"
+        "   raw two  \n"
+        "   \"\"\"\n"
         "    let total = add(1, 2) // note\n"
         "    let list = [1,\n"
         "        2,\n"

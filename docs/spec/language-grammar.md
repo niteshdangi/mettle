@@ -30,10 +30,24 @@ Text uses `"..."`; scalar characters use `'...'`; byte text/scalars use a `b`
 prefix. Escapes: backslash, matching quote, n, r, t, 0, and Unicode scalar
 `\u{hex}` in Unicode literals; byte escapes use `\xHH`. Byte scalar literals
 must produce one byte; character literals exactly one valid scalar.
-Raw text uses `r"..."` or matched hash fences `r#"..."#`; raw byte text uses `br`.
 Interpolated text uses `f"..."`, with `{ expression }` holes and doubled braces
-for literal braces. Raw and interpolation combinations are reserved until
-specified, not silently concatenated.
+for literal braces.
+
+A text block is the multi-line, escape-free text form. A `"""` that is followed
+only by optional spaces or tabs and a line terminator opens a block; the content
+starts on the next line and ends at the first later line whose leading spaces and
+tabs are followed by `"""`, and that closing line's indentation is the block's
+indentation. The value is the lines between the delimiters with the indentation
+removed from each, joined by `\n` (CR and CRLF terminators become `\n`) with no
+terminator after the last line. A non-blank line must begin with exactly that
+indentation; a blank line (spaces and tabs only) may be shorter and becomes empty.
+Escapes are not processed, so backslashes, quotes and braces are literal; a block
+cannot contain a line consisting only of `"""`. Text after the closing `"""`
+lexes normally. A `"""` that does not end its line, an unclosed block and a
+content line indented less than the closing line are lexical errors. Text blocks
+replace the former `r"..."`, `r#"..."#` and `br` forms, which are rejected with a
+diagnostic naming `"""`. `b"""` and `f"""` (byte blocks and interpolation in a
+block) are reserved until specified and are rejected, not silently concatenated.
 
 Reserve the additional keywords used below. Unsupported reserved constructs
 produce a feature-not-implemented diagnostic, not reinterpretation as identifiers.
@@ -485,7 +499,7 @@ field_pattern = IDENT, [ ":", pattern ] | ".." ;
 slice_patterns = [ slice_pattern, { ",", slice_pattern }, [ "," ] ] ;
 slice_pattern = pattern | [ IDENT, "@" ], ".." ;
 literal       = INTEGER | FLOAT | CHARACTER | BYTE | TEXT | BYTE_TEXT
-              | RAW_TEXT | RAW_BYTE_TEXT | "true" | "false" ;
+              | "true" | "false" ;
 const_expression = expression ;
 static_item   = attributes, [ visibility ], "static", [ "mut" ],
                 IDENT, ":", type, "=", expression, [ ";" ] ;

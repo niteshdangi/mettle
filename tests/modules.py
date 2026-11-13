@@ -36,8 +36,10 @@ static BYTES: read [u8; 2] from static = b"ab";
 fn main(): i32 {
     if GREETING.len() != 4usize { return 1 }
     if BYTES[1] != 98u8 { return 2 }
-    let raw = r#"a\\n"b"#
-    if raw.len() != 5usize { return 3 }
+    let block = \"\"\"
+        a\\n"b
+        \"\"\"
+    if block.len() != 5usize { return 3 }
     0
 }
 """

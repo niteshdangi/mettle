@@ -80,8 +80,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "trivia": b" \t\v\f\r\n// cafe\xc3\xa9\r/* outer /* inner */ done */\n",
             "numbers": b"1..3 1..=3 1.5e+3 2f32 3.25 1e-9 0xff 0o77 0b10 tuple.0.1 tuple. /*x*/ 0.1",
             "symbols": b"... ..= >>= <<= == != <= >= && || += -= *= /= %= &= |= ^= << >> -> => ?. ?? (){}[],;:+-*/%!=<>&|^.?@$",
-            "text": b'"" "a\\\"b\\\\c" b"hello" r#"a"b"# br##"one\ntwo"## `type`',
-            "format": b'f"plain" f"{{x}} {value}" f"{ { 1 } }" f"{f"{2}"}" f"{r#"}"#}"',
+            "text": b'"" "a\\\"b\\\\c" b"hello" """\n  a"b\n  """ `type`',
+            "format": b'f"plain" f"{{x}} {value}" f"{ { 1 } }" f"{f"{2}"}" f"{"}"}"',
             "characters": "'a' '\\n' '\\u{10ffff}' '\\u{0}' '\\u{d7ff}' '\\u{e000}' '\u00e9' '\U0001f600' b'a' b'\\xFF' b'\\0'".encode(),
         }
         invalid = {
@@ -91,7 +91,10 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "utf8-surrogate": b"\xed\xa0\x80",
             "utf8-range": b"\xf4\x90\x80\x80",
             "comment-eof": b"/* outer /* inner */",
-            "raw-eof": b'r##"text"#',
+            "block-eof": b'"""\ntext',
+            "block-inline": b'"""text"""',
+            "block-byte": b'b"""\na\n"""',
+            "raw-removed": b'br#"text"#',
             "text-newline": b'"text\r\nnext',
             "backtick-eof": b"`bad",
             "backtick-empty": b"``",
@@ -314,7 +317,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "array": "[1, 2, 3,][0]",
             "repeat": "[42; count]",
             "ranges": "(1..3, ..4, 5.., .., 1..=3)",
-            "literals": "(1.25e+3, 'x', b'\\xff', \"a\\n\", r#\"raw\\n\"#, br#\"bytes\"#)",
+            "literals": "(1.25e+3, 'x', b'\\xff', \"a\\n\", \"\"\"\n  block\n  \"\"\", b\"bytes\")",
             "bindings": "let value: i32 = 2\nvar count = value\ncount += 3\nlet _ = other()\ncount",
             "tail-newline": "42 // tail\n",
             "tail-semicolon": "42\n;\n",
@@ -494,8 +497,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                     ('"\\u{110000}"', "invalid Unicode scalar escape"),
                     ('b"\\u{41}"', "invalid text escape"),
                     ('b"\\xgg"', "byte escape requires two hexadecimal digits"),
-                    ('b"\u00e9"', "byte text must contain only ASCII characters"),
-                    ('br#"\u00e9"#', "byte text must contain only ASCII characters"))
+                    ('b"\u00e9"', "byte text must contain only ASCII characters"))
         for i, (literal, message) in enumerate(bad_text):
             if not selected(f"text-{i}"):
                 continue
