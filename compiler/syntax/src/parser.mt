@@ -146,7 +146,7 @@ extend<region r> Parser<region r> {
         (self.at("fn") || self.at("let") || self.at("var") || self.at("if") || self.at("else")
             || self.at("while") || self.at("loop") || self.at("return") || self.at("break") || self.at("continue")
             || self.at("true") || self.at("false") || self.at("type") || self.at("copy") || self.at("enum")
-            || self.at("pub") || self.at("module") || self.at("import") || self.at("interface")
+            || self.at("pub") || self.at("internal") || self.at("module") || self.at("import") || self.at("interface")
             || self.at("read") || self.at("mut") || self.at("take") || self.at("const") || self.at("static")
             || self.at("unsafe") || self.at("extern") || self.at("async") || self.at("await") || self.at("throws")
             || self.at("throw") || self.at("try") || self.at("capture") || self.at("match") || self.at("for")
@@ -173,6 +173,16 @@ extend<region r> Parser<region r> {
         self.position = look.next
         self.refresh()
         let followed = self.name_token()
+        self.position = position
+        self.look = look
+        followed
+    }
+    mut fn followed_by_word(): bool {
+        let position = self.position
+        let look = self.look
+        self.position = look.next
+        self.refresh()
+        let followed = self.look.token.kind.is(Kind.Word) || self.look.token.kind.is(Kind.QuotedWord)
         self.position = position
         self.look = look
         followed
@@ -1184,7 +1194,7 @@ extend<region r> Parser<region r> {
             self.result.diagnostics.issues.truncate(issues)
             self.result.diagnostics.error_count = errors
         }
-        if self.at("@") || self.at("pub") || self.at("type") || self.at("copy") || self.at("enum") || self.at("interface") || self.at("module") || self.at("import") || self.at("extern") || self.at("const") || self.at("static") || self.at("alias") || self.at("macro") || self.named_function_ahead() {
+        if self.at("@") || self.at("pub") || self.at("internal") || self.at("type") || self.at("copy") || self.at("enum") || self.at("interface") || self.at("module") || self.at("import") || self.at("extern") || self.at("const") || self.at("static") || self.at("alias") || self.at("macro") || self.named_function_ahead() {
             try self.declaration(BodyContext.File)
             return
         }
@@ -1282,7 +1292,7 @@ extend<region r> Parser<region r> {
             else if self.at("}") {
                 if open == 0 && block { break }
                 if open != 0 { open -= 1 }
-            } else if open == 0 && (self.look.token.kind.is(Kind.Newline) || self.at(";") || (enclosed == 0 && (self.at("fn") || self.at("pub") || self.at("module") || self.at("import")))) { break }
+            } else if open == 0 && (self.look.token.kind.is(Kind.Newline) || self.at(";") || (enclosed == 0 && (self.at("fn") || self.at("pub") || self.at("internal") || self.at("module") || self.at("import")))) { break }
             self.advance()
         }
         try self.finish(NodeKind.Error, start, saved.pending, none)
@@ -1315,17 +1325,17 @@ extend<region r> Parser<region r> {
         self.depth -= 1
     }
     mut fn visibility(): Unit throws Failure {
-        if self.at("pub") {
+        if self.at("pub") || self.at("internal") {
             let visibility = self.anchor()
             let visibility_mark = self.pending.len()
             let operation = self.look.index as u32
+            let public = self.at("pub")
             self.advance()
-            if self.consume("(") {
-                self.suppressed += 1
-                self.refresh()
-                try self.name(false)
-                while self.consume(".") { try self.name(false) }
-                try self.close(")", "expected ')'")
+            if public {
+                if self.at("parent") && self.followed_by_word() { self.advance() }
+                else if self.at("(") {
+                    try self.fail("'pub(path)' visibility was removed; use 'internal' for package visibility or 'pub parent' for the parent module", Phase.Parse)
+                }
             }
             try self.finish(NodeKind.Visibility, visibility, visibility_mark, present(operation))
         }
