@@ -238,6 +238,31 @@ sanitizer instrumentation still runs in debug emission. Selector changes need
 measured evidence across supported targets. Every symbolic body, including
 unused declarations, must still be checked.
 
+### 5.5. Front-end work items from the 2026-11-14 profile (I14)
+
+Pilot measurements (WSL2, loaded machine, indicative only; repeat under the
+section 5.1 protocol before claiming a result). A program importing only
+`std.io`, no build cache, took about 21 s in the front end; importing `core`
+only, about 7 s; an empty program, about 2 s. With the checked-library cache
+warm, a small test builds in about 2.4 s. Stack sampling of the 21 s case (ten
+interrupted runs, one per 2 s mark; proportions are approximate) showed, in
+order: SHA-256 hashing of the library sources and archive preparation (first
+~6 s), interface-implementation coherence over the whole library
+(`Solver::coherent`, ~6-10 s), IR verification (~12 s), and borrow/loan
+analysis (`analysis::loans`, ~14-16 s). LLVM codegen and linking added about
+0-4 s. The library does not change between builds, yet each pass re-runs over
+it. These are I14 compile-time gate candidates, not V1 behavior changes; each
+must keep every symbolic body checked (section 5.4).
+
+| Item | Work | Acceptance |
+| --- | --- | --- |
+| I14-C1 | Library input hashing: stop re-reading and software-hashing the whole library per invocation. Keep the cache-key semantics (library contents, path, compiler identity and the flags in `library_cache.cpp`) but obtain the content identity from a size/mtime-validated manifest and use hardware SHA where available. | Same keys for same inputs; changed content still invalidates; cold and warm wall time before/after |
+| I14-C2 | Coherence: store the library-only coherence result in the checked-library archive; per build check only the program's implementations against the library and each other. | Identical diagnostics on overlap, orphan and conflicting-implementation fixtures; wall-time delta |
+| I14-C3 | IR verification and loan/origin analysis of library functions: record the verified/analyzed result in the archive keyed by library contents and reuse it, instead of re-running per build. Do not skip any body. | Same diagnostics and unwind/cleanup behavior; wall-time and peak-RSS delta |
+
+Record raw before/after results in the I14 evidence bundle; a faster result
+does not offset a regression in retained cache bytes (section 5.1).
+
 ## 6. V1 / V1.1 / V1.2 evidence
 
 V1 requires the audited capability denominator, supported-profile probes, semantic
