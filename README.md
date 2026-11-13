@@ -106,11 +106,12 @@ count) controls granularity, not concurrency; it replaces the previous
 `METTLE_LIBRARY_TEST_JOBS` and `METTLE_SOURCE_TEST_JOBS` settings. Use `ctest -j N`
 for the global CPU/memory budget. `tools/build.py --test-jobs N` passes the same
 budget (default at most four); lower it for memory-heavy or sanitized compilers.
-`METTLE_TEST_CACHE_LIMIT_KIB` sets the shared suite cache budget (default 2097152,
-2 GiB). Six checked interfaces alone (core/alloc/std, debug/release) occupied
+`METTLE_TEST_CACHE_LIMIT_KIB` sets the shared suite cache budget (default 8388608,
+8 GiB). Six checked interfaces alone (core/alloc/std, debug/release) occupied
 794,493,268 bytes in a private baseline cache, exceeding the compiler's default
 512 MiB before objects or sanitizer variants. The suite budget adds headroom;
-it is not a measured full-suite working set. Package workers do not receive this
+the priming fixtures plus sanitizer variants hold about 1.5 GiB, and a 2 GiB budget evicted
+the variant entries in a measured run. It is not a measured full-suite working set. Package workers do not receive this
 override, so cold-cache and eviction tests retain their existing budgets.
 Standalone runners retain `-j N` and accept zero-based `--shard-index I
 --shard-count N`. Each shard writes separate artifacts and evidence.
