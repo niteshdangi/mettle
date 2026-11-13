@@ -176,9 +176,8 @@ resource exhaustion, not silently produce incomplete items.
 Declarative macros occupy a namespace distinct from values and types. Explicit
 single-name and grouped imports bind macros in that namespace before expansion;
 `pub import` reexports them, while a private import does not. Macro import
-ambiguity is a name error. Restricted `pub(path)` boundaries apply uniformly to
-functions, types, constants, statics and macros; the boundary must name an
-enclosing module.
+ambiguity is a name error. `internal` and `pub parent` boundaries apply uniformly to
+functions, types, constants, statics and macros.
 
 The extension host API is versioned independently from compiler internals.
 A plugin declares its required API major version and minimum minor capabilities.

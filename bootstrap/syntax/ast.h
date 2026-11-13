@@ -260,9 +260,10 @@ inline NodeOwner NodeOwner::borrow(Node &node) {
   result.owning = false;
   return result;
 }
-// Restriction of loader- and expander-generated items; no source spelling
-// produces it.
+// `restriction` of a public item is empty (`pub`), packageVisibility
+// (`internal`) or parentVisibility (`pub parent`).
 inline const std::vector<std::string> packageVisibility = {"<package>"};
+inline const std::vector<std::string> parentVisibility = {"<parent>"};
 struct VisibilitySyntax {
   bool publicItem = false;
   std::vector<std::string> restriction;

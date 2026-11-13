@@ -333,7 +333,7 @@ extend<T: unsized, A: Allocator> Box<T, A> {
     }
     // Safety: use a valid prefix Layout, initialize only that extent, and adopt the aligned payload with the returned padded layout/allocator.
     // Failure drops the source Box; success transfers both blocks: free source once with its original layout, without dropping the moved payload.
-    pub(super) take unsafe fn try_move_with_prefix(
+    pub parent take unsafe fn try_move_with_prefix(
         prefix: Layout
     ): (ptr<mut T>, ptr<mut u8>, Layout, ptr<mut u8>, Layout, A) throws AllocError {
         var source = self

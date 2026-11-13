@@ -356,7 +356,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "declaration-generic": "fn identity<T, region r, const N: usize = 4>(read value: T): T { value }",
             "declaration-defaults": "fn defaults<T = i32>(value: T = 42): T { value }",
             "declaration-constraints": "fn convert<T: Trait + ?Sized, U>(value: T): U\nwhere T: Other, U = Result<T> { other(value) }",
-            "declaration-public": "pub(package) unsafe const fn identity<T>(value: T): T => value",
+            "declaration-public": "internal unsafe const fn identity<T>(value: T): T => value",
+            "declaration-parent": "pub parent fn up() { 1 }\ninternal type Node { pub parent: i32 }",
             "declaration-effect": "fn load<T>(value: T): T throws Error where T: Trait { value }",
             "declaration-generic-value": "fn main() => factory<T>",
             "declaration-contextual-format": "fn format(format: format, value: format.Message) { format }",
@@ -390,6 +391,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
 
         rejected = {
             "missing-rhs": "fn main() { 1 + }",
+            "visibility-path-removed": "pub(super) fn f() { 0 }",
             "same-line": "fn main() { 1 2 }",
             "comparison-chain": "fn main() { a < b < c }",
             "range-chain": "fn main() { 1..2..3 }",
@@ -717,8 +719,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
 
         signatures = {
             "full": (
-                "pub(package) unsafe const fn select<region r: static, T: Trait + ?Sized = Other, const N: usize = 4>(read value: T = input): T throws Error\nwhere T: Other + ?Sized, region r: static, T = Result<T> => value",
-                ["visibility(package)", "modifier[unsafe]()", "modifier[const]()", "select",
+                "internal unsafe const fn select<region r: static, T: Trait + ?Sized = Other, const N: usize = 4>(read value: T = input): T throws Error\nwhere T: Other + ?Sized, region r: static, T = Result<T> => value",
+                ["visibility()", "modifier[unsafe]()", "modifier[const]()", "select",
                  "generic-parameters(generic-parameter[region](r,bounds(static)),generic-parameter(T,bounds(Trait,modifier[?](Sized)),default-type(Other)),generic-parameter[const](N,usize,default-value(expr[4])))",
                  "parameters(parameter[read](value,T,default-value(expr[input])))", "T", "effect(Error)",
                  "constraints(constraint[:](T,bounds(Other,modifier[?](Sized))),constraint[:](modifier[region](r),bounds(static)),constraint[=](T,apply(Result,arguments(argument(T)))))"]),
@@ -763,9 +765,9 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
 
         module_cases = {
             "imports": (
-                "pub(package) import dep.api as selected;\nimport dep.{A, B as C,}\nimport dep.*",
-                "module(import(visibility(package),import-path(dep,api),import-alias(selected)),import(import-path(dep),import-group(import-name(A),import-name(B,import-alias(C)))),import(import-path(dep),import-glob()))",
-                ["pub(package) import dep.api as selected"]),
+                "internal import dep.api as selected;\nimport dep.{A, B as C,}\nimport dep.*",
+                "module(import(visibility(),import-path(dep,api),import-alias(selected)),import(import-path(dep),import-group(import-name(A),import-name(B,import-alias(C)))),import(import-path(dep),import-glob()))",
+                ["internal import dep.api as selected"]),
             "inline": (
                 "pub module api {\nimport dep\nmodule child;\nfn entry() { 42 }\n}",
                 "module(module-declaration(visibility(),api,module-body(import(import-path(dep)),module-declaration(child),function(entry,parameters(),block(expr[42])))))",
@@ -1085,9 +1087,9 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             if result.stderr.count("error[") != 140:
                 raise AssertionError("Diagnostics were discarded")
             visibility = source("one-visibility-diagnostic",
-                                "pub(nowhere) fn f(){}\nfn main(){0}\n")
+                                "pub parent fn f(){}\nfn main(){0}\n")
             result = run([executable, "check", str(visibility)], 1)
-            if result.stderr.count("restricted visibility must name an enclosing module") != 1:
+            if result.stderr.count("needs a parent module") != 1:
                 raise AssertionError("One visibility restriction was diagnosed repeatedly")
             independent = source(
                 "independent-exhaustiveness-budgets",

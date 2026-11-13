@@ -15,8 +15,8 @@ bool allOf(std::string_view text, char c) {
 }
 
 bool isModifier(std::string_view word) {
-  return oneOf(word, {"pub", "copy", "static", "take", "mut", "read", "async",
-                      "unsafe", "extern", "const", "heap"});
+  return oneOf(word, {"pub", "internal", "copy", "static", "take", "mut",
+                      "read", "async", "unsafe", "extern", "const", "heap"});
 }
 
 bool isKeyword(std::string_view word) {
@@ -243,8 +243,15 @@ private:
       ++j;
       auto next = skipSpaces(j);
       if (lead.back() == "pub" && next < tokens.size() &&
-          isSymbol(tokens[next], "("))
-        j = closing(next);
+          tokens[next].kind == TokenKind::Word &&
+          tokens[next].text == "parent") {
+        auto after = skipSpaces(next + 1);
+        if (after < tokens.size() && tokens[after].kind == TokenKind::Word) {
+          exported = false;
+          lead.push_back("parent");
+          j = next + 1;
+        }
+      }
     }
     j = skipSpaces(j);
     auto has = [&](std::string_view word) {

@@ -135,7 +135,8 @@ void Parser::run(Module &module, std::vector<std::string> scope, bool nested) {
         ++position;
       while (peek().kind != TokenKind::End && !is("fn") && !is("type") &&
              !is("copy") && !is("alias") && !is("enum") && !is("union") &&
-             !is("pub") && !is("module") && !is("import") && !is("interface") &&
+             !is("pub") && !is("internal") && !is("module") && !is("import") &&
+             !is("interface") &&
              !(is("extend") && position && tokens[position - 1].text != "." &&
                tokens[position - 1].text != "fn") &&
              !(nested && is("}")))

@@ -132,7 +132,7 @@ def path_dependency():
 def restricted_dependency_visibility():
     app = packages("path-dependency/app")
     library = packages("path-dependency/units/src/main.mt")
-    library.write_text("pub(units) fn secret(): i32 { 21 }\n"
+    library.write_text("internal fn secret(): i32 { 21 }\n"
                        "pub fn base(): i32 { secret() }\n")
     build_and_run(app)
     main = app / "src/main.mt"

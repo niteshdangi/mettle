@@ -69,7 +69,7 @@ extend<T: Clone> T? implements Clone {
         }
     }
 }
-pub(super) type ArrayInit<T, const N: usize> {
+pub parent type ArrayInit<T, const N: usize> {
     storage: core.mem.MaybeUninit<[T; N]>
     initialized: usize
     drop {
@@ -83,10 +83,10 @@ pub(super) type ArrayInit<T, const N: usize> {
 }
 
 extend<T, const N: usize> ArrayInit<T, N> {
-    pub(super) static fn new(): ArrayInit<T, N> {
+    pub parent static fn new(): ArrayInit<T, N> {
         ArrayInit(core.mem.MaybeUninit<[T; N]>.uninit(), 0usize)
     }
-    pub(super) mut fn push(take value: T): Unit {
+    pub parent mut fn push(take value: T): Unit {
         if self.initialized == N { super.panic.panic("array is already initialized") }
         // Safety: this is the next in-bounds uninitialized slot.
         unsafe {
@@ -97,7 +97,7 @@ extend<T, const N: usize> ArrayInit<T, N> {
         }
         self.initialized += 1usize
     }
-    pub(super) take fn finish(): [T; N] {
+    pub parent take fn finish(): [T; N] {
         var guard = self
         if guard.initialized != N { super.panic.panic("array is not initialized") }
         guard.initialized = 0usize

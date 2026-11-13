@@ -188,7 +188,7 @@ def main(executable, directory, only=None, *, jobs=4, pattern=None,
                    "fn main() { child.result() - 42 }\n"})
     case("restricted-visible-siblings", {
         "main.mt": "module outer {\n"
-                   "module a { pub(super) fn answer() { 42 } }\n"
+                   "module a { pub parent fn answer() { 42 } }\n"
                    "module b { pub fn answer() { super.a.answer() } }\n"
                    "pub fn result() { b.answer() }\n}\n"
                    "fn main() { outer.result() - 42 }\n"})
@@ -294,13 +294,13 @@ def main(executable, directory, only=None, *, jobs=4, pattern=None,
                    "pub import hidden as exposed;\n"
                    "fn main() { 0 }\n"},
          "name", "cannot reexport private or restricted item 'exposed'", (2, 5))
-    case("restriction-not-ancestor", {
+    case("restriction-path-removed", {
         "main.mt": "module a {}\nmodule b { pub(main.a) fn bad() { 0 } }\n"
                    "fn main() { 0 }\n"},
-         "name", "restricted visibility must name an enclosing module", (2, 12))
+         "parse", "'pub(path)' visibility was removed; use 'internal' for package visibility or 'pub parent' for the parent module", (2, 15))
     case("restricted-denied", {
-        "main.mt": "module outer { pub(super) module child {\n"
-                   "pub(super) fn hidden() { 42 } } }\n"
+        "main.mt": "module outer { pub parent module child {\n"
+                   "pub parent fn hidden() { 42 } } }\n"
                    "fn main() { outer.child.hidden() }\n"},
          "name", "unresolved or inaccessible function 'outer.child.hidden'", (3, 13))
     case("ambiguous-globs", {

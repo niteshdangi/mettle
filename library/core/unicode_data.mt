@@ -2971,43 +2971,43 @@ fn contains(read ranges: [u32], scalar: u32): bool {
     false
 }
 
-pub(super) fn is_alphabetic(scalar: u32): bool {
+pub parent fn is_alphabetic(scalar: u32): bool {
     contains(read ALPHABETIC_RANGES, scalar)
 }
 
-pub(super) fn is_lowercase(scalar: u32): bool {
+pub parent fn is_lowercase(scalar: u32): bool {
     contains(read LOWERCASE_RANGES, scalar)
 }
 
-pub(super) fn is_uppercase(scalar: u32): bool {
+pub parent fn is_uppercase(scalar: u32): bool {
     contains(read UPPERCASE_RANGES, scalar)
 }
 
-pub(super) fn is_cased(scalar: u32): bool {
+pub parent fn is_cased(scalar: u32): bool {
     contains(read CASED_RANGES, scalar)
 }
 
-pub(super) fn is_case_ignorable(scalar: u32): bool {
+pub parent fn is_case_ignorable(scalar: u32): bool {
     contains(read CASE_IGNORABLE_RANGES, scalar)
 }
 
-pub(super) fn is_grapheme_extend(scalar: u32): bool {
+pub parent fn is_grapheme_extend(scalar: u32): bool {
     contains(read GRAPHEME_EXTEND_RANGES, scalar)
 }
 
-pub(super) fn is_default_ignorable(scalar: u32): bool {
+pub parent fn is_default_ignorable(scalar: u32): bool {
     contains(read DEFAULT_IGNORABLE_RANGES, scalar)
 }
 
-pub(super) fn is_white_space(scalar: u32): bool {
+pub parent fn is_white_space(scalar: u32): bool {
     contains(read WHITE_SPACE_RANGES, scalar)
 }
 
-pub(super) fn is_numeric(scalar: u32): bool {
+pub parent fn is_numeric(scalar: u32): bool {
     contains(read NUMERIC_RANGES, scalar)
 }
 
-pub(super) fn is_debug_escape(scalar: u32, escape_grapheme_extend: bool): bool {
+pub parent fn is_debug_escape(scalar: u32, escape_grapheme_extend: bool): bool {
     contains(read DEBUG_ESCAPE_RANGES, scalar) || is_white_space(scalar) ||
         is_default_ignorable(scalar) ||
         (escape_grapheme_extend && is_grapheme_extend(scalar))
@@ -3032,10 +3032,10 @@ fn find_mapping(read table: [u32], scalar: u32): [u32; 4] {
     [1u32, scalar, 0u32, 0u32]
 }
 
-pub(super) fn lowercase(scalar: u32): [u32; 4] {
+pub parent fn lowercase(scalar: u32): [u32; 4] {
     find_mapping(read LOWERCASE_MAP, scalar)
 }
 
-pub(super) fn uppercase(scalar: u32): [u32; 4] {
+pub parent fn uppercase(scalar: u32): [u32; 4] {
     find_mapping(read UPPERCASE_MAP, scalar)
 }

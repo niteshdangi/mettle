@@ -17,15 +17,22 @@ std::vector<std::string> Parser::path() {
 
 VisibilitySyntax Parser::visibility() {
   VisibilitySyntax result;
+  if (take("internal")) {
+    result.publicItem = true;
+    result.restriction = packageVisibility;
+    result.span = tokens[position - 1].span;
+    return result;
+  }
   if (!take("pub"))
     return result;
   result.publicItem = true;
   result.span = tokens[position - 1].span;
-  if (take("(")) {
-    ++parens;
-    result.restriction = path();
-    result.span.end = expect(")").span.end;
-    --parens;
+  if (is("parent") && nameToken(peek(1))) {
+    result.restriction = parentVisibility;
+    result.span.end = tokens[position++].span.end;
+  } else if (is("(")) {
+    fail("'pub(path)' visibility was removed; use 'internal' for package "
+         "visibility or 'pub parent' for the parent module");
   }
   return result;
 }
