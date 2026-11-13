@@ -111,8 +111,8 @@ fn main(): i32 {
     }
     var other: [u8; 3] = [97, 66, 32]
     let other_view: read [u8] = read other
-    if !byte_view.subslice(1usize, 4usize).unwrap().eq_ignore_ascii_case(
-        other_view.subslice(0usize, 3usize).unwrap()
+    if !byte_view.subslice(1usize, 4usize).or_panic().eq_ignore_ascii_case(
+        other_view.subslice(0usize, 3usize).or_panic()
     ) {
         return 13
     }

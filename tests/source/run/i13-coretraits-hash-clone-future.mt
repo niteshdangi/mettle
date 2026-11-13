@@ -39,13 +39,13 @@ fn main(): i32 {
     }
 
     let pending: Poll<(Outcome<i32, i32>)> = Poll.Pending
-    match take pending.map_err(fn(take error: i32): i32 { error + 1 }) {
+    match take pending.map_failure(fn(take error: i32): i32 { error + 1 }) {
         Poll.Pending => {},
         Poll.Ready(result) => { return 5 }
     }
 
     let ready_error: Poll<(Outcome<i32, i32>)> = Poll.Ready(failure(6i32))
-    match take ready_error.map_err(fn(take error: i32): i32 { error + 1 }) {
+    match take ready_error.map_failure(fn(take error: i32): i32 { error + 1 }) {
         Poll.Ready(result) => match result {
             success(value) => { return 6 },
             failure(error) => { if error != 7 { return 6 } }

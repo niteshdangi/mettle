@@ -4,5 +4,5 @@ import core.outcome
 
 fn main(): i32 {
     let failed: (Outcome<i32, i32>) = failure(1)
-    failed.expect("success required")
+    failed.or_panic("success required")
 }

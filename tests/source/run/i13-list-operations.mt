@@ -114,13 +114,13 @@ fn main(): i32 {
     w.clear()
     if !w.is_empty() || w.pop().is_present() { return 17 }
     w.push(5)
-    if w.pop().unwrap() != 5 { return 18 }
+    if w.pop().or_panic() != 5 { return 18 }
 
     var a = filled(5)
     {
         var d = a.drain(1usize..3usize)
         if d.size_hint().0 != 2usize { return 20 }
-        if d.next().unwrap() != 1 || d.next_back().unwrap() != 2 { return 21 }
+        if d.next().or_panic() != 1 || d.next_back().or_panic() != 2 { return 21 }
     }
     if a.len() != 3usize || a[1usize] != 3 { return 22 }
     let a_len = a.len()
@@ -175,9 +175,9 @@ fn main(): i32 {
     p.push(1)
     p.push(2)
     if p.pop_if(fn(mut x: i32): bool { x == 1 }).is_present() { return 37 }
-    if p.pop_if(fn(mut x: i32): bool { x == 2 }).unwrap() != 2 { return 38 }
-    *p.get_mut(0usize).unwrap() = 9
-    if *p.get(0usize).unwrap() != 9 || p.get(1usize).is_present() { return 39 }
+    if p.pop_if(fn(mut x: i32): bool { x == 2 }).or_panic() != 2 { return 38 }
+    *p.get_mut(0usize).or_panic() = 9
+    if *p.get(0usize).or_panic() != 9 || p.get(1usize).is_present() { return 39 }
 
     var e = filled(6)
     var gone = vec.new<i32>()
@@ -194,7 +194,7 @@ fn main(): i32 {
     repl.push(30)
     {
         var it = sp.splice(1usize..3usize, repl)
-        if it.next().unwrap() != 1 { return 41 }
+        if it.next().or_panic() != 1 { return 41 }
     }
     if sp.len() != 6usize || sp[1usize] != 10 || sp[3usize] != 30 || sp[4usize] != 3 { return 42 }
 

@@ -43,7 +43,7 @@ fn run(): i32 throws Error {
         present(stored) => { if *stored != 1 { return 7 } },
         none => { return 8 }
     }
-    if *set.first().unwrap() != 1 || *set.last().unwrap() != 9 { return 9 }
+    if *set.first().or_panic() != 1 || *set.last().or_panic() != 9 { return 9 }
 
     // Replace and take return the stored element; remove reports presence.
     match set.replace(5) {
@@ -147,7 +147,7 @@ fn run(): i32 throws Error {
     keyed.push(8)
     keyed.push(6)
     var built = btree.SortedSet<i32>.(FromItems<i32>).from_iter(keyed)
-    if built.len() != 2usize || *built.first().unwrap() != 6 { return 44 }
+    if built.len() != 2usize || *built.first().or_panic() != 6 { return 44 }
     var more = vec.new<i32>()
     more.push(7)
     built.extend(more)

@@ -4,7 +4,7 @@ import core.cmp.PartialEq
 
 fn main(): i32 {
     var words = [11u32, 22u32, 33u32]
-    let start = NonNull.new(words.as_mut_ptr()).unwrap()
+    let start = NonNull.new(words.as_mut_ptr()).or_panic()
     let bytes = start.cast<u8>()
     let end = unsafe { start.add(3usize) }
     let extent = core.mem.size_of<u32>() * 3usize

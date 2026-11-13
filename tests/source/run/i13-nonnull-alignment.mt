@@ -4,7 +4,7 @@ import core.num.NonZero
 import std.panic.{catch_panic, CatchResult}
 
 fn alignment_matches<T>(address: usize, alignment: usize): bool {
-    let pointer = NonNull<T>.without_provenance(NonZero<usize>.new(address).unwrap())
+    let pointer = NonNull<T>.without_provenance(NonZero<usize>.new(address).or_panic())
     let stride = core.mem.size_of<T>()
     var expected = usize.MAX
     var offset = 0usize
@@ -44,7 +44,7 @@ fn main(): i32 {
         address += 1usize
     }
     let high_bit = usize.MAX / 2usize + 1usize
-    let one = NonZero<usize>.new(1usize).unwrap()
+    let one = NonZero<usize>.new(1usize).or_panic()
     let byte = NonNull<u8>.without_provenance(one)
     let odd_stride = NonNull<[u8; 3]>.without_provenance(one)
     if byte.align_offset(high_bit) != high_bit - 1usize ||

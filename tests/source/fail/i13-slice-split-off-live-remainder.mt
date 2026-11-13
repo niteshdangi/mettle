@@ -7,7 +7,7 @@ fn main(): i32 {
     var total = 0
     while view.len() > 1usize {
         let held = mut view[0usize]
-        let first = slice.split_off_first_mut(mut view).unwrap()
+        let first = slice.split_off_first_mut(mut view).or_panic()
         *held += *first
         total += *held
     }

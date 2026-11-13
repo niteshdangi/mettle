@@ -175,9 +175,9 @@ fn main(): i32 {
         }
         require_fused(take items)
     }
-    if *list.get(0usize).unwrap() != 10 ||
-        *list.get(1usize).unwrap() != 20 ||
-        *list.get(2usize).unwrap() != 30 {
+    if *list.get(0usize).or_panic() != 10 ||
+        *list.get(1usize).or_panic() != 20 ||
+        *list.get(2usize).or_panic() != 30 {
         return 43
     }
     {
@@ -196,8 +196,8 @@ fn main(): i32 {
         }
         require_fused(take items)
     }
-    if list.len() != 2usize || *list.get(0usize).unwrap() != 10 ||
-        *list.get(1usize).unwrap() != 30 {
+    if list.len() != 2usize || *list.get(0usize).or_panic() != 10 ||
+        *list.get(1usize).or_panic() != 30 {
         return 49
     }
     list.push_back(40)

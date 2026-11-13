@@ -83,7 +83,7 @@ fn alignment_partition<T, U>(
     let size_u = core.mem.size_of<U>()
     if size_t == 0usize || size_u == 0usize { return (len, 0usize, 0usize) }
 
-    let pointer = core.ptr.NonNull<T>.new(data.cast_mut()).unwrap()
+    let pointer = core.ptr.NonNull<T>.new(data.cast_mut()).or_panic()
     let prefix = pointer.align_offset(core.mem.align_of<U>())
     if prefix == 0xffffffffffffffffusize || prefix > len {
         return (len, 0usize, 0usize)
@@ -669,7 +669,7 @@ extend [u8] {
         while start < self.len() && ascii_space(self[start]) {
             start += 1usize
         }
-        self.subslice(start, self.len()).unwrap()
+        self.subslice(start, self.len()).or_panic()
     }
 
     pub fn trim_ascii_end(): read [u8] from self {
@@ -677,7 +677,7 @@ extend [u8] {
         while end > 0usize && ascii_space(self[end - 1usize]) {
             end -= 1usize
         }
-        self.subslice(0usize, end).unwrap()
+        self.subslice(0usize, end).or_panic()
     }
 
     pub fn trim_ascii(): read [u8] from self {
@@ -1499,7 +1499,7 @@ extend<region r, T: fmt.Debug> SliceChunks<region r, T> implements fmt.Debug {
             } else {
                 self.size
             }
-            try debug.field(self.items.window(start, count).unwrap())
+            try debug.field(self.items.window(start, count).or_panic())
             start += count
         }
         try debug.finish()
@@ -1542,7 +1542,7 @@ extend<region r, T: fmt.Debug> SliceWindows<region r, T> implements fmt.Debug {
         var debug = try f.debug_tuple("Windows")
         var index = self.front
         while index < self.back {
-            try debug.field(self.items.window(index, self.size).unwrap())
+            try debug.field(self.items.window(index, self.size).or_panic())
             index += 1usize
         }
         try debug.finish()
@@ -1568,14 +1568,14 @@ extend<region r, T, const N: usize> SliceArrayWindows<region r, T, N> implements
         if self.front == self.back { return none }
         let index = self.front
         self.front += 1usize
-        present(self.items.window(index, N).unwrap().as_array<N>().unwrap())
+        present(self.items.window(index, N).or_panic().as_array<N>().or_panic())
     }
 }
 extend<region r, T, const N: usize> SliceArrayWindows<region r, T, N> implements BidirectionalIterator {
     mut fn next_back(): (read [T; N] from r)? {
         if self.front == self.back { return none }
         self.back -= 1usize
-        present(self.items.window(self.back, N).unwrap().as_array<N>().unwrap())
+        present(self.items.window(self.back, N).or_panic().as_array<N>().or_panic())
     }
 }
 extend<region r, T, const N: usize> SliceArrayWindows<region r, T, N> implements super.iter.ExactSizeIterator {}

@@ -1,7 +1,7 @@
 # Language review proposal: remaining Rust-shaped areas
 
 Scope: areas not already covered by the in-flight changes (`package.*` anchor,
-`pub(path)`, raw text, Box/Rc/Arc/Cell/RefCell and unwrap/expect/as_ref renames).
+`pub(path)`, raw text, Box/Rc/Arc/Cell/RefCell and or_panic/expect/as_ref renames).
 Basis: D16 ("Mettle must not read like a Rust copy") and `i13-library.md`.
 
 Counting method: `grep -Eoh` occurrences in `*.mt` under `library/`, `tests/`,

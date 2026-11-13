@@ -55,11 +55,11 @@ fn checks_views(): i32 {
 }
 
 fn checks_extraction(): i32 {
-    if some(3).unwrap() != 3 || some(4).expect("present") != 4 { return 40 }
-    if some(5).unwrap_or(0) != 5 || nothing().unwrap_or(6) != 6 { return 41 }
-    if nothing().unwrap_or_else(fn(): i32 { 7 }) != 7 { return 42 }
-    if some(1).unwrap_or_else(fn(): i32 { 7 }) != 1 { return 43 }
-    if nothing().unwrap_or_default() != 0 || some(8).unwrap_or_default() != 8 { return 44 }
+    if some(3).or_panic() != 3 || some(4).or_panic("present") != 4 { return 40 }
+    if some(5).or(0) != 5 || nothing().or(6) != 6 { return 41 }
+    if nothing().or_else(fn(): i32 { 7 }) != 7 { return 42 }
+    if some(1).or_else(fn(): i32 { 7 }) != 1 { return 43 }
+    if nothing().or_default() != 0 || some(8).or_default() != 8 { return 44 }
     if unsafe { some(9).unwrap_unchecked() } != 9 { return 45 }
     0
 }
@@ -98,9 +98,9 @@ fn checks_combinators(): i32 {
     if nothing().and(present(true)).is_present() { return 71 }
     if some(1).and_then(fn(value: i32): i32? { present(value + 1) }) != present(2) { return 72 }
     if some(1).and_then(fn(value: i32): i32? { none }).is_present() { return 73 }
-    if some(1).or(present(2)) != present(1) || nothing().or(present(2)) != present(2) { return 74 }
-    if nothing().or_else(fn(): i32? { present(3) }) != present(3) { return 75 }
-    if some(1).or_else(fn(): i32? { present(3) }) != present(1) { return 76 }
+    if some(1).or_present(present(2)) != present(1) || nothing().or_present(present(2)) != present(2) { return 74 }
+    if nothing().or_present_with(fn(): i32? { present(3) }) != present(3) { return 75 }
+    if some(1).or_present_with(fn(): i32? { present(3) }) != present(1) { return 76 }
     if some(1).xor(none) != present(1) || nothing().xor(present(2)) != present(2) { return 77 }
     if some(1).xor(present(2)).is_present() || nothing().xor(none).is_present() { return 78 }
     match some(1).zip(present(true)) {
@@ -118,9 +118,9 @@ fn checks_combinators(): i32 {
 }
 
 fn checks_outcomes(): i32 {
-    match some(3).ok_or(false) { success(value) => { if value != 3 { return 90 } }, failure(_) => { return 91 } }
-    match nothing().ok_or(false) { success(_) => { return 92 }, failure(error) => { if error { return 93 } } }
-    match nothing().ok_or_else(fn(): i32 { 9 }) { success(_) => { return 94 }, failure(error) => { if error != 9 { return 95 } } }
+    match some(3).or_failure(false) { success(value) => { if value != 3 { return 90 } }, failure(_) => { return 91 } }
+    match nothing().or_failure(false) { success(_) => { return 92 }, failure(error) => { if error { return 93 } } }
+    match nothing().or_failure_with(fn(): i32 { 9 }) { success(_) => { return 94 }, failure(error) => { if error != 9 { return 95 } } }
     let transposed_source: (Outcome<i32, bool>)? = present(success(4))
     match transposed_source.transpose() {
         success(inner) => { if inner != present(4) { return 96 } },

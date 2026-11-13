@@ -286,7 +286,7 @@ extend<T, A: Allocator> Deque<T, A> {
         // Grow only with this deque's allocator before moving any values.
         self.reserve(count)
         while other.len != 0usize {
-            self.push_back(other.pop_front().unwrap())
+            self.push_back(other.pop_front().or_panic())
         }
     }
     pub mut fn shrink_to_fit(): Unit { self.shrink_to(0usize) }
@@ -359,7 +359,7 @@ extend<T, A: Allocator> Deque<T, A> {
     }
     pub mut fn push_back_mut(take value: T): mut T from self {
         self.push_back(value)
-        self.get_mut(self.len - 1usize).unwrap()
+        self.get_mut(self.len - 1usize).or_panic()
     }
     pub mut fn push_front(take value: T): Unit {
         match capture self.try_reserve_one() {
@@ -372,7 +372,7 @@ extend<T, A: Allocator> Deque<T, A> {
     }
     pub mut fn push_front_mut(take value: T): mut T from self {
         self.push_front(value)
-        self.get_mut(0usize).unwrap()
+        self.get_mut(0usize).or_panic()
     }
     pub mut fn pop_front(): T? {
         if self.len == 0usize { return none }
@@ -388,12 +388,12 @@ extend<T, A: Allocator> Deque<T, A> {
     }
     pub mut fn pop_front_if<F: take fn(mut T): bool>(take test: F): T? {
         if self.len == 0usize { return none }
-        let first = self.get_mut(0usize).unwrap()
+        let first = self.get_mut(0usize).or_panic()
         if test(first) { self.pop_front() } else { none }
     }
     pub mut fn pop_back_if<F: take fn(mut T): bool>(take test: F): T? {
         if self.len == 0usize { return none }
-        let last = self.get_mut(self.len - 1usize).unwrap()
+        let last = self.get_mut(self.len - 1usize).or_panic()
         if test(last) { self.pop_back() } else { none }
     }
     pub fn get(i: usize): (read T from self)? {
@@ -423,7 +423,7 @@ extend<T, A: Allocator> Deque<T, A> {
         var high = self.len
         while low < high {
             let mid = low + (high - low) / 2usize
-            let order = comparator(self.get(mid).unwrap())
+            let order = comparator(self.get(mid).or_panic())
             if order.is_lt() {
                 low = mid + 1usize
             } else {
@@ -441,7 +441,7 @@ extend<T, A: Allocator> Deque<T, A> {
         var high = self.len
         while low < high {
             let mid = low + (high - low) / 2usize
-            let current = key_fn(self.get(mid).unwrap())
+            let current = key_fn(self.get(mid).or_panic())
             let order = current.cmp(key)
             if order.is_lt() {
                 low = mid + 1usize
@@ -457,7 +457,7 @@ extend<T, A: Allocator> Deque<T, A> {
         var high = self.len
         while low < high {
             let mid = low + (high - low) / 2usize
-            if predicate(self.get(mid).unwrap()) {
+            if predicate(self.get(mid).or_panic()) {
                 low = mid + 1usize
             } else {
                 high = mid
@@ -501,7 +501,7 @@ extend<T, A: Allocator> Deque<T, A> {
     }
     pub mut fn insert_mut(i: usize, take value: T): mut T from self {
         self.insert(i, value)
-        self.get_mut(i).unwrap()
+        self.get_mut(i).or_panic()
     }
     pub mut fn remove(i: usize): T? {
         if i >= self.len { return none }
@@ -583,7 +583,7 @@ extend<T, A: Allocator> Deque<T, A> {
         }
         var i = 0usize
         while i < mid {
-            let value = self.pop_front().unwrap()
+            let value = self.pop_front().or_panic()
             self.push_back(value)
             i += 1usize
         }
@@ -596,7 +596,7 @@ extend<T, A: Allocator> Deque<T, A> {
         }
         var i = 0usize
         while i < mid {
-            let value = self.pop_back().unwrap()
+            let value = self.pop_back().or_panic()
             self.push_front(value)
             i += 1usize
         }
@@ -750,7 +750,7 @@ extend<T, A: Allocator> Deque<T, A> {
         var other = new_in<T, A>(self.a.clone())
         other.reserve_exact(count)
         while self.len > at {
-            other.push_front(self.pop_back().unwrap())
+            other.push_front(self.pop_back().or_panic())
         }
         other
     }

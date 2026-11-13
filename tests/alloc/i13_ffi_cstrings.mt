@@ -19,7 +19,7 @@ fn main(): i32 {
     let raw = moved.into_raw()
     unsafe { *raw = 98i8 }
     let restored = unsafe { CString.from_raw(raw) }
-    if restored.to_str().unwrap() != "b\u{e9}" { return 3 }
+    if restored.to_str().or_panic() != "b\u{e9}" { return 3 }
     let text = match take capture restored.into_string() {
         success(value) => value,
         failure(_) => { return 4 }
@@ -59,7 +59,7 @@ fn main(): i32 {
         failure(_) => { return 15 }
     }
     let written = output.len()
-    if fmt.written_text(read storage, written).unwrap() != "NulError(1, [65, 0, 66])" { return 16 }
+    if fmt.written_text(read storage, written).or_panic() != "NulError(1, [65, 0, 66])" { return 16 }
     var empty: [u8; 0] = []
     var refused = fmt.buffer_writer(mut empty)
     var refused_formatter = fmt.formatter(mut refused, fmt.spec())

@@ -6,8 +6,8 @@ fn main(): i32 {
     {
         let view: mut [i32] = mut forward[..]
         var chunks = view.chunks_exact_mut(2usize)
-        let first = chunks.next().unwrap()
-        let last = chunks.next_back().unwrap()
+        let first = chunks.next().or_panic()
+        let last = chunks.next_back().or_panic()
         let remainder = take chunks.into_remainder()
         assert(remainder.len() == 1usize, "forward omitted suffix")
         first[0usize] = 10
@@ -20,8 +20,8 @@ fn main(): i32 {
     {
         let view: mut [i32] = mut reverse[..]
         var chunks = view.rchunks_exact_mut(2usize)
-        let last = chunks.next().unwrap()
-        let first = chunks.next_back().unwrap()
+        let last = chunks.next().or_panic()
+        let first = chunks.next_back().or_panic()
         let remainder = take chunks.into_remainder()
         assert(remainder.len() == 1usize, "reverse remainder excludes unyielded full chunk")
         last[0usize] = 60
@@ -43,7 +43,7 @@ fn main(): i32 {
     {
         let view: mut [i32] = mut reverse[..]
         var chunks = view.rchunks_exact_mut(7usize)
-        let whole = chunks.next().unwrap()
+        let whole = chunks.next().or_panic()
         let remainder = take chunks.into_remainder()
         assert(remainder.len() == 0usize, "divisible input has empty remainder")
         whole[6usize] = 70

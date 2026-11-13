@@ -10,13 +10,13 @@ fn main(): i32 {
     let last: read i32
     {
         var view: read [i32] = read values[..]
-        first = slice.split_off_first(mut view).unwrap()
-        last = slice.split_off_last(mut view).unwrap()
+        first = slice.split_off_first(mut view).or_panic()
+        last = slice.split_off_last(mut view).or_panic()
         assert(*first == 10 && *last == 40, "read endpoints")
         assert(view.len() == 2usize && view[0usize] == 20 && view[1usize] == 30,
             "stored read view retains the middle")
-        assert(*slice.split_off_last(mut view).unwrap() == 30, "second last")
-        assert(*slice.split_off_first(mut view).unwrap() == 20, "last remaining element")
+        assert(*slice.split_off_last(mut view).or_panic() == 30, "second last")
+        assert(*slice.split_off_first(mut view).or_panic() == 20, "last remaining element")
         assert(view.len() == 0usize && slice.split_off_first(mut view).is_none() &&
             slice.split_off_last(mut view).is_none(), "empty endpoints preserve empty view")
     }
@@ -27,8 +27,8 @@ fn main(): i32 {
     let back: read Item
     {
         var view: read [Item] = items.as_slice()
-        front = slice.split_off_first(mut view).unwrap()
-        back = slice.split_off_last(mut view).unwrap()
+        front = slice.split_off_first(mut view).or_panic()
+        back = slice.split_off_last(mut view).or_panic()
         assert(view.len() == 1usize && view[0usize].value == 8,
             "List-derived view retains non-Copy elements")
     }

@@ -3287,10 +3287,10 @@ extend bool {
     pub fn then<T, F: take fn(): T>(take f: F): T? {
         if self { present(f()) } else { none }
     }
-    pub fn ok_or<E>(take error: E): (Outcome<Unit, E>) {
+    pub fn or_failure<E>(take error: E): (Outcome<Unit, E>) {
         if self { success(()) } else { failure(error) }
     }
-    pub fn ok_or_else<E, F: take fn(): E>(take error: F): (Outcome<Unit, E>) {
+    pub fn or_failure_with<E, F: take fn(): E>(take error: F): (Outcome<Unit, E>) {
         if self { success(()) } else { failure(error()) }
     }
 }

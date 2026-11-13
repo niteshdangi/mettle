@@ -18,7 +18,7 @@ fn from_read<region r, V: core.convert.From<read i32 from r>>(take value: read i
 
 fn main(): i32 {
     var values = [1i32, 2i32]
-    let first = NonNull.new(values.as_mut_ptr()).unwrap()
+    let first = NonNull.new(values.as_mut_ptr()).or_panic()
     let second = unsafe { first.add(1usize) }
     let copied = first
     if first != copied || first == second || !(first < second) || !(second > first) { return 1 }

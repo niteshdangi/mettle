@@ -44,21 +44,18 @@ extend<T, E> (Outcome<T, E>) {
         match take self { success(value) => none, failure(error) => present(error) }
     }
 
-    pub take fn unwrap(): T {
-        match take self { success(value) => value, failure(error) => super.panic.panic("called `unwrap` on a failed outcome") }
-    }
-    pub take fn expect(read message: Text): T {
+    pub take fn or_panic(read message: Text = "called `or_panic` on a failed outcome"): T {
         match take self { success(value) => value, failure(error) => super.panic.panic(message) }
     }
-    pub unsafe fn unwrap_unchecked(receiver take self: (Outcome<T, E>)): T { self.unwrap() }
-    pub unsafe fn unwrap_err_unchecked(receiver take self: (Outcome<T, E>)): E { self.unwrap_failure() }
-    pub take fn unwrap_failure(): E {
-        match take self { success(value) => super.panic.panic("called `unwrap_failure` on a successful outcome"), failure(error) => error }
+    pub unsafe fn unwrap_unchecked(receiver take self: (Outcome<T, E>)): T { self.or_panic() }
+    pub unsafe fn unwrap_err_unchecked(receiver take self: (Outcome<T, E>)): E { self.failure_or_panic() }
+    pub take fn failure_or_panic(read message: Text = "called `failure_or_panic` on a successful outcome"): E {
+        match take self { success(value) => super.panic.panic(message), failure(error) => error }
     }
-    pub take fn unwrap_or(take fallback: T): T {
+    pub take fn or(take fallback: T): T {
         match take self { success(value) => value, failure(error) => fallback }
     }
-    pub take fn unwrap_or_else<F: take fn(take E): T>(take fallback: F): T {
+    pub take fn or_else<F: take fn(take E): T>(take fallback: F): T {
         match take self { success(value) => value, failure(error) => fallback(error) }
     }
 
@@ -68,7 +65,7 @@ extend<T, E> (Outcome<T, E>) {
     pub take fn map_or<U, F: take fn(take T): U>(take fallback: U, take f: F): U {
         match take self { success(value) => f(value), failure(error) => fallback }
     }
-    pub take fn map_err<F, G: take fn(take E): F>(take f: G): (Outcome<T, F>) {
+    pub take fn map_failure<F, G: take fn(take E): F>(take f: G): (Outcome<T, F>) {
         match take self { success(value) => success(value), failure(error) => failure(f(error)) }
     }
     pub take fn and<U>(take other: (Outcome<U, E>)): (Outcome<U, E>) {
@@ -98,25 +95,19 @@ extend<T, E> (Outcome<T, E>) {
             failure(error) => { f(read error); failure(error) }
         }
     }
-    pub take fn unwrap_or_default(): T where T: Default {
+    pub take fn or_default(): T where T: Default {
         match take self {
             success(value) => value,
             failure(error) => T.(Default).default()
         }
     }
-    pub take fn expect_failure(read message: Text): E {
-        match take self {
-            success(value) => super.panic.panic(message),
-            failure(error) => error
-        }
-    }
     pub take fn and_then<U, F: take fn(take T): (Outcome<U, E>)>(take f: F): (Outcome<U, E>) {
         match take self { success(value) => f(value), failure(error) => failure(error) }
     }
-    pub take fn or_else<F, G: take fn(take E): (Outcome<T, F>)>(take f: G): (Outcome<T, F>) {
+    pub take fn or_success_with<F, G: take fn(take E): (Outcome<T, F>)>(take f: G): (Outcome<T, F>) {
         match take self { success(value) => success(value), failure(error) => f(error) }
     }
-    pub take fn or<F>(take other: (Outcome<T, F>)): (Outcome<T, F>) {
+    pub take fn or_success<F>(take other: (Outcome<T, F>)): (Outcome<T, F>) {
         match take self { success(value) => success(value), failure(error) => other }
     }
 

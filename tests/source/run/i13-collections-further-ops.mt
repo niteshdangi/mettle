@@ -189,9 +189,9 @@ fn main(): i32 {
         }
         let tail = list.split_off(2usize)
         if list.len() != 2usize || tail.len() != 2usize ||
-            (*list.get(1usize).unwrap()).value != 2 ||
-            (*tail.get(0usize).unwrap()).value != 3 ||
-            (*tail.get(1usize).unwrap()).value != 4 {
+            (*list.get(1usize).or_panic()).value != 2 ||
+            (*tail.get(0usize).or_panic()).value != 3 ||
+            (*tail.get(1usize).or_panic()).value != 4 {
             return 11
         }
     }
@@ -210,7 +210,7 @@ fn main(): i32 {
         !global_list.contains(3) || global_list.contains(9) {
         return 13
     }
-    if *global_list.get(2usize).unwrap() != 3 { return 14 }
+    if *global_list.get(2usize).or_panic() != 3 { return 14 }
 
     var counted_drops = 0usize
     {

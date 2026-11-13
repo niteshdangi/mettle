@@ -43,7 +43,7 @@ fn main(): i32 {
     var value = 7i32
     let raw = core.ptr.from_mut(mut value)
     var sequence = [2i32, 4i32, 6i32]
-    let start = NonNull.new(sequence.as_mut_ptr()).unwrap()
+    let start = NonNull.new(sequence.as_mut_ptr()).or_panic()
     let dangling = NonNull<i32>.dangling()
     if dangling.addr().get() != core.mem.align_of<i32>() { return 44 }
     let second = unsafe { start.add(1usize) }
@@ -68,7 +68,7 @@ fn main(): i32 {
     ) { return 46 }
     var slice_bytes = [11u8, 22u8, 33u8]
     let byte_slice = NonNull.slice_from_raw_parts(
-        NonNull.new(slice_bytes.as_mut_ptr()).unwrap(),
+        NonNull.new(slice_bytes.as_mut_ptr()).or_panic(),
         2usize
     )
     let next_byte_slice = unsafe { byte_slice.byte_add(1usize) }
@@ -117,13 +117,13 @@ fn main(): i32 {
     if zero_sized.align_offset(1usize) != 0usize ||
         zero_sized.align_offset(8usize) != usize.MAX { return 48 }
     let misaligned = NonNull<i32>.without_provenance(
-        NonZero<usize>.new(1usize).unwrap()
+        NonZero<usize>.new(1usize).or_panic()
     )
     if misaligned.is_aligned() || misaligned.align_offset(8usize) != usize.MAX {
         return 50
     }
     let odd_sized = NonNull<[u8; 3]>.without_provenance(
-        NonZero<usize>.new(1usize).unwrap()
+        NonZero<usize>.new(1usize).or_panic()
     )
     if odd_sized.align_offset(8usize) != 5usize { return 51 }
     match catch_panic(fn(): Unit {
@@ -180,7 +180,7 @@ fn main(): i32 {
     unsafe { first_pointer.swap(second_pointer) }
     if first != 8i32 || second_value != 3i32 { return 41 }
     var bytes = [0u8, 0u8, 0u8, 0u8]
-    let bytes_pointer = NonNull.new(bytes.as_mut_ptr()).unwrap()
+    let bytes_pointer = NonNull.new(bytes.as_mut_ptr()).or_panic()
     unsafe { bytes_pointer.write_bytes(0xabu8, 4usize) }
     if bytes[0usize] != 0xabu8 || bytes[3usize] != 0xabu8 { return 42 }
 
@@ -192,18 +192,18 @@ fn main(): i32 {
         core.ptr.copy_nonoverlapping(raw.cast_const(), core.ptr.from_mut(mut nonoverlap_value), 1usize)
     }
     if nonoverlap_value != 13i32 { return 35 }
-    let copied_nonnull = NonNull.new(copied_ptr).unwrap()
+    let copied_nonnull = NonNull.new(copied_ptr).or_panic()
     unsafe { copied_nonnull.copy_from(pointer, 1usize) }
     if copied_value != 13i32 { return 36 }
     var output = 0i32
-    let output_ptr = NonNull.new(core.ptr.from_mut(mut output)).unwrap()
+    let output_ptr = NonNull.new(core.ptr.from_mut(mut output)).or_panic()
     unsafe { copied_nonnull.copy_to(output_ptr, 1usize) }
     if output != 13i32 { return 37 }
     var overlap_first = 0i32
     var overlap_second = 0i32
-    let overlap_ptr = NonNull.new(core.ptr.from_mut(mut overlap_first)).unwrap()
+    let overlap_ptr = NonNull.new(core.ptr.from_mut(mut overlap_first)).or_panic()
     unsafe { overlap_ptr.copy_from_nonoverlapping(pointer, 1usize) }
-    let overlap_second_ptr = NonNull.new(core.ptr.from_mut(mut overlap_second)).unwrap()
+    let overlap_second_ptr = NonNull.new(core.ptr.from_mut(mut overlap_second)).or_panic()
     unsafe { overlap_ptr.copy_to_nonoverlapping(overlap_second_ptr, 1usize) }
     if overlap_first != 13i32 || overlap_second != 13i32 { return 38 }
 
@@ -222,7 +222,7 @@ fn main(): i32 {
     )
     let nonnull_drop = NonNull.new(
         core.ptr.from_mut(mut nonnull_owner).cast<DropMarker>()
-    ).unwrap()
+    ).or_panic()
     unsafe { nonnull_drop.drop_in_place() }
     if nonnull_count != 1i32 { return 40 }
 
@@ -232,7 +232,7 @@ fn main(): i32 {
         DropMarker(core.ptr.from_mut(mut slice_drop_count))
     ]
     let slice_owner = NonNull.slice_from_raw_parts(
-        NonNull.new(slice_owners.as_mut_ptr()).unwrap(),
+        NonNull.new(slice_owners.as_mut_ptr()).or_panic(),
         2usize
     )
     unsafe { slice_owner.drop_in_place() }

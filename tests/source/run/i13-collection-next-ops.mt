@@ -200,8 +200,8 @@ fn main(): i32 {
         *last = 5
     }
     if list_nodes.len() != 2usize ||
-        *list_nodes.get(0usize).unwrap() != 2 ||
-        *list_nodes.get(1usize).unwrap() != 5 {
+        *list_nodes.get(0usize).or_panic() != 2 ||
+        *list_nodes.get(1usize).or_panic() != 5 {
         return 13
     }
 

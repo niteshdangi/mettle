@@ -130,10 +130,10 @@ def main(executable, directory, only=None, *, jobs=4, pattern=None,
                  directory / "library-builtin-pointer-does-not-load-core" / "lib")])
         absent = case("library-core-unwrap-none-aborts", {
             "main.mt": "import core.option;\nfn nothing(): i32? { none }\n"
-                       "fn main(): i32 { nothing().unwrap() }\n"}, build_only=True)
+                       "fn main(): i32 { nothing().or_panic() }\n"}, build_only=True)
         aborted = processes.run([str(absent / "program")], capture_output=True)
-        if aborted.returncode != 101 or b"called `unwrap` on an absent value" not in aborted.stderr:
-            raise AssertionError(f"unwrap panic: {aborted.returncode} {aborted.stderr!r}")
+        if aborted.returncode != 101 or b"called `or_panic` on an absent value" not in aborted.stderr:
+            raise AssertionError(f"or_panic panic: {aborted.returncode} {aborted.stderr!r}")
         case("library-prelude-names-need-no-import", {
             "main.mt": "fn order(a: i32, b: i32): Ordering { a.cmp(b) }\n"
                        "fn size(read t: Text): usize { t.len() }\n"
@@ -153,7 +153,7 @@ def main(executable, directory, only=None, *, jobs=4, pattern=None,
              "name", "unresolved or inaccessible type 'Text'", (2, 14))
         panicked = case("library-panic-reports-message-and-exits-101", {
             "main.mt": "fn nothing(): i32? { none }\n"
-                       "fn main(): i32 { let guard = nothing()\n guard.expect(\"value was required\") }\n"},
+                       "fn main(): i32 { let guard = nothing()\n guard.or_panic(\"value was required\") }\n"},
              build_only=True)
         exited = processes.run([str(panicked / "program")], capture_output=True, text=True)
         if exited.returncode != 101 or "panicked: value was required" not in exited.stderr:

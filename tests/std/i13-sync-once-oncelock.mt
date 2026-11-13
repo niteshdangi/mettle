@@ -116,7 +116,7 @@ fn checks_oncelock_single_thread(): i32 {
         present(value) => { *value = 42 },
         none => { return 36 }
     }
-    if *cell.get().unwrap() != 42 { return 37 }
+    if *cell.get().or_panic() != 42 { return 37 }
     match cell.get() {
         present(value) => { if *value != 42 { return 38 } },
         none => { return 39 }
@@ -140,11 +140,11 @@ fn checks_oncelock_single_thread(): i32 {
     }
 
     let built: once_lock.OnceLock<i32> = from_value<once_lock.OnceLock<i32>>(70)
-    if *built.get().unwrap() != 70 { return 62 }
+    if *built.get().or_panic() != 70 { return 62 }
     let defaulted: once_lock.OnceLock<i32> = default_value<once_lock.OnceLock<i32>>()
     if defaulted.get().is_present() { return 63 }
     let copied = built.clone()
-    if *copied.get().unwrap() != 70 { return 64 }
+    if *copied.get().or_panic() != 70 { return 64 }
     if !(copied == built) { return 65 }
     0
 }

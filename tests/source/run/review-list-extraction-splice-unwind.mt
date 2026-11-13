@@ -24,7 +24,7 @@ fn main(): i32 {
             if value == 20 { value = 21; panic("extract stop") }
             true
         })
-        if extracted.next().unwrap() != 10 { return 1 }
+        if extracted.next().or_panic() != 10 { return 1 }
         let result = std.panic.catch_panic(fn(): Unit { let item = extracted.next() })
         match take result {
             CatchResult.Panicked(info) => { if info.message() != "extract stop" { return 2 } },
@@ -38,7 +38,7 @@ fn main(): i32 {
     values.push(50)
     {
         var extracted = values.extract_if(1usize..3usize, fn(mut value: i32): bool { value == 30 })
-        if extracted.next().unwrap() != 30 { return 7 }
+        if extracted.next().or_panic() != 30 { return 7 }
     }
     if values != [21, 40, 50] { return 8 }
     var replacement = alloc.vec.new<i32>()
@@ -47,7 +47,7 @@ fn main(): i32 {
     replacement.push(9)
     {
         var removed = values.splice(1usize..2usize, take replacement)
-        if removed.next_back().unwrap() != 40 { return 9 }
+        if removed.next_back().or_panic() != 40 { return 9 }
         if removed.next().is_present() { return 10 }
     }
     if values != [21, 7, 8, 9, 50] { return 11 }
@@ -58,6 +58,6 @@ fn main(): i32 {
         CatchResult.Panicked(info) => { if info.message() != "replacement stop" { return 12 } },
         CatchResult.Returned(_) => { return 13 }
     }
-    if values.len() < 2usize || *values.first().unwrap() != 21 || *values.last().unwrap() != 50 { return 14 }
+    if values.len() < 2usize || *values.first().or_panic() != 21 || *values.last().or_panic() != 50 { return 14 }
     0
 }

@@ -32,7 +32,7 @@ fn main(): i32 {
         consume(mapped_guard)
         value + 1
     })
-    if mapped.unwrap() != 8 { return 3 }
+    if mapped.or_panic() != 8 { return 3 }
 
     let outcome_guard = Guard(core.ptr.from_mut(drops))
     let result: Outcome<i32, i32> = success(11)
@@ -40,7 +40,7 @@ fn main(): i32 {
         consume(outcome_guard)
         value + 2
     })
-    if converted.unwrap() != 13 { return 4 }
+    if converted.or_panic() != 13 { return 4 }
 
     let poll_guard = Guard(core.ptr.from_mut(drops))
     match take Poll.Ready(17).map(take fn(take value: i32): i32 {

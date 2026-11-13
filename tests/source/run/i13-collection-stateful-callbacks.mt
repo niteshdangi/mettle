@@ -197,8 +197,8 @@ fn main(): i32 {
         none => { return 5 }
     }
     assert(remaining.next().is_none(), "linked extraction completes")
-    assert(linked.len() == 3usize && *linked.front().unwrap() == 1 &&
-        *linked.back().unwrap() == 5, "linked list stays linked after extraction")
+    assert(linked.len() == 3usize && *linked.front().or_panic() == 1 &&
+        *linked.back().or_panic() == 5, "linked list stays linked after extraction")
 
     var drops = 0
     {

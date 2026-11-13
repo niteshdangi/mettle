@@ -61,7 +61,7 @@ fn main(): i32 {
         Poll.Pending => { return 13 }
     }
     let failed_poll: Poll<(Outcome<u16, u8>)> = Poll.Ready(failure(5u8))
-    match take failed_poll.map_err(fn(take value: u8): u16 { value as u16 + 1u16 }) {
+    match take failed_poll.map_failure(fn(take value: u8): u16 { value as u16 + 1u16 }) {
         Poll.Ready(result) => match take result {
             success(_) => { return 14 },
             failure(value) => { if value != 6u16 { return 14 } }

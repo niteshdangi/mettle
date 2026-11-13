@@ -21,8 +21,8 @@ Counts are `grep -rIoE '\bNAME\b'` match totals (not distinct files), excluding
 - code: `bootstrap/**` and `tools/**` (`.cpp`, `.h`, `.py`).
 
 Caveats. Method names are matched by word, so definitions of same-named methods
-on unrelated types are included (for example `unwrap` counts Option and Outcome
-together; `as_ref` also counts the `AsRef` interface). `tests` for `expect` is
+on unrelated types are included (for example `or_panic` counts Option and Outcome
+together; `as_ref` also counts the `AsRef` interface). `tests` for `or_panic` is
 dominated by the `expect-error:` fixture directive and is unusable; `ok` and
 `err` are too generic to count by word, so call counts (`.ok(`, `.err(`) are
 given instead. Per-name call-site counts that cannot be separated are marked
@@ -51,14 +51,14 @@ operation tests (a rename test would be bookkeeping, forbidden by AGENTS.md).
    violation of the "no second copy" rule and the cheapest to fix:
    - `core.num.from_str_radix` is a pass-through to `parse_radix`
      (num.mt:2832).
-   - `Outcome` has both `unwrap_err`/`expect_err` and `unwrap_failure`/
-     `expect_failure`.
+   - `Outcome` has both `unwrap_err`/`expect_err` and `failure_or_panic`/
+     `failure_or_panic`.
    - `T?` and `Outcome` have both `as_view` and `as_ref` with identical bodies.
    - `String` has both `as_str` (string.mt:88) and `as_text` (string.mt:500).
    - Two parse interfaces: `core.text.FromStr` (`from_str`, char/float/bool/int
      `from_str`) and `core.num.FromText` (`from_text_radix`).
 4. Mixed vocabulary on `Outcome`: `is_success`/`is_failure` but `is_ok_and`,
-   `is_err_and`, `ok`, `err`, `map_err`, `inspect_err`. `T?`: `is_present` but
+   `is_err_and`, `ok`, `err`, `map_failure`, `inspect_err`. `T?`: `is_present` but
    `is_some_and`, `then_some`.
 
 ## Summary table
@@ -71,16 +71,16 @@ Counts are lib / tests / docs / ledger rows (examples are 0 throughout).
 | 1 | `is_some_and` | `is_present_and` | 1 | 4 | 2 | 1 | B1 | no |
 | 2 | `is_ok_and` / `is_err_and` | `is_success_and` / `is_failure_and` | 1 / 1 | 4 / 4 | 2 / 2 | 2 / 2 | B1 | no |
 | 3 | `then_some` | `then_present` | 1 | 5 | 3 | 1 | B1 | no |
-| 4 | `map_err` | `map_failure` | 3 | 13 | 3 | 3 | B1 | no |
+| 4 | `map_failure` | `map_failure` | 3 | 13 | 3 | 3 | B1 | no |
 | 5 | `inspect_err` | `inspect_failure` | 1 | 4 | 2 | 2 | B1 | no |
-| 6 | `unwrap_err`, `expect_err` | merge into existing `unwrap_failure`, `expect_failure` | 3 / 1 | 15 / 3 | 3 / 3 | 1 / 1 | B1 | no |
+| 6 | `unwrap_err`, `expect_err` | merge into existing `failure_or_panic`, `failure_or_panic` | 3 / 1 | 15 / 3 | 3 / 3 | 1 / 1 | B1 | no |
 | 7 | `from_str_radix` (free fn) | delete; use `parse_radix` | 2 | 673 | 1 | 12 | B1 | no |
 | 8 | `T?`/`Outcome` inherent `as_ref` | delete; keep `as_view` | 2 defs | mixed | mixed | 8 | B1 | no |
 | 9 | `String.as_str` | delete; keep `as_text` | 4 defs total of `as_str` (1 on String) | mixed | mixed | 5 | B1 | no |
 | 10 | `Outcome.ok()` / `err()` | `success_value()` / `failure_value()` | 1 def each | 3 / 3 calls | 4 / 2 | 2 / 4 | B2 | no |
-| 11 | `ok_or` / `ok_or_else` | `or_failure` / `or_failure_with` | 2 / 2 | 7 / 6 | 3 / 3 | 2 / 3 | B2 | no |
-| 12 | `unwrap` | `or_panic` | 54 | 367 | 7 | 3 | B3 | no |
-| 13 | `unwrap_or`, `_else`, `_default` | `value_or`, `value_or_else`, `value_or_default` | 2 / 2 / 2 | 5 / 6 / 6 | 4 / 4 / 4 | 4 / 2 / 3 | B3 | no |
+| 11 | `or_failure` / `or_failure_with` | `or_failure` / `or_failure_with` | 2 / 2 | 7 / 6 | 3 / 3 | 2 / 3 | B2 | no |
+| 12 | `or_panic` | `or_panic` | 54 | 367 | 7 | 3 | B3 | no |
+| 13 | `or`, `_else`, `_default` | `value_or`, `value_or_else`, `value_or_default` | 2 / 2 / 2 | 5 / 6 / 6 | 4 / 4 / 4 | 4 / 2 / 3 | B3 | no |
 | 14 | `unwrap_unchecked`, `unwrap_err_unchecked` | `value_unchecked`, `failure_unchecked` | 2 / 1 | 3 / 2 | 5 / 2 | 2 / 2 | B3 | no |
 | 15 | `push_str` | `push_text` | 38 | 34 | 1 | 1 | B4 | no |
 | 16 | `write_str` (`fmt.Write`) | `write_text` | 280 | 42 | 1 | 4 | B4 | no |
@@ -108,11 +108,11 @@ the single `from_str_radix` to `parse_radix` rewrite).
 
 - Rows 1-9. Why: each name either reuses Rust's `some`/`ok`/`err` words next to a
   sibling already renamed (`is_present`, `is_success`, `is_failure`), or is a
-  second copy of an existing native operation (`parse_radix`, `unwrap_failure`,
+  second copy of an existing native operation (`parse_radix`, `failure_or_panic`,
   `as_view`, `as_text`). Rewrites are exact; no semantic change.
 - Conflicts checked: `is_present_and`, `is_success_and`, `is_failure_and`,
   `then_present`, `map_failure`, `inspect_failure`: no existing definition or
-  use anywhere in library/tests/docs. `unwrap_failure`/`expect_failure` already
+  use anywhere in library/tests/docs. `failure_or_panic`/`failure_or_panic` already
   exist (2 mentions each), so row 6 deletes the `_err` pair rather than
   renaming. `then_present` mirrors the `present(...)` constructor.
 - Row 8 caveat: `as_ref` as a call on options cannot be separated from the
@@ -128,31 +128,31 @@ the single `from_str_radix` to `parse_radix` rewrite).
 Small blast radius (call sites: tests only, 3 to 7 each).
 
 - Row 10: `ok()` to `success_value()`, `err()` to `failure_value()`. Why: `ok`/`err`
-  name Rust constructors that Mettle spells `success`/`failure`. Not `success()`
-  or `failure()` because they would shadow the constructors in reading and
+  name Rust constructors that Mettle spells `success`/`failure`. Not `ok()`
+  or `err()` because they would shadow the constructors in reading and
   pattern position. `success_value`/`failure_value` appear only as test local
   variable names (6 and 10 mentions) so a method of that name is safe; shadowing
   a local with a method is not possible.
-- Row 11: `ok_or(e)` to `or_failure(e)`, `ok_or_else(f)` to `or_failure_with(f)`.
+- Row 11: `or_failure(e)` to `or_failure(e)`, `or_failure_with(f)` to `or_failure_with(f)`.
   Why: names the result (`Outcome` failure) instead of `Ok`. No collision with
   `or`/`or_else` (which still mean option-or).
 
-### B3. Extraction vocabulary: `unwrap` family (largest call-site count; decide as a unit)
+### B3. Extraction vocabulary: `or_panic` family (largest call-site count; decide as a unit)
 
 Rename the whole family together or not at all; a half-renamed set is worse than
 either.
 
-- `unwrap()` to `or_panic()`; `unwrap_or*` to `value_or*`; `unwrap_unchecked` to
+- `or_panic()` to `or_panic()`; `or*` to `value_or*`; `unwrap_unchecked` to
   `value_unchecked`; `unwrap_err_unchecked` to `failure_unchecked`;
-  `unwrap_failure` to `failure_or_panic` (it is the surviving form after B1).
-  `expect(message)` and `expect_failure(message)` stay (see keep-list).
-- Why: "unwrap" is Rust wrapper jargon with no meaning once `T?` and `Outcome`
+  `failure_or_panic` to `failure_or_panic` (it is the surviving form after B1).
+  `or_panic(message)` and `failure_or_panic(message)` stay (see keep-list).
+- Why: "or_panic" is Rust wrapper jargon with no meaning once `T?` and `Outcome`
   are plain language forms. `or_panic` states the failure mode at the call site
   and pairs with `value_or`; `value_or` is the established name in C++
   `std::optional` and reads as plain English.
-- Cost: `unwrap` 54 lib / 367 tests / 7 docs / 3 ledger / 7 code (the 7 code hits
+- Cost: `or_panic` 54 lib / 367 tests / 7 docs / 3 ledger / 7 code (the 7 code hits
   are `tools/` and test-runner strings; panic message text
-  "called `unwrap` on an absent value" must change with it, and tests asserting
+  "called `or_panic` on an absent value" must change with it, and tests asserting
   that message need the matching edit). This is the single largest rewrite in
   the proposal; if the owner prefers to defer, B1, B2 and B4 are independent of it.
 - Conflicts: `or_panic`, `value_or*`, `value_unchecked`, `failure_unchecked` are
@@ -267,7 +267,7 @@ Left-over `str` members read as Rust.
 | `Duration`, `Instant`, `SystemTime` | Universal time vocabulary. |
 | `PathBuf`, `OsStr`, `OsString`, `CStr`, `CString` | Names track platform concepts and Mettle already has `Path`; a rename adds no clarity. |
 | `iter`, `iter_mut`, `into_iter` | They correspond exactly to the retained interfaces `Iterable`, `MutableIterable`, `OwnedIterable` (the `OwnedIterable` method is `into_iter`). Renaming the methods would decouple them from the interface names. |
-| `expect(message)`, `expect_failure(message)` | Plain English assertion; the message argument makes the failure intent explicit; no better short word. |
+| `or_panic(message)`, `failure_or_panic(message)` | Plain English assertion; the message argument makes the failure intent explicit; no better short word. |
 | `map`, `map_or*`, `and_then`, `or_else`, `filter`, `flatten`, `zip`, `inspect`, `cloned`, `copied` | Method names unchanged by D21 for adapters; `and_then`/`map_or` are not Rust-only (Haskell/Kotlin style) and have no clearer replacement. |
 | `as_mut`, `to_owned`, `into_owned`, `into_inner`, `as_deref*` | Tied to retained interfaces (`AsMut`, `ToOwned`, `OwnedType`) or conventional conversion prefixes (`as_`, `to_`, `into_`). |
 | `with_capacity`, `reserve`, `shrink_to_fit`, `truncate`, `retain` | Descriptive. |

@@ -63,7 +63,7 @@ fn main(): i32 {
         failure(_) => { return 14 }
     }
     let written = output.len()
-    if fmt.written_text(read storage, written).unwrap() != "CStr(\"A\u{fffd}\u{fffd}\")" { return 15 }
+    if fmt.written_text(read storage, written).or_panic() != "CStr(\"A\u{fffd}\u{fffd}\")" { return 15 }
     var empty: [u8; 0] = []
     var refused = fmt.buffer_writer(mut empty)
     var refused_formatter = fmt.formatter(mut refused, fmt.spec())

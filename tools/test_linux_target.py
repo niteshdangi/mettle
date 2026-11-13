@@ -154,12 +154,12 @@ def library_cases(output):
         cases.append(("core", program.stem, program.read_text(), {"expected": 0}))
     cases.append(("core", "unwrap-none-aborts",
                   "import core.option;\nfn nothing(): i32? { none }\n"
-                  "fn main(): i32 { nothing().unwrap() }\n",
+                  "fn main(): i32 { nothing().or_panic() }\n",
                   {"expected": 101, "stderr_contains": [
-                      "panicked: called `unwrap` on an absent value"]}))
+                      "panicked: called `or_panic` on an absent value"]}))
     cases.append(("core", "panic-reports-message",
                   "fn nothing(): i32? { none }\n"
-                  "fn main(): i32 { let guard = nothing()\n guard.expect(\"value was required\") }\n",
+                  "fn main(): i32 { let guard = nothing()\n guard.or_panic(\"value was required\") }\n",
                   {"expected": 101, "stderr_contains": ["panicked: value was required"]}))
     cases.append(("core", "panic-function-unwinds",
                   "fn check(ok: bool) { if !ok { panic(\"check failed\") } }\n"

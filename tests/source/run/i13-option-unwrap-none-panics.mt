@@ -4,5 +4,5 @@ import core.option
 
 fn main(): i32 {
     let absent: i32? = none
-    absent.unwrap()
+    absent.or_panic()
 }

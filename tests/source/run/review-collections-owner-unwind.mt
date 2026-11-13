@@ -82,7 +82,7 @@ fn main(): i32 {
         source.push(Bomb(2, counter, 1u8))
         source.push(Bomb(3, counter, 0u8))
         var items = source.into_iter()
-        let first = items.next().unwrap()
+        let first = items.next().or_panic()
     })
     match take consuming {
         CatchResult.Panicked(_) => {},

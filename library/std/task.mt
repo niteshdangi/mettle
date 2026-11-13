@@ -141,7 +141,7 @@ pub fn block_on<F: Future>(take future: F): F.Output {
             Poll.Pending => { signal.get().wait() }
         }
     }
-    result.unwrap()
+    result.or_panic()
 }
 
 // Pending exactly once, waking itself first so a poll loop reschedules it.
@@ -359,7 +359,7 @@ fn dispose_call(raw: ptr<mut u8>): Unit {
 // as thread bodies. A second panic while handling the first is fatal.
 fn dispose(take future: ErasedFuture, code: i32, cancelled: bool): Unit {
     var owner = future
-    let report = owner.report.take_value().unwrap()
+    let report = owner.report.take_value().or_panic()
     var call = DisposeCall(present(owner))
     let action: fn(ptr<mut u8>): Unit = dispose_call
     let body = unsafe { core.mem.transmute<extern "C" fn(ptr<mut u8>): Unit>(action) }
@@ -760,7 +760,7 @@ extend<T> JoinHandle<T> {
         let locked = capture self.result.get().state.lock()
         var guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
         let status = guard.get().status
-        if status == 1u8 { return guard.get_mut().value.take_value().unwrap() }
+        if status == 1u8 { return guard.get_mut().value.take_value().or_panic() }
         if status == 3u8 { throw JoinError.Panicked(guard.get().code) }
         throw JoinError.Cancelled
     }

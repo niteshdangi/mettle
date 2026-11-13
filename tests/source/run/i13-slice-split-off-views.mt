@@ -9,8 +9,8 @@ fn main(): i32 {
     var values = [10, 20, 30, 40, 50, 60]
     {
         var view: mut [i32] = mut values[..]
-        let front = slice.split_off_first_mut(mut view).unwrap()
-        let back = slice.split_off_last_mut(mut view).unwrap()
+        let front = slice.split_off_first_mut(mut view).or_panic()
+        let back = slice.split_off_last_mut(mut view).or_panic()
         *front = 11
         *back = 61
         view[0usize] = 21
@@ -22,8 +22,8 @@ fn main(): i32 {
     let prefix: mut [i32]
     {
         var view: mut [i32] = mut values[..]
-        prefix = slice.split_off_mut(mut view, iter.range_to(2usize)).unwrap()
-        let suffix = slice.split_off_mut(mut view, iter.range_from(2usize)).unwrap()
+        prefix = slice.split_off_mut(mut view, iter.range_to(2usize)).or_panic()
+        let suffix = slice.split_off_mut(mut view, iter.range_from(2usize)).or_panic()
         assert(prefix.len() == 2usize && view.len() == 2usize && suffix.len() == 2usize,
             "prefix and suffix selection retain complementary views")
         prefix[0usize] = 12
@@ -41,13 +41,13 @@ fn main(): i32 {
         assert(slice.split_off_mut(mut view, iter.range_to_inclusive(0xffffffffffffffffusize)).is_none(),
             "inclusive end never wraps")
         assert(view.len() == 6usize && view[0usize] == 12, "invalid bounds preserve view")
-        let included = slice.split_off_mut(mut view, iter.range_to_inclusive(1usize)).unwrap()
+        let included = slice.split_off_mut(mut view, iter.range_to_inclusive(1usize)).or_panic()
         assert(included.len() == 2usize && view.len() == 4usize, "inclusive prefix")
-        let empty_prefix = slice.split_off_mut(mut view, iter.range_to(0usize)).unwrap()
+        let empty_prefix = slice.split_off_mut(mut view, iter.range_to(0usize)).or_panic()
         assert(empty_prefix.len() == 0usize && view.len() == 4usize, "empty prefix")
-        let empty_suffix = slice.split_off_mut(mut view, iter.range_from(4usize)).unwrap()
+        let empty_suffix = slice.split_off_mut(mut view, iter.range_from(4usize)).or_panic()
         assert(empty_suffix.len() == 0usize && view.len() == 4usize, "empty suffix")
-        let all = slice.split_off_mut(mut view, iter.range_to(4usize)).unwrap()
+        let all = slice.split_off_mut(mut view, iter.range_to(4usize)).or_panic()
         assert(all.len() == 4usize && view.len() == 0usize, "full prefix")
         assert(slice.split_off_first_mut(mut view).is_none() &&
             slice.split_off_last_mut(mut view).is_none(), "empty exclusive endpoints")
@@ -55,8 +55,8 @@ fn main(): i32 {
     {
         var zero = [(); 3]
         var view: mut [Unit] = mut zero[..]
-        let front = slice.split_off_first_mut(mut view).unwrap()
-        let back = slice.split_off_last_mut(mut view).unwrap()
+        let front = slice.split_off_first_mut(mut view).or_panic()
+        let back = slice.split_off_last_mut(mut view).or_panic()
         *front = ()
         *back = ()
         assert(view.len() == 1usize, "zero-sized endpoints partition logical elements")
@@ -66,7 +66,7 @@ fn main(): i32 {
         var view: mut [i32] = mut backing[..]
         var total = 0
         while view.len() != 0usize {
-            let first = slice.split_off_first_mut(mut view).unwrap()
+            let first = slice.split_off_first_mut(mut view).or_panic()
             if view.len() != 0usize { view[0usize] += 10 }
             total += *first
         }
@@ -80,8 +80,8 @@ fn main(): i32 {
         let first: mut Item
         {
             var view: mut [Item] = list.as_mut_slice()
-            first = slice.split_off_first_mut(mut view).unwrap()
-            let last = slice.split_off_last_mut(mut view).unwrap()
+            first = slice.split_off_first_mut(mut view).or_panic()
+            let last = slice.split_off_last_mut(mut view).or_panic()
             view[0usize].value = 20
             last.value = 30
         }

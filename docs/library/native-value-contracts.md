@@ -86,11 +86,11 @@ The extraction operations consume `T?`:
 
 | Operation | Present branch | Absent branch |
 | --- | --- | --- |
-| `unwrap()` | Transfer T | Panic with an absence diagnostic |
-| `expect(message: read Text)` | Transfer T | Panic reporting the supplied message |
-| `unwrap_or(fallback: take T)` | Transfer T; destroy unused fallback | Transfer fallback |
-| `unwrap_or_else(make)` | Transfer T | Invoke `make(): T` |
-| `unwrap_or_default()` with `T: Default` | Transfer T | Invoke `T.(Default).default()` |
+| `or_panic()` | Transfer T | Panic with an absence diagnostic |
+| `or_panic(message: read Text)` | Transfer T | Panic reporting the supplied message |
+| `or(fallback: take T)` | Transfer T; destroy unused fallback | Transfer fallback |
+| `or_else(make)` | Transfer T | Invoke `make(): T` |
+| `or_default()` with `T: Default` | Transfer T | Invoke `T.(Default).default()` |
 
 `unsafe unwrap_unchecked()` consumes the optional and transfers its payload.
 The caller must establish presence before the call. Absence violates its
@@ -128,11 +128,11 @@ a consuming callback; a discarded payload is destroyed.
 | `map_or_else(make, f)` | `f(take payload)` | Invoke `make(): U` |
 | `map_or_default(f)` with `U: Default` | `f(take payload)` | Construct U's default |
 | `and_then(f)` | Return `f(take payload): U?` | `none` |
-| `or_else(make)` | Preserve the owned present value | Return `make(): T?` |
+| `or_present_with(make)` | Preserve the owned present value | Return `make(): T?` |
 | `is_present_and(test)` | Return `test(take payload)` | False |
 | `is_none_or(test)` | Return `test(take payload)` | True |
-| `ok_or(error: take E)` | `success(payload)` | `failure(error)` |
-| `ok_or_else(make_error)` | `success(payload)` | `failure(make_error())` |
+| `or_failure(error: take E)` | `success(payload)` | `failure(error)` |
+| `or_failure_with(make_error)` | `success(payload)` | `failure(make_error())` |
 
 `filter(keep)` borrows the payload for `keep(read payload): bool`.
 It returns the original owned present value when true, destroys that payload
@@ -142,7 +142,7 @@ owned optional unchanged. Neither grants exclusive payload access; encapsulated
 interior mutation retains its separate rules.
 
 `and(other: take U?)` returns `other` when the receiver is present, otherwise
-`none`. `or(other: take T?)` returns the receiver when present, otherwise `other`.
+`none`. `or_present(other: take T?)` returns the receiver when present, otherwise `other`.
 `xor(other: take T?)` returns the sole present value when exactly one input is
 present, otherwise `none`. Both inputs are consumed and every unreturned payload
 is destroyed.
@@ -200,16 +200,16 @@ These operations consume `(Outcome<T, E>)`:
 | --- | --- | --- |
 | `ok()` | `present(payload)` | Destroy E; return `none` |
 | `err()` | Destroy T; return `none` | `present(error)` |
-| `unwrap()` | Transfer T | Panic with an error diagnostic |
-| `expect(message: read Text)` | Transfer T | Panic reporting message and error |
-| `unwrap_failure()` | Panic with a success diagnostic | Transfer E |
-| `expect_failure(message: read Text)` | Panic reporting message and success payload | Transfer E |
-| `unwrap_or(fallback: take T)` | Transfer T; destroy unused fallback | Destroy E; transfer fallback |
-| `unwrap_or_else(make)` | Transfer T | Return `make(take error): T` |
-| `unwrap_or_default()` with `T: Default` | Transfer T | Destroy E; construct T's default |
+| `or_panic()` | Transfer T | Panic with an error diagnostic |
+| `or_panic(message: read Text)` | Transfer T | Panic reporting message and error |
+| `failure_or_panic()` | Panic with a success diagnostic | Transfer E |
+| `failure_or_panic(message: read Text)` | Panic reporting message and success payload | Transfer E |
+| `or(fallback: take T)` | Transfer T; destroy unused fallback | Destroy E; transfer fallback |
+| `or_else(make)` | Transfer T | Return `make(take error): T` |
+| `or_default()` with `T: Default` | Transfer T | Destroy E; construct T's default |
 
-Checked success extraction (`unwrap`, `expect`) requires `E: Debug`;
-checked failure extraction (`unwrap_failure`, `expect_failure`)
+Checked success extraction (`or_panic`) requires `E: Debug`;
+checked failure extraction (`failure_or_panic`)
 requires `T: Debug`. Wrong-alternative diagnostics expose the rejected payload
 through that capability. Payload formatting may invoke user code and panic;
 ordinary panic/cleanup rules apply. Exact diagnostic punctuation is not an API
@@ -227,17 +227,17 @@ These operations consume the receiver:
 | Operation | Success branch | Failure branch |
 | --- | --- | --- |
 | `map(f)` | `success(f(take payload))` | Preserve owned E |
-| `map_err(f)` | Preserve owned T | `failure(f(take error))` |
+| `map_failure(f)` | Preserve owned T | `failure(f(take error))` |
 | `map_or(fallback: take U, f)` | Return `f(take payload)` | Destroy E; transfer fallback |
 | `map_or_else(make, f)` | Return `f(take payload)` | Return `make(take error)` |
 | `map_or_default(f)` with `U: Default` | Return `f(take payload)` | Destroy E; construct U's default |
 | `and_then(f)` | Return `f(take payload): (U throws E)` | Preserve owned E |
-| `or_else(f)` | Preserve owned T | Return `f(take error): (T throws F)` |
+| `or_success_with(f)` | Preserve owned T | Return `f(take error): (T throws F)` |
 | `is_success_and(test)` | Return `test(take payload)` | Destroy E; false |
 | `is_failure_and(test)` | Destroy T; false | Return `test(take error)` |
 
 `and(other: take (U throws E))` returns `other` when successful, otherwise the
-original failure. `or(other: take (T throws F))` preserves success, otherwise
+original failure. `or_success(other: take (T throws F))` preserves success, otherwise
 returns `other`. Both eagerly supplied outcomes are consumed; all unreturned
 payloads are destroyed.
 
@@ -267,7 +267,7 @@ their input values, payload operations and regions satisfy the
 
 | Receiver | Required constant-callable operations |
 | --- | --- |
-| Optional | `is_present`, `is_none`, `as_view`, `as_mut`, `as_pin_ref`, `as_pin_mut`, `as_slice`, `as_mut_slice`, `expect`, `unwrap`, `unwrap_unchecked`, `copied`, `flatten`, `replace`, escaped `take`, `take_value`, `transpose` |
+| Optional | `is_present`, `is_none`, `as_view`, `as_mut`, `as_pin_ref`, `as_pin_mut`, `as_slice`, `as_mut_slice`, `or_panic`, `unwrap_unchecked`, `copied`, `flatten`, `replace`, escaped `take`, `take_value`, `transpose` |
 | Stored outcome | `is_success`, `is_failure`, `as_view`, `as_mut`, `copied`, `flatten`, `transpose` |
 
 This is not a promise that arbitrary destructors, Clone, Default, dereference

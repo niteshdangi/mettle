@@ -82,7 +82,7 @@ fn main(): i32 {
         values.push_back(2)
         values.push_back(3)
         values.push_back(4)
-        let pointer = core.ptr.from_ref(*values.front().unwrap())
+        let pointer = core.ptr.from_ref(*values.front().or_panic())
         let allocations = stats.allocations
         stats.reject_size = 36usize
         match capture values.try_reserve(5usize) {
@@ -90,7 +90,7 @@ fn main(): i32 {
             failure(_) => {}
         }
         if values.capacity() != 4usize || stats.allocations != allocations ||
-            core.ptr.from_ref(*values.front().unwrap()) != pointer { return 4 }
+            core.ptr.from_ref(*values.front().or_panic()) != pointer { return 4 }
         stats.reject_size = 0usize
     }
     var capacity = 1usize
@@ -172,7 +172,7 @@ fn main(): i32 {
             unsafe { core.mem.forget(take values) }
             return 25
         }
-        if *values.get(1).unwrap() != 10 { return 26 }
+        if *values.get(1).or_panic() != 10 { return 26 }
         values.clear()
         stats.panic_free = true
         let emptied = std.panic.catch_panic(fn(): Unit { values.shrink_to_fit() })

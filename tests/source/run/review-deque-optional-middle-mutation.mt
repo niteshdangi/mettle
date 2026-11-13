@@ -19,7 +19,7 @@ fn main(): i32 {
             }
             values.truncate(6usize)
             values.insert(at, 99)
-            if values.len() != 7usize || values.remove(at).unwrap() != 99 { return 2 }
+            if values.len() != 7usize || values.remove(at).or_panic() != 99 { return 2 }
             index = 0usize
             while index < 6usize {
                 if values[index] != (head + index) as i32 { return 3 }

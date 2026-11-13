@@ -16,7 +16,7 @@ fn main(): i32 {
     if exact_len(copied) != 3usize || copied.next_back() != present(3) { return 2 }
 
     var peeked = iter.range(0i32, 4i32).peekable()
-    if exact_len(peeked) != 4usize || *peeked.peek().unwrap() != 0 || exact_len(peeked) != 4usize { return 3 }
+    if exact_len(peeked) != 4usize || *peeked.peek().or_panic() != 0 || exact_len(peeked) != 4usize { return 3 }
     if peeked.next_back() != present(3) || exact_len(peeked) != 3usize { return 4 }
     var forked = peeked.clone()
     if forked.next() != present(0) || peeked.next() != present(0) || forked.next() != peeked.next() { return 5 }

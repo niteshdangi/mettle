@@ -15,7 +15,7 @@ fn main(): i32 {
     if ready.map_ok(fn(value: i32): i64 { value as i64 + 1i64 }) !=
         Poll<(Outcome<i64, i32>)?>.Ready(present(success(4i64))) { return 1 }
     let failed: Poll<(Outcome<i32, i32>)?> = Poll.Ready(present(failure(5)))
-    if failed.map_err(fn(error: i32): i64 { error as i64 + 1i64 }) !=
+    if failed.map_failure(fn(error: i32): i64 { error as i64 + 1i64 }) !=
         Poll<(Outcome<i32, i64>)?>.Ready(present(failure(6i64))) { return 2 }
 
     let pending_ok: Poll<(Outcome<i32, i32>)?> = Poll.Pending
@@ -23,16 +23,16 @@ fn main(): i32 {
         core.panic.panic("map_ok called on Pending")
     }).is_pending() { return 3 }
     let pending_err: Poll<(Outcome<i32, i32>)?> = Poll.Pending
-    if !pending_err.map_err(fn(error: i32): i32 {
-        core.panic.panic("map_err called on Pending")
+    if !pending_err.map_failure(fn(error: i32): i32 {
+        core.panic.panic("map_failure called on Pending")
     }).is_pending() { return 4 }
     let empty_ok: Poll<(Outcome<i32, i32>)?> = Poll.Ready(none)
     if empty_ok.map_ok(fn(value: i32): i32 {
         core.panic.panic("map_ok called on none")
     }) != Poll<(Outcome<i32, i32>)?>.Ready(none) { return 5 }
     let empty_err: Poll<(Outcome<i32, i32>)?> = Poll.Ready(none)
-    if empty_err.map_err(fn(error: i32): i32 {
-        core.panic.panic("map_err called on none")
+    if empty_err.map_failure(fn(error: i32): i32 {
+        core.panic.panic("map_failure called on none")
     }) != Poll<(Outcome<i32, i32>)?>.Ready(none) { return 6 }
 
     var drops = 0usize
@@ -44,7 +44,7 @@ fn main(): i32 {
             core.panic.panic("map_ok called on failure")
         }) {
             Poll.Ready(result) => {
-                let error = result.unwrap().unwrap_failure()
+                let error = result.or_panic().failure_or_panic()
                 if error.value != 7 || drops != 0usize { return 7 }
             },
             Poll.Pending => { return 8 }
@@ -54,11 +54,11 @@ fn main(): i32 {
     {
         let ready_owned: Poll<(Outcome<Owned, i32>)?> =
             Poll.Ready(present(success(Owned(8, counter))))
-        match take ready_owned.map_err(fn(error: i32): i64 {
-            core.panic.panic("map_err called on success")
+        match take ready_owned.map_failure(fn(error: i32): i64 {
+            core.panic.panic("map_failure called on success")
         }) {
             Poll.Ready(result) => {
-                let value = result.unwrap().unwrap()
+                let value = result.or_panic().or_panic()
                 if value.value != 8 || drops != 1usize { return 10 }
             },
             Poll.Pending => { return 11 }

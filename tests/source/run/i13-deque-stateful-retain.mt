@@ -13,7 +13,7 @@ fn main(): i32 {
     }
     i = 0
     while i < 6 {
-        if deque.pop_front().unwrap() != i + 0 { return 1 }
+        if deque.pop_front().or_panic() != i + 0 { return 1 }
         i += 1
     }
     i = 8

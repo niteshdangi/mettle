@@ -2,7 +2,7 @@ import core.option
 import core.outcome
 
 fn main(): i32 {
-    if true.then_present(7).unwrap() != 7 { return 1 }
+    if true.then_present(7).or_panic() != 7 { return 1 }
     if false.then_present(7).is_present() { return 2 }
 
     match present(3i32).xor(none) {
@@ -28,10 +28,10 @@ fn main(): i32 {
     let absent_for_map: i32? = none
     if absent_for_map.map_or_default(fn(take value: i32): i32 { value }) != 0 { return 9 }
     let absent_for_default: i32? = none
-    if absent_for_default.unwrap_or_default() != 0 { return 10 }
+    if absent_for_default.or_default() != 0 { return 10 }
 
     let (left, right) = present((11i32, 12i32)).unzip()
-    if left.unwrap() != 11 || right.unwrap() != 12 { return 11 }
+    if left.or_panic() != 11 || right.or_panic() != 12 { return 11 }
 
     let failure_value: (Outcome<i32, i32>) = failure(13i32)
     if failure_value.map_or_else(
@@ -41,9 +41,9 @@ fn main(): i32 {
         return 12
     }
     let failure_value: (Outcome<i32, i32>) = failure(14i32)
-    if failure_value.unwrap_or_default() != 0 { return 13 }
+    if failure_value.or_default() != 0 { return 13 }
     let failure_value: (Outcome<i32, i32>) = failure(15i32)
-    if failure_value.expect_failure("expected failure") != 15 { return 14 }
+    if failure_value.failure_or_panic("expected failure") != 15 { return 14 }
 
     let success_value: (Outcome<i32, i32>) = success(16i32)
     let combined: (Outcome<i32, i32>) = success_value.and(failure(17i32))

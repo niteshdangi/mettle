@@ -59,8 +59,8 @@ fn cell_operations(): i32 {
         !core.cell.Cell.new(2i32).cmp(core.cell.Cell.new(1i32)).is_gt() {
         return 21
     }
-    if !core.cell.Cell.new(1i32).partial_cmp(core.cell.Cell.new(1i32)).unwrap().is_eq() ||
-        !core.cell.Cell.new(2i32).partial_cmp(core.cell.Cell.new(1i32)).unwrap().is_gt() ||
+    if !core.cell.Cell.new(1i32).partial_cmp(core.cell.Cell.new(1i32)).or_panic().is_eq() ||
+        !core.cell.Cell.new(2i32).partial_cmp(core.cell.Cell.new(1i32)).or_panic().is_gt() ||
         core.cell.Cell.new(f32.NAN).partial_cmp(core.cell.Cell.new(0.0f32)).is_present() {
         return 22
     }

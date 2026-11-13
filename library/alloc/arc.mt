@@ -891,7 +891,7 @@ extend<T> Arc<[T]> implements From<super.vec.List<T>> {
                 var index = length
                 while index > 0usize {
                     index -= 1usize
-                    slots[index] = core.mem.MaybeUninit<T>.new(source.pop().unwrap())
+                    slots[index] = core.mem.MaybeUninit<T>.new(source.pop().or_panic())
                 }
             },
             none => {}

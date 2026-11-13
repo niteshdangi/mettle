@@ -121,7 +121,7 @@ fn main(): i32 {
     // Foreign wake calls can race cancellation, but cannot revive the task.
     let racing = ex.spawn(Probe(core.ptr.from_mut(drops), core.ptr.from_mut(saved), 0, false))
     let _polls = ex.run_until_stalled()
-    let sender = saved.take_value().unwrap()
+    let sender = saved.take_value().or_panic()
     let worker = thread.spawn(take fn(): Unit { hammer(sender.clone()) })
     racing.abort()
     let outcome = capture worker.join()

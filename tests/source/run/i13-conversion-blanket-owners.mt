@@ -53,7 +53,7 @@ fn main(): i32 {
             failure(_) => { return 1 }
         }
         let converted = into_self(from_self(cell))
-        if converted.get().unwrap().value != 17i32 || drops != 0i32 { return 2 }
+        if converted.get().or_panic().value != 17i32 || drops != 0i32 { return 2 }
     }
     if drops != 1i32 { return 3 }
 

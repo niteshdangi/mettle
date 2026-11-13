@@ -33,12 +33,12 @@ fn read_source(mut input: Reader, limit: usize): List<u8>? throws io.Error {
 fn source_read_limit(): Unit throws io.Error {
     let empty_data = [0u8; 0]
     var empty = io.slice_reader(empty_data)
-    let accepted = (try read_source(empty, 0usize)).unwrap()
+    let accepted = (try read_source(empty, 0usize)).or_panic()
     assert(accepted.is_empty(), "empty input exceeds zero limit")
     let array = [1u8, 2u8, 3u8, 4u8]
     let data = array.split_at(0usize).1
     var exact = io.slice_reader(data)
-    let accepted = (try read_source(exact, data.len())).unwrap()
+    let accepted = (try read_source(exact, data.len())).or_panic()
     assert(accepted.as_slice() == data, "exact-limit input changed")
     var over = io.slice_reader(data)
     assert((try read_source(over, data.len() - 1usize)).is_none(), "over-limit input accepted")
@@ -51,7 +51,7 @@ fn source_read_chunk_limit(): Unit throws io.Error {
     let array = [42u8; 4097]
     let data = array.split_at(0usize).1
     var exact = io.slice_reader(data)
-    let accepted = (try read_source(exact, data.len())).unwrap()
+    let accepted = (try read_source(exact, data.len())).or_panic()
     assert(accepted.as_slice() == data, "multi-chunk input changed")
     var over = io.slice_reader(data)
     assert((try read_source(over, 4096usize)).is_none(), "over-limit second chunk accepted")

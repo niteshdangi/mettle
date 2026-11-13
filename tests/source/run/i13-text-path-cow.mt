@@ -41,9 +41,9 @@ fn path_cows(): Unit {
     let moved = PathBuf.(From<BorrowedOrOwned<region static, Path>>).from(take owned)
     assert(moved.as_bytes().as_ptr() == owned_pointer, "owned path conversion transfers storage")
     var iter = (read moved).into_iter()
-    assert(iter.next().unwrap().same(OsStr.new("/".as_bytes())), "borrowed owner iteration starts at root")
-    assert(iter.next_back().unwrap().same(OsStr.new("b".as_bytes())), "borrowed owner iterator supports mixed ends")
-    assert(iter.next().unwrap().same(OsStr.new("a".as_bytes())) && iter.next().is_none(),
+    assert(iter.next().or_panic().same(OsStr.new("/".as_bytes())), "borrowed owner iteration starts at root")
+    assert(iter.next_back().or_panic().same(OsStr.new("b".as_bytes())), "borrowed owner iterator supports mixed ends")
+    assert(iter.next().or_panic().same(OsStr.new("a".as_bytes())) && iter.next().is_none(),
         "borrowed owner iteration yields each remaining component once")
     var path_iter = path.into_iter()
     assert(path_iter.count() == 3usize, "borrowed path implements the owned-view iteration protocol")

@@ -31,7 +31,7 @@ fn main(): i32 {
     if unsafe { DROPS != 2 || CALLS != 3 } { return 4 }
     {
         let token = Token(5)
-        let result = false.ok_or_else<Token>(take fn(): Token { token })
+        let result = false.or_failure_with<Token>(take fn(): Token { token })
         match take result {
             failure(value) => { consume(take value) },
             success(_) => { return 5 }
@@ -39,7 +39,7 @@ fn main(): i32 {
     }
     {
         let token = Token(20)
-        let result = true.ok_or_else(take fn(): Token { token })
+        let result = true.or_failure_with(take fn(): Token { token })
         match take result {
             success(_) => {},
             failure(_) => { return 6 }

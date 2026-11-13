@@ -161,7 +161,7 @@ fn checks_iterators(): i32 {
     let a = owned.next()
     let b = owned.next()
     let finished = owned.next()
-    if a.unwrap() != 7 || b.unwrap() != 8 || finished.is_present() { return 58 }
+    if a.or_panic() != 7 || b.or_panic() != 8 || finished.is_present() { return 58 }
     0
 }
 

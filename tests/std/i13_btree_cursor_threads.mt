@@ -19,7 +19,7 @@ fn main(): i32 {
     let moved = owning.into_iter()
     let worker = thread.spawn(take fn(): i32 {
         var items = take moved
-        let first = items.next().unwrap()
+        let first = items.next().or_panic()
         first.value.value
     })
     match capture worker.join() {
@@ -53,7 +53,7 @@ fn main(): i32 {
     {
         let pending = core.cell.Cell.new(present(tree.entry(4)))
         thread.scope(fn(read scope: thread.Scope): Unit {
-            let moved_entry = pending.replace(none).unwrap()
+            let moved_entry = pending.replace(none).or_panic()
             let child = scope.spawn(take fn(): i32 {
                 *moved_entry.or_insert(44)
             })
@@ -66,7 +66,7 @@ fn main(): i32 {
     {
         let pending = core.cell.Cell.new(present(tree.iter_mut()))
         thread.scope(fn(read scope: thread.Scope): Unit {
-            let moved_cursor = pending.replace(none).unwrap()
+            let moved_cursor = pending.replace(none).or_panic()
             let child = scope.spawn(take fn(): usize {
                 var items = take moved_cursor
                 var count = 0usize
@@ -84,7 +84,7 @@ fn main(): i32 {
             }
         })
     }
-    assert(*tree.get(1).unwrap() == 12 && *tree.get(4).unwrap() == 45,
+    assert(*tree.get(1).or_panic() == 12 && *tree.get(4).or_panic() == 45,
         "joined cursor writes are visible to the original owner")
     0
 }

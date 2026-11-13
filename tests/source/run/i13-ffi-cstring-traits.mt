@@ -77,9 +77,9 @@ fn main(): i32 {
     }
     if !from_vec_with_nul.eq(owned) { return 9 }
     var nonzero_items = vec.new<NonZero<u8>>()
-    nonzero_items.push(NonZero<u8>.new(65u8).unwrap())
-    nonzero_items.push(NonZero<u8>.new(66u8).unwrap())
-    nonzero_items.push(NonZero<u8>.new(67u8).unwrap())
+    nonzero_items.push(NonZero<u8>.new(65u8).or_panic())
+    nonzero_items.push(NonZero<u8>.new(66u8).or_panic())
+    nonzero_items.push(NonZero<u8>.new(67u8).or_panic())
     let nonzero_bytes = List<NonZero<u8>>.(FromItems<NonZero<u8>>).from_iter(nonzero_items)
     let from_nonzero = CString.(From<List<NonZero<u8>>>).from(nonzero_bytes)
     if !from_nonzero.eq(owned) { return 24 }

@@ -249,7 +249,7 @@ extend<T, A: Allocator> List<T, A> {
     }
     pub mut fn push_mut(take value: T): mut T from self {
         self.push(value)
-        self.get_mut(self.len - 1usize).unwrap()
+        self.get_mut(self.len - 1usize).or_panic()
     }
     pub mut fn pop(): T? {
         if self.len == 0usize { return none }
@@ -268,7 +268,7 @@ extend<T, A: Allocator> List<T, A> {
     }
     pub mut fn insert_mut(index: usize, take value: T): mut T from self {
         self.insert(index, value)
-        self.get_mut(index).unwrap()
+        self.get_mut(index).or_panic()
     }
     pub mut fn remove(index: usize): T {
         if index >= self.len { panic_precondition() }

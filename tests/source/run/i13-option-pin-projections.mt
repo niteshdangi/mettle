@@ -20,7 +20,7 @@ fn main(): i32 {
             none => { return 3 }
         }
     }
-    if value.unwrap() != 4 { return 4 }
+    if value.or_panic() != 4 { return 4 }
 
     var empty: i32? = none
     {

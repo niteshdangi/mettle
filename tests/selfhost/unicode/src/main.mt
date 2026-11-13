@@ -29,7 +29,7 @@ fn column(read bytes: [u8], mut at: usize): String {
     while at < bytes.len() && bytes[at] != b';' {
         if bytes[at] == 32u8 { at += 1usize; continue }
         let scalar = number(bytes, mut at)
-        text.push(core.char.from_u32(scalar).unwrap())
+        text.push(core.char.from_u32(scalar).or_panic())
     }
     assert(at < bytes.len(), "missing UCD column separator")
     at += 1usize
@@ -52,15 +52,15 @@ fn normalization(read input: Text): (usize, List<u32>) {
         let c5 = column(bytes, mut at)
         if part1 {
             var characters = c1.as_text().chars()
-            let scalar = characters.next().unwrap() as u32
+            let scalar = characters.next().or_panic() as u32
             assert(characters.next().is_none(), "Part1 input must be a single scalar")
             explicit.push(scalar)
         }
-        assert(nfc(c1.as_text().as_bytes()).unwrap().as_slice() == c2.as_text().as_bytes(), "NFC(c1) differs from c2")
-        assert(nfc(c2.as_text().as_bytes()).unwrap().as_slice() == c2.as_text().as_bytes(), "NFC(c2) differs from c2")
-        assert(nfc(c3.as_text().as_bytes()).unwrap().as_slice() == c2.as_text().as_bytes(), "NFC(c3) differs from c2")
-        assert(nfc(c4.as_text().as_bytes()).unwrap().as_slice() == c4.as_text().as_bytes(), "NFC(c4) differs from c4")
-        assert(nfc(c5.as_text().as_bytes()).unwrap().as_slice() == c4.as_text().as_bytes(), "NFC(c5) differs from c4")
+        assert(nfc(c1.as_text().as_bytes()).or_panic().as_slice() == c2.as_text().as_bytes(), "NFC(c1) differs from c2")
+        assert(nfc(c2.as_text().as_bytes()).or_panic().as_slice() == c2.as_text().as_bytes(), "NFC(c2) differs from c2")
+        assert(nfc(c3.as_text().as_bytes()).or_panic().as_slice() == c2.as_text().as_bytes(), "NFC(c3) differs from c2")
+        assert(nfc(c4.as_text().as_bytes()).or_panic().as_slice() == c4.as_text().as_bytes(), "NFC(c4) differs from c4")
+        assert(nfc(c5.as_text().as_bytes()).or_panic().as_slice() == c4.as_text().as_bytes(), "NFC(c5) differs from c4")
         cases += 1usize
     }
     (cases, explicit)
@@ -73,9 +73,9 @@ fn unchanged_scalars(read explicit: [u32]): Unit {
     while scalar < 0x110000u32 {
         if index < explicit.len() && scalar == explicit[index] { index += 1usize }
         else if scalar < 0xd800u32 || scalar > 0xdfffu32 {
-            let character = core.char.from_u32(scalar).unwrap()
+            let character = core.char.from_u32(scalar).or_panic()
             let text = character.encode_utf8(mut buffer)
-            assert(nfc(text.as_bytes()).unwrap().as_slice() == text.as_bytes(), "unlisted scalar changed under NFC")
+            assert(nfc(text.as_bytes()).or_panic().as_slice() == text.as_bytes(), "unlisted scalar changed under NFC")
         }
         scalar += 1u32
     }
@@ -125,7 +125,7 @@ fn integration(): Unit {
     var names = 0usize
     for token in lexed.tokens.as_slice() {
         if token.kind.is(Kind.Word) || token.kind.is(Kind.QuotedWord) {
-            let name = token.identifier(source.as_bytes()).unwrap()
+            let name = token.identifier(source.as_bytes()).or_panic()
             assert(name.as_slice() == "café".as_bytes(), "canonically equivalent identifier differs")
             assert(token.span.source == 7u32, "source identity changed")
             names += 1usize
@@ -150,7 +150,7 @@ fn integration(): Unit {
     while count < 4096usize { ordered.push('\u{300}'); count += 1usize }
     count = 0usize
     while count < 4096usize { ordered.push('\u{315}'); count += 1usize }
-    assert(nfc(marks.as_text().as_bytes()).unwrap().as_slice() == ordered.as_text().as_bytes(), "long combining run ordered incorrectly")
+    assert(nfc(marks.as_text().as_bytes()).or_panic().as_slice() == ordered.as_text().as_bytes(), "long combining run ordered incorrectly")
 }
 
 fn run(): i32 throws io.Error {

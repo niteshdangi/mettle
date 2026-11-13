@@ -75,20 +75,20 @@ fn main(): i32 {
     custom.insert(7, 70)
     if custom.hasher().key != 17u64 ||
         custom.as_entries()[0usize].hash != custom.hasher().hash_one(7i32) ||
-        *custom.get(7).unwrap() != 70 {
+        *custom.get(7).or_panic() != 70 {
         return 8
     }
     var capacity_custom =
         hash_map.with_capacity_and_hasher<i32, i32, TestBuildHasher>(4usize, TestBuildHasher(23u64))
     if capacity_custom.capacity() < 4usize { return 7 }
     capacity_custom.insert(3, 30)
-    if *capacity_custom.get(3).unwrap() != 30 { return 6 }
+    if *capacity_custom.get(3).or_panic() != 30 { return 6 }
     var capacity_custom_in = hash_map.with_capacity_and_hasher_in<
         i32, i32, alloc.alloc.Global, TestBuildHasher
     >(3usize, alloc.alloc.Global(), TestBuildHasher(29u64))
     if capacity_custom_in.capacity() < 3usize { return 4 }
     capacity_custom_in.insert(5, 50)
-    if *capacity_custom_in.get(5).unwrap() != 50 { return 3 }
+    if *capacity_custom_in.get(5).or_panic() != 50 { return 3 }
     var custom_set = hash_map.set_with_hasher<i32, TestBuildHasher>(TestBuildHasher(31u64))
     custom_set.insert(11)
     if custom_set.hasher().key != 31u64 || !custom_set.contains(11) ||
@@ -146,7 +146,7 @@ fn main(): i32 {
         *pair.0 += 1
         *pair.1 += 2
     }
-    if *map.get(1).unwrap() != 12 || *map.get(2).unwrap() != 23 { return 21 }
+    if *map.get(1).or_panic() != 12 || *map.get(2).or_panic() != 23 { return 21 }
     match capture map.try_insert(3, 30) {
         success(old) => { if old.is_present() { return 22 } },
         failure(_) => { return 23 }
@@ -159,13 +159,13 @@ fn main(): i32 {
         },
         none => { return 24 }
     }
-    if *map.get(1).unwrap() != 13 || *map.get(3).unwrap() != 31 { return 25 }
+    if *map.get(1).or_panic() != 13 || *map.get(3).or_panic() != 31 { return 25 }
     unsafe {
         let pair = map.get_disjoint_unchecked_mut(1, 3)
         *pair.0 += 1
         *pair.1 += 1
     }
-    if *map.get(1).unwrap() != 14 || *map.get(3).unwrap() != 32 { return 26 }
+    if *map.get(1).or_panic() != 14 || *map.get(3).or_panic() != 32 { return 26 }
 
     // Entry API: occupied and vacant paths, plus the default helpers.
     if !require_debug(read map.entry(4)) { return 28 }
@@ -175,7 +175,7 @@ fn main(): i32 {
     }
     let inserted = map.entry(4).or_insert(40)
     *inserted += 1
-    if *map.get(4).unwrap() != 41 { return 31 }
+    if *map.get(4).or_panic() != 41 { return 31 }
     let kept = map.entry(4).or_insert(0)
     if *kept != 41 { return 32 }
     let lazy = map.entry(5).or_insert_with(take fn(): i32 { 50 })
@@ -183,7 +183,7 @@ fn main(): i32 {
     let keyed = map.entry(6).or_insert_with_key(take fn(read key: i32): i32 { key * 10 })
     if *keyed != 60 { return 34 }
     map.entry(6).and_modify(take fn(mut value: i32): Unit { value += 1 }).or_insert(0)
-    if *map.get(6).unwrap() != 61 { return 35 }
+    if *map.get(6).or_panic() != 61 { return 35 }
     let defaults = map.entry(7).or_default()
     if *defaults != 0 { return 36 }
     match take map.entry(7) {
@@ -202,7 +202,7 @@ fn main(): i32 {
         },
         Entry.Occupied(_) => { return 40 }
     }
-    if *map.get(8).unwrap() != 80 || *map.get(7).unwrap() != 70 { return 41 }
+    if *map.get(8).or_panic() != 80 || *map.get(7).or_panic() != 70 { return 41 }
     {
         var inserted = map.entry(10).insert_entry(100)
         if *inserted.key() != 10 || *inserted.get() != 100 { return 45 }
@@ -276,11 +276,11 @@ fn main(): i32 {
     keyed_pairs.push((3, 300))
     keyed_pairs.push((4, 400))
     let built = hash_map.Map<i32, i32>.(FromItems<(i32, i32)>).from_iter(keyed_pairs)
-    if built.len() != 2usize || *built.get(4).unwrap() != 400 { return 71 }
+    if built.len() != 2usize || *built.get(4).or_panic() != 400 { return 71 }
     var more = vec.new<(i32, i32)>()
     more.push((5, 500))
     source.extend(more)
-    if source.len() != 3usize || *source.get(5).unwrap() != 500 { return 72 }
+    if source.len() != 3usize || *source.get(5).or_panic() != 500 { return 72 }
     var owned_total = 0
     for pair in source.into_iter() { owned_total += pair.1 }
     if owned_total != 800 { return 73 }
@@ -296,7 +296,7 @@ fn main(): i32 {
     if sized_set.capacity() < 5usize { return 75 }
 
     let from_array = hash_map.Map<i32, i32>.(From<[(i32, i32); 2]>).from([(1, 10), (2, 20)])
-    if from_array.len() != 2usize || *from_array.get(2).unwrap() != 20 { return 76 }
+    if from_array.len() != 2usize || *from_array.get(2).or_panic() != 20 { return 76 }
     let set_array = hash_map.Set<i32>.(From<[i32; 3]>).from([2, 2, 3])
     if set_array.len() != 2usize || !set_array.contains(3) { return 77 }
 

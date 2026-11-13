@@ -48,17 +48,14 @@ extend<T> T? {
         }
     }
 
-    pub take fn unwrap(): T {
-        match take self { present(value) => value, none => super.panic.panic("called `unwrap` on an absent value") }
-    }
-    pub take fn expect(read message: Text): T {
+    pub take fn or_panic(read message: Text = "called `or_panic` on an absent value"): T {
         match take self { present(value) => value, none => super.panic.panic(message) }
     }
-    pub unsafe fn unwrap_unchecked(receiver take self: T?): T { self.unwrap() }
-    pub take fn unwrap_or(take fallback: T): T {
+    pub unsafe fn unwrap_unchecked(receiver take self: T?): T { self.or_panic() }
+    pub take fn or(take fallback: T): T {
         match take self { present(value) => value, none => fallback }
     }
-    pub take fn unwrap_or_else<F: take fn(): T>(take fallback: F): T {
+    pub take fn or_else<F: take fn(): T>(take fallback: F): T {
         match take self { present(value) => value, none => fallback() }
     }
 
@@ -74,7 +71,7 @@ extend<T> T? {
     pub take fn map_or_default<U: Default, F: take fn(take T): U>(take f: F): U {
         match take self { present(value) => f(value), none => U.(Default).default() }
     }
-    pub take fn unwrap_or_default(): T where T: Default {
+    pub take fn or_default(): T where T: Default {
         match take self {
             present(value) => value,
             none => T.(Default).default()
@@ -101,10 +98,10 @@ extend<T> T? {
             none => other
         }
     }
-    pub take fn or_else<F: take fn(): T?>(take f: F): T? {
+    pub take fn or_present_with<F: take fn(): T?>(take f: F): T? {
         match take self { present(value) => present(value), none => f() }
     }
-    pub take fn or(take other: T?): T? {
+    pub take fn or_present(take other: T?): T? {
         match take self { present(value) => present(value), none => other }
     }
     pub take fn filter<F: take fn(read T): bool>(take keep: F): T? {
@@ -119,10 +116,10 @@ extend<T> T? {
             none => none
         }
     }
-    pub take fn ok_or<E>(take error: E): (Outcome<T, E>) {
+    pub take fn or_failure<E>(take error: E): (Outcome<T, E>) {
         match take self { present(value) => success(value), none => failure(error) }
     }
-    pub take fn ok_or_else<E, F: take fn(): E>(take error: F): (Outcome<T, E>) {
+    pub take fn or_failure_with<E, F: take fn(): E>(take error: F): (Outcome<T, E>) {
         match take self { present(value) => success(value), none => failure(error()) }
     }
 

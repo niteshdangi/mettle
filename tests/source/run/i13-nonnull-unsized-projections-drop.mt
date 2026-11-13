@@ -22,7 +22,7 @@ fn main(): i32 {
             Tracked(core.ptr.from_mut(mut drops), 3i32)
         ])
         let data = core.ptr.from_mut(mut storage).cast<Tracked>()
-        var slice = NonNull.slice_from_raw_parts(NonNull.new(data).unwrap(), 2usize)
+        var slice = NonNull.slice_from_raw_parts(NonNull.new(data).or_panic(), 2usize)
         {
             let view = unsafe { slice.as_ref() }
             if view.len() != 2usize || view[0usize].value != 2i32 ||

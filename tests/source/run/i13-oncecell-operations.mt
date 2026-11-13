@@ -51,7 +51,7 @@ fn main(): i32 {
     if *value.get_or_init(fn(): i32 { calls += 1; 99 }) != 42 || calls != 1 {
         return 6
     }
-    let held = value.get().unwrap()
+    let held = value.get().or_panic()
     match capture value.set(17) {
         success(_) => { return 7 },
         failure(rejected) => { if rejected != 17 || *held != 42 { return 8 } }
@@ -60,11 +60,11 @@ fn main(): i32 {
     if equal(value, defaulted) || equal(defaulted, value) { return 26 }
     let borrowed = OnceCell<i32>.(Borrow<OnceCell<i32>>).borrow(read value)
     if core.ptr.from_ref(borrowed) != core.ptr.from_ref(value) ||
-        *borrowed.get().unwrap() != 42 {
+        *borrowed.get().or_panic() != 42 {
         return 27
     }
     match any.downcast_ref<OnceCell<i32>>(read value) {
-        present(found) => { if *found.get().unwrap() != 42 { return 28 } },
+        present(found) => { if *found.get().or_panic() != 42 { return 28 } },
         none => { return 29 }
     }
     if any.is<OnceCell<u32>>(read value) { return 30 }
@@ -75,18 +75,18 @@ fn main(): i32 {
         !equal(value, converted_into) {
         return 10
     }
-    *value.get_mut().unwrap() = 43
-    if *value.get().unwrap() != 43 || *copied.get().unwrap() != 42 ||
+    *value.get_mut().or_panic() = 43
+    if *value.get().or_panic() != 43 || *copied.get().or_panic() != 42 ||
         equal(value, copied) {
         return 11
     }
-    if value.`take`().unwrap() != 43 || value.get().is_present() { return 12 }
+    if value.`take`().or_panic() != 43 || value.get().is_present() { return 12 }
     if value.`take`().is_present() { return 13 }
     match capture value.set(44) {
         success(_) => {},
         failure(_) => { return 14 }
     }
-    if value.into_inner().unwrap() != 44 { return 15 }
+    if value.into_inner().or_panic() != 44 { return 15 }
     if OnceCell<i32>.new().into_inner().is_present() { return 16 }
     transferable<OnceCell<i32>>()
     transferable<OnceCell<core.cell.Cell<i32>>>()
@@ -106,13 +106,13 @@ fn main(): i32 {
             }
         }
         if drops != 10 { return 20 }
-        let extracted = owned.`take`().unwrap()
+        let extracted = owned.`take`().or_panic()
         if extracted.value != 1 || owned.get().is_present() { return 21 }
         match capture owned.set(Counted(counter, 100)) {
             success(_) => {},
             failure(_) => { return 22 }
         }
-        let consumed = owned.into_inner().unwrap()
+        let consumed = owned.into_inner().or_panic()
         if consumed.value != 100 || drops != 10 { return 23 }
     }
     if drops != 111 { return 24 }
@@ -124,9 +124,9 @@ fn main(): i32 {
         var owned = OnceCell<Counted>.(From<Counted>).from(Counted(counter, 10))
         let cloned = owned.clone()
         let copied = owned.to_owned()
-        owned.get_mut().unwrap().value = 20
-        if cloned.get().unwrap().value != 11 || copied.get().unwrap().value != 11 ||
-            owned.get().unwrap().value != 20 || drops != 1111 {
+        owned.get_mut().or_panic().value = 20
+        if cloned.get().or_panic().value != 11 || copied.get().or_panic().value != 11 ||
+            owned.get().or_panic().value != 20 || drops != 1111 {
             return 31
         }
     }

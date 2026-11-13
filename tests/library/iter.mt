@@ -31,8 +31,8 @@ fn main(): i32 {
     if iter.sum(iter.empty<i32>()) != 0 || iter.product(iter.empty<i32>()) != 1 { return 12 }
     if iter.max(iter.empty<i32>()).is_present() { return 13 }
     if iter.sum(iter.range_inclusive(1, 10)) != 55 || iter.product(iter.range_inclusive(1u64, 10u64)) != 3628800u64 { return 14 }
-    if iter.max(iter.range(0, 5).map(fn(take x: i32): i32 { (x * 7) % 5 })).unwrap() != 4 { return 15 }
-    if iter.min(iter.range(3, 5)).unwrap() != 3 { return 16 }
+    if iter.max(iter.range(0, 5).map(fn(take x: i32): i32 { (x * 7) % 5 })).or_panic() != 4 { return 15 }
+    if iter.min(iter.range(3, 5)).or_panic() != 3 { return 16 }
     // adapters
     if iter.range(0, 10).filter(evens).fold(0, fn(take a: i32, take x: i32): i32 { a + x }) != 20 { return 17 }
     var z = iter.range(0, 3).zip(iter.range(10, 20))
@@ -54,7 +54,7 @@ fn main(): i32 {
     match take pk.peek() { present(v) => { if *v != 0 { return 26 } }, none => { return 26 } }
     match take pk.next() { present(v) => { if v != 0 { return 27 } }, none => { return 27 } }
     match take pk.next() { present(v) => { if v != 1 { return 28 } }, none => { return 28 } }
-    if iter.range(0, 3).last().unwrap() != 2 || iter.range(0, 3).nth(1usize).unwrap() != 1 || iter.range(0, 3).nth(3usize).is_present() { return 29 }
+    if iter.range(0, 3).last().or_panic() != 2 || iter.range(0, 3).nth(1usize).or_panic() != 1 || iter.range(0, 3).nth(3usize).is_present() { return 29 }
     var once = iter.once(5)
     if once.count() != 1usize { return 30 }
     var n = 0

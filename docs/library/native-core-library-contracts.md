@@ -309,7 +309,7 @@ not implementations for arbitrary non-integer generic T.
 
 Bool supports not/and/or/xor, comparisons and explicit integer conversion.
 `then_present(take T)` returns present(T) on true and destroys T on false.
-`then(make: take fn(): T)` calls make only on true. Bool `ok_or`/`ok_or_else`
+`then(make: take fn(): T)` calls make only on true. Bool `or_failure`/`or_failure_with`
 return success(Unit) on true, otherwise the supplied/generated error.
 No truthiness conversion is introduced.
 
@@ -1196,7 +1196,7 @@ does not start execution.
 
 Poll `is_ready/is_pending` query; `map` consumes and invokes
 `take fn(take T): U` only on Ready. `as_ref/as_mut` borrow its active payload.
-`map_ok/map_err` for Ready outcomes map only the selected alternative;
+`map_ok/map_failure` for Ready outcomes map only the selected alternative;
 Pending and the other alternative propagate untouched. Pending never
 fabricates an optional/outcome payload.
 

@@ -1,6 +1,6 @@
 // profiles: debug release
 // bool, char, u8 and float primitive operations and per-type constants:
-// bool::then/then_present/ok_or/ok_or_else, char::decode_utf16, u8::escape_ascii
+// bool::then/then_present/or_failure/or_failure_with, char::decode_utf16, u8::escape_ascii
 // and the bounds of every numeric primitive. Expected values are computed
 // independently.
 import core.option
@@ -31,13 +31,13 @@ fn error_code(result: (Outcome<Unit, i32>)): i32 {
 }
 
 fn bool_operations(): i32 {
-    if true.then(fn(): i32 { 7 }).unwrap() != 7 { return 1 }
+    if true.then(fn(): i32 { 7 }).or_panic() != 7 { return 1 }
     if false.then(fn(): i32 { 7 }).is_present() { return 2 }
-    if true.then_present(7).unwrap() != 7 || false.then_present(7).is_present() { return 3 }
-    if !ok_status(true.ok_or(9i32)) || ok_status(false.ok_or(9i32)) { return 4 }
-    if error_code(false.ok_or(9i32)) != 9 { return 5 }
-    if !ok_status(true.ok_or_else(fn(): i32 { 9 })) { return 6 }
-    if error_code(false.ok_or_else(fn(): i32 { 9 })) != 9 { return 7 }
+    if true.then_present(7).or_panic() != 7 || false.then_present(7).is_present() { return 3 }
+    if !ok_status(true.or_failure(9i32)) || ok_status(false.or_failure(9i32)) { return 4 }
+    if error_code(false.or_failure(9i32)) != 9 { return 5 }
+    if !ok_status(true.or_failure_with(fn(): i32 { 9 })) { return 6 }
+    if error_code(false.or_failure_with(fn(): i32 { 9 })) != 9 { return 7 }
     0
 }
 

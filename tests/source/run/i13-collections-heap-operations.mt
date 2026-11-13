@@ -87,7 +87,7 @@ fn main(): i32 {
     queue.push(7)
     if queue.len() != 4usize || queue.is_empty() { return 10 }
     if !check_iter(read queue) { return 43 }
-    if *queue.peek().unwrap() != 9 { return 11 }
+    if *queue.peek().or_panic() != 9 { return 11 }
     if heap_values(read queue) != 20 { return 12 }
     if queue.as_slice().len() != 4usize { return 13 }
     let before_shrink = queue.capacity()
@@ -100,7 +100,7 @@ fn main(): i32 {
         present(value) => { if value != 9 { return 15 } },
         none => { return 16 }
     }
-    if *queue.peek().unwrap() != 7 { return 17 }
+    if *queue.peek().or_panic() != 7 { return 17 }
     match queue.pop() {
         present(value) => { if value != 7 { return 18 } },
         none => { return 19 }
@@ -130,7 +130,7 @@ fn main(): i32 {
             none => { return 25 }
         }
     }
-    if *mutable.peek().unwrap() != 5 { return 26 }
+    if *mutable.peek().or_panic() != 5 { return 26 }
     if binary_heap.new<i32>().peek_mut().is_present() { return 27 }
 
     // Sorted and unsorted extraction.
@@ -156,16 +156,16 @@ fn main(): i32 {
     if ascending.len() != 3usize || ascending[0usize] != 4 ||
         ascending[1usize] != 6 || ascending[2usize] != 8 { return 30 }
     let from_array = binary_heap.BinaryHeap<i32>.(From<[i32; 4]>).from([3, 1, 4, 2])
-    if from_array.len() != 4usize || *from_array.peek().unwrap() != 4 { return 31 }
+    if from_array.len() != 4usize || *from_array.peek().or_panic() != 4 { return 31 }
     var arbitrary = vec.new<i32>()
     arbitrary.push(1)
     arbitrary.push(4)
     arbitrary.push(2)
     arbitrary.push(3)
     var from_list = binary_heap.BinaryHeap<i32>.(From<List<i32>>).from(arbitrary)
-    if *from_list.peek().unwrap() != 4 || from_list.len() != 4usize { return 32 }
-    if from_list.pop().unwrap() != 4 || from_list.pop().unwrap() != 3 ||
-        from_list.pop().unwrap() != 2 || from_list.pop().unwrap() != 1 {
+    if *from_list.peek().or_panic() != 4 || from_list.len() != 4usize { return 32 }
+    if from_list.pop().or_panic() != 4 || from_list.pop().or_panic() != 3 ||
+        from_list.pop().or_panic() != 2 || from_list.pop().or_panic() != 1 {
         return 33
     }
 
@@ -181,7 +181,7 @@ fn main(): i32 {
         visits += 1
         value % 2 == 0
     })
-    if visits != 8 || retained.len() != 4usize || *retained.peek().unwrap() != 6 { return 34 }
+    if visits != 8 || retained.len() != 4usize || *retained.peek().or_panic() != 6 { return 34 }
 
     var left = binary_heap.new<i32>()
     left.push(1)
@@ -190,7 +190,7 @@ fn main(): i32 {
     right.push(9)
     right.push(3)
     left.append(mut right)
-    if !right.is_empty() || left.len() != 4usize || *left.peek().unwrap() != 9 { return 35 }
+    if !right.is_empty() || left.len() != 4usize || *left.peek().or_panic() != 9 { return 35 }
 
     // Draining and clearing.
     var drained_sum = 0
@@ -219,15 +219,15 @@ fn main(): i32 {
     source.push(7)
     source.push(4)
     let from_list = binary_heap.BinaryHeap<i32>.(FromItems<i32>).from_iter(source)
-    if *from_list.peek().unwrap() != 7 || from_list.len() != 3usize { return 38 }
+    if *from_list.peek().or_panic() != 7 || from_list.len() != 3usize { return 38 }
     var more = vec.new<i32>()
     more.push(11)
     more.push(1)
     var grown = binary_heap.new<i32>()
     grown.extend(more)
-    if *grown.peek().unwrap() != 11 || grown.len() != 2usize { return 39 }
+    if *grown.peek().or_panic() != 11 || grown.len() != 2usize { return 39 }
     let duplicate = grown.clone()
-    if duplicate.len() != 2usize || *duplicate.peek().unwrap() != 11 { return 40 }
+    if duplicate.len() != 2usize || *duplicate.peek().or_panic() != 11 { return 40 }
     let back = List<i32>.(From<binary_heap.BinaryHeap<i32>>).from(duplicate)
     if back.len() != 2usize { return 41 }
     var empty_owned: vec.IntoIter<i32> = default_value<vec.IntoIter<i32>>()

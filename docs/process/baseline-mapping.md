@@ -191,19 +191,28 @@ identities, not additional native method names.
 | `option::Option::is_some`, `is_none` | `is_present`, `is_none`; [queries](../library/native-value-contracts.md#2-optional-queries-and-projections) |
 | `option::Option::as_ref` | `as_view`; [projections](../library/native-value-contracts.md#2-optional-queries-and-projections) |
 | `option::Option::as_mut`, `as_pin_ref`, `as_pin_mut`, `as_slice`, `as_mut_slice`, `iter`, `iter_mut`, `as_deref`, `as_deref_mut` | Same member names; [projections](../library/native-value-contracts.md#2-optional-queries-and-projections) |
-| `option::Option::unwrap`, `expect`, `unwrap_unchecked`, `unwrap_or`, `unwrap_or_else`, `unwrap_or_default` | Same member names; [extraction](../library/native-value-contracts.md#3-optional-extraction-and-mutation) |
+| `option::Option::unwrap`, `expect` | `or_panic` with an optional message; [extraction](../library/native-value-contracts.md#3-optional-extraction-and-mutation) |
+| `option::Option::unwrap_unchecked` | Same member name; [extraction](../library/native-value-contracts.md#3-optional-extraction-and-mutation) |
+| `option::Option::unwrap_or`, `unwrap_or_else`, `unwrap_or_default` | `or`, `or_else`, `or_default`; [extraction](../library/native-value-contracts.md#3-optional-extraction-and-mutation) |
 | `option::Option::take`, `replace`, `insert`, `get_or_insert`, `get_or_insert_with`, `get_or_insert_default`, `take_if` | Same member names, escaped `take`; [mutation](../library/native-value-contracts.md#3-optional-extraction-and-mutation) |
-| `option::Option::map`, `map_or`, `map_or_else`, `map_or_default`, `and_then`, `or_else`, `is_none_or`, `ok_or`, `ok_or_else`, `filter`, `inspect`, `and`, `or`, `xor`, `zip`, `unzip`, `flatten`, `transpose`, `copied`, `cloned` | Same member names; [transformations](../library/native-value-contracts.md#4-optional-transformations) |
+| `option::Option::map`, `map_or`, `map_or_else`, `map_or_default`, `and_then`, `is_none_or`, `filter`, `inspect`, `and`, `xor`, `zip`, `unzip`, `flatten`, `transpose`, `copied`, `cloned` | Same member names; [transformations](../library/native-value-contracts.md#4-optional-transformations) |
 | `option::Option::is_some_and` | `is_present_and`; [transformations](../library/native-value-contracts.md#4-optional-transformations) |
+| `option::Option::ok_or`, `ok_or_else` | `or_failure`, `or_failure_with`; [transformations](../library/native-value-contracts.md#4-optional-transformations) |
+| `option::Option::or`, `or_else` | `or_present`, `or_present_with`; [transformations](../library/native-value-contracts.md#4-optional-transformations) |
 | `primitive::bool::then_some` | `then_present`; [eager conditional construction](../library/native-value-contracts.md#4-optional-transformations) |
 | `primitive::bool::then` | Same member name; [eager/lazy conditional construction](../library/native-value-contracts.md#4-optional-transformations) |
 | `result::Result::is_ok`, `is_err` | `is_success`, `is_failure`; [queries](../library/native-value-contracts.md#5-stored-outcome-queries-and-projections) |
 | `result::Result::as_ref` | `as_view`; [projections](../library/native-value-contracts.md#5-stored-outcome-queries-and-projections) |
 | `result::Result::as_mut`, `iter`, `iter_mut`, `as_deref`, `as_deref_mut` | Same member names; [projections](../library/native-value-contracts.md#5-stored-outcome-queries-and-projections) |
-| `result::Result::ok`, `err`, `unwrap`, `expect`, `unwrap_or`, `unwrap_or_else`, `unwrap_or_default`, `unwrap_unchecked`, `unwrap_err_unchecked` | Same member names; [extraction](../library/native-value-contracts.md#6-stored-outcome-extraction) |
-| `result::Result::unwrap_err`, `expect_err` | `unwrap_failure`, `expect_failure`; [extraction](../library/native-value-contracts.md#6-stored-outcome-extraction) |
-| `result::Result::map`, `map_err`, `map_or`, `map_or_else`, `map_or_default`, `and_then`, `or_else`, `and`, `or`, `inspect`, `copied`, `cloned`, `flatten`, `transpose` | Same member names; [transformations](../library/native-value-contracts.md#7-stored-outcome-transformations) |
+| `result::Result::ok`, `err` | Same member names; [extraction](../library/native-value-contracts.md#6-stored-outcome-extraction) |
+| `result::Result::unwrap`, `expect` | `or_panic` with an optional message; [extraction](../library/native-value-contracts.md#6-stored-outcome-extraction) |
+| `result::Result::unwrap_or`, `unwrap_or_else`, `unwrap_or_default` | `or`, `or_else`, `or_default`; [extraction](../library/native-value-contracts.md#6-stored-outcome-extraction) |
+| `result::Result::unwrap_unchecked`, `unwrap_err_unchecked` | Same member names; [extraction](../library/native-value-contracts.md#6-stored-outcome-extraction) |
+| `result::Result::unwrap_err`, `expect_err` | `failure_or_panic` with an optional message; [extraction](../library/native-value-contracts.md#6-stored-outcome-extraction) |
+| `result::Result::map`, `map_or`, `map_or_else`, `map_or_default`, `and_then`, `and`, `inspect`, `copied`, `cloned`, `flatten`, `transpose` | Same member names; [transformations](../library/native-value-contracts.md#7-stored-outcome-transformations) |
 | `result::Result::is_ok_and`, `is_err_and`, `inspect_err` | `is_success_and`, `is_failure_and`, `inspect_failure`; [transformations](../library/native-value-contracts.md#7-stored-outcome-transformations) |
+| `result::Result::map_err` | `map_failure`; [transformations](../library/native-value-contracts.md#7-stored-outcome-transformations) |
+| `result::Result::or`, `or_else` | `or_success`, `or_success_with`; [transformations](../library/native-value-contracts.md#7-stored-outcome-transformations) |
 
 Receiver modes, payload bounds, effects, complexity, failure and regions come
 from that native specification; its

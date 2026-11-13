@@ -86,7 +86,7 @@ fn find_pattern<P: Pattern>(
 ): (usize, usize)? {
     var at = if reverse { text.len() } else { 0usize }
     while true {
-        let part = if reverse { text.get(0usize, at).unwrap() } else { text.get(at, text.len()).unwrap() }
+        let part = if reverse { text.get(0usize, at).or_panic() } else { text.get(at, text.len()).or_panic() }
         let matched = if reverse { pattern.match_back(part) } else { pattern.match_front(part) }
         match matched {
             present(length) => {
@@ -620,12 +620,12 @@ extend<region r, P: Pattern> Split<region r, P> {
             search_end = end - 1usize
             while !self.rest.is_char_boundary(search_end) { search_end -= 1usize }
         }
-        let search = self.rest.get(0usize, search_end).unwrap()
+        let search = self.rest.get(0usize, search_end).or_panic()
         match find_pattern(search, mut self.pattern, true) {
             present((start, stop)) => {
                 self.back_empty = stop != start
-                let piece = self.rest.get(stop, end).unwrap()
-                self.rest = self.rest.get(0usize, start).unwrap()
+                let piece = self.rest.get(stop, end).or_panic()
+                self.rest = self.rest.get(0usize, start).or_panic()
                 present(piece)
             },
             none => self.finish()
@@ -641,12 +641,12 @@ extend<region r, P: Pattern> Split<region r, P> implements Iterator {
             if self.rest.is_empty() { return self.finish() }
             search_start = scalar_width(self.rest.bytes, 0usize)
         }
-        let search = self.rest.get(search_start, self.rest.len()).unwrap()
+        let search = self.rest.get(search_start, self.rest.len()).or_panic()
         match find_pattern(search, mut self.pattern, false) {
             present((start, stop)) => {
                 self.front_empty = stop != start
-                let piece = self.rest.get(0usize, search_start + start).unwrap()
-                self.rest = self.rest.get(search_start + stop, self.rest.len()).unwrap()
+                let piece = self.rest.get(0usize, search_start + start).or_panic()
+                self.rest = self.rest.get(search_start + stop, self.rest.len()).or_panic()
                 present(piece)
             },
             none => self.finish()
@@ -739,8 +739,8 @@ extend<region r> SplitInclusive<region r> implements Iterator {
             }
             if self.rest.is_empty() { self.done = true; return none }
             let end = scalar_width(self.rest.bytes, 0usize)
-            let piece = self.rest.get(0usize, end).unwrap()
-            self.rest = self.rest.get(end, self.rest.len()).unwrap()
+            let piece = self.rest.get(0usize, end).or_panic()
+            self.rest = self.rest.get(end, self.rest.len()).or_panic()
             if self.rest.is_empty() { self.done = true }
             return present(piece)
         }
@@ -748,8 +748,8 @@ extend<region r> SplitInclusive<region r> implements Iterator {
         match self.rest.find(read *self.separator) {
             present(at) => {
                 let end = at + self.separator.len()
-                let piece = self.rest.get(0usize, end).unwrap()
-                self.rest = self.rest.get(end, self.rest.len()).unwrap()
+                let piece = self.rest.get(0usize, end).or_panic()
+                self.rest = self.rest.get(end, self.rest.len()).or_panic()
                 if self.rest.is_empty() { self.done = true }
                 present(piece)
             },
@@ -768,7 +768,7 @@ pub type Matches<region r, P = read Text from r> {
 extend<region r, P: Pattern> Matches<region r, P> {
     mut fn next_range(reverse: bool): (usize, usize)? {
         if self.done { return none }
-        let part = self.text.get(self.front, self.back).unwrap()
+        let part = self.text.get(self.front, self.back).or_panic()
         match find_pattern(part, mut self.pattern, reverse) {
             present((start, end)) => {
                 let first = self.front + start
@@ -822,7 +822,7 @@ extend<region r, P: Pattern> MatchIndices<region r, P> implements Iterator {
     type Item = (usize, read Text from r)
     mut fn next(): (usize, read Text from r)? {
         match self.inner.next_range(false) {
-            present((start, end)) => present((start, self.inner.text.get(start, end).unwrap())),
+            present((start, end)) => present((start, self.inner.text.get(start, end).or_panic())),
             none => none
         }
     }
@@ -830,7 +830,7 @@ extend<region r, P: Pattern> MatchIndices<region r, P> implements Iterator {
 extend<region r, P: DoubleEndedPattern> MatchIndices<region r, P> implements BidirectionalIterator {
     mut fn next_back(): (usize, read Text from r)? {
         match self.inner.next_range(true) {
-            present((start, end)) => present((start, self.inner.text.get(start, end).unwrap())),
+            present((start, end)) => present((start, self.inner.text.get(start, end).or_panic())),
             none => none
         }
     }
@@ -840,7 +840,7 @@ extend<region r, P: Pattern> RMatchIndices<region r, P> implements Iterator {
     type Item = (usize, read Text from r)
     mut fn next(): (usize, read Text from r)? {
         match self.inner.next_range(true) {
-            present((start, end)) => present((start, self.inner.text.get(start, end).unwrap())),
+            present((start, end)) => present((start, self.inner.text.get(start, end).or_panic())),
             none => none
         }
     }
@@ -848,7 +848,7 @@ extend<region r, P: Pattern> RMatchIndices<region r, P> implements Iterator {
 extend<region r, P: DoubleEndedPattern> RMatchIndices<region r, P> implements BidirectionalIterator {
     mut fn next_back(): (usize, read Text from r)? {
         match self.inner.next_range(false) {
-            present((start, end)) => present((start, self.inner.text.get(start, end).unwrap())),
+            present((start, end)) => present((start, self.inner.text.get(start, end).or_panic())),
             none => none
         }
     }
@@ -1549,7 +1549,7 @@ extend Text implements super.ops.IndexRangeMut {
     type Output = Text
     mut fn index_range_mut(start: usize, end: RangeEnd): mut Text from self {
         let length = Text.(super.ops.IndexRange).index_range(read self, start, end).len()
-        self.get_mut(start, start + length).unwrap()
+        self.get_mut(start, start + length).or_panic()
     }
 }
 

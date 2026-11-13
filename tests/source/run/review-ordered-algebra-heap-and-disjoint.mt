@@ -19,12 +19,12 @@ fn main(): i32 {
     }
     if expected != 5 { return 2 }
     var symmetric = left.symmetric_difference(read right)
-    if *symmetric.next().unwrap() != 1 || *symmetric.next().unwrap() != 3 ||
-        *symmetric.next().unwrap() != 4 || symmetric.next().is_present() { return 3 }
+    if *symmetric.next().or_panic() != 1 || *symmetric.next().or_panic() != 3 ||
+        *symmetric.next().or_panic() != 4 || symmetric.next().is_present() { return 3 }
     var common = left.intersection(read right)
-    if *common.next().unwrap() != 2 || common.next().is_present() { return 4 }
+    if *common.next().or_panic() != 2 || common.next().is_present() { return 4 }
     var difference = left.difference(read right)
-    if *difference.next().unwrap() != 4 || difference.next().is_present() { return 5 }
+    if *difference.next().or_panic() != 4 || difference.next().is_present() { return 5 }
     var map = alloc.btree.new<i32, i32>()
     let old = map.insert(1, 10)
     let reversed = std.panic.catch_panic(fn(): Unit { let range = map.range(3, 1) })
@@ -44,18 +44,18 @@ fn main(): i32 {
     heap_values.push(2)
     heap_values.push(1)
     {
-        var guard = heap_values.peek_mut().unwrap()
+        var guard = heap_values.peek_mut().or_panic()
         *guard.deref_mut() = 0
         unsafe { core.mem.forget(take guard) }
     }
-    if heap_values.len() != 1usize || *heap_values.peek().unwrap() != 0 { return 9 }
+    if heap_values.len() != 1usize || *heap_values.peek().or_panic() != 0 { return 9 }
     heap_values.push(5)
-    if heap_values.pop().unwrap() != 5 || heap_values.pop().unwrap() != 0 || !heap_values.is_empty() { return 10 }
+    if heap_values.pop().or_panic() != 5 || heap_values.pop().or_panic() != 0 || !heap_values.is_empty() { return 10 }
     heap_values.push(2)
     heap_values.push(5)
     heap_values.push(3)
     {
-        var guard = heap_values.peek_mut().unwrap()
+        var guard = heap_values.peek_mut().or_panic()
         *guard.deref_mut() = 1
     }
     let sorted = heap_values.into_sorted_vec()

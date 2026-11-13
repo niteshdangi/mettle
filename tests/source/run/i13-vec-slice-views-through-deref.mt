@@ -18,23 +18,23 @@ fn found_at(result: (Outcome<usize, usize>), index: usize): bool {
 
 fn main(): i32 {
     var v = sample()
-    if *v.first().unwrap() != 5 || *v.last().unwrap() != 0 { return 1 }
-    *v.first_mut().unwrap() = 6
-    *v.last_mut().unwrap() = 9
+    if *v.first().or_panic() != 5 || *v.last().or_panic() != 0 { return 1 }
+    *v.first_mut().or_panic() = 6
+    *v.last_mut().or_panic() = 9
     if v[0usize] != 6 || v[5usize] != 9 { return 2 }
-    if *v.get(1usize).unwrap() != 1 || v.get(9usize).is_present() { return 3 }
-    *v.get_mut(1usize).unwrap() = 1
+    if *v.get(1usize).or_panic() != 1 || v.get(9usize).is_present() { return 3 }
+    *v.get_mut(1usize).or_panic() = 1
     unsafe { if *v.get_unchecked(2usize) != 4 { return 4 } }
     unsafe { *v.get_unchecked_mut(2usize) = 4 }
 
-    let (head, tail) = v.split_first().unwrap()
+    let (head, tail) = v.split_first().or_panic()
     if *head != 6 || tail.len() != 5usize { return 5 }
-    let (last_item, front_part) = v.split_last().unwrap()
+    let (last_item, front_part) = v.split_last().or_panic()
     if *last_item != 9 || front_part.len() != 5usize { return 6 }
-    let (mh, mt) = v.split_first_mut().unwrap()
+    let (mh, mt) = v.split_first_mut().or_panic()
     *mh = 7
     if mt.len() != 5usize || v[0usize] != 7 { return 7 }
-    let (ml, mi) = v.split_last_mut().unwrap()
+    let (ml, mi) = v.split_last_mut().or_panic()
     *ml = 8
     if mi.len() != 5usize || v[5usize] != 8 { return 8 }
 
@@ -100,8 +100,8 @@ fn main(): i32 {
     if nth[1usize] != 1 { return 29 }
 
     if !sample().starts_with(read [5, 1]) || !sample().ends_with(read [3, 0]) { return 30 }
-    if sample().strip_prefix(read [5]).unwrap().len() != 5usize { return 31 }
-    if sample().strip_suffix(read [0]).unwrap().len() != 5usize { return 32 }
+    if sample().strip_prefix(read [5]).or_panic().len() != 5usize { return 31 }
+    if sample().strip_suffix(read [0]).or_panic().len() != 5usize { return 32 }
     if !sample().contains(read 4) { return 33 }
 
     let base = sample()
@@ -133,8 +133,8 @@ fn main(): i32 {
     for c in cm.rchunks_exact_mut(2usize) { c[1usize] = 13 }
     if cm[0usize] != 12 || cm[2usize] != 12 || cm[4usize] != 12 ||
         cm[1usize] != 13 || cm[3usize] != 13 || cm[5usize] != 13 { return 39 }
-    if sample().chunk(0usize, 2usize).unwrap().len() != 2usize { return 40 }
-    if sample().subslice(1usize, 3usize).unwrap().len() != 2usize { return 41 }
+    if sample().chunk(0usize, 2usize).or_panic().len() != 2usize { return 40 }
+    if sample().subslice(1usize, 3usize).or_panic().len() != 2usize { return 41 }
 
     var pieces = 0
     for piece in base.split(fn(read a: i32): bool { a == 4 }) { pieces += 1 }
@@ -165,28 +165,28 @@ fn main(): i32 {
     if runs != 8 { return 50 }
 
     let fresh = sample()
-    if fresh.first_chunk<2>().unwrap()[1usize] != 1 { return 51 }
-    if fresh.last_chunk<2>().unwrap()[0usize] != 3 { return 52 }
-    let (sf, sr) = fresh.split_first_chunk<2>().unwrap()
+    if fresh.first_chunk<2>().or_panic()[1usize] != 1 { return 51 }
+    if fresh.last_chunk<2>().or_panic()[0usize] != 3 { return 52 }
+    let (sf, sr) = fresh.split_first_chunk<2>().or_panic()
     if sf[1usize] != 1 || sr.len() != 4usize { return 53 }
-    let (sr2, sl) = fresh.split_last_chunk<2>().unwrap()
+    let (sr2, sl) = fresh.split_last_chunk<2>().or_panic()
     if sl[1usize] != 0 || sr2.len() != 4usize { return 54 }
     var fm = sample()
-    let fcm = fm.first_chunk_mut<2>().unwrap()
+    let fcm = fm.first_chunk_mut<2>().or_panic()
     fcm[0usize] = 8
-    let lcm = fm.last_chunk_mut<2>().unwrap()
+    let lcm = fm.last_chunk_mut<2>().or_panic()
     lcm[1usize] = 8
     if fm[0usize] != 8 || fm[5usize] != 8 { return 55 }
-    let (sfm, srm) = fm.split_first_chunk_mut<2>().unwrap()
+    let (sfm, srm) = fm.split_first_chunk_mut<2>().or_panic()
     sfm[1usize] = 9
     if srm.len() != 4usize { return 56 }
-    let (slm, slm_tail) = fm.split_last_chunk_mut<2>().unwrap()
+    let (slm, slm_tail) = fm.split_last_chunk_mut<2>().or_panic()
     slm_tail[0usize] = 9
     if slm.len() != 4usize || fm[1usize] != 9 || fm[4usize] != 9 { return 57 }
 
-    if fresh.as_array<6>().unwrap()[5usize] != 0 { return 58 }
+    if fresh.as_array<6>().or_panic()[5usize] != 0 { return 58 }
     var am_src = sample()
-    let am = am_src.as_mut_array<6>().unwrap()
+    let am = am_src.as_mut_array<6>().or_panic()
     am[0usize] = 1
     if am_src[0usize] != 1 { return 59 }
 

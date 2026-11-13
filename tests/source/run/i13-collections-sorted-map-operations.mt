@@ -70,12 +70,12 @@ fn main(): i32 {
         present(value) => { *value += 1 },
         none => { return 16 }
     }
-    if *map.get(3).unwrap() != 31 { return 17 }
+    if *map.get(3).or_panic() != 31 { return 17 }
     if map[3] != 31 || map[9] != 90 { return 23 }
-    if *map.first_key().unwrap() != 1 || *map.last_key().unwrap() != 9 { return 18 }
-    let (first_key, first_value) = map.first_key_value().unwrap()
+    if *map.first_key().or_panic() != 1 || *map.last_key().or_panic() != 9 { return 18 }
+    let (first_key, first_value) = map.first_key_value().or_panic()
     if *first_key != 1 || *first_value != 10 { return 19 }
-    let (last_key, last_value) = map.last_key_value().unwrap()
+    let (last_key, last_value) = map.last_key_value().or_panic()
     if *last_key != 9 || *last_value != 90 { return 20 }
     match take map.last_entry() {
         present(entry) => { if *entry.key() != 9 { return 21 } },
@@ -121,13 +121,13 @@ fn main(): i32 {
     if !require_debug(read counts.entry(1)) { return 90 }
     let fresh = counts.entry(1).or_insert(7)
     *fresh += 1
-    if *counts.get(1).unwrap() != 8 { return 40 }
+    if *counts.get(1).or_panic() != 8 { return 40 }
     let seeded = counts.entry(2).or_insert_with(take fn(): i32 { 20 })
     if *seeded != 20 { return 41 }
     let keyed = counts.entry(3).or_insert_with_key(take fn(read key: i32): i32 { key * 100 })
     if *keyed != 300 { return 42 }
     counts.entry(3).and_modify(take fn(mut value: i32): Unit { value += 1 }).or_insert(0)
-    if *counts.get(3).unwrap() != 301 { return 43 }
+    if *counts.get(3).or_panic() != 301 { return 43 }
     let defaulted = counts.entry(4).or_default()
     if *defaulted != 0 { return 44 }
     {
@@ -158,7 +158,7 @@ fn main(): i32 {
         },
         Entry.Vacant(_) => { return 48 }
     }
-    if *counts.get(5).unwrap() != 56 { return 49 }
+    if *counts.get(5).or_panic() != 56 { return 49 }
     match take counts.entry(2) {
         Entry.Occupied(occupied) => {
             var view = take occupied
@@ -182,7 +182,7 @@ fn main(): i32 {
             none => { return 53 }
         }
     }
-    if *counts.get(1).unwrap() != 80 { return 54 }
+    if *counts.get(1).or_panic() != 80 { return 54 }
     var empty_range = 0
     for entry in counts.range(3, 3) { empty_range += 1 }
     if empty_range != 0 { return 55 }
@@ -246,7 +246,7 @@ fn main(): i32 {
     keyed_pairs.push((7, 70))
     keyed_pairs.push((6, 60))
     let built = btree.SortedMap<i32, i32>.(FromItems<(i32, i32)>).from_iter(keyed_pairs)
-    if *built.first_key().unwrap() != 6 || built.len() != 2usize { return 72 }
+    if *built.first_key().or_panic() != 6 || built.len() != 2usize { return 72 }
     var more = vec.new<(i32, i32)>()
     more.push((8, 80))
     var grown = built
@@ -264,16 +264,16 @@ fn main(): i32 {
     append_source.insert(3, 30)
     appended.append(mut append_source)
     if appended.len() != 3usize || !append_source.is_empty() ||
-        *appended.get(2).unwrap() != 200 {
+        *appended.get(2).or_panic() != 200 {
         return 75
     }
     appended.clear()
     if !appended.is_empty() { return 76 }
 
     let array_map = btree.SortedMap<i32, i32>.(From<[(i32, i32); 3]>).from([(3, 30), (1, 10), (3, 31)])
-    if array_map.len() != 2usize || *array_map.get(3).unwrap() != 31 { return 77 }
+    if array_map.len() != 2usize || *array_map.get(3).or_panic() != 31 { return 77 }
     let array_set = btree.SortedSet<i32>.(From<[i32; 3]>).from([3, 1, 3])
-    if array_set.len() != 2usize || *array_set.first().unwrap() != 1 { return 78 }
+    if array_set.len() != 2usize || *array_set.first().or_panic() != 1 { return 78 }
 
     var keys_map = btree.new<i32, i32>()
     keys_map.insert(2, 20)

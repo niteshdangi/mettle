@@ -10,7 +10,7 @@ type Counted {
 
 fn main(): i32 {
     var words = [0u32; 3]
-    let bytes = NonNull.new(words.as_mut_ptr()).unwrap().cast<u8>()
+    let bytes = NonNull.new(words.as_mut_ptr()).or_panic().cast<u8>()
     let unaligned = unsafe { bytes.add(1usize) }.cast<u32>()
     if unaligned.is_aligned() { return 1 }
     unsafe { unaligned.write_unaligned(0x12345678u32) }
@@ -28,7 +28,7 @@ fn main(): i32 {
     var drops = 0i32
     let counter = core.ptr.from_mut(mut drops)
     var storage = core.mem.ManuallyDrop.new(Counted(counter, 1i32))
-    let owner = NonNull.new(storage.as_mut_ptr()).unwrap()
+    let owner = NonNull.new(storage.as_mut_ptr()).or_panic()
     {
         let moved = unsafe { owner.`read`() }
         if moved.amount != 1i32 || drops != 0i32 { return 6 }
@@ -41,7 +41,7 @@ fn main(): i32 {
     }
     if drops != 3i32 { return 9 }
     var other = core.mem.ManuallyDrop.new(Counted(counter, 8i32))
-    let other_pointer = NonNull.new(other.as_mut_ptr()).unwrap()
+    let other_pointer = NonNull.new(other.as_mut_ptr()).or_panic()
     unsafe { owner.swap(other_pointer) }
     unsafe { owner.drop_in_place() }
     if drops != 11i32 { return 10 }

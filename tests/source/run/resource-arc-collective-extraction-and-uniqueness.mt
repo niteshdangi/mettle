@@ -7,7 +7,7 @@ fn collective(): i32 {
     let phase = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
     let worker_phase = phase.retain()
     let worker = thread.spawn(take fn(): i32 {
-        let sibling = slot.replace(none).unwrap()
+        let sibling = slot.replace(none).or_panic()
         worker_phase.get().store(1usize, core.sync.atomic.Ordering.SeqCst)
         while worker_phase.get().load(core.sync.atomic.Ordering.SeqCst) != 2usize {
             thread.yield_now()
@@ -37,7 +37,7 @@ fn unique(): i32 {
     let exclusive = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
     let worker_exclusive = exclusive.retain()
     let worker = thread.spawn(take fn(): i32 {
-        let sibling = slot.replace(none).unwrap()
+        let sibling = slot.replace(none).or_panic()
         while worker_phase.get().load(core.sync.atomic.Ordering.SeqCst) == 0usize {
             thread.yield_now()
         }

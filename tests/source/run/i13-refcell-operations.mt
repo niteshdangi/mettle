@@ -212,7 +212,7 @@ fn main(): i32 {
         }
     }
     {
-        var recovered = integer.try_borrow_mut().unwrap()
+        var recovered = integer.try_borrow_mut().or_panic()
         if *recovered.get_mut() != 43 { return 43 }
     }
     let array_cell = core.cell.RefCell.new([1i32, 2])
@@ -239,8 +239,8 @@ fn main(): i32 {
         !other_slice.cmp(slice_cell).is_lt() {
         return 52
     }
-    if !slice_cell.partial_cmp(slice_cell).unwrap().is_eq() ||
-        !slice_cell.partial_cmp(other_slice).unwrap().is_gt() ||
+    if !slice_cell.partial_cmp(slice_cell).or_panic().is_eq() ||
+        !slice_cell.partial_cmp(other_slice).or_panic().is_gt() ||
         core.cell.RefCell.new(f32.NAN).partial_cmp(core.cell.RefCell.new(0.0f32)).is_present() {
         return 53
     }
@@ -272,7 +272,7 @@ fn main(): i32 {
         }
     }
     {
-        var recovered = tail.try_borrow_mut().unwrap()
+        var recovered = tail.try_borrow_mut().or_panic()
         if recovered.get_ref().values.len() != 2usize ||
             recovered.get_mut().values[0] != 56 {
             return 51

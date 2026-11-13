@@ -203,7 +203,7 @@ extend<T, A: Allocator + Clone> LinkedList<T, A> {
         if at > self.len { super.alloc.panic_precondition() }
         var other = new_in<T, A>(self.a.clone())
         while self.len > at {
-            other.push_front(self.pop_back().unwrap())
+            other.push_front(self.pop_back().or_panic())
         }
         other
     }

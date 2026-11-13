@@ -108,7 +108,7 @@ fn main(): i32 {
     var it = c.clone().into_iter()
     if it.len() != 3usize { return 21 }
     let it2 = it.clone()
-    if it.next_back().unwrap() != 3 || it.next().unwrap() != 10 { return 22 }
+    if it.next_back().or_panic() != 3 || it.next().or_panic() != 10 { return 22 }
     if it2.size_hint().0 != 3usize { return 23 }
     let view_it: read [i32] = IntoIter<i32>.(AsRef<[i32]>).as_ref(read it)
     if view_it.len() != 1usize { return 24 }

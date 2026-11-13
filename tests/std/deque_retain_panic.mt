@@ -26,7 +26,7 @@ fn main(): i32 {
     callback_deque.push_back(Item(3, callback_drops.retain(), false))
     callback_deque.push_back(Item(4, callback_drops.retain(), false))
     {
-        let removed = callback_deque.pop_front().unwrap()
+        let removed = callback_deque.pop_front().or_panic()
     }
     callback_deque.push_back(Item(5, callback_drops.retain(), false))
     let callback = std.panic.catch_panic(fn(): i32 {
@@ -60,7 +60,7 @@ fn main(): i32 {
     destructor_deque.push_back(Item(7, destructor_drops.retain(), false))
     destructor_deque.push_back(Item(8, destructor_drops.retain(), false))
     {
-        let removed = destructor_deque.pop_front().unwrap()
+        let removed = destructor_deque.pop_front().or_panic()
     }
     destructor_deque.push_back(Item(9, destructor_drops.retain(), false))
     let destructor = std.panic.catch_panic(fn(): i32 {

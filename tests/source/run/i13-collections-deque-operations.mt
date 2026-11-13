@@ -57,8 +57,8 @@ fn main(): i32 {
     d.push_front(0)
     if !same(d, [0, 1, 2, 3]) { return 10 }
     if d.len() != 4usize || d.is_empty() { return 11 }
-    if *d.front().unwrap() != 0 || *d.back().unwrap() != 3 { return 12 }
-    if d.get(4usize).is_present() || *d.get(1usize).unwrap() != 1 { return 13 }
+    if *d.front().or_panic() != 0 || *d.back().or_panic() != 3 { return 12 }
+    if d.get(4usize).is_present() || *d.get(1usize).or_panic() != 1 { return 13 }
     match take d.back_mut() {
         present(last) => { *last = 30 },
         none => { return 14 }
@@ -109,10 +109,10 @@ fn main(): i32 {
         *inserted = 7
     }
     if !same(d, [1, 5, 7, 20]) { return 32 }
-    if d.remove(2usize).unwrap() != 7 || !same(d, [1, 5, 20]) { return 33 }
-    if d.swap_remove_back(0usize).unwrap() != 1 || !same(d, [20, 5]) { return 34 }
+    if d.remove(2usize).or_panic() != 7 || !same(d, [1, 5, 20]) { return 33 }
+    if d.swap_remove_back(0usize).or_panic() != 1 || !same(d, [20, 5]) { return 34 }
     d.push_front(4)
-    if d.swap_remove_front(2usize).unwrap() != 5 || !same(d, [20, 4]) { return 35 }
+    if d.swap_remove_front(2usize).or_panic() != 5 || !same(d, [20, 4]) { return 35 }
     d.push_back(9)
     d.swap(0usize, 2usize)
     if !same(d, [9, 4, 20]) { return 36 }

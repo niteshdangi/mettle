@@ -31,7 +31,7 @@ fn main(): i32 {
         CatchResult.Returned(_) => { return 9 }
     }
     {
-        var guard = borrowed.try_borrow_mut().unwrap()
+        var guard = borrowed.try_borrow_mut().or_panic()
         if *guard.get_ref() != 10 { return 10 }
         *guard.get_mut() = 11
     }
@@ -59,8 +59,8 @@ fn main(): i32 {
         CatchResult.Panicked(_) => {},
         CatchResult.Returned(_) => { return 4 }
     }
-    if drops != 10 || cell.get().unwrap().value != 1 { return 5 }
-    let extracted = cell.into_inner().unwrap()
+    if drops != 10 || cell.get().or_panic().value != 1 { return 5 }
+    let extracted = cell.into_inner().or_panic()
     if extracted.value != 1 || drops != 10 { return 6 }
     0
 }

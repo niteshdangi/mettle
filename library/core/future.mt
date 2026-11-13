@@ -102,7 +102,7 @@ extend<T, E> Poll<(Outcome<T, E>)> {
             Poll.Pending => Poll.Pending
         }
     }
-    pub take fn map_err<F, G: take fn(take E): F>(take f: G): Poll<(Outcome<T, F>)> {
+    pub take fn map_failure<F, G: take fn(take E): F>(take f: G): Poll<(Outcome<T, F>)> {
         match take self {
             Poll.Ready(result) => Poll.Ready(match take result {
                 success(value) => success(value),
@@ -126,7 +126,7 @@ extend<T, E> Poll<(Outcome<T, E>)?> {
             Poll.Pending => Poll.Pending
         }
     }
-    pub take fn map_err<F, G: take fn(take E): F>(take f: G): Poll<(Outcome<T, F>)?> {
+    pub take fn map_failure<F, G: take fn(take E): F>(take f: G): Poll<(Outcome<T, F>)?> {
         match take self {
             Poll.Ready(result) => Poll.Ready(match take result {
                 present(outcome) => present(match take outcome {

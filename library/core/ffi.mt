@@ -136,7 +136,7 @@ extend<region r> CStrDebug<region r> implements fmt.Debug {
                 present(error) => error.valid_up_to(),
                 none => bytes.len()
             }
-            let prefix = slice.subslice(bytes, 0usize, valid).unwrap()
+            let prefix = slice.subslice(bytes, 0usize, valid).or_panic()
             let text = unsafe { super.text.from_utf8_unchecked(prefix) }
             var chars = text.chars()
             while true {
@@ -163,7 +163,7 @@ extend<region r> CStrDebug<region r> implements fmt.Debug {
                 },
                 none => bytes.len()
             }
-            bytes = slice.subslice(bytes, consumed, bytes.len()).unwrap()
+            bytes = slice.subslice(bytes, consumed, bytes.len()).or_panic()
         }
         try f.write_char('"')
     }

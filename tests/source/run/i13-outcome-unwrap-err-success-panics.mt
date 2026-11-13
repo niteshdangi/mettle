@@ -4,5 +4,5 @@ import core.outcome
 
 fn main(): i32 {
     let passed: (Outcome<i32, i32>) = success(1)
-    passed.unwrap_failure()
+    passed.failure_or_panic()
 }

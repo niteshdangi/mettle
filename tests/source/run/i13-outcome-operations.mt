@@ -29,10 +29,10 @@ fn checks_views(): i32 {
     match value.as_view() { success(view) => { if *view != 9 { return 20 } }, failure(_) => { return 21 } }
     match err(8).as_view() { success(_) => { return 22 }, failure(view) => { if *view != 8 { return 23 } } }
     match take value.as_mut() { success(view) => { *view = 10 }, failure(_) => { return 24 } }
-    if value.unwrap() != 10 { return 25 }
+    if value.or_panic() != 10 { return 25 }
     var failed: (Outcome<i32, i32>) = failure(1)
     match take failed.as_mut() { success(_) => { return 26 }, failure(view) => { *view = 2 } }
-    if failed.unwrap_failure() != 2 { return 27 }
+    if failed.failure_or_panic() != 2 { return 27 }
     var boxed: (Outcome<heap i32, i32>) = success(heap 5)
     match boxed.as_deref() { success(view) => { if *view != 5 { return 28 } }, failure(_) => { return 29 } }
     match take boxed.as_deref_mut() { success(view) => { *view = 6 }, failure(_) => { return 30 } }
@@ -52,22 +52,22 @@ fn checks_views(): i32 {
 }
 
 fn checks_extraction(): i32 {
-    if ok(1).unwrap() != 1 || ok(2).expect("success") != 2 { return 50 }
-    if err(3).unwrap_failure() != 3 || err(4).expect_failure("failure") != 4 { return 51 }
-    if ok(5).unwrap_or(0) != 5 || err(5).unwrap_or(6) != 6 { return 52 }
-    if err(7).unwrap_or_else(fn(error: i32): i32 { error + 1 }) != 8 { return 53 }
-    if ok(7).unwrap_or_else(fn(error: i32): i32 { error + 1 }) != 7 { return 54 }
-    if err(9).unwrap_or_default() != 0 || ok(9).unwrap_or_default() != 9 { return 55 }
+    if ok(1).or_panic() != 1 || ok(2).or_panic("success") != 2 { return 50 }
+    if err(3).failure_or_panic() != 3 || err(4).failure_or_panic("failure") != 4 { return 51 }
+    if ok(5).or(0) != 5 || err(5).or(6) != 6 { return 52 }
+    if err(7).or_else(fn(error: i32): i32 { error + 1 }) != 8 { return 53 }
+    if ok(7).or_else(fn(error: i32): i32 { error + 1 }) != 7 { return 54 }
+    if err(9).or_default() != 0 || ok(9).or_default() != 9 { return 55 }
     if unsafe { ok(10).unwrap_unchecked() } != 10 { return 56 }
     if unsafe { err(11).unwrap_err_unchecked() } != 11 { return 57 }
     0
 }
 
 fn checks_transformations(): i32 {
-    if ok(2).map(fn(value: i32): i32 { value * 3 }).unwrap() != 6 { return 60 }
-    if err(2).map(fn(value: i32): i32 { value * 3 }).unwrap_failure() != 2 { return 61 }
-    if err(2).map_err(fn(error: i32): i32 { error + 10 }).unwrap_failure() != 12 { return 62 }
-    if ok(2).map_err(fn(error: i32): i32 { error + 10 }).unwrap() != 2 { return 63 }
+    if ok(2).map(fn(value: i32): i32 { value * 3 }).or_panic() != 6 { return 60 }
+    if err(2).map(fn(value: i32): i32 { value * 3 }).failure_or_panic() != 2 { return 61 }
+    if err(2).map_failure(fn(error: i32): i32 { error + 10 }).failure_or_panic() != 12 { return 62 }
+    if ok(2).map_failure(fn(error: i32): i32 { error + 10 }).or_panic() != 2 { return 63 }
     if ok(2).map_or(0, fn(value: i32): i32 { value + 1 }) != 3 || err(2).map_or(5, fn(value: i32): i32 { value }) != 5 { return 64 }
     if err(2).map_or_else(fn(error: i32): i32 { error * 4 }, fn(value: i32): i32 { value }) != 8 { return 65 }
     if ok(2).map_or_else(fn(error: i32): i32 { error * 4 }, fn(value: i32): i32 { value + 7 }) != 9 { return 66 }
@@ -78,47 +78,47 @@ fn checks_transformations(): i32 {
         inspect_calls += 1
         if value != 6 { core.panic.panic("inspect saw the wrong payload") }
     })
-    if inspected.unwrap() != 6 || inspect_calls != 1 { return 69 }
+    if inspected.or_panic() != 6 || inspect_calls != 1 { return 69 }
     let skipped = err(6).inspect(fn(read value: i32): Unit { core.panic.panic("inspect ran on failure") })
-    if skipped.unwrap_failure() != 6 { return 70 }
+    if skipped.failure_or_panic() != 6 { return 70 }
     var inspect_err_calls = 0
     let inspected_error = err(7).inspect_failure(fn(read error: i32): Unit {
         inspect_err_calls += 1
         if error != 7 { core.panic.panic("inspect_failure saw the wrong error") }
     })
-    if inspected_error.unwrap_failure() != 7 || inspect_err_calls != 1 { return 71 }
+    if inspected_error.failure_or_panic() != 7 || inspect_err_calls != 1 { return 71 }
     let skipped_error = ok(7).inspect_failure(fn(read error: i32): Unit { core.panic.panic("inspect_failure ran on success") })
-    if skipped_error.unwrap() != 7 { return 72 }
+    if skipped_error.or_panic() != 7 { return 72 }
     let nested: (Outcome<(Outcome<i32, i32>), i32>) = success(success(3))
-    if nested.flatten().unwrap() != 3 { return 73 }
+    if nested.flatten().or_panic() != 3 { return 73 }
     let nested_inner: (Outcome<(Outcome<i32, i32>), i32>) = success(failure(4))
-    if nested_inner.flatten().unwrap_failure() != 4 { return 74 }
+    if nested_inner.flatten().failure_or_panic() != 4 { return 74 }
     let nested_outer: (Outcome<(Outcome<i32, i32>), i32>) = failure(5)
-    if nested_outer.flatten().unwrap_failure() != 5 { return 75 }
+    if nested_outer.flatten().failure_or_panic() != 5 { return 75 }
     let transposed: (Outcome<i32?, i32>) = success(present(1))
-    match transposed.transpose() { present(inner) => { if inner.unwrap() != 1 { return 76 } }, none => { return 77 } }
+    match transposed.transpose() { present(inner) => { if inner.or_panic() != 1 { return 76 } }, none => { return 77 } }
     let empty: (Outcome<i32?, i32>) = success(none)
     if empty.transpose().is_present() { return 78 }
     let failed: (Outcome<i32?, i32>) = failure(2)
-    match failed.transpose() { present(inner) => { if inner.unwrap_failure() != 2 { return 79 } }, none => { return 80 } }
+    match failed.transpose() { present(inner) => { if inner.failure_or_panic() != 2 { return 79 } }, none => { return 80 } }
     0
 }
 
 fn checks_combinators(): i32 {
     let next: (Outcome<bool, i32>) = success(true)
-    if !ok(1).and(next).unwrap() { return 90 }
+    if !ok(1).and(next).or_panic() { return 90 }
     let unused: (Outcome<bool, i32>) = success(true)
-    if err(1).and(unused).unwrap_failure() != 1 { return 91 }
-    if ok(1).and_then(fn(value: i32): (Outcome<i32, i32>) { success(value + 1) }).unwrap() != 2 { return 92 }
-    if ok(1).and_then(fn(value: i32): (Outcome<i32, i32>) { failure(value + 5) }).unwrap_failure() != 6 { return 93 }
+    if err(1).and(unused).failure_or_panic() != 1 { return 91 }
+    if ok(1).and_then(fn(value: i32): (Outcome<i32, i32>) { success(value + 1) }).or_panic() != 2 { return 92 }
+    if ok(1).and_then(fn(value: i32): (Outcome<i32, i32>) { failure(value + 5) }).failure_or_panic() != 6 { return 93 }
     let fallback: (Outcome<i32, u8>) = success(2)
-    if ok(1).or(fallback).unwrap() != 1 { return 94 }
+    if ok(1).or_success(fallback).or_panic() != 1 { return 94 }
     let fallback_used: (Outcome<i32, u8>) = success(2)
-    if err(1).or(fallback_used).unwrap() != 2 { return 95 }
+    if err(1).or_success(fallback_used).or_panic() != 2 { return 95 }
     let fallback_failed: (Outcome<i32, u8>) = failure(3u8)
-    if err(1).or(fallback_failed).unwrap_failure() != 3u8 { return 96 }
-    if err(1).or_else(fn(error: i32): (Outcome<i32, u8>) { success(error + 1) }).unwrap() != 2 { return 97 }
-    if ok(4).or_else(fn(error: i32): (Outcome<i32, u8>) { failure(0u8) }).unwrap() != 4 { return 98 }
+    if err(1).or_success(fallback_failed).failure_or_panic() != 3u8 { return 96 }
+    if err(1).or_success_with(fn(error: i32): (Outcome<i32, u8>) { success(error + 1) }).or_panic() != 2 { return 97 }
+    if ok(4).or_success_with(fn(error: i32): (Outcome<i32, u8>) { failure(0u8) }).or_panic() != 4 { return 98 }
     0
 }
 

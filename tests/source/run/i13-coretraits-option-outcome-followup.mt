@@ -103,7 +103,7 @@ fn main(): i32 {
     }
     let nested: (Outcome<(Outcome<i32, i32>), i32>) = success(success(13i32))
     let flattened: (Outcome<i32, i32>) = nested.flatten()
-    if flattened.unwrap() != 13 { return 18 }
+    if flattened.or_panic() != 13 { return 18 }
     let copied_outcome = borrowed_success(read source).copied()
     match copied_outcome {
         success(value) => { if value != 7 { return 19 } },
@@ -142,9 +142,9 @@ fn main(): i32 {
     }
     if inspect_calls != 1 { return 29 }
     let unwrapped_failure: (Outcome<i32, i32>) = failure(16i32)
-    if unwrapped_failure.unwrap_failure() != 16 { return 26 }
+    if unwrapped_failure.failure_or_panic() != 16 { return 26 }
     let expected_failure: (Outcome<i32, i32>) = failure(17i32)
-    if expected_failure.expect_failure("expected failure") != 17 { return 27 }
+    if expected_failure.failure_or_panic("expected failure") != 17 { return 27 }
     let unchecked_failure: (Outcome<i32, i32>) = failure(18i32)
     let unchecked_error = unsafe { unchecked_failure.unwrap_err_unchecked() }
     if unchecked_error != 18 { return 28 }

@@ -27,8 +27,8 @@ fn main(): i32 {
         {
             var drain = values.drain(1usize..4usize)
             if drain.len() != 3usize || drain.size_hint().0 != 3usize { return 1 }
-            let _front = drain.next().unwrap()
-            let _back = drain.next_back().unwrap()
+            let _front = drain.next().or_panic()
+            let _back = drain.next_back().or_panic()
             if drain.len() != 1usize || drain.as_slice()[0usize].value != 2 { return 2 }
             if drain_drops != 0usize { return 3 }
         }
@@ -50,8 +50,8 @@ fn main(): i32 {
         }
         var iterator: IntoIter<Counted> = values.into_iter()
         if iterator.len() != 4usize { return 7 }
-        let _front = iterator.next().unwrap()
-        let _back = iterator.next_back().unwrap()
+        let _front = iterator.next().or_panic()
+        let _back = iterator.next_back().or_panic()
         if iterator.len() != 2usize || iterator.size_hint().0 != 2usize { return 8 }
         if iter_drops != 0usize { return 9 }
     }

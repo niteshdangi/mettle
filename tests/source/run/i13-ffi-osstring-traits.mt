@@ -38,7 +38,7 @@ fn main(): i32 {
     if !debug_is(owned, "\"alpha\"") { return 25 }
     let self_reference: read OsStr = OsStr.(AsRef<OsStr>).as_ref(view)
     if !view_eq(self_reference, view) || !view_eq(view, "alpha") ||
-        !OsString.(PartialOrd<read Text>).partial_cmp(owned, "alpha").unwrap().is_eq() {
+        !OsString.(PartialOrd<read Text>).partial_cmp(owned, "alpha").or_panic().is_eq() {
         return 30
     }
     if !view.same(owned.as_os_str()) { return 1 }

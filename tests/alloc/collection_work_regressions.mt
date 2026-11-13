@@ -74,8 +74,8 @@ fn main(): i32 {
     allocation.grows = 0usize
     map.shrink_to(8usize)
     if allocation.grows != 0usize || map.capacity() < 8usize ||
-        map.capacity() > old_capacity || *map.get(1).unwrap() != 10 ||
-        *map.get(2).unwrap() != 20 { return 2 }
+        map.capacity() > old_capacity || *map.get(1).or_panic() != 10 ||
+        *map.get(2).or_panic() != 20 { return 2 }
 
     var hashes = 0usize
     let counter = core.ptr.from_mut(hashes)
@@ -99,16 +99,16 @@ fn main(): i32 {
     hashes = 0usize
     {
         var combined = left.`union`(read right)
-        let first = combined.next().unwrap().value
-        let second = combined.next().unwrap().value
+        let first = combined.next().or_panic().value
+        let second = combined.next().or_panic().value
         if first + second != 3 || hashes != 0usize { return 6 }
-        if combined.next().unwrap().value != 3 || combined.next().is_present() ||
+        if combined.next().or_panic().value != 3 || combined.next().is_present() ||
             hashes != 2usize { return 7 }
     }
     hashes = 0usize
     {
         var difference = left.difference(read right)
-        if difference.next().unwrap().value != 1 || difference.next().is_present() ||
+        if difference.next().or_panic().value != 1 || difference.next().is_present() ||
             difference.next().is_present() || hashes != 2usize { return 8 }
     }
     var first_key = 1

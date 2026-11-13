@@ -585,9 +585,9 @@ class LinuxOracleTests(unittest.TestCase):
                        if isinstance(node, ast.FunctionDef) and node.name == "execute")
         program = OUTPUT / "mock-library-program"
         program.write_bytes(b"mock linked artifact")
-        case = {"name": "unwrap", "object": "source.o", "program": str(program),
+        case = {"name": "or_panic", "object": "source.o", "program": str(program),
                 **expectations}
-        message = b"panicked: called `unwrap` on an absent value\n"
+        message = b"panicked: called `or_panic` on an absent value\n"
         for status, stderr, accepted in (
                 (-11, message, False), (1, message, False),
                 (101, b"", False), (101, message, True)):

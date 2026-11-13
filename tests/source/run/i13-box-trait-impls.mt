@@ -226,7 +226,7 @@ fn main(): i32 {
         }
     }
     var counter = boxed.new(List<i32>.(From<[i32; 2]>).from([15, 16]).into_iter())
-    if counter.next().unwrap() != 15 { return 27 }
+    if counter.next().or_panic() != 15 { return 27 }
     let pending = boxed.new(AddOne(41))
     if drive(pending) != 42 { return 29 }
     0

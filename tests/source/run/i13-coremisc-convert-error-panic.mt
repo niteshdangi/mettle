@@ -58,7 +58,7 @@ fn checks_error(): i32 {
 fn checks_panic(): i32 {
     let outcome = catch_panic(fn(): Unit {
         let absent: i32? = none
-        let _ = absent.unwrap()
+        let _ = absent.or_panic()
     })
     match outcome {
         CatchResult.Panicked(info) => { if info.code() != 101 { return 20 } },
