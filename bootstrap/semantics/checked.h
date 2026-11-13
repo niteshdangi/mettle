@@ -70,6 +70,9 @@ struct NodeFacts {
   Type interfaceType = Type::Unknown;
   Type interfaceSelf = Type::Unknown;
   int interfaceMethod = -1;
+  // Selecting the implementation needs `Static` regions proven by the region
+  // pass.
+  bool selectionNeedsRegionProof = false;
   unsigned hiddenReceiver = 0;
   int witness = -1;
   Type erasedSource = Type::Unknown;
