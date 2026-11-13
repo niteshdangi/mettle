@@ -38,6 +38,7 @@ fn checks_inclusive(): i32 {
     if hash_one(read closed) != hash_one(read duplicate) { return 19 }
     let converted: iter.RangeInclusive<i32> = closed.clone().into()
     if converted != closed { return 21 }
+    if closed.start != 1 || closed.end != 3 { return 22 }
     if closed == iter.RangeInclusive.new(1i32, 4i32) { return 11 }
     let (low, high) = closed.clone().into_inner()
     if low != 1 || high != 3 { return 12 }
