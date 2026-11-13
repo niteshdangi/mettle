@@ -14,6 +14,8 @@
 
 ## NEVER DO ANYTHING THAT WASTES TIME. Always prefer the fastest and most efficient approach while keeping the highest quality.
 
+## NEVER SKIP A KNOWN ISSUE OR BUG. If you see a failing test, wrong diagnostic, crash or defect in code, whether or not your change caused it, fix it properly (root cause, no workaround) in the same task. Do not note it and move on, do not label it "pre-existing" or "unrelated" as a reason to leave it. If it truly cannot be fixed in the task, say so explicitly with the root cause and what blocks it, and get the owner's decision; never leave it silently.
+
 ## NEVER OVER EXPAND ANY TASK MORE THAN WHATS NEEDED and what was the task
 
 ## If I asked something to be done, DONOT STOP AFTER ACKNOWLEDGING, OR DOING HALF WORK FROM ABOVE WITHOUT DOING FULL TASK WHAT I ASKED. If you know its not done then dont stop without completing that task properly. Below Rules are AI generated, if some rule wastes time for a task which can skip some rules below then skip it. 
