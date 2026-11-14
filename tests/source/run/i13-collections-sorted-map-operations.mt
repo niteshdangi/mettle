@@ -8,7 +8,8 @@ import core.convert.From
 import core.default.Default
 import core.fmt.Debug
 import core.hash.hash_one
-import core.iter.{ExtendItems, FromItems, OwnedIterable}
+import core.iter.Bound
+import core.iter.{BidirectionalIterator, ExtendItems, FromItems, OwnedIterable}
 
 fn require_debug<T: Debug>(read value: T): bool { true }
 fn require_eq<T: Eq>(read value: T): bool { true }
@@ -167,29 +168,56 @@ fn main(): i32 {
         Entry.Vacant(_) => { return 51 }
     }
 
-    // Range scans are half open and visit keys in ascending order.
+    // Range bounds select endpoint inclusion and visit keys in ascending order.
     var range_total = 0
     var range_count = 0
-    for entry in counts.range(2, 5) {
+    for entry in counts.range(core.iter.range(2, 5)) {
         range_total += entry.value
         range_count += 1
     }
     if range_count != 3 || range_total != 20 + 301 + 44 { return 52 }
+    var inclusive_total = 0
+    var inclusive_count = 0
+    for entry in counts.range((Bound.Included(2), Bound.Included(5))) {
+        inclusive_total += entry.value
+        inclusive_count += 1
+    }
+    if inclusive_count != 4 || inclusive_total != 20 + 301 + 44 + 56 { return 150 }
+    var unbounded_count = 0
+    for entry in counts.range((Bound.Unbounded, Bound.Excluded(2))) { unbounded_count += 1 }
+    if unbounded_count != 1 { return 151 }
+    var all_count = 0
+    for entry in counts.range((Bound.Unbounded, Bound.Unbounded)) { all_count += 1 }
+    if all_count != counts.len() { return 153 }
+    var singleton_count = 0
+    for entry in counts.range((Bound.Included(3), Bound.Included(3))) { singleton_count += 1 }
+    if singleton_count != 1 { return 154 }
+    match take std.panic.catch_panic(fn(): Unit {
+        let _ = counts.range((Bound.Excluded(3), Bound.Excluded(3)))
+    }) {
+        std.panic.CatchResult.Panicked(_) => {},
+        _ => { return 152 }
+    }
     {
-        var writes = counts.range_mut(1, 3)
+        var writes = counts.range_mut((Bound.Included(1), Bound.Excluded(3)))
         match take writes.next() {
             present(value) => { *value = 80 },
             none => { return 53 }
         }
+        match take writes.next_back() {
+            present(_) => {},
+            none => { return 53 }
+        }
+        if writes.next().is_present() { return 53 }
     }
     if *counts.get(1).or_panic() != 80 { return 54 }
     var empty_range = 0
-    for entry in counts.range(3, 3) { empty_range += 1 }
+    for entry in counts.range(core.iter.range(3, 3)) { empty_range += 1 }
     if empty_range != 0 { return 55 }
 
     // Filtering, splitting and iteration.
     var extracted = 0
-    for pair in counts.extract_if(fn(read key: i32, mut value: i32): bool { value > 100 }) {
+    for pair in counts.extract_if(core.iter.range_full(), fn(read key: i32, mut value: i32): bool { value > 100 }) {
         extracted += pair.0
     }
     var drops = 0usize
@@ -225,6 +253,16 @@ fn main(): i32 {
     var upper = counts.split_off(2)
     if counts.len() != 1usize || upper.len() != 2usize || !upper.contains_key(5) { return 58 }
     for value in upper.values_mut() { *value += 1 }
+    {
+        var values = upper.values_mut()
+        let remaining = values.size_hint().0
+        if !values.next_back().is_present() ||
+            values.size_hint().0 != remaining - 1usize ||
+            !values.next().is_present() ||
+            values.size_hint().0 != remaining - 2usize {
+            return 155
+        }
+    }
     if sum_values(read upper) != 21 + 57 { return 59 }
     var walked = 0
     for entry in upper.iter() { walked += 1 }

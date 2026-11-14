@@ -1,4 +1,4 @@
-import core.iter.Iterator
+import core.iter.{Iterator, BidirectionalIterator}
 import core.cmp.{Ord, Ordering}
 import core.slice
 import core.text
@@ -6,6 +6,13 @@ import core.char
 import alloc.string
 import alloc.vec
 import alloc.vec_deque
+
+import core.iter.FusedIterator
+
+fn require_fused<I: FusedIterator>(mut iterator: I): bool {
+    while iterator.next().is_present() {}
+    !iterator.next().is_present()
+}
 
 fn main(): i32 {
     let text = "  a\u{e9} \t b \u{2003}c  "
@@ -71,6 +78,58 @@ fn main(): i32 {
     match reverse_terminated.next() { present(part) => { if part != "b" { return 130 } }, none => { return 130 } }
     match reverse_terminated.next() { present(part) => { if part != "a" { return 131 } }, none => { return 131 } }
     match reverse_terminated.next() { present(_) => { return 132 }, none => {} }
+
+    var mixed_terminated = "a,b,".split_terminator(",")
+    match mixed_terminated.next() { present(part) => { if part != "a" { return 150 } }, none => { return 150 } }
+    match mixed_terminated.next_back() { present(part) => { if part != "b" { return 151 } }, none => { return 151 } }
+    match mixed_terminated.next() { present(_) => { return 152 }, none => {} }
+
+    var adjacent_terminated = "a,,b,,".split_terminator(",")
+    match adjacent_terminated.next() { present(part) => { if part != "a" { return 153 } }, none => { return 153 } }
+    match adjacent_terminated.next_back() { present(part) => { if !part.is_empty() { return 154 } }, none => { return 154 } }
+    match adjacent_terminated.next() { present(part) => { if !part.is_empty() { return 155 } }, none => { return 155 } }
+    match adjacent_terminated.next_back() { present(part) => { if part != "b" { return 156 } }, none => { return 156 } }
+    match adjacent_terminated.next() { present(_) => { return 157 }, none => {} }
+
+    var reverse_mixed_terminated = "a,,b,,".rsplit_terminator(",")
+    match reverse_mixed_terminated.next() { present(part) => { if !part.is_empty() { return 158 } }, none => { return 158 } }
+    match reverse_mixed_terminated.next_back() { present(part) => { if part != "a" { return 159 } }, none => { return 159 } }
+    match reverse_mixed_terminated.next() { present(part) => { if part != "b" { return 160 } }, none => { return 160 } }
+    match reverse_mixed_terminated.next_back() { present(part) => { if !part.is_empty() { return 161 } }, none => { return 161 } }
+    match reverse_mixed_terminated.next() { present(_) => { return 162 }, none => {} }
+
+    var empty_separator_terminated = "abc".split_terminator("")
+    match empty_separator_terminated.next() { present(part) => { if !part.is_empty() { return 163 } }, none => { return 163 } }
+    match empty_separator_terminated.next_back() { present(part) => { if part != "c" { return 164 } }, none => { return 164 } }
+    match empty_separator_terminated.next() { present(part) => { if part != "a" { return 165 } }, none => { return 165 } }
+    match empty_separator_terminated.next_back() { present(part) => { if part != "b" { return 166 } }, none => { return 166 } }
+    match empty_separator_terminated.next() { present(_) => { return 167 }, none => {} }
+
+    var unicode_empty_separator = "a\u{e9}\u{1f600}".split_terminator("")
+    if unicode_empty_separator.next_back() != present("\u{1f600}") ||
+        unicode_empty_separator.next_back() != present("\u{e9}") ||
+        unicode_empty_separator.next_back() != present("a") ||
+        unicode_empty_separator.next_back() != present("") ||
+        unicode_empty_separator.next_back().is_present() { return 180 }
+
+    var empty_text_terminated = "".split_terminator(",")
+    match empty_text_terminated.next() { present(part) => { if !part.is_empty() { return 172 } }, none => { return 172 } }
+    match empty_text_terminated.next_back() { present(_) => { return 173 }, none => {} }
+    var empty_text_reverse_terminated = "".rsplit_terminator(",")
+    match empty_text_reverse_terminated.next() { present(part) => { if !part.is_empty() { return 174 } }, none => { return 174 } }
+    match empty_text_reverse_terminated.next_back() { present(_) => { return 175 }, none => {} }
+    var empty_text_empty_separator = "".split_terminator("")
+    match empty_text_empty_separator.next() { present(part) => { if !part.is_empty() { return 176 } }, none => { return 176 } }
+    match empty_text_empty_separator.next_back() { present(_) => { return 177 }, none => {} }
+    var empty_text_empty_reverse_separator = "".rsplit_terminator("")
+    match empty_text_empty_reverse_separator.next() { present(part) => { if !part.is_empty() { return 178 } }, none => { return 178 } }
+    match empty_text_empty_reverse_separator.next_back() { present(_) => { return 179 }, none => {} }
+
+    var overlapping_terminated = "aaaaa".split_terminator("aa")
+    match overlapping_terminated.next() { present(part) => { if !part.is_empty() { return 168 } }, none => { return 168 } }
+    match overlapping_terminated.next_back() { present(part) => { if part != "a" { return 169 } }, none => { return 169 } }
+    match overlapping_terminated.next() { present(part) => { if !part.is_empty() { return 170 } }, none => { return 170 } }
+    match overlapping_terminated.next_back() { present(_) => { return 171 }, none => {} }
 
     var inclusive = "a,b,".split_inclusive(",")
     match inclusive.next() { present(part) => { if part != "a," { return 15 } }, none => { return 15 } }
@@ -213,6 +272,24 @@ fn main(): i32 {
         match text_unicode_escape.next() { present(c) => { text_unicode_escaped.push(c) }, none => { break } }
     }
     if text_unicode_escaped.as_text() != "\\u{e9}" { return 135 }
+    if !require_fused("a\n".escape_default()) { return 144 }
+    if !require_fused("a".chars()) { return 145 }
+    if !require_fused("a".char_indices()) { return 146 }
+    if !require_fused("a\n".split("\n")) { return 147 }
+    if !require_fused("a\n".split_inclusive("\n")) { return 148 }
+    if !require_fused("  a  ".split_whitespace()) { return 149 }
+    if !require_fused("a\n".lines()) { return 150 }
+    var lines = "first\r\nmiddle\nlast\n".lines()
+    if lines.next_back() != present("last") || lines.next() != present("first") ||
+        lines.next_back() != present("middle") || lines.next().is_present() {
+        return 153
+    }
+    var empty_line = "\n".lines()
+    if empty_line.next_back() != present("") || empty_line.next_back().is_present() {
+        return 154
+    }
+    if !require_fused("a".bytes()) { return 151 }
+    if !require_fused("a🦀".encode_utf16()) { return 152 }
     var default_escape = '\u{1b}'.escape_default()
     match default_escape.next() { present(c) => { if c != '\\' { return 127 } }, none => { return 127 } }
     var utf16 = "a🦀".encode_utf16()

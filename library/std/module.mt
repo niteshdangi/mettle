@@ -11,6 +11,7 @@ pub module process
 pub module net
 pub module panic
 pub module sync
+pub module collections
 pub module task
 pub module thread
 pub module macros

@@ -1,5 +1,6 @@
 import alloc.alloc.{Allocator, Layout, AllocError, Global, layout_unchecked}
 import alloc.vec.List
+import alloc.string.ToString
 import core.clone.Clone
 
 // Allocator that fails once the shared budget of successful allocations runs out.
@@ -175,6 +176,48 @@ fn main(): i32 {
     )
     match capture m.try_insert(1, 2) { success(_) => { return 7 }, failure(_) => {} }
     if m.len() != 0usize { return 8 }
+
+    var reserve_budget = 2
+    var reserve_live = 0
+    {
+        var map = alloc.hash_map.new_in<i32, i32, Limited>(
+            Limited(core.ptr.from_mut(reserve_budget), core.ptr.from_mut(reserve_live),
+                    core.ptr.from_mut(alignment_errors))
+        )
+        match capture map.try_insert(1, 2) { success(_) => {}, failure(_) => { return 70 } }
+        let capacity = map.capacity()
+        let entries = map.as_entries().as_ptr()
+        let live_before = reserve_live
+        reserve_budget = 1
+        let overflow = match take capture map.try_reserve(usize.MAX) {
+            success(_) => { return 71 },
+            failure(error) => error
+        }
+        if reserve_budget != 1 || map.capacity() != capacity ||
+            map.as_entries().as_ptr() != entries || reserve_live != live_before {
+            return 72
+        }
+        let exhausted = match take capture map.try_reserve(10usize) {
+            success(_) => { return 73 },
+            failure(error) => error
+        }
+        if overflow == exhausted || overflow != overflow.clone() { return 74 }
+        let overflow_message = overflow.to_string()
+        let exhausted_message = exhausted.to_string()
+        if overflow_message.as_text() != "memory allocation failed because the computed capacity exceeded the collection's maximum" ||
+            exhausted_message.as_text() != "memory allocation failed because the memory allocator returned an error" {
+            return 79
+        }
+        if map.capacity() != capacity || map.as_entries().as_ptr() != entries ||
+            map.len() != 1usize || reserve_live != live_before {
+            return 75
+        }
+        match map.get(1) {
+            present(value) => { if *value != 2 { return 76 } },
+            none => { return 77 }
+        }
+    }
+    if reserve_live != 0 { return 78 }
 
     var budget3 = 0
     var live3 = 0

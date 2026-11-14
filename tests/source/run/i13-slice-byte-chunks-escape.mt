@@ -1,4 +1,11 @@
 // profiles: debug release
+import core.iter.FusedIterator
+
+fn require_fused<I: FusedIterator>(mut iterator: I): bool {
+    while iterator.next().is_present() {}
+    !iterator.next().is_present()
+}
+
 fn main(): i32 {
     let source = [97u8, 10u8, 255u8, 98u8]
     let view: read [u8] = read source
@@ -12,6 +19,7 @@ fn main(): i32 {
         }
     }
     if count != 8usize || rendered[0usize] != 97u8 || rendered[1usize] != 92u8 || rendered[2usize] != 110u8 || rendered[7usize] != 98u8 { return 1 }
+    if !require_fused(view.escape_ascii()) { return 7 }
 
     var chunks = view.utf8_chunks()
     let first = match take chunks.next() { present(chunk) => chunk, none => { return 2 } }

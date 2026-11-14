@@ -38,12 +38,15 @@ No owner is Copy. Clone follows section 11, not ordinary assignment.
 
 Ordinary allocation exhaustion aborts through the selected allocation handler.
 Capacity arithmetic overflow is a checked capacity panic, not a wrapped small
-allocation. `try_reserve/try_reserve_exact` return a typed reserve failure for
-capacity overflow or allocation failure and preserve the original initialized
-contents; they do not convert callback panics into failures.
-`try_push(take T)` returns a PushError owning the uninserted T on capacity/
-allocation failure. Other `try_` constructors consume and clean their
-arguments unless their explicit result returns those owners.
+allocation. `try_reserve/try_reserve_exact` throw the opaque
+`alloc.collections.TryReserveError` for capacity overflow or allocation failure
+and preserve the collection on failure. Fallible capacity constructors,
+`String.try_push_str`, and hash map/set `try_insert` throw the same error.
+These operations do not convert callback panics into failures.
+`try_push(take T)` throws `PushError<T>` with `value` owning the uninserted
+value and `error` containing the `TryReserveError`. Other `try_` constructors
+consume and clean their arguments unless their explicit result returns those
+owners.
 Allocation policy does not excuse a safe operation from valid partial cleanup.
 
 Unless a stronger rule is given, callback panic leaves initialized owned

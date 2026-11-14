@@ -181,8 +181,12 @@ portable byte encoding it additionally promises. `BuildHasher` associates
 one Hasher type; `build_hasher` constructs state such that repeated builds
 from the same builder hash identical streams identically.
 `BuildHasher.hash_one<T: Hash>(read T)` hashes one value with fresh state.
-`BuildHasherDefault<H: Hasher + Default>` stores no H state and constructs
-H's default. General Hash output, seeds and algorithm are not fixed across
+`BuildHasherDefault<H>` is an empty generic copy type; constructing or defaulting
+the builder requires no properties of H and stores or owns no H state.
+Only its `BuildHasher` implementation requires `H: Hasher + Default` and
+constructs a fresh H default. Consequently, its transfer, sharing, pinning and
+unwind-safety properties do not depend on H. General Hash output, seeds and
+algorithm are not fixed across
 library revisions or targets, and are not cryptographic guarantees.
 
 `core.error.Error: Debug + Display` lends an optional source error from its
@@ -537,6 +541,27 @@ const N. `len/is_empty` are O(1). `as_ptr/as_mut_ptr` lend raw addresses,
 not ownership; `_ptr_range` gives start and one-past pointers. Pointer
 invalidation follows the backing owner. All element projections preserve
 the slice's region and access mode.
+
+`core.slice.SliceIndex<S>` is the index-to-projection relation used by
+`Index/IndexMut`. Its unsafe implementations must preserve valid projection
+provenance, extent, access, and Text validity. For `S = [T]`, `usize` selects
+`Output = T`; range indices
+select `Output = [T]`. For `S = Text`, only range indices exist and
+`Output = Text`. `SliceRange` supplies normalization for range descriptors,
+iterator-state ranges, and `(Bound<usize>, Bound<usize>)` through
+`RangeBounds<usize>`; excluded starts and inclusive ends use checked successor
+conversion. `get/get_mut` return none for overflow, reversed or out-of-bounds
+intervals and, for Text, non-UTF-8-boundary endpoints. `index/index_mut` panic
+for the same invalid selections. An exhausted inclusive iterator selects an
+empty interval after its final endpoint, still subject to overflow and extent
+checks. `SliceRange` is unsafe to implement: every successful normalization
+must satisfy `start <= end <= len` without overflow. Returned views borrow
+the input slice, not
+the index, and mutable projections retain exclusive access. Unsafe
+`get_unchecked/get_unchecked_mut` accept raw slice pointers and return raw
+projection pointers without allocating or acquiring ownership; callers must
+establish valid provenance, extent, index, and Text boundaries even if the
+result is never dereferenced, plus exclusive writable access for `_mut`.
 
 | Members | Contract |
 | --- | --- |

@@ -31,6 +31,18 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <bcrypt.h>
+#endif
+
+#ifdef __linux__
+#include <sys/random.h>
+#endif
+
 #ifdef __APPLE__
 #include <crt_externs.h>
 #include <sys/event.h>
@@ -666,6 +678,95 @@ extern "C" std::int32_t mettle_rt_errno_kind(std::int32_t code) {
   default:
     return 18;
   }
+}
+
+extern "C" std::int32_t mettle_rt_random_fill(std::uint8_t *buffer,
+                                              std::size_t count) {
+  if (count == 0)
+    return 0;
+  if (!buffer) {
+    errno = EINVAL;
+    return -1;
+  }
+
+#ifdef _WIN32
+  std::size_t offset = 0;
+  while (offset < count) {
+    const auto size = std::min(
+        count - offset,
+        static_cast<std::size_t>(std::numeric_limits<ULONG>::max()));
+    if (BCryptGenRandom(nullptr, buffer + offset, static_cast<ULONG>(size),
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG) < 0) {
+      errno = EIO;
+      return -1;
+    }
+    offset += size;
+  }
+  return 0;
+#else
+  std::size_t offset = 0;
+#ifdef __linux__
+  while (offset < count) {
+    const auto size = std::min(
+        count - offset,
+        static_cast<std::size_t>(std::numeric_limits<ssize_t>::max()));
+    const auto received = getrandom(buffer + offset, size, 0);
+    if (received > 0) {
+      offset += static_cast<std::size_t>(received);
+      continue;
+    }
+    if (received < 0 && errno == EINTR)
+      continue;
+    offset = 0;
+    break;
+  }
+  if (offset == count)
+    return 0;
+#endif
+
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) ||     \
+    defined(__NetBSD__) || defined(__DragonFly__)
+  offset = 0;
+  while (offset < count) {
+    const auto size = std::min<std::size_t>(count - offset, 256);
+    if (getentropy(buffer + offset, size) != 0) {
+      offset = 0;
+      break;
+    }
+    offset += size;
+  }
+  if (offset == count)
+    return 0;
+#endif
+
+  int flags = O_RDONLY;
+#ifdef O_CLOEXEC
+  flags |= O_CLOEXEC;
+#endif
+  int descriptor;
+  do {
+    descriptor = open("/dev/urandom", flags);
+  } while (descriptor < 0 && errno == EINTR);
+  if (descriptor < 0)
+    return -1;
+
+  offset = 0;
+  while (offset < count) {
+    const auto size = std::min(
+        count - offset,
+        static_cast<std::size_t>(std::numeric_limits<ssize_t>::max()));
+    const auto received = read(descriptor, buffer + offset, size);
+    if (received > 0) {
+      offset += static_cast<std::size_t>(received);
+      continue;
+    }
+    if (received < 0 && errno == EINTR)
+      continue;
+    close(descriptor);
+    return -1;
+  }
+  return close(descriptor) == 0 ? 0 : -1;
+#endif
 }
 
 extern "C" void mettle_rt_set_errno(std::int32_t value) { errno = value; }

@@ -8,6 +8,7 @@ extern "C" {
     pub unsafe fn mettle_rt_errno(): i32;
     pub unsafe fn mettle_rt_errno_kind(code: i32): i32;
     pub unsafe fn mettle_rt_errno_is_range(code: i32): i32;
+    pub unsafe fn mettle_rt_random_fill(buffer: ptr<mut u8>, count: usize): i32;
     pub unsafe fn mettle_rt_dup(fd: i32): i32;
     pub unsafe fn mettle_rt_remove_dir_all(path: ptr<read u8>): i32;
     pub unsafe fn mettle_rt_set_errno(code: i32): Unit;
@@ -86,6 +87,12 @@ extern "C" {
     pub unsafe fn abort(): Never;
     pub unsafe fn strlen(text: ptr<read u8>): usize;
     pub unsafe fn strerror(code: i32): ptr<read u8>;
+}
+
+pub fn fill_random_bytes(mut bytes: [u8]): Unit {
+    if unsafe { mettle_rt_random_fill(data_mut(bytes), bytes.len()) } != 0 {
+        core.intrinsics.abort()
+    }
 }
 
 // An owned POSIX descriptor. Dropping closes it unless `into_raw_fd` transfers

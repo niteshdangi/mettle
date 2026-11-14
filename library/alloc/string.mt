@@ -1,5 +1,7 @@
 import core.iter.{Iterator, BidirectionalIterator}
-import super.alloc.{Allocator, Global, AllocError, panic_precondition}
+import super.alloc.{Allocator, Global, panic_precondition}
+import super.boxed.Box
+import super.collections.TryReserveError
 import core.clone.Clone
 import core.default.Default
 import core.fmt
@@ -14,8 +16,8 @@ import core.text.{
     from_utf8_unchecked,
     from_utf8_unchecked_mut
 }
-extend<A: Allocator> String implements ExtendItems<alloc.boxed.Box<Text, A>> {
-    mut fn extend<I: OwnedIterable<Item = alloc.boxed.Box<Text, A>>>(
+extend<A: Allocator> String implements ExtendItems<Box<Text, A>> {
+    mut fn extend<I: OwnedIterable<Item = Box<Text, A>>>(
         take items: I
     ): Unit {
         var source = items.into_iter()
@@ -27,12 +29,12 @@ extend<A: Allocator> String implements ExtendItems<alloc.boxed.Box<Text, A>> {
         }
     }
 }
-extend<A: Allocator> String implements FromItems<alloc.boxed.Box<Text, A>> {
-    static fn from_iter<I: OwnedIterable<Item = alloc.boxed.Box<Text, A>>>(
+extend<A: Allocator> String implements FromItems<Box<Text, A>> {
+    static fn from_iter<I: OwnedIterable<Item = Box<Text, A>>>(
         take items: I
     ): String {
         var result = new()
-        String.(ExtendItems<alloc.boxed.Box<Text, A>>).extend(mut result, take items)
+        String.(ExtendItems<Box<Text, A>>).extend(mut result, take items)
         result
     }
 }
@@ -160,13 +162,13 @@ pub const fn new_in<A: Allocator>(take a: A): String<A> {
     from_valid_bytes(super.vec.new_in<u8, A>(take a))
 }
 pub const fn new(): String { new_in(Global()) }
-pub fn try_with_capacity_in<A: Allocator>(n: usize, take a: A): String<A> throws AllocError {
+pub fn try_with_capacity_in<A: Allocator>(n: usize, take a: A): String<A> throws TryReserveError {
     from_valid_bytes(try super.vec.try_with_capacity_in<u8, A>(n, take a))
 }
 pub fn with_capacity_in<A: Allocator>(n: usize, take a: A): String<A> {
     from_valid_bytes(super.vec.with_capacity_in<u8, A>(n, take a))
 }
-pub fn try_with_capacity(n: usize): String throws AllocError {
+pub fn try_with_capacity(n: usize): String throws TryReserveError {
     try try_with_capacity_in(n, Global())
 }
 pub fn with_capacity(n: usize): String {
@@ -559,9 +561,9 @@ extend<A: Allocator> String<A> {
     // Safety: the bytes must be well-formed UTF-8 again before the string is
     // next observed as text (including on drop-free early exits such as errors).
     pub mut unsafe const fn as_mut_vec(): mut List<u8, A> from self { mut self.v }
-    pub mut fn try_reserve(extra: usize): Unit throws AllocError { try self.v.try_reserve(extra) }
+    pub mut fn try_reserve(extra: usize): Unit throws TryReserveError { try self.v.try_reserve(extra) }
     pub mut fn reserve(extra: usize): Unit { self.v.reserve(extra) }
-    pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
+    pub mut fn try_reserve_exact(extra: usize): Unit throws TryReserveError {
         try self.v.try_reserve_exact(extra)
     }
     pub mut fn reserve_exact(extra: usize): Unit { self.v.reserve_exact(extra) }
@@ -589,7 +591,7 @@ extend<A: Allocator> String<A> {
         }
     }
 
-    pub mut fn try_push_str(read t: Text): Unit throws AllocError {
+    pub mut fn try_push_str(read t: Text): Unit throws TryReserveError {
         let bytes = t.as_bytes()
         try self.v.try_reserve(bytes.len())
         var i = 0usize
@@ -1096,7 +1098,7 @@ extend Text {
             present(length) => length,
             none => panic_precondition()
         }
-        if total > 0x7fffffffffffffffusize { panic_precondition() }
+        if total > isize.MAX as usize { panic_precondition() }
         if total == 0usize { return new() }
         var result = with_capacity(total)
         var remaining = count

@@ -1,8 +1,9 @@
-import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, FromItems, ExtendItems}
+import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, OwnedIterable, Iterable, FromItems, ExtendItems}
 import core.clone.Clone
 import core.default.Default
 import core.fmt
-import super.alloc.{Allocator, Global, AllocError, PushError}
+import super.alloc.{Allocator, Global, PushError}
+import super.collections.TryReserveError
 import super.vec.List
 import core.cmp.{Ord, Ordering}
 import core.ops.{Deref, DerefMut}
@@ -103,13 +104,13 @@ extend<region r, T: Ord, A: Allocator> PeekMut<region r, T, A> implements DerefM
 
 pub fn new_in<T, A: Allocator>(take a: A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(a)) }
 pub fn new<T>(): BinaryHeap<T> { new_in(Global()) }
-pub fn try_with_capacity_in<T, A: Allocator>(n: usize, take a: A): BinaryHeap<T, A> throws AllocError {
+pub fn try_with_capacity_in<T, A: Allocator>(n: usize, take a: A): BinaryHeap<T, A> throws TryReserveError {
     BinaryHeap(try super.vec.try_with_capacity_in<T, A>(n, take a))
 }
 pub fn with_capacity_in<T, A: Allocator>(n: usize, take a: A): BinaryHeap<T, A> {
     BinaryHeap(super.vec.with_capacity_in<T, A>(n, take a))
 }
-pub fn try_with_capacity<T>(n: usize): BinaryHeap<T> throws AllocError {
+pub fn try_with_capacity<T>(n: usize): BinaryHeap<T> throws TryReserveError {
     try try_with_capacity_in<T, Global>(n, Global())
 }
 pub fn with_capacity<T>(n: usize): BinaryHeap<T> { with_capacity_in(n, Global()) }
@@ -122,11 +123,11 @@ extend<T, A: Allocator> BinaryHeap<T, A> {
     pub fn len(): usize { self.data.len() }
     pub fn capacity(): usize { self.data.capacity() }
     pub fn is_empty(): bool { self.data.is_empty() }
-    pub mut fn try_reserve(additional: usize): Unit throws AllocError {
+    pub mut fn try_reserve(additional: usize): Unit throws TryReserveError {
         try self.data.try_reserve(additional)
     }
     pub mut fn reserve(additional: usize): Unit { self.data.reserve(additional) }
-    pub mut fn try_reserve_exact(additional: usize): Unit throws AllocError {
+    pub mut fn try_reserve_exact(additional: usize): Unit throws TryReserveError {
         try self.data.try_reserve_exact(additional)
     }
     pub mut fn reserve_exact(additional: usize): Unit {
@@ -171,7 +172,7 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
         }
     }
     pub mut fn try_push(take value: T): Unit throws PushError<T> {
-        match capture self.data.try_reserve(1usize) {
+        match take capture self.data.try_reserve(1usize) {
             success(_) => {},
             failure(error) => { throw PushError(value, error) }
         }
@@ -479,6 +480,7 @@ extend<region r, T> Iter<region r, T> implements Iterator {
         }
     }
 }
+extend<region r, T> Iter<region r, T> implements FusedIterator {}
 extend<region r, T> Iter<region r, T> implements BidirectionalIterator {
     mut fn next_back(): (read T from r)? {
         if self.front >= self.back { return none }

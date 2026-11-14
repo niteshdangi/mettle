@@ -16,6 +16,8 @@ std::int32_t mettle_rt_errno();
 std::int32_t mettle_rt_errno_kind(std::int32_t code);
 std::int32_t mettle_rt_errno_is_range(std::int32_t code);
 void mettle_rt_set_errno(std::int32_t value);
+// Fills the entire buffer from the operating system CSPRNG; zero on success.
+std::int32_t mettle_rt_random_fill(std::uint8_t *buffer, std::size_t count);
 
 // Duplicates with close-on-exec into a descriptor above standard streams.
 std::int32_t mettle_rt_dup(std::int32_t fd);

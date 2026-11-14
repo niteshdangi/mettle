@@ -316,7 +316,7 @@ unsafe extend<T: Transferable + Shareable + unsized, A: Allocator + Shareable> W
 // payload, so it aborts.
 unsafe fn increment(count: ptr<mut core.sync.atomic.AtomicUsize>) {
     let previous = (*count).fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
-    if previous > 0x7fffffffffffffffusize { core.intrinsics.abort() }
+    if previous > isize.MAX as usize { core.intrinsics.abort() }
 }
 
 unsafe fn increment_weak(h: ptr<mut ArcHeader>): Unit {
@@ -326,7 +326,7 @@ unsafe fn increment_weak(h: ptr<mut ArcHeader>): Unit {
             current = (*h).wk.load(core.sync.atomic.Ordering.Relaxed)
             continue
         }
-        if current > 0x7fffffffffffffffusize { core.intrinsics.abort() }
+        if current > isize.MAX as usize { core.intrinsics.abort() }
         match (*h).wk.compare_exchange_weak(
             current, current + 1usize,
             core.sync.atomic.Ordering.Acquire, core.sync.atomic.Ordering.Relaxed
@@ -532,7 +532,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
             let b = self.h
             var current = (*b).strong.load(core.sync.atomic.Ordering.Relaxed)
             while current != 0usize {
-                if current > 0x7fffffffffffffffusize { core.intrinsics.abort() }
+                if current > isize.MAX as usize { core.intrinsics.abort() }
                 let allocator = self.a.clone()
                 match (*b).strong.compare_exchange_weak(current, current + 1usize,
                         core.sync.atomic.Ordering.Acquire, core.sync.atomic.Ordering.Relaxed) {

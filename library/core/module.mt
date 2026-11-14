@@ -25,6 +25,7 @@ pub module outcome
 pub module panic
 pub module pin
 pub module ptr
+pub module range
 pub module slice
 pub module sync
 pub module text

@@ -1,3 +1,5 @@
+import core.iter.Iterator
+
 fn without_local_pattern(read text: Text): read Text from text {
     let pattern = alloc.string.from_text("..")
     text.trim_start_matches(pattern.as_text()).trim_end_matches(pattern.as_text())
@@ -40,5 +42,16 @@ fn main(): i32 {
     assert(visits == 5usize, "boundary predicate called once")
     let empty = "".contains(fn(value: char): bool { visits += 1usize; true })
     assert(!empty && visits == 5usize, "empty searches do not call predicates")
+    visits = 0usize
+    {
+        var pieces = "a,b,c".split(fn(value: char): bool {
+            visits += 1usize
+            value == ','
+        })
+        assert(pieces.next() == present("a") && pieces.next() == present("b") &&
+            pieces.next() == present("c") && pieces.next().is_none(),
+            "split retains its mutable matcher across searches")
+    }
+    assert(visits == 5usize, "split searches each scalar once with the same matcher")
     0
 }

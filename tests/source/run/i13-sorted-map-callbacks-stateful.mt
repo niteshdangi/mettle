@@ -58,7 +58,7 @@ fn main(): i32 {
     var started = 0
     let started_ptr = core.ptr.from_mut(started)
     {
-        var extracted = map.extract_if(fn(read key: i32, mut value: i32): bool {
+        var extracted = map.extract_if(core.iter.range_full(), fn(read key: i32, mut value: i32): bool {
             calls += 1
             unsafe { *started_ptr += 1 }
             if key != expected { ordered = false }
@@ -111,7 +111,7 @@ fn main(): i32 {
     ordered = true
     unsafe { *started_ptr = 0 }
     {
-        var extracted = set_extract.extract_if(fn(read key: i32): bool {
+        var extracted = set_extract.extract_if(core.iter.range_full(), fn(read key: i32): bool {
             calls += 1
             unsafe { *started_ptr += 1 }
             if key != expected { ordered = false }
@@ -144,7 +144,7 @@ fn main(): i32 {
     })
     if visited != 96 || !in_order || tree.len() != 32usize { return 30 }
     {
-        var extracted = tree.extract_if(fn(read key: i32, mut value: i32): bool {
+        var extracted = tree.extract_if(core.iter.range_full(), fn(read key: i32, mut value: i32): bool {
             key % 2 == 0
         })
         var next_key = 0
@@ -162,6 +162,48 @@ fn main(): i32 {
         if next_key != 96 { return 32 }
     }
     if tree.len() != 16usize { return 33 }
+
+    var bounded_map = btree.new<i32, i32>()
+    let _m1 = bounded_map.insert(1, 10)
+    let _m2 = bounded_map.insert(2, 20)
+    let _m3 = bounded_map.insert(3, 30)
+    let _m4 = bounded_map.insert(4, 40)
+    let _m5 = bounded_map.insert(5, 50)
+    calls = 0
+    {
+        var extracted = bounded_map.extract_if(core.iter.range(2, 4), fn(read key: i32, mut value: i32): bool {
+            calls += 1
+            key % 2 == 0
+        })
+        match extracted.next() {
+            present(entry) => { if entry.0 != 2 || entry.1 != 20 { return 40 } },
+            none => { return 40 }
+        }
+        if extracted.next().is_present() || calls != 2 { return 41 }
+    }
+    if bounded_map.contains_key(2) || !bounded_map.contains_key(3) ||
+        !bounded_map.contains_key(4) || !bounded_map.contains_key(5) { return 42 }
+
+    var bounded_set = btree.set_new<i32>()
+    let _s1 = bounded_set.insert(1)
+    let _s2 = bounded_set.insert(2)
+    let _s3 = bounded_set.insert(3)
+    let _s4 = bounded_set.insert(4)
+    let _s5 = bounded_set.insert(5)
+    calls = 0
+    {
+        var extracted = bounded_set.extract_if(core.iter.range(2, 4), fn(read key: i32): bool {
+            calls += 1
+            key % 2 == 0
+        })
+        match extracted.next() {
+            present(key) => { if key != 2 { return 43 } },
+            none => { return 43 }
+        }
+        if extracted.next().is_present() || calls != 2 { return 44 }
+    }
+    if bounded_set.contains(2) || !bounded_set.contains(3) ||
+        !bounded_set.contains(4) || !bounded_set.contains(5) { return 45 }
 
     var entries = btree.new<i32, i32>()
     let _l = entries.insert(1, 10)

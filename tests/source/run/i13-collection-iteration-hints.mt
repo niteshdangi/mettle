@@ -387,6 +387,8 @@ fn main(): i32 {
 
     let default_hash_iter: hash_map.MapIntoIter<i32, i32> =
         default_value<hash_map.MapIntoIter<i32, i32>>()
+    let default_full_range: core.iter.RangeFull = default_value<core.iter.RangeFull>()
+    let default_repeat_n: core.iter.RepeatN<i32> = default_value<core.iter.RepeatN<i32>>()
     let default_hash_keys: hash_map.IntoKeys<i32, i32, alloc.alloc.Global> =
         default_value<hash_map.IntoKeys<i32, i32, alloc.alloc.Global>>()
     let default_hash_values: hash_map.IntoValues<i32, i32, alloc.alloc.Global> =
@@ -404,6 +406,7 @@ fn main(): i32 {
     let default_deque_iter: vec_deque.DequeIntoIter<i32> =
         default_value<vec_deque.DequeIntoIter<i32>>()
     if default_hash_iter.size_hint() != (0usize, present(0usize)) ||
+        default_repeat_n.size_hint() != (0usize, present(0usize)) ||
         default_hash_keys.size_hint() != (0usize, present(0usize)) ||
         default_hash_values.size_hint() != (0usize, present(0usize)) ||
         default_hash_set.size_hint() != (0usize, present(0usize)) ||
@@ -414,6 +417,16 @@ fn main(): i32 {
         default_deque_iter.size_hint() != (0usize, present(0usize)) {
         return 84
     }
+    let _ = default_full_range
+    require_fused(take default_hash_iter)
+    require_fused(take default_hash_keys)
+    require_fused(take default_hash_values)
+    require_fused(take default_hash_set)
+    require_fused(take default_sorted_iter)
+    require_fused(take default_sorted_keys)
+    require_fused(take default_sorted_values)
+    require_fused(take default_sorted_set)
+    require_fused(take default_deque_iter)
     var debug_sorted = btree.new<i32, i32>()
     debug_sorted.insert(1, 10)
     let _ = require_debug(read debug_sorted.into_iter())

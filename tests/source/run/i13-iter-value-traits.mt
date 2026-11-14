@@ -31,6 +31,7 @@ extend Ticks implements Default {
 }
 
 fn fresh<T: Default>(): T { T.(Default).default() }
+fn clone_empty<T>(read value: iter.Empty<T>): iter.Empty<T> { value.clone() }
 
 fn checks_clone_positions(): i32 {
     var original = iter.range(0, 3).enumerate()
@@ -93,6 +94,8 @@ fn checks_default_then_clone(): i32 {
     var base: iter.Chained<Ticks, Ticks> = fresh()
     var base_copy = base.clone()
     if base_copy.next().is_present() { return 30 }
+    var empty_copy = clone_empty(read iter.empty<Ticks>())
+    if empty_copy.next().is_present() { return 31 }
     0
 }
 
@@ -156,6 +159,54 @@ fn checks_borrowed_clones(): i32 {
     0
 }
 
+fn checks_source_clones(): i32 {
+    var single = iter.once(7)
+    var single_copy = single.clone()
+    if single.next() != present(7) || single_copy.next() != present(7) { return 79 }
+
+    var single_with = iter.once_with(fn(): i32 { 8 })
+    var single_with_copy = single_with.clone()
+    if single_with.next() != present(8) || single_with_copy.next() != present(8) { return 78 }
+
+    var generated = iter.from_fn(fn(): i32? { present(8) })
+    var generated_copy = generated.clone()
+    if generated.next() != present(8) || generated_copy.next() != present(8) { return 80 }
+
+    var generated_with = iter.repeat_with(fn(): i32 { 9 })
+    var generated_with_copy = generated_with.clone()
+    if generated_with.next() != present(9) || generated_with_copy.next() != present(9) { return 81 }
+
+    var repeated = iter.repeat(10)
+    var repeated_copy = repeated.clone()
+    if repeated.next() != present(10) || repeated_copy.next() != present(10) { return 82 }
+
+    var bounded = iter.repeat_n(11, 3usize)
+    if bounded.next() != present(11) { return 83 }
+    var bounded_copy = bounded.clone()
+    if bounded.next() != present(11) || bounded_copy.next() != present(11) { return 84 }
+    if bounded.count() != 1usize || bounded_copy.count() != 1usize { return 85 }
+
+    var successors = iter.successors(
+        present(1),
+        fn(read value: i32): i32? { if value < 4 { present(value + 1) } else { none } }
+    )
+    if successors.next() != present(1) { return 86 }
+    var successors_copy = successors.clone()
+    if successors.next() != present(2) || successors_copy.next() != present(2) { return 87 }
+
+    var scanned = iter.range(1, 5).scan(
+        0,
+        fn(mut state: i32, take item: i32): i32? {
+            state = state + item
+            present(state)
+        }
+    )
+    if scanned.next() != present(1) { return 88 }
+    var scanned_copy = scanned.clone()
+    if scanned.next() != present(3) || scanned_copy.next() != present(3) { return 89 }
+    0
+}
+
 fn main(): i32 {
     var code = checks_clone_positions()
     if code != 0 { return code }
@@ -165,5 +216,7 @@ fn main(): i32 {
     if code != 0 { return code }
     code = checks_buffered_clones()
     if code != 0 { return code }
-    checks_borrowed_clones()
+    code = checks_borrowed_clones()
+    if code != 0 { return code }
+    checks_source_clones()
 }

@@ -86,6 +86,62 @@ fn main(): i32 {
     if owned_words.next() != present("b") || words.next_back() != present("b") ||
         owned_words.next_back().is_present() { return 31 }
 
+    var reverse_matches = "a,b,c".rmatches(',')
+    if reverse_matches.next() != present(",") { return 32 }
+    var reverse_matches_copy = reverse_matches.clone()
+    if reverse_matches.next() != present(",") || reverse_matches_copy.next() != present(",") ||
+        reverse_matches.next().is_present() || reverse_matches_copy.next().is_present() { return 33 }
+
+    var match_indices = "a,b,c".match_indices(',')
+    if match_indices.next() != present((1usize, ",")) { return 34 }
+    var match_indices_copy = match_indices.clone()
+    if match_indices.next() != present((3usize, ",")) ||
+        match_indices_copy.next() != present((3usize, ",")) { return 35 }
+
+    var reverse_match_indices = "a,b,c".rmatch_indices(',')
+    if reverse_match_indices.next() != present((3usize, ",")) { return 36 }
+    var reverse_match_indices_copy = reverse_match_indices.clone()
+    if reverse_match_indices.next() != present((1usize, ",")) ||
+        reverse_match_indices_copy.next() != present((1usize, ",")) { return 37 }
+
+    var matches = "a,b,c".matches(',')
+    if matches.next() != present(",") { return 38 }
+    var matches_copy = matches.clone()
+    if matches.next() != present(",") || matches_copy.next() != present(",") { return 39 }
+
+    var limited_split = "a,b,c".splitn(3usize, ",")
+    if limited_split.next() != present("a") { return 40 }
+    var limited_split_copy = limited_split.clone()
+    if limited_split.next() != present("b") || limited_split_copy.next() != present("b") { return 41 }
+
+    var limited_reverse_split = "a,b,c".rsplitn(3usize, ",")
+    if limited_reverse_split.next() != present("c") { return 42 }
+    var limited_reverse_split_copy = limited_reverse_split.clone()
+    if limited_reverse_split.next() != present("b") ||
+        limited_reverse_split_copy.next() != present("b") { return 43 }
+
+    var terminated_split = "a,b,".split_terminator(",")
+    if terminated_split.next() != present("a") { return 44 }
+    var terminated_split_copy = terminated_split.clone()
+    if terminated_split.next() != present("b") || terminated_split_copy.next() != present("b") { return 45 }
+
+    var reverse_terminated_split = "a,b,".rsplit_terminator(",")
+    if reverse_terminated_split.next() != present("b") { return 46 }
+    var reverse_terminated_split_copy = reverse_terminated_split.clone()
+    if reverse_terminated_split.next() != present("a") ||
+        reverse_terminated_split_copy.next() != present("a") { return 47 }
+
+    var lines = "first\nsecond\n".lines()
+    if lines.next() != present("first") { return 48 }
+    var lines_copy = lines.clone()
+    if lines.next() != present("second") || lines_copy.next() != present("second") { return 49 }
+
+    var utf16 = "A🦀".encode_utf16()
+    if utf16.next() != present(65u16) { return 50 }
+    var utf16_copy = utf16.clone()
+    if utf16.next() != present(0xd83eu16) || utf16_copy.next() != present(0xd83eu16) { return 51 }
+    if utf16.next() != present(0xdd80u16) || utf16_copy.next() != present(0xdd80u16) { return 52 }
+
     if "(body".strip_circumfix("(", ")").is_present() { return 15 }
     match "(body)".strip_circumfix("(", ")") {
         present(body) => { if body != "body" { return 16 } },

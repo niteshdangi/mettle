@@ -6,6 +6,7 @@ import core.cmp.{Eq, Ordering, PartialEq, PartialOrd}
 import core.default.Default
 import core.fmt.{Debug, Error, buffer_writer, formatter, spec, written_text}
 import core.hash.hash_one
+import core.iter.Bound
 import core.iter.{ExtendItems, FromItems, OwnedIterable}
 
 fn default_value<T: Default>(): T { T.(Default).default() }
@@ -69,13 +70,13 @@ fn run(): i32 throws Error {
     }
     if ordered != 4 { return 16 }
     var inside = 0
-    for value in set.range(2, 7) { inside += value.key }
-    if inside != 2 + 4 { return 17 }
+    for value in set.range((Bound.Excluded(2), Bound.Included(4))) { inside += value.key }
+    if inside != 4 { return 17 }
     var none_inside = 0
-    for value in set.range(7, 7) { none_inside += 1 }
+    for value in set.range(core.iter.range(7, 7)) { none_inside += 1 }
     if none_inside != 0 { return 18 }
     match take std.panic.catch_panic(fn(): Unit {
-        let _ = set.range(7, 2)
+        let _ = set.range((Bound.Included(7), Bound.Excluded(2)))
     }) {
         std.panic.CatchResult.Panicked(_) => {},
         _ => { return 18 }
@@ -99,7 +100,7 @@ fn run(): i32 throws Error {
     })
     if kept_visits != 4 || set.len() != 2usize || !set.contains(4) || !set.contains(10) { return 23 }
     var extracted = 0
-    for value in set.extract_if(fn(read value: i32): bool { value == 4 }) { extracted += value }
+    for value in set.extract_if(core.iter.range_full(), fn(read value: i32): bool { value == 4 }) { extracted += value }
     if extracted != 4 || set.len() != 1usize { return 24 }
     var upper = set_of(20, 30, 40)
     var tail = upper.split_off(30)

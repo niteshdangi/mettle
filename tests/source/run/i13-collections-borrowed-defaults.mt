@@ -6,7 +6,7 @@ import core.clone.Clone
 import core.convert.From
 import core.default.Default
 import core.fmt.Debug
-import core.iter.{ExactSizeIterator, Iterator, Iterable}
+import core.iter.{ExactSizeIterator, Iterator, BidirectionalIterator, Iterable}
 
 fn default_value<T: Default>(): T { T.(Default).default() }
 fn require_debug<T: Debug>(read value: T): bool { true }
@@ -27,6 +27,8 @@ fn check_btree_defaults<region r>(
         default_value<btree.IterMut<region r, i32, i32, alloc.alloc.Global>>()
     var values_mut: btree.ValuesMut<region r, i32, i32, alloc.alloc.Global> =
         default_value<btree.ValuesMut<region r, i32, i32, alloc.alloc.Global>>()
+    var range_mut: btree.RangeMut<region r, i32, i32, alloc.alloc.Global> =
+        default_value<btree.RangeMut<region r, i32, i32, alloc.alloc.Global>>()
     var entries_copy = entries.clone()
     var keys_copy = keys.clone()
     var values_copy = values.clone()
@@ -35,6 +37,7 @@ fn check_btree_defaults<region r>(
     require_debug(read values)
     require_debug(read entries_mut)
     require_debug(read values_mut)
+    if range_mut.next().is_present() || range_mut.next_back().is_present() { return false }
     entries.size_hint() == (0usize, present(0usize)) &&
         exact_len(read entries) == 0usize &&
         exact_len(read keys) == 0usize &&

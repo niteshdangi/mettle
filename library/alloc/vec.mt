@@ -1,4 +1,5 @@
-import super.alloc.{ Allocator, Global, AllocError, Layout, layout_of, layout_unchecked, free_block, handle_alloc_error, panic_precondition, dangling_for }
+import super.alloc.{ Allocator, Global, AllocError, Layout, layout_of, layout_unchecked, layout_array, free_block, handle_alloc_error, panic_precondition, dangling_for }
+import super.collections.TryReserveError
 import core.clone.Clone
 import core.default.Default
 import core.cmp.{ Eq, Ord, Ordering, PartialEq, PartialOrd }
@@ -124,10 +125,13 @@ pub macro vec {
     ($($value:expr),+ $(,)?) => { from_array([$($value),*]) };
 }
 
-pub fn try_with_capacity_in<T, A: Allocator>(n: usize, take a: A): List<T, A> throws AllocError {
+pub fn try_with_capacity_in<T, A: Allocator>(n: usize, take a: A): List<T, A> throws TryReserveError {
     var v = new_in<T, A>(a)
     try v.try_reserve_exact(n)
     v
+}
+pub fn try_with_capacity<T>(n: usize): List<T> throws TryReserveError {
+    try try_with_capacity_in<T, Global>(n, Global())
 }
 pub fn with_capacity_in<T, A: Allocator>(n: usize, take a: A): List<T, A> {
     var v = new_in<T, A>(a)
@@ -135,6 +139,24 @@ pub fn with_capacity_in<T, A: Allocator>(n: usize, take a: A): List<T, A> {
     v
 }
 pub fn with_capacity<T>(n: usize): List<T> { with_capacity_in(n, Global()) }
+
+pub(super) fn growth_target<T>(capacity: usize, need: usize, exact: bool): usize throws TryReserveError {
+    if core.mem.size_of<T>() == 0usize || need <= capacity { return capacity }
+    var ncap = need
+    if !exact {
+        let doubled = capacity.saturating_mul(2usize)
+        if doubled > ncap { ncap = doubled }
+        if ncap < 4usize { ncap = 4usize }
+    }
+    match capture layout_array<T>(ncap) {
+        success(_) => { return ncap },
+        failure(_) => {}
+    }
+    match capture layout_array<T>(need) {
+        success(_) => need,
+        failure(_) => throw TryReserveError.capacity_overflow()
+    }
+}
 
 extend<T> List<T> {
     pub init() {
@@ -167,52 +189,55 @@ extend<T, A: Allocator> List<T, A> {
     pub const fn as_slice(): read [T] from self { unsafe { read *slice_ptr(self.ptr, self.len) } }
     pub mut const fn as_mut_slice(): mut [T] from self { unsafe { mut *slice_ptr_mut(self.ptr, self.len) } }
 
+    pub(super) fn check_reserve(extra: usize, exact: bool): Unit throws TryReserveError {
+        let need = match self.len.checked_add(extra) {
+            present(n) => n,
+            none => throw TryReserveError.capacity_overflow()
+        }
+        let _target = try growth_target<T>(self.cap, need, exact)
+    }
     // Grows to at least `need` slots; failure leaves the vector unchanged.
-    mut fn grow_to(need: usize, exact: bool): Unit throws AllocError {
+    mut fn grow_to(need: usize, exact: bool): Unit throws TryReserveError {
+        let ncap = try growth_target<T>(self.cap, need, exact)
+        if ncap == self.cap { return () }
         let size = core.mem.size_of<T>()
-        if size == 0usize || need <= self.cap { return () }
-        var ncap = need
-        if !exact {
-            let doubled = self.cap.saturating_mul(2usize)
-            if doubled > ncap { ncap = doubled }
-            if ncap < 4usize { ncap = 4usize }
-        }
         let align = core.mem.align_of<T>()
-        let bytes = match ncap.checked_mul(size) {
-            present(b) => b,
-            none => throw AllocError(0xffffffffffffffffusize, align)
-        }
-        if bytes > 0x7fffffffffffffffusize - (align - 1usize) { throw AllocError(bytes, align) }
-        let np = if self.cap == 0usize {
-            try self.a.allocate(unsafe { layout_unchecked(bytes, align) })
+        let bytes = ncap * size
+        let layout = unsafe { layout_unchecked(bytes, align) }
+        let result = if self.cap == 0usize {
+            capture self.a.allocate(layout)
         } else {
-            unsafe { try self.a.grow(self.ptr.cast<u8>(), layout_unchecked(self.cap * size, align), bytes) }
+            unsafe { capture self.a.grow(self.ptr.cast<u8>(), layout_unchecked(self.cap * size, align), bytes) }
+        }
+        let np = match take result {
+            success(p) => p,
+            failure(_) => throw TryReserveError.allocation_error(layout)
         }
         self.ptr = np.cast<T>()
         self.cap = ncap
     }
-    pub mut fn try_reserve(extra: usize): Unit throws AllocError {
+    pub mut fn try_reserve(extra: usize): Unit throws TryReserveError {
         match self.len.checked_add(extra) {
             present(need) => try self.grow_to(need, false),
-            none => throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
+            none => throw TryReserveError.capacity_overflow()
         }
     }
-    pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
+    pub mut fn try_reserve_exact(extra: usize): Unit throws TryReserveError {
         match self.len.checked_add(extra) {
             present(need) => try self.grow_to(need, true),
-            none => throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
+            none => throw TryReserveError.capacity_overflow()
         }
     }
     pub mut fn reserve(extra: usize): Unit {
         match capture self.try_reserve(extra) {
             success(_) => (),
-            failure(_) => handle_alloc_error(layout_of<T>())
+            failure(error) => error.handle()
         }
     }
     pub mut fn reserve_exact(extra: usize): Unit {
         match capture self.try_reserve_exact(extra) {
             success(_) => (),
-            failure(_) => handle_alloc_error(layout_of<T>())
+            failure(error) => error.handle()
         }
     }
     // Releases spare capacity; failure keeps the larger block.
@@ -235,7 +260,7 @@ extend<T, A: Allocator> List<T, A> {
 
     // On allocation failure the error retains the value and the vector is unchanged.
     pub mut fn try_push(take value: T): Unit throws super.alloc.PushError<T> {
-        match capture self.try_reserve(1usize) {
+        match take capture self.try_reserve(1usize) {
             success(_) => {},
             failure(error) => { throw super.alloc.PushError(value, error) }
         }

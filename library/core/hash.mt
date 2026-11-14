@@ -4,6 +4,7 @@
 // little-endian bytes, so results do not depend on the host byte order.
 import super.cmp.{Ordering, Descending}
 import super.text.Text
+import super.default.Default
 
 pub interface Hasher {
     mut fn write(read bytes: [u8]): Unit;
@@ -61,6 +62,18 @@ pub interface BuildHasher {
         value.hash(mut state)
         state.finish()
     }
+}
+
+pub copy type BuildHasherDefault<H> {}
+extend<H> BuildHasherDefault<H> {
+    pub static const fn new(): BuildHasherDefault<H> { BuildHasherDefault<H>() }
+}
+extend<H> BuildHasherDefault<H> implements Default {
+    static fn default(): BuildHasherDefault<H> { BuildHasherDefault<H>.new() }
+}
+extend<H: Hasher + Default> BuildHasherDefault<H> implements BuildHasher {
+    type Hasher = H
+    fn build_hasher(): H { H.(Default).default() }
 }
 
 // Hashes one value with the default keyed SipHash-1-3 (zero key).

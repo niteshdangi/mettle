@@ -1,3 +1,5 @@
+import super.collections.TryReserveError
+
 // Allocation contracts. `Global` forwards to the three `mettle_rt_*` symbols:
 // hosted builds link them from the Mettle runtime, freestanding builds provide
 // them. Sizes passed to them are never zero.
@@ -14,7 +16,7 @@ pub copy type LayoutError { pub size: usize; pub align: usize }
 
 pub type PushError<T> {
     pub value: T
-    pub allocation: AllocError
+    pub error: TryReserveError
 }
 
 // Size and alignment of a block. `align` is a power of two and `size`

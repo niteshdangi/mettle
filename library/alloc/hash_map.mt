@@ -1,10 +1,11 @@
-import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
 import core.clone.Clone
 import core.default.Default
 import core.cmp.Eq
 import core.fmt
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_unchecked, handle_alloc_error, layout_of}
-import core.hash.{BuildHasher, Hash, SipHasher, sip13}
+import super.alloc.{Allocator, Global, Layout, layout_unchecked, free_block}
+import super.collections.TryReserveError
+import core.hash.{BuildHasher, Hash, Hasher, SipHasher, sip13}
 import super.vec.List
 import core.cmp.PartialEq
 import core.borrow.KeyView
@@ -12,10 +13,31 @@ import core.ops.{BitAnd, BitOr, BitXor, Sub}
 
 fn empty(): usize { 0xffffffffffffffffusize }
 
+fn index_layout(ncap: usize): Layout throws TryReserveError {
+    let bytes = match ncap.checked_mul(8usize) {
+        present(b) => b,
+        none => throw TryReserveError.capacity_overflow()
+    }
+    if bytes > isize.MAX as usize - 7usize { throw TryReserveError.capacity_overflow() }
+    unsafe { layout_unchecked(bytes, 8usize) }
+}
+
 pub type Bucket<K, V> {
     pub hash: u64
     pub key: K
     pub value: V
+}
+
+pub type DefaultHasher { hasher: SipHasher }
+extend DefaultHasher {
+    pub static fn new(): DefaultHasher { DefaultHasher(sip13(0u64, 0u64)) }
+}
+extend DefaultHasher implements Default {
+    static fn default(): DefaultHasher { DefaultHasher.new() }
+}
+extend DefaultHasher implements Hasher {
+    mut fn write(read bytes: [u8]): Unit { self.hasher.write(bytes) }
+    fn finish(): u64 { self.hasher.finish() }
 }
 
 // Entries live densely in a `List` and a power-of-two index table (linear
@@ -216,84 +238,88 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         }
     }
 
-    // Reindexes into a fresh table of `ncap` slots; failure changes nothing.
-    mut fn rebuild(ncap: usize): Unit throws AllocError {
-        let bytes = match ncap.checked_mul(8usize) {
-            present(b) => b,
-            none => throw AllocError(empty(), 8usize)
-        }
-        if bytes > 0x7fffffffffffffffusize - 7usize {
-            throw AllocError(bytes, 8usize)
-        }
-        let layout = unsafe { layout_unchecked(bytes, 8usize) }
-        let np = try self.entries.allocator_mut().allocate(layout)
-        let nidx = np.cast<usize>()
+    mut fn install_index(nidx: ptr<mut usize>, ncap: usize): Unit {
         var i = 0usize
         while i < ncap {
             unsafe { *nidx.add(i) = empty() }
             i += 1usize
         }
-        let old_index = self.idx
-        let old_capacity = self.icap
-        self.idx = nidx
-        self.icap = ncap
         let mask = ncap - 1usize
         var e = 0usize
         while e < self.entries.len() {
             let h = match self.entries.get(e) { present(b) => b.hash, none => 0u64 }
             var pos = (h as usize) & mask
-            while self.slot(pos) != empty() { pos = (pos + 1usize) & mask }
-            self.set_slot(pos, e)
+            while unsafe { *nidx.add(pos) } != empty() { pos = (pos + 1usize) & mask }
+            unsafe { *nidx.add(pos) = e }
             e += 1usize
         }
+        let old_index = self.idx
+        let old_capacity = self.icap
+        self.idx = nidx
+        self.icap = ncap
         if old_capacity != 0usize {
             let old = unsafe { layout_unchecked(old_capacity * 8usize, 8usize) }
             unsafe { self.entries.allocator_mut().deallocate(old_index.cast<u8>(), old) }
         }
     }
 
-    pub mut fn try_reserve(extra: usize): Unit throws AllocError {
+    mut fn rebuild(ncap: usize): Unit throws TryReserveError {
+        let layout = try index_layout(ncap)
+        let np = match capture self.entries.allocator_mut().allocate(layout) {
+            success(p) => p,
+            failure(_) => throw TryReserveError.allocation_error(layout)
+        }
+        self.install_index(np.cast<usize>(), ncap)
+    }
+
+    mut fn try_reserve_impl(extra: usize, exact: bool): Unit throws TryReserveError {
         let need = match (self.entries.len()).checked_add(extra) {
             present(n) => n,
-            none => throw AllocError(empty(), 8usize)
+            none => throw TryReserveError.capacity_overflow()
         }
-        try self.entries.try_reserve(extra)
         if need <= self.capacity() { return () }
+        try self.entries.check_reserve(extra, exact)
         var ncap = if self.icap == 0usize { 8usize } else { self.icap }
         while need > ncap - ncap / 4usize {
-            if ncap > 0x7fffffffffffffffusize / 2usize {
-                throw AllocError(empty(), 8usize)
+            if ncap > isize.MAX as usize / 2usize {
+                throw TryReserveError.capacity_overflow()
             }
             ncap *= 2usize
         }
-        if ncap != self.icap { try self.rebuild(ncap) }
+        if ncap == self.icap {
+            if exact { try self.entries.try_reserve_exact(extra) }
+            else { try self.entries.try_reserve(extra) }
+            return ()
+        }
+        let layout = try index_layout(ncap)
+        let np = match capture self.entries.allocator_mut().allocate(layout) {
+            success(p) => p,
+            failure(_) => throw TryReserveError.allocation_error(layout)
+        }
+        let guard = unsafe {
+            free_block(np, layout, core.ptr.from_mut(*self.entries.allocator_mut()))
+        }
+        if exact { try self.entries.try_reserve_exact(extra) }
+        else { try self.entries.try_reserve(extra) }
+        core.mem.forget(take guard)
+        self.install_index(np.cast<usize>(), ncap)
     }
-    pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
-        let need = match self.entries.len().checked_add(extra) {
-            present(n) => n,
-            none => throw AllocError(empty(), 8usize)
-        }
-        try self.entries.try_reserve_exact(extra)
-        if need <= self.capacity() { return () }
-        var ncap = 8usize
-        while need > ncap - ncap / 4usize {
-            if ncap > 0x7fffffffffffffffusize / 2usize {
-                throw AllocError(empty(), 8usize)
-            }
-            ncap *= 2usize
-        }
-        if ncap > self.icap { try self.rebuild(ncap) }
+    pub mut fn try_reserve(extra: usize): Unit throws TryReserveError {
+        try self.try_reserve_impl(extra, false)
+    }
+    pub mut fn try_reserve_exact(extra: usize): Unit throws TryReserveError {
+        try self.try_reserve_impl(extra, true)
     }
     pub mut fn reserve(extra: usize): Unit {
         match capture self.try_reserve(extra) {
             success(_) => (),
-            failure(_) => handle_alloc_error(layout_of<Bucket<K, V>>())
+            failure(error) => error.handle()
         }
     }
     pub mut fn reserve_exact(extra: usize): Unit {
         match capture self.try_reserve_exact(extra) {
             success(_) => (),
-            failure(_) => handle_alloc_error(layout_of<Bucket<K, V>>())
+            failure(error) => error.handle()
         }
     }
     pub mut fn shrink_to_fit(): Unit {
@@ -328,7 +354,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         if wanted != 0usize {
             target = 8usize
             while wanted > target - target / 4usize {
-                if target > 0x7fffffffffffffffusize / 2usize { return () }
+                if target > isize.MAX as usize / 2usize { return () }
                 target *= 2usize
             }
         }
@@ -431,7 +457,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
 
     // Inserts or replaces; a replaced value is returned. On allocation failure
     // the map is unchanged and the pair is dropped.
-    pub mut fn try_insert(take key: K, take value: V): V? throws AllocError {
+    pub mut fn try_insert(take key: K, take value: V): V? throws TryReserveError {
         let hash = self.builder.hash_one(key)
         match self.find_pos(hash, key) {
             present(pos) => {
@@ -445,7 +471,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         none
     }
 
-    mut fn try_append(hash: u64, take key: K, take value: V): usize throws AllocError {
+    mut fn try_append(hash: u64, take key: K, take value: V): usize throws TryReserveError {
         try self.try_reserve(1usize)
         let at = self.entries.len()
         self.entries.push(Bucket(hash, key, value))
@@ -459,7 +485,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         let outcome = capture self.try_insert(key, value)
         match take outcome {
             success(old) => old,
-            failure(_) => handle_alloc_error(layout_of<Bucket<K, V>>())
+            failure(error) => error.handle()
         }
     }
 
@@ -471,7 +497,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
             none => {
                 match capture self.try_append(hash, key, value) {
                     success(index) => index,
-                    failure(_) => handle_alloc_error(layout_of<Bucket<K, V>>())
+                    failure(error) => error.handle()
                 }
             }
         }
@@ -620,10 +646,10 @@ extend<K: Hash + PartialEq, A: Allocator, S: BuildHasher> Set<K, A, S> {
     pub fn len(): usize { self.map.len() }
     pub fn capacity(): usize { self.map.capacity() }
     pub fn is_empty(): bool { self.map.is_empty() }
-    pub mut fn try_reserve(extra: usize): Unit throws AllocError {
+    pub mut fn try_reserve(extra: usize): Unit throws TryReserveError {
         try self.map.try_reserve(extra)
     }
-    pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
+    pub mut fn try_reserve_exact(extra: usize): Unit throws TryReserveError {
         try self.map.try_reserve_exact(extra)
     }
     pub mut fn reserve(extra: usize): Unit { self.map.reserve(extra) }
@@ -644,7 +670,7 @@ extend<K: Hash + PartialEq, A: Allocator, S: BuildHasher> Set<K, A, S> {
     pub mut fn insert(take key: K): bool {
         match self.map.insert(key, ()) { present(_) => false, none => true }
     }
-    pub mut fn try_insert(take key: K): bool throws AllocError {
+    pub mut fn try_insert(take key: K): bool throws TryReserveError {
         match try self.map.try_insert(key, ()) { present(_) => false, none => true }
     }
     pub mut fn remove<Q: Hash + PartialEq + unsized>(read key: Q): bool where K: KeyView<Q> {
@@ -1131,36 +1157,44 @@ extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
 
 // Generic mutable iteration visits values only: mutable keys could break the
 // table's hash invariants.
-pub type ValuesMut<region r, K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> { map: (mut Map<K, V, A, S> from r)?; index: usize }
+pub type ValuesMut<region r, K, V, A: Allocator = Global, S: BuildHasher = DefaultHashBuilder> {
+    map: (mut Map<K, V, A, S> from r)?
+    index: usize
+    back: usize
+}
 extend<region r, K, V, A: Allocator, S: BuildHasher> ValuesMut<region r, K, V, A, S> implements Iterator {
     type Item = mut V from r
     mut fn next(): (mut V from r)? {
+        if self.index >= self.back { return none }
         match mut self.map {
             present(map) => {
-                if self.index < map.entries.len() {
-                    let i = self.index
-                    self.index += 1usize
-                    present(unsafe { mut (*map.entries.as_mut_ptr().add(i)).value })
-                } else {
-                    none
-                }
+                let i = self.index
+                self.index += 1usize
+                present(unsafe { mut (*map.entries.as_mut_ptr().add(i)).value })
             },
             none => none
         }
     }
     fn size_hint(): (usize, usize?) {
-        match read self.map {
+        let remaining = self.back - self.index
+        (remaining, present(remaining))
+    }
+}
+extend<region r, K, V, A: Allocator, S: BuildHasher> ValuesMut<region r, K, V, A, S> implements BidirectionalIterator {
+    mut fn next_back(): (mut V from r)? {
+        if self.index >= self.back { return none }
+        match mut self.map {
             present(map) => {
-                let remaining = map.entries.len() - self.index
-                (remaining, present(remaining))
+                self.back -= 1usize
+                present(unsafe { mut (*map.entries.as_mut_ptr().add(self.back)).value })
             },
-            none => (0usize, present(0usize))
+            none => none
         }
     }
 }
 extend<region r, K, V, A: Allocator, S: BuildHasher> ValuesMut<region r, K, V, A, S> implements ExactSizeIterator {}
 extend<region r, K, V, A: Allocator, S: BuildHasher> ValuesMut<region r, K, V, A, S> implements Default {
-    static fn default(): ValuesMut<region r, K, V, A, S> { ValuesMut(none, 0usize) }
+    static fn default(): ValuesMut<region r, K, V, A, S> { ValuesMut(none, 0usize, 0usize) }
 }
 extend<region r, K, V: fmt.Debug, A: Allocator, S: BuildHasher> ValuesMut<region r, K, V, A, S> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
@@ -1170,7 +1204,7 @@ extend<region r, K, V: fmt.Debug, A: Allocator, S: BuildHasher> ValuesMut<region
             present(map) => {
                 var index = self.index
                 var first = true
-                while index < map.entries.len() {
+                while index < self.back {
                     try f.debug_item_start(first)
                     try V.(fmt.Debug).fmt(map.entries[index].value, mut f)
                     try f.debug_item_end()
@@ -1254,6 +1288,20 @@ extend<region r, K, V> Values<region r, K, V> implements Iterator {
         (remaining, present(remaining))
     }
 }
+extend<region r, K, V, A: Allocator> MapDrain<region r, K, V, A> implements FusedIterator {}
+extend<region r, K: Hash + PartialEq, V, A: Allocator, S: BuildHasher, F: mut fn(read K, mut V): bool> ExtractIf<region r, K, V, A, S, F> implements FusedIterator {}
+extend<region r, K, A: Allocator> SetDrain<region r, K, A> implements FusedIterator {}
+extend<region r, K: Hash + PartialEq, A: Allocator, S: BuildHasher, F: mut fn(read K): bool> SetExtractIf<region r, K, A, S, F> implements FusedIterator {}
+extend<region r, K: Hash + PartialEq, A: Allocator, S: BuildHasher> SetAlgebra<region r, K, A, S> implements FusedIterator {}
+extend<region r, K, V> Iter<region r, K, V> implements FusedIterator {}
+extend<K, V, A: Allocator, S: BuildHasher> MapIntoIter<K, V, A, S> implements FusedIterator {}
+extend<K, V, A: Allocator, S: BuildHasher> IntoKeys<K, V, A, S> implements FusedIterator {}
+extend<K, V, A: Allocator, S: BuildHasher> IntoValues<K, V, A, S> implements FusedIterator {}
+extend<K, A: Allocator, S: BuildHasher> SetIntoIter<K, A, S> implements FusedIterator {}
+extend<region r, K, V, A: Allocator, S: BuildHasher> IterMut<region r, K, V, A, S> implements FusedIterator {}
+extend<region r, K, V, A: Allocator, S: BuildHasher> ValuesMut<region r, K, V, A, S> implements FusedIterator {}
+extend<region r, K, V> Keys<region r, K, V> implements FusedIterator {}
+extend<region r, K, V> Values<region r, K, V> implements FusedIterator {}
 extend<region r, K, V> Values<region r, K, V> implements Clone {
     fn clone(): Values<region r, K, V> { Values(self.items, self.front, self.back) }
 }
@@ -1292,10 +1340,16 @@ extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
 extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> implements MutableIterable {
     type Item = V
     type IterMut<region r> = ValuesMut<region r, K, V, A, S>
-    fn iter_mut<region r>(receiver mut self: Self from r): ValuesMut<region r, K, V, A, S> { ValuesMut(present(mut self), 0usize) }
+    fn iter_mut<region r>(receiver mut self: Self from r): ValuesMut<region r, K, V, A, S> {
+        let back = self.entries.len()
+        ValuesMut(present(mut self), 0usize, back)
+    }
 }
 extend<K, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
-    pub mut fn values_mut(): ValuesMut<region self, K, V, A, S> { ValuesMut(present(mut self), 0usize) }
+    pub mut fn values_mut(): ValuesMut<region self, K, V, A, S> {
+        let back = self.entries.len()
+        ValuesMut(present(mut self), 0usize, back)
+    }
 }
 
 extend<K: Hash + PartialEq, V, A: Allocator + Default, S: BuildHasher + Default> Map<K, V, A, S> implements Default {

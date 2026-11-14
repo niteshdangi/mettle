@@ -6,7 +6,7 @@ fn main(): i32 {
     var j = 0
     for e in read m { if e.key != j { return 2 }; j += 1 }
     if j != 200 { return 2 }
-    var rg = m.range(10 + 0, 20 + 0)
+    var rg = m.range(core.iter.range(10 + 0, 20 + 0))
     var span = 0
     while true { match rg.next() { present(e) => { span += 1 }, none => { break } } }
     if span != 10 { return 3 }

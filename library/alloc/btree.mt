@@ -1,4 +1,4 @@
-import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, Bound, RangeBounds, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
 import core.clone.Clone
 import core.default.Default
 import core.cmp.{Eq, PartialEq, PartialOrd}
@@ -185,6 +185,54 @@ unsafe fn bound_pos<K, V, Q: Ord + unsized>(root: ptr<mut Node<K, V>>, read key:
         n = node_child(n, found.0)
     }
     best
+}
+// Position of the first entry strictly greater than `key`; null when none.
+unsafe fn upper_bound_pos<K, V, Q: Ord + unsized>(root: ptr<mut Node<K, V>>, read key: Q): (ptr<mut Node<K, V>>, usize) where K: KeyView<Q> {
+    var best = (null_node<K, V>(), 0usize)
+    var n = root
+    while n != null_node<K, V>() {
+        let found = search_node(n, key)
+        let i = if found.1 { found.0 + 1usize } else { found.0 }
+        if i < (*n).len { best = (n, i) }
+        if (*n).leaf { break }
+        n = node_child(n, i)
+    }
+    best
+}
+
+fn range_positions<region r, K, V, Q: Ord + unsized>(
+    root: ptr<mut Node<K, V>>,
+    take start: Bound<read Q from r>,
+    take end: Bound<read Q from r>
+): ((ptr<mut Node<K, V>>, usize), (ptr<mut Node<K, V>>, usize)) where K: KeyView<Q> {
+    let invalid = match read start {
+        Bound.Included(low) => match read end {
+            Bound.Included(high) => Q.(Ord).cmp(low, high).is_gt(),
+            Bound.Excluded(high) => Q.(Ord).cmp(low, high).is_gt(),
+            Bound.Unbounded => false
+        },
+        Bound.Excluded(low) => match read end {
+            Bound.Included(high) => Q.(Ord).cmp(low, high).is_gt(),
+            Bound.Excluded(high) => {
+                let order = Q.(Ord).cmp(low, high)
+                order.is_gt() || order.is_eq()
+            },
+            Bound.Unbounded => false
+        },
+        Bound.Unbounded => false
+    }
+    if invalid { super.alloc.panic_precondition() }
+    let start_pos = match take start {
+        Bound.Included(key) => unsafe { bound_pos(root, key) },
+        Bound.Excluded(key) => unsafe { upper_bound_pos(root, key) },
+        Bound.Unbounded => unsafe { first_pos(root) }
+    }
+    let end_pos = match take end {
+        Bound.Included(key) => unsafe { upper_bound_pos(root, key) },
+        Bound.Excluded(key) => unsafe { bound_pos(root, key) },
+        Bound.Unbounded => (null_node<K, V>(), 0usize)
+    }
+    (start_pos, end_pos)
 }
 
 // Blocks come from the map's allocator through `a`, which outlives the call.
@@ -519,34 +567,43 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         let entry = unsafe { self.take_entry(at.0, at.1) }
         present((entry.key, entry.value))
     }
-    // Entries with `from <= key < to`; reversed bounds panic.
-    pub fn range(read from: K, read to: K): KeyRange<region self, K, V, A> {
-        var start = (null_node<K, V>(), 0usize)
-        var stop = (null_node<K, V>(), 0usize)
-        let order = from.cmp(to)
-        if order.is_gt() { super.alloc.panic_precondition() }
-        if order.is_lt() {
-            start = unsafe { bound_pos(self.root, from) }
-            stop = unsafe { bound_pos(self.root, to) }
-        }
-        KeyRange(read self, start.0, start.1, stop.0, stop.1)
+    pub fn range<Q: Ord + unsized, R: RangeBounds<Q>>(
+        take bounds: R
+    ): KeyRange<region self, K, V, A> where K: KeyView<Q> {
+        let positions = range_positions(
+            self.root,
+            R.(RangeBounds<Q>).start_bound(read bounds),
+            R.(RangeBounds<Q>).end_bound(read bounds)
+        )
+        KeyRange(read self, positions.0.0, positions.0.1, positions.1.0, positions.1.1)
     }
-    pub mut fn range_mut(read from: K, read to: K): RangeMut<region self, K, V, A> {
-        var start = (null_node<K, V>(), 0usize)
-        var stop = (null_node<K, V>(), 0usize)
-        let order = from.cmp(to)
-        if order.is_gt() { super.alloc.panic_precondition() }
-        if order.is_lt() {
-            start = unsafe { bound_pos(self.root, from) }
-            stop = unsafe { bound_pos(self.root, to) }
+    pub mut fn range_mut<Q: Ord + unsized, R: RangeBounds<Q>>(
+        take bounds: R
+    ): RangeMut<region self, K, V, A> where K: KeyView<Q> {
+        let positions = range_positions(
+            self.root,
+            R.(RangeBounds<Q>).start_bound(read bounds),
+            R.(RangeBounds<Q>).end_bound(read bounds)
+        )
+        let empty = positions.0.0 == positions.1.0 && positions.0.1 == positions.1.1
+        let back = if empty {
+            positions.1
+        } else if positions.1.0 == null_node<K, V>() {
+            unsafe { last_pos(self.root) }
+        } else {
+            unsafe { predecessor(positions.1.0, positions.1.1) }
         }
-        RangeMut(mut self, start.0, start.1, stop.0, stop.1)
+        RangeMut(present(mut self), positions.0.0, positions.0.1, back.0, back.1, empty)
     }
-    pub mut fn extract_if<F: mut fn(read K, mut V): bool>(
-        take predicate: F
-    ): MapExtractIf<region self, K, V, A, F> {
-        let first = unsafe { first_pos(self.root) }
-        MapExtractIf(mut self, predicate, first.0, first.1)
+    pub mut fn extract_if<R: RangeBounds<K>, F: mut fn(read K, mut V): bool>(
+        take bounds: R, take predicate: F
+    ): MapExtractIf<region self, K, V, A, R, F> where K: KeyView<K> {
+        let positions = range_positions(
+            self.root,
+            R.(RangeBounds<K>).start_bound(read bounds),
+            R.(RangeBounds<K>).end_bound(read bounds)
+        )
+        MapExtractIf(mut self, predicate, bounds, positions.0.0, positions.0.1, positions.1.0, positions.1.1)
     }
     pub mut fn retain<F: mut fn(read K, mut V): bool>(take predicate: F): Unit {
         var keep = predicate
@@ -873,11 +930,15 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
     pub mut fn split_off(read key: K): SortedSet<K, A> where A: Clone {
         SortedSet(self.map.split_off(key))
     }
-    pub mut fn extract_if<F: mut fn(read K): bool>(
-        take predicate: F
-    ): SetExtractIf<region self, K, A, F> {
-        let first = unsafe { first_pos(self.map.root) }
-        SetExtractIf(mut self, predicate, first.0, first.1)
+    pub mut fn extract_if<R: RangeBounds<K>, F: mut fn(read K): bool>(
+        take bounds: R, take predicate: F
+    ): SetExtractIf<region self, K, A, R, F> where K: KeyView<K> {
+        let positions = range_positions(
+            self.map.root,
+            R.(RangeBounds<K>).start_bound(read bounds),
+            R.(RangeBounds<K>).end_bound(read bounds)
+        )
+        SetExtractIf(mut self, predicate, bounds, positions.0.0, positions.0.1, positions.1.0, positions.1.1)
     }
     pub mut fn retain<F: mut fn(read K): bool>(take predicate: F): Unit {
         var keep = predicate
@@ -894,7 +955,11 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
             }
         }
     }
-    pub fn range(read from: K, read to: K): KeyRange<region self, K, Unit, A> { self.map.range(from, to) }
+    pub fn range<Q: Ord + unsized, R: RangeBounds<Q>>(
+        take bounds: R
+    ): KeyRange<region self, K, Unit, A> where K: KeyView<Q> {
+        self.map.range<Q, R>(take bounds)
+    }
 }
 
 pub type SortedSetAlgebra<region r, K, A: Allocator> {
@@ -1081,21 +1146,45 @@ pub type KeyRange<region r, K, V, A: Allocator> {
 
 // Mutably iterates values in a half-open range without exposing mutable keys.
 pub type RangeMut<region r, K, V, A: Allocator> {
-    map: mut SortedMap<K, V, A> from r
-    node: ptr<mut Node<K, V>>
-    idx: usize
-    end_node: ptr<mut Node<K, V>>
-    end_idx: usize
+    map: (mut SortedMap<K, V, A> from r)?
+    front_node: ptr<mut Node<K, V>>
+    front_idx: usize
+    back_node: ptr<mut Node<K, V>>
+    back_idx: usize
+    done: bool
 }
 extend<region r, K, V, A: Allocator> RangeMut<region r, K, V, A> implements Iterator {
     type Item = mut V from r
     mut fn next(): (mut V from r)? {
-        if self.node == self.end_node && self.idx == self.end_idx { return none }
-        let at = unsafe { node_entry(self.node, self.idx) }
-        let after = unsafe { successor(self.node, self.idx) }
-        self.node = after.0
-        self.idx = after.1
+        if self.done { return none }
+        let at = unsafe { node_entry(self.front_node, self.front_idx) }
+        if self.front_node == self.back_node && self.front_idx == self.back_idx {
+            self.done = true
+        } else {
+            let after = unsafe { successor(self.front_node, self.front_idx) }
+            self.front_node = after.0
+            self.front_idx = after.1
+        }
         present(unsafe { mut (*at).value })
+    }
+}
+extend<region r, K, V, A: Allocator> RangeMut<region r, K, V, A> implements BidirectionalIterator {
+    mut fn next_back(): (mut V from r)? {
+        if self.done { return none }
+        let at = unsafe { node_entry(self.back_node, self.back_idx) }
+        if self.front_node == self.back_node && self.front_idx == self.back_idx {
+            self.done = true
+        } else {
+            let before = unsafe { predecessor(self.back_node, self.back_idx) }
+            self.back_node = before.0
+            self.back_idx = before.1
+        }
+        present(unsafe { mut (*at).value })
+    }
+}
+extend<region r, K, V, A: Allocator> RangeMut<region r, K, V, A> implements Default {
+    static fn default(): RangeMut<region r, K, V, A> {
+        RangeMut(none, null_node<K, V>(), 0usize, null_node<K, V>(), 0usize, true)
     }
 }
 
@@ -1111,16 +1200,20 @@ extend<region r, K, V, A: Allocator> KeyRange<region r, K, V, A> implements Iter
     }
 }
 
-pub type MapExtractIf<region r, K, V, A: Allocator, F> {
+pub type MapExtractIf<region r, K, V, A: Allocator, R, F> {
     map: mut SortedMap<K, V, A> from r
     predicate: F
+    bounds: R
     node: ptr<mut Node<K, V>>
     index: usize
+    end_node: ptr<mut Node<K, V>>
+    end_index: usize
 }
-extend<region r, K: Ord, V, A: Allocator, F: mut fn(read K, mut V): bool> MapExtractIf<region r, K, V, A, F> implements Iterator {
+extend<region r, K: Ord, V, A: Allocator, R: RangeBounds<K>, F: mut fn(read K, mut V): bool> MapExtractIf<region r, K, V, A, R, F> implements Iterator {
     type Item = (K, V)
     mut fn next(): (K, V)? {
-        while self.node != null_node<K, V>() {
+        while self.node != self.end_node || self.index != self.end_index {
+            if self.node == null_node<K, V>() { return none }
             let entry = unsafe { node_entry(self.node, self.index) }
             if self.predicate(unsafe { read (*entry).key }, unsafe { mut (*entry).value }) {
                 let node = self.node
@@ -1128,8 +1221,15 @@ extend<region r, K: Ord, V, A: Allocator, F: mut fn(read K, mut V): bool> MapExt
                 self.node = null_node<K, V>()
                 let removed = unsafe { self.map.take_entry(node, index) }
                 let next = unsafe { bound_pos(self.map.root, read removed.key) }
+                let positions = range_positions(
+                    self.map.root,
+                    R.(RangeBounds<K>).start_bound(read self.bounds),
+                    R.(RangeBounds<K>).end_bound(read self.bounds)
+                )
                 self.node = next.0
                 self.index = next.1
+                self.end_node = positions.1.0
+                self.end_index = positions.1.1
                 return present((removed.key, removed.value))
             }
             let next = unsafe { successor(self.node, self.index) }
@@ -1140,16 +1240,20 @@ extend<region r, K: Ord, V, A: Allocator, F: mut fn(read K, mut V): bool> MapExt
     }
 }
 
-pub type SetExtractIf<region r, K, A: Allocator, F> {
+pub type SetExtractIf<region r, K, A: Allocator, R, F> {
     set: mut SortedSet<K, A> from r
     predicate: F
+    bounds: R
     node: ptr<mut Node<K, Unit>>
     index: usize
+    end_node: ptr<mut Node<K, Unit>>
+    end_index: usize
 }
-extend<region r, K: Ord, A: Allocator, F: mut fn(read K): bool> SetExtractIf<region r, K, A, F> implements Iterator {
+extend<region r, K: Ord, A: Allocator, R: RangeBounds<K>, F: mut fn(read K): bool> SetExtractIf<region r, K, A, R, F> implements Iterator {
     type Item = K
     mut fn next(): K? {
-        while self.node != null_node<K, Unit>() {
+        while self.node != self.end_node || self.index != self.end_index {
+            if self.node == null_node<K, Unit>() { return none }
             let entry = unsafe { node_entry(self.node, self.index) }
             if self.predicate(unsafe { read (*entry).key }) {
                 let node = self.node
@@ -1157,8 +1261,15 @@ extend<region r, K: Ord, A: Allocator, F: mut fn(read K): bool> SetExtractIf<reg
                 self.node = null_node<K, Unit>()
                 let removed = unsafe { self.set.map.take_entry(node, index) }
                 let next = unsafe { bound_pos(self.set.map.root, read removed.key) }
+                let positions = range_positions(
+                    self.set.map.root,
+                    R.(RangeBounds<K>).start_bound(read self.bounds),
+                    R.(RangeBounds<K>).end_bound(read self.bounds)
+                )
                 self.node = next.0
                 self.index = next.1
+                self.end_node = positions.1.0
+                self.end_index = positions.1.1
                 return present(removed.key)
             }
             let next = unsafe { successor(self.node, self.index) }
@@ -1489,38 +1600,53 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
 // Generic mutable iteration visits values only, in key order.
 pub type ValuesMut<region r, K, V, A: Allocator> {
     map: (mut SortedMap<K, V, A> from r)?
-    node: ptr<mut Node<K, V>>
-    idx: usize
+    front_node: ptr<mut Node<K, V>>
+    front_idx: usize
+    back_node: ptr<mut Node<K, V>>
+    back_idx: usize
     left: usize
 }
 extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Iterator {
     type Item = mut V from r
     mut fn next(): (mut V from r)? {
         if self.left == 0usize { return none }
-        let at = unsafe { node_entry(self.node, self.idx) }
+        let at = unsafe { node_entry(self.front_node, self.front_idx) }
         self.left -= 1usize
         if self.left != 0usize {
-            let after = unsafe { successor(self.node, self.idx) }
-            self.node = after.0
-            self.idx = after.1
+            let after = unsafe { successor(self.front_node, self.front_idx) }
+            self.front_node = after.0
+            self.front_idx = after.1
         }
         present(unsafe { mut (*at).value })
     }
     fn size_hint(): (usize, usize?) { (self.left, present(self.left)) }
 }
+extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements BidirectionalIterator {
+    mut fn next_back(): (mut V from r)? {
+        if self.left == 0usize { return none }
+        let at = unsafe { node_entry(self.back_node, self.back_idx) }
+        self.left -= 1usize
+        if self.left != 0usize {
+            let before = unsafe { predecessor(self.back_node, self.back_idx) }
+            self.back_node = before.0
+            self.back_idx = before.1
+        }
+        present(unsafe { mut (*at).value })
+    }
+}
 extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements ExactSizeIterator {}
 extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements Default {
     // The absent map and zero count make the null cursor unreachable.
     static fn default(): ValuesMut<region r, K, V, A> {
-        ValuesMut(none, null_node<K, V>(), 0usize, 0usize)
+        ValuesMut(none, null_node<K, V>(), 0usize, null_node<K, V>(), 0usize, 0usize)
     }
 }
 extend<region r, K, V: fmt.Debug, A: Allocator> ValuesMut<region r, K, V, A> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try f.write_str("ValuesMut(")
         try f.debug_open("[")
-        var node = self.node
-        var idx = self.idx
+        var node = self.front_node
+        var idx = self.front_idx
         var left = self.left
         var first = true
         while left != 0usize {
@@ -1604,6 +1730,20 @@ extend<region r, K, V, A: Allocator> Values<region r, K, V, A> implements Defaul
         Values(EntryIter<region r, K, V, A>.(Default).default())
     }
 }
+extend<region r, K: Ord, A: Allocator> SortedSetAlgebra<region r, K, A> implements FusedIterator {}
+extend<region r, K, V, A: Allocator> EntryIter<region r, K, V, A> implements FusedIterator {}
+extend<region r, K, V, A: Allocator> RangeMut<region r, K, V, A> implements FusedIterator {}
+extend<region r, K, V, A: Allocator> KeyRange<region r, K, V, A> implements FusedIterator {}
+extend<region r, K: Ord, V, A: Allocator, R: RangeBounds<K>, F: mut fn(read K, mut V): bool> MapExtractIf<region r, K, V, A, R, F> implements FusedIterator {}
+extend<region r, K: Ord, A: Allocator, R: RangeBounds<K>, F: mut fn(read K): bool> SetExtractIf<region r, K, A, R, F> implements FusedIterator {}
+extend<K, V, A: Allocator> MapIntoIter<K, V, A> implements FusedIterator {}
+extend<K, V, A: Allocator> IntoKeys<K, V, A> implements FusedIterator {}
+extend<K, V, A: Allocator> IntoValues<K, V, A> implements FusedIterator {}
+extend<K, A: Allocator> SetIntoIter<K, A> implements FusedIterator {}
+extend<region r, K, V, A: Allocator> IterMut<region r, K, V, A> implements FusedIterator {}
+extend<region r, K, V, A: Allocator> ValuesMut<region r, K, V, A> implements FusedIterator {}
+extend<region r, K, V, A: Allocator> Keys<region r, K, V, A> implements FusedIterator {}
+extend<region r, K, V, A: Allocator> Values<region r, K, V, A> implements FusedIterator {}
 extend<region r, K, V: fmt.Debug, A: Allocator> Values<region r, K, V, A> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try f.write_str("Values(")
@@ -1652,15 +1792,17 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> implements MutableIterable {
     type IterMut<region r> = ValuesMut<region r, K, V, A>
     fn iter_mut<region r>(receiver mut self: Self from r): ValuesMut<region r, K, V, A> {
         let first = unsafe { first_pos(self.root) }
+        let last = unsafe { last_pos(self.root) }
         let n = self.len
-        ValuesMut(present(mut self), first.0, first.1, n)
+        ValuesMut(present(mut self), first.0, first.1, last.0, last.1, n)
     }
 }
 extend<K, V, A: Allocator> SortedMap<K, V, A> {
     pub mut fn values_mut(): ValuesMut<region self, K, V, A> {
         let first = unsafe { first_pos(self.root) }
+        let last = unsafe { last_pos(self.root) }
         let n = self.len
-        ValuesMut(present(mut self), first.0, first.1, n)
+        ValuesMut(present(mut self), first.0, first.1, last.0, last.1, n)
     }
 }
 

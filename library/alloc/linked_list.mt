@@ -6,6 +6,7 @@ import core.hash.{Hash, Hasher}
 import core.fmt
 
 import super.alloc.{Allocator, Global, AllocError, PushError, layout_of, handle_alloc_error}
+import super.collections.TryReserveError
 
 type Node<T> {
     value: T
@@ -61,7 +62,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
     pub mut fn try_push_back(take value: T): Unit throws PushError<T> {
         let raw = match capture self.a.allocate(layout_of<Node<T>>()) {
             success(p) => p,
-            failure(error) => { throw PushError(value, error) }
+            failure(error) => { throw PushError(value, TryReserveError.from_alloc_error(error)) }
         }
         let n = raw.cast<Node<T>>()
         unsafe { core.ptr.write(n, Node(value, self.tail, core.ptr.null_mut<Node<T>>())) }
@@ -72,7 +73,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
     pub mut fn try_push_front(take value: T): Unit throws PushError<T> {
         let raw = match capture self.a.allocate(layout_of<Node<T>>()) {
             success(p) => p,
-            failure(error) => { throw PushError(value, error) }
+            failure(error) => { throw PushError(value, TryReserveError.from_alloc_error(error)) }
         }
         let n = raw.cast<Node<T>>()
         unsafe { core.ptr.write(n, Node(value, core.ptr.null_mut<Node<T>>(), self.head)) }

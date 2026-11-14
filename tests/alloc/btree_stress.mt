@@ -1,5 +1,6 @@
 import core.clone.Clone
 import core.cmp.PartialEq
+import core.iter.Bound
 type Counted {
     count: ptr<mut i32>
     drop { unsafe { *self.count += 1 } }
@@ -36,7 +37,7 @@ fn main(): i32 {
         }
         if i != 1000 { return 7 }
         var seen = 0
-        var inside = map.range(100, 200)
+        var inside = map.range((Bound.Excluded(99), Bound.Included(198)))
         while true {
             match inside.next() {
                 present(entry) => {
@@ -90,7 +91,7 @@ fn main(): i32 {
     match take small.get_mut(7) { present(v) => { *v = -1 }, none => { return 18 } }
     if dup == small { return 19 }
     {
-        var mutable_range = small.range_mut(10, 20)
+        var mutable_range = small.range_mut((Bound.Excluded(9), Bound.Included(19)))
         var changed = 0
         while true {
             match take mutable_range.next() {
