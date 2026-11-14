@@ -1,5 +1,6 @@
 pub import core.float.{FpCategory, ParseFloatError}
 pub import core.num.{
+    IntegerBounds,
     IntErrorKind,
     NonZero,
     NonZeroI8,

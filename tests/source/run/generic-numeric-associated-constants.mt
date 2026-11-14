@@ -1,4 +1,13 @@
-import core.num.{NonZero, Saturating}
+import core.num.{IntegerBounds, NonZero, Saturating}
+import std.num.{IntegerBounds as StdIntegerBounds}
+
+fn make_nonzero<T: Copy + IntegerBounds>(value: T): NonZero<T>? {
+    NonZero<T>.new(value)
+}
+
+fn make_std_nonzero<T: Copy + StdIntegerBounds>(value: T): NonZero<T>? {
+    NonZero<T>.new(value)
+}
 
 const LOW: u8 = NonZero<u8>.MIN.get()
 const SIGNED_LOW: i16 = NonZero<i16>.MIN.get()
@@ -18,5 +27,19 @@ fn main(): i32 {
     }
     let minimum = Saturating<i16>.MIN
     let maximum = Saturating<u16>.MAX
-    if minimum.value == SIGNED_LOW && maximum.value == HIGH { 0 } else { 2 }
+    match make_nonzero(0u8) {
+        present(_) => { return 4 },
+        none => {}
+    }
+    match make_std_nonzero(0u8) {
+        present(_) => { return 5 },
+        none => {}
+    }
+    match make_nonzero(9u8) {
+        present(value) => {
+            if minimum.value == SIGNED_LOW && maximum.value == HIGH &&
+               value.get() == 9u8 { 0 } else { 2 }
+        },
+        none => 3
+    }
 }

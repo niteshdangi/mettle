@@ -56,6 +56,7 @@ fn main(): i32 {
     let zero_error = IntErrorKind.Zero
     if !debug_is(IntErrorKind.InvalidDigit, "InvalidDigit") ||
        !debug_is(IntErrorKind.NegOverflow, "NegOverflow") ||
+       !debug_is(IntErrorKind.InvalidRadix, "InvalidRadix") ||
        !debug_is(IntErrorKind.Zero, "Zero") ||
        zero_error.clone() != zero_error ||
        hash.hash_one(read zero_error) != hash.hash_one(read zero_error.clone()) {
@@ -65,7 +66,8 @@ fn main(): i32 {
     match capture num.parse<i8>("") {
         success(value) => { return 3 },
         failure(empty) => {
-            if *empty.kind() != IntErrorKind.Empty ||
+            if empty.kind != IntErrorKind.Empty ||
+               *empty.kind() != IntErrorKind.Empty ||
                !debug_is(read empty, "ParseIntError { kind: Empty }") ||
                !display_is(read empty, "cannot parse integer from empty string") ||
                !has_no_error_source(read empty) ||

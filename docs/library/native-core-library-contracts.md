@@ -275,16 +275,23 @@ and leading - only for signed types. At least one digit is required; digits
 are ASCII 0..9/a..z/A..Z with value < radix. Whitespace, separators and prefixes
 are not skipped. Bad radix panics; bad input returns ParseIntError with kind
 Empty, InvalidDigit, PosOverflow, NegOverflow, or Zero where a nonzero target
-requires it. Decimal FromStr uses radix ten. Parsing is O(input bytes).
+requires it. IntErrorKind.InvalidRadix remains a public compatibility variant;
+invalid radix values panic and do not produce that error. Decimal FromStr uses
+radix ten. Parsing is O(input bytes).
 
 `Wrapping<T>` delegates arithmetic to wrapping operations and bitwise
 operations to T. `Saturating<T>` delegates arithmetic to saturating operations;
 neither wrapper makes division by zero valid. Wrapper equality/order/hash
 inspect the inner value. `NonZero<Int>` contains exactly a nonzero integer:
-`new` returns optional, `new_unchecked` requires nonzero, `get` returns the
-integer. Nonzero arithmetic and checked/saturating forms use the corresponding
-integer operation while preserving nonzero validity. Bitwise OR of a NonZero
-operand preserves nonzero. A signed nonzero MIN is the signed integer MIN,
+`IntegerBounds` is public and supplies a const zero predicate plus `MIN`, `MAX`,
+and `NONZERO_MIN`; the generic `new` returns none exactly for zero.
+`new_unchecked` requires nonzero, `get` returns the integer. Nonzero arithmetic
+and checked/saturating forms use the corresponding
+integer operation while preserving nonzero validity. `IntegerBounds` is a
+publicly nameable but sealed interface implemented only by the twelve integer
+primitives, so safe construction and the `NONZERO_MIN` constant cannot be
+forged by user implementations. Bitwise OR of a NonZero operand preserves
+nonzero. A signed nonzero MIN is the signed integer MIN,
 unsigned nonzero MIN is one, and MAX is the underlying integer MAX.
 For unsigned NonZero, checked_add takes an ordinary unsigned integer;
 checked_mul takes another NonZero and checked_pow takes a u32 exponent.

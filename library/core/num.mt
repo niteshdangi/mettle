@@ -18,7 +18,7 @@ import super.ops.{Shr, ShrAssign, Sub, SubAssign}
 import super.text.{from_utf8_unchecked, FromStr, Text}
 
 pub copy enum IntErrorKind {
-    Empty, InvalidDigit, PosOverflow, NegOverflow, Zero
+    Empty, InvalidDigit, PosOverflow, NegOverflow, InvalidRadix, Zero
 }
 
 extend IntErrorKind implements PartialEq {
@@ -38,12 +38,13 @@ extend IntErrorKind implements Debug {
             IntErrorKind.InvalidDigit => try f.write_str("InvalidDigit"),
             IntErrorKind.PosOverflow => try f.write_str("PosOverflow"),
             IntErrorKind.NegOverflow => try f.write_str("NegOverflow"),
+            IntErrorKind.InvalidRadix => try f.write_str("InvalidRadix"),
             IntErrorKind.Zero => try f.write_str("Zero")
         }
     }
 }
 
-pub copy type ParseIntError { kind: IntErrorKind }
+pub copy type ParseIntError { pub kind: IntErrorKind }
 
 extend ParseIntError {
     pub const fn kind(): read IntErrorKind from self { read self.kind }
@@ -70,6 +71,7 @@ extend ParseIntError implements Display {
             IntErrorKind.InvalidDigit => try f.write_str("invalid digit found in string"),
             IntErrorKind.PosOverflow => try f.write_str("number too large to fit in target type"),
             IntErrorKind.NegOverflow => try f.write_str("number too small to fit in target type"),
+            IntErrorKind.InvalidRadix => try f.write_str("radix must be within 2..=36"),
             IntErrorKind.Zero => try f.write_str("number would be zero for non-zero type")
         }
     }
@@ -3693,7 +3695,10 @@ extend u8 {
     pub fn escape_ascii(): EscapeDefault { escape_default_byte(self) }
 }
 
-interface IntegerBounds {
+interface IntegerBoundsSealed {}
+
+pub interface IntegerBounds: IntegerBoundsSealed + Sized {
+    static fn is_zero(read value: Self): bool;
     const MIN: Self;
     const MAX: Self;
     const NONZERO_MIN: Self;
@@ -3702,6 +3707,12 @@ interface IntegerBounds {
 // Non-zero integers; the wrapped value is never zero.
 @layout(transparent)
 pub copy type NonZero<T: Copy + IntegerBounds> { value: T }
+
+extend<T: Copy + IntegerBounds> NonZero<T> {
+    pub static const fn new(value: T): NonZero<T>? {
+        if T.(IntegerBounds).is_zero(read value) { none } else { present(NonZero(value)) }
+    }
+}
 pub alias NonZeroI8 = NonZero<i8>
 pub alias NonZeroI16 = NonZero<i16>
 pub alias NonZeroI32 = NonZero<i32>
@@ -3718,9 +3729,6 @@ pub alias NonZeroUsize = NonZero<usize>
 macro nonzero_constructor {
     ($type:ident) => {
         extend NonZero<$type> {
-            pub static const fn new(value: $type): NonZero<$type>? {
-                if value == 0 { none } else { present(NonZero(value)) }
-            }
             pub static unsafe const fn new_unchecked(value: $type): NonZero<$type> {
                 NonZero(value)
             }
@@ -3768,7 +3776,9 @@ extend<T: Copy + IntegerBounds + IntegerBits> NonZero<T> {
 macro signed_integer_bounds {
     ($($type:ident),*) => {
         $(
+            extend $type implements IntegerBoundsSealed {}
             extend $type implements IntegerBounds {
+                static const fn is_zero(read value: $type): bool { value == 0 }
                 const MIN: $type = $type.MIN
                 const MAX: $type = $type.MAX
                 const NONZERO_MIN: $type = $type.MIN
@@ -3780,7 +3790,9 @@ macro signed_integer_bounds {
 macro unsigned_integer_bounds {
     ($($type:ident),*) => {
         $(
+            extend $type implements IntegerBoundsSealed {}
             extend $type implements IntegerBounds {
+                static const fn is_zero(read value: $type): bool { value == 0 }
                 const MIN: $type = $type.MIN
                 const MAX: $type = $type.MAX
                 const NONZERO_MIN: $type = 1
