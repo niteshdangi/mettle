@@ -774,6 +774,8 @@ extend<region r, T: PartialOrd<U> + unsized, U: unsized, A: Allocator> pinned mu
     fn partial_cmp(read other: Pinned<U, A>): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
 }
 unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}
+// Moving an Arc handle never pins its allocator or payload.
+unsafe extend<T: unsized, A: Allocator> Arc<T, A> implements Unpin {}
 unsafe extend<T: Transferable + Shareable + unsized, A: Allocator + Transferable> Pinned<T, A> implements Transferable {}
 unsafe extend<T: Transferable + Shareable + unsized, A: Allocator + Shareable> Pinned<T, A> implements Shareable {}
 extend<T: Default> Pinned<T> implements Default {

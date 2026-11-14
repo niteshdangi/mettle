@@ -858,7 +858,7 @@ extend<I: Iterator> I implements OwnedIterable {
     fn into_iter(receiver take self: Self): I { self }
 }
 
-pub type Phantom<T> {}
+pub import super.marker.{PhantomData as Phantom}
 
 pub type Mapped<B, I, F> { iter: I; f: F; result: Phantom<B> }
 extend<B, I: Iterator, F: mut fn(take I.Item): B> Mapped<B, I, F> implements Iterator {

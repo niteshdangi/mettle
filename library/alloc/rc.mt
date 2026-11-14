@@ -771,6 +771,8 @@ extend<region r, T: PartialOrd<U> + unsized, U: unsized, A: Allocator> pinned mu
     fn partial_cmp(read other: Pinned<U, A>): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
 }
 unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}
+// Moving an Rc handle never pins its allocator or payload.
+unsafe extend<T: unsized, A: Allocator> Rc<T, A> implements Unpin {}
 extend<T: Default> Pinned<T> implements Default {
     static fn default(): Pinned<T> { pin(T.(Default).default()) }
 }

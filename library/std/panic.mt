@@ -1,6 +1,52 @@
 // Hosted panic integration. Panics run their hook before unwinding; an
 // uncaught message panic ends the process with status 101.
+import core.convert.From
+import core.default.Default
+import core.fmt.{Debug, Error, Formatter}
+import core.future.{Context, Future, Poll}
+import core.ops.{Deref, DerefMut}
 import core.text.Text
+
+pub import core.panic.{RefUnwindSafe, UnwindSafe}
+
+pub type AssertUnwindSafe<T> { @pinned pub value: T }
+
+unsafe extend<T> AssertUnwindSafe<T> implements core.marker.UnwindSafe {}
+unsafe extend<T> AssertUnwindSafe<T> implements core.marker.RefUnwindSafe {}
+
+extend<T> AssertUnwindSafe<T> implements From<T> {
+    static fn from(take value: T): AssertUnwindSafe<T> { AssertUnwindSafe(value) }
+}
+
+extend<T> AssertUnwindSafe<T> implements Deref {
+    type Target = T
+    fn deref(): read T from self { read self.value }
+}
+
+extend<T> AssertUnwindSafe<T> implements DerefMut {
+    mut fn deref_mut(): mut T from self { mut self.value }
+}
+
+extend<T: Default> AssertUnwindSafe<T> implements Default {
+    static fn default(): AssertUnwindSafe<T> {
+        AssertUnwindSafe(T.(Default).default())
+    }
+}
+
+extend<T: Debug> AssertUnwindSafe<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_tuple("AssertUnwindSafe")
+        let _ = try debug.field(self.value)
+        try debug.finish()
+    }
+}
+
+extend<F: Future> AssertUnwindSafe<F> implements Future {
+    type Output = F.(Future).Output
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Self.Output> {
+        F.(Future).poll(self.project_value(), mut cx)
+    }
+}
 
 extern "C" {
     unsafe fn mettle_rt_set_panic_hook(hook: unsafe extern "C" fn(ptr<read u8>, u64): Unit): Unit;

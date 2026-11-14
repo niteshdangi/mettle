@@ -17,6 +17,7 @@ pub module fmt
 pub module future
 pub module hash
 pub module iter
+pub module marker
 pub module mem
 pub module num
 pub module ops

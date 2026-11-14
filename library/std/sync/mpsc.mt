@@ -45,10 +45,10 @@ type Shared<T> {
     open: core.sync.atomic.AtomicBool
 }
 
-pub type SendError<T> { pub value: T }
+pub copy type SendError<T> { pub value: T }
 pub copy type RecvError {}
 pub copy type TryRecvError { pub disconnected: bool }
-pub type TrySendError<T> { pub value: T; pub disconnected: bool }
+pub copy type TrySendError<T> { pub value: T; pub disconnected: bool }
 pub copy type RecvTimeoutError { pub timed_out: bool; pub disconnected: bool }
 pub type SendTimeoutError<T> {
     pub value: T

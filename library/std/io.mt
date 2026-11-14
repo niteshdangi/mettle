@@ -100,6 +100,7 @@ pub copy enum SeekFrom { Start(u64), End(i64), Current(i64) }
 
 pub type IoSlice<region r> { data: read [u8] from r }
 pub type IoSliceMut<region r> { data: mut [u8] from r }
+unsafe extend<region r> IoSliceMut<region r> implements core.marker.RefUnwindSafe {}
 
 extend<region r> IoSlice<region r> {
     pub static fn new(read data: [u8] from r): IoSlice<region r> {

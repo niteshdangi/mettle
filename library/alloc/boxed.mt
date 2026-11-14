@@ -761,8 +761,8 @@ extend<T: fmt.Debug + unsized, A: Allocator> Box<T, A> implements fmt.Debug {
 }
 
 // Owned storage moves or is shared exactly when its elements and allocator do.
-unsafe extend<T: Transferable, A: Allocator + Transferable> Box<T, A> implements Transferable {}
-unsafe extend<T: Shareable, A: Allocator + Shareable> Box<T, A> implements Shareable {}
+unsafe extend<T: Transferable + unsized, A: Allocator + Transferable> Box<T, A> implements Transferable {}
+unsafe extend<T: Shareable + unsized, A: Allocator + Shareable> Box<T, A> implements Shareable {}
 
 // Unique heap owner whose payload stays at its address until destruction.
 // Moving the handle never moves the payload; safe code reaches the payload
@@ -897,8 +897,8 @@ extend<region r, T: PartialOrd<U> + unsized, U: unsized, A: Allocator> pinned mu
 }
 // The handle is movable; pinning is a property of the payload's storage.
 unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}
-unsafe extend<T: Transferable, A: Allocator + Transferable> Pinned<T, A> implements Transferable {}
-unsafe extend<T: Shareable, A: Allocator + Shareable> Pinned<T, A> implements Shareable {}
+unsafe extend<T: Transferable + unsized, A: Allocator + Transferable> Pinned<T, A> implements Transferable {}
+unsafe extend<T: Shareable + unsized, A: Allocator + Shareable> Pinned<T, A> implements Shareable {}
 extend<T: Default> Pinned<T> implements Default {
     static fn default(): Pinned<T> { pin(T.(Default).default()) }
 }
@@ -912,3 +912,6 @@ extend<T> Pinned<[T]> implements Default {
 extend Pinned<Text> implements Default {
     static fn default(): Pinned<Text> { copy_text("").into_pinned() }
 }
+
+// Moving a Box handle never pins its allocator or payload.
+unsafe extend<T: unsized, A: Allocator> Box<T, A> implements Unpin {}
