@@ -359,6 +359,8 @@ pub interface Binary { fn fmt(mut f: Formatter): Unit throws Error; }
 pub interface Octal { fn fmt(mut f: Formatter): Unit throws Error; }
 pub interface LowerHex { fn fmt(mut f: Formatter): Unit throws Error; }
 pub interface UpperHex { fn fmt(mut f: Formatter): Unit throws Error; }
+pub interface LowerExp { fn fmt(mut f: Formatter): Unit throws Error; }
+pub interface UpperExp { fn fmt(mut f: Formatter): Unit throws Error; }
 
 pub fn write<W: Write, T: Display>(mut sink: W, read value: T): Unit throws Error {
     var f = formatter(mut sink, spec())
@@ -562,6 +564,162 @@ fn fmt_radix128(mut f: Formatter, magnitude: u128, negative: bool, radix: u128, 
     }
     let text = unsafe { from_utf8_unchecked(unsafe { slice.subslice_unchecked(read digits, start, 128usize) }) }
     try f.pad_integral(!negative, prefix, text)
+}
+fn fmt_integer_exp(mut f: Formatter, magnitude: u128, negative: bool, upper: bool): Unit throws Error {
+    var digits = [0u8; 39]
+    var start = 39usize
+    var rest = magnitude
+    while true {
+        start -= 1usize
+        digits[start] = digit_char((rest % 10u128) as u64, false)
+        rest = rest / 10u128
+        if rest == 0u128 { break }
+    }
+
+    let digit_count = 39usize - start
+    var exponent = digit_count - 1usize
+    let options = f.options()
+    let precision = options.precision
+    var kept = digit_count
+    match precision {
+        present(p) => {
+            if p < digit_count - 1usize {
+                kept = p + 1usize
+                let first_discarded = digits[start + kept] - 0x30u8
+                var rest_nonzero = false
+                var i = start + kept + 1usize
+                while i < 39usize {
+                    if digits[i] != 0x30u8 { rest_nonzero = true }
+                    i += 1usize
+                }
+                let last_kept = digits[start + kept - 1usize] - 0x30u8
+                let round_up = first_discarded > 5u8 ||
+                    (first_discarded == 5u8 && (rest_nonzero || last_kept % 2u8 != 0u8))
+                if round_up {
+                    var i = start + kept
+                    while i > start && digits[i - 1usize] == 0x39u8 {
+                        digits[i - 1usize] = 0x30u8
+                        i -= 1usize
+                    }
+                    if i == start {
+                        digits[start] = 0x31u8
+                        var zero = start + 1usize
+                        while zero < start + kept {
+                            digits[zero] = 0x30u8
+                            zero += 1usize
+                        }
+                        exponent += 1usize
+                    } else {
+                        digits[i - 1usize] += 1u8
+                    }
+                }
+            }
+        },
+        none => {}
+    }
+    match precision {
+        present(_) => {},
+        none => {
+            while kept > 1usize && digits[start + kept - 1usize] == 0x30u8 {
+                kept -= 1usize
+            }
+        }
+    }
+
+    let exponent_length = if exponent < 10usize { 1usize } else { 2usize }
+    let has_point = match precision {
+        present(p) => p > 0usize || options.alternate,
+        none => kept > 1usize || options.alternate
+    }
+    let fraction_count = match precision {
+        present(p) => p,
+        none => kept - 1usize
+    }
+    let trailing_zeros = match precision {
+        present(p) => if p >= digit_count { p - (digit_count - 1usize) } else { 0usize },
+        none => 0usize
+    }
+    let fixed_length = 1usize + (if has_point { 1usize } else { 0usize }) +
+        1usize + exponent_length + (if negative || options.plus { 1usize } else { 0usize })
+    let padding = match options.width {
+        present(width) => {
+            if width <= fixed_length || fraction_count > width - fixed_length {
+                0usize
+            } else {
+                width - fixed_length - fraction_count
+            }
+        },
+        none => 0usize
+    }
+
+    if options.zero && padding > 0usize {
+        if negative { try f.write_char('-') }
+        else if options.plus { try f.write_char('+') }
+        var zeros = padding
+        while zeros > 0usize {
+            try f.write_char('0')
+            zeros -= 1usize
+        }
+    } else {
+        let before = if padding > 0usize {
+            match options.align {
+                Align.Left => 0usize,
+                Align.Center => padding / 2usize,
+                Align.Right => padding,
+                Align.Unknown => padding
+            }
+        } else {
+            0usize
+        }
+        var fills = before
+        while fills > 0usize {
+            try f.write_char(options.fill)
+            fills -= 1usize
+        }
+        if negative { try f.write_char('-') }
+        else if options.plus { try f.write_char('+') }
+    }
+
+    try f.write_char(digits[start] as char)
+    if has_point {
+        try f.write_char('.')
+        if kept > 1usize {
+            let fraction = unsafe {
+                from_utf8_unchecked(unsafe {
+                    slice.subslice_unchecked(read digits, start + 1usize, start + kept)
+                })
+            }
+            try f.write_str(fraction)
+        }
+        var zeros = trailing_zeros
+        while zeros > 0usize {
+            try f.write_char('0')
+            zeros -= 1usize
+        }
+    }
+    try f.write_char(if upper { 'E' } else { 'e' })
+    if exponent_length == 2usize {
+        try f.write_char((0x30u8 + (exponent / 10usize) as u8) as char)
+    }
+    try f.write_char((0x30u8 + (exponent % 10usize) as u8) as char)
+
+    if !(options.zero && padding > 0usize) {
+        let after = padding - (if padding > 0usize {
+            match options.align {
+                Align.Left => 0usize,
+                Align.Center => padding / 2usize,
+                Align.Right => padding,
+                Align.Unknown => padding
+            }
+        } else {
+            0usize
+        })
+        var fills = after
+        while fills > 0usize {
+            try f.write_char(options.fill)
+            fills -= 1usize
+        }
+    }
 }
 extend i8 implements Display {
     fn fmt(mut f: Formatter): Unit throws Error {
@@ -797,6 +955,117 @@ extend u128 implements LowerHex {
 }
 extend u128 implements UpperHex {
     fn fmt(mut f: Formatter): Unit throws Error { try fmt_radix128(mut f, self, false, 16u128, true, "0x") }
+}
+
+extend i8 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, false)
+    }
+}
+extend i8 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, true)
+    }
+}
+extend i16 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, false)
+    }
+}
+extend i16 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, true)
+    }
+}
+extend i32 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, false)
+    }
+}
+extend i32 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, true)
+    }
+}
+extend i64 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, false)
+    }
+}
+extend i64 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, true)
+    }
+}
+extend isize implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, false)
+    }
+}
+extend isize implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, true)
+    }
+}
+extend u8 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, false) }
+}
+extend u8 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, true) }
+}
+extend u16 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, false) }
+}
+extend u16 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, true) }
+}
+extend u32 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, false) }
+}
+extend u32 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, true) }
+}
+extend u64 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, false) }
+}
+extend u64 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, true) }
+}
+extend usize implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, false) }
+}
+extend usize implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, true) }
+}
+extend i128 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let negative = self < 0i128
+        let magnitude = if negative { self.wrapping_neg() as u128 } else { self as u128 }
+        try fmt_integer_exp(mut f, magnitude, negative, false)
+    }
+}
+extend i128 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let negative = self < 0i128
+        let magnitude = if negative { self.wrapping_neg() as u128 } else { self as u128 }
+        try fmt_integer_exp(mut f, magnitude, negative, true)
+    }
+}
+extend u128 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self, false, false) }
+}
+extend u128 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self, false, true) }
 }
 
 extend bool implements Display {

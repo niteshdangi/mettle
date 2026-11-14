@@ -7,8 +7,8 @@ import core.fmt.Display
 import core.hash
 import core.num
 import core.num.IntErrorKind
-import core.num.ParseIntError
-import core.text.Text
+import core.num.NonZero
+import core.text.{FromStr, Text}
 
 fn debug_is<T: Debug>(read value: T, read expected: Text): bool {
     var buffer = [0u8; 64]
@@ -65,7 +65,7 @@ fn main(): i32 {
     match capture num.parse<i8>("") {
         success(value) => { return 3 },
         failure(empty) => {
-            if empty != ParseIntError(IntErrorKind.Empty) ||
+            if *empty.kind() != IntErrorKind.Empty ||
                !debug_is(read empty, "ParseIntError { kind: Empty }") ||
                !display_is(read empty, "cannot parse integer from empty string") ||
                !has_no_error_source(read empty) ||
@@ -90,15 +90,14 @@ fn main(): i32 {
                     }
                 }
             }
-            if !display_is(
-                   ParseIntError(IntErrorKind.Zero),
-                   "number would be zero for non-zero type") {
-                return 9
-            }
-            let radix = ParseIntError(IntErrorKind.InvalidRadix)
-            if !debug_is(read radix, "ParseIntError { kind: InvalidRadix }") ||
-               !display_is(read radix, "radix must be within 2..=36") {
-                return 11
+            match capture NonZero<u8>.(FromStr).from_str("0") {
+                success(_) => { return 9 },
+                failure(zero) => {
+                    if *zero.kind() != IntErrorKind.Zero ||
+                       !display_is(read zero, "number would be zero for non-zero type") {
+                        return 9
+                    }
+                }
             }
         }
     }

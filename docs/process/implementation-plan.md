@@ -456,12 +456,12 @@ It may proceed alongside I15-I16.
 
 Owner worklist amendment (2026-11-09): deprecated APIs are no longer required,
 and all eight [reference profiles](../spec/platform-contracts.md#8-reference-profiles) remain in post-V1
-scope. The [reconciled worklist](post-v1-worklist.md) accounts for all 106,125
-stable canonical records: 629 excluded deprecated records, 13,295 V1
-obligations, 41,151 post-V1 contextual obligations, 50,190 attached
+scope. The [reconciled worklist](post-v1-worklist.md) accounts for all 106,120
+stable canonical records: 629 excluded deprecated records, 13,291 V1
+obligations, 41,150 post-V1 contextual obligations, 50,190 attached
 implementation members, 684 attached inherent blocks and 176 namespaces.
-The post-V1 obligations group into 32,355 source-declaration work units;
-4,864 also occur in V1, leaving 27,491 units not represented there.
+The post-V1 obligations group into 32,354 source-declaration work units;
+4,864 also occur in V1, leaving 27,490 units not represented there.
 Shared code does not discharge type/profile evidence. These are inventory
 counts before source-cfg and implementation-state review, not missing-code
 counts or I17 qualification. A009 and profile/toolchain work remain separate.

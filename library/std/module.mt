@@ -7,6 +7,9 @@ pub module path
 pub module time
 pub module fs
 pub module env
+pub module f32
+pub module f64
+pub module num
 pub module process
 pub module net
 pub module panic

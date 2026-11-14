@@ -14,7 +14,7 @@ const fn literal_scalars(): bool {
     }
     match capture num.parse_radix<i32>("\u{e9}", 10u32) {
         failure(error) => {
-            if (error.kind as u8) != (IntErrorKind.InvalidDigit as u8) {
+            if (*error.kind() as u8) != (IntErrorKind.InvalidDigit as u8) {
                 return false
             }
         },

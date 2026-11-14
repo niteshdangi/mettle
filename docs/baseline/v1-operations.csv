@@ -8284,10 +8284,7 @@ B6b4e7da7f247d0951cfbbd7d,operation:io::ErrorKind::Deadlock,https://doc.rust-lan
 B9db3f02d4572aface04af2e5,operation:io::ErrorKind::DirectoryNotEmpty,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.DirectoryNotEmpty,,evidenced,tests/std/i13_io_error_kinds.mt
 Ba494f81cece5e827d4eab917,operation:io::ErrorKind::ExecutableFileBusy,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.ExecutableFileBusy,,evidenced,tests/std/i13_io_error_kinds.mt
 B9472d5db2a74d4d8944d5b21,operation:io::ErrorKind::FileTooLarge,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.FileTooLarge,,evidenced,tests/std/i13_io_error_kinds.mt
-Bf6e7c337d8cbc8a3fdc4fca5,operation:io::ErrorKind::FilesystemLoop,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.FilesystemLoop,,evidenced,tests/std/i13_io_error_kinds.mt
 Beda1ad5b33e5b52a87234037,operation:io::ErrorKind::HostUnreachable,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.HostUnreachable,,evidenced,tests/std/i13_io_error_kinds.mt
-B0b811dc383ddc1c11c3cd408,operation:io::ErrorKind::InProgress,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.InProgress,,evidenced,tests/std/i13_io_error_kinds.mt
-Bbbe59e42123f2aa86ff26a7d,operation:io::ErrorKind::InputOutputError,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.InputOutputError,,evidenced,tests/std/i13_io_error_kinds.mt
 B3805c566ac085d1c37815984,operation:io::ErrorKind::Interrupted,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.Interrupted,,evidenced,tests/std/i13_io_error_kinds.mt
 B39d65ac16ab083ca97e01482,operation:io::ErrorKind::InvalidData,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.InvalidData,,evidenced,tests/std/i13_io_error_kinds.mt
 B7a935e5c59d5616e0bd35610,operation:io::ErrorKind::InvalidFilename,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.InvalidFilename,,evidenced,tests/std/i13_io_error_kinds.mt
@@ -8309,7 +8306,6 @@ Bcb79c90fcd54be01156c3327,operation:io::ErrorKind::StaleNetworkFileHandle,https:
 B0c51f2dec237df660d2f0e25,operation:io::ErrorKind::StorageFull,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.StorageFull,,evidenced,tests/std/i13_io_error_kinds.mt
 B5b3e5fe82e1b10f8d4980db5,operation:io::ErrorKind::TimedOut,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.TimedOut,,evidenced,tests/std/i13_io_error_kinds.mt
 Bd2135f889d4605d5facb940f,operation:io::ErrorKind::TooManyLinks,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.TooManyLinks,,evidenced,tests/std/i13_io_error_kinds.mt
-B83144ed2952993f39a6f5b8c,operation:io::ErrorKind::TooManyOpenFiles,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.TooManyOpenFiles,,evidenced,tests/std/i13_io_error_kinds.mt
 B57404ac5a4f8f0b6a1571c56,operation:io::ErrorKind::UnexpectedEof,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.UnexpectedEof,,evidenced,tests/std/i13_io_error_kinds.mt
 B12fea66244603697e757a2af,operation:io::ErrorKind::Unsupported,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.Unsupported,,evidenced,tests/std/i13_io_error_kinds.mt
 B87856c1d0fe9803cd0591d11,operation:io::ErrorKind::WouldBlock,https://doc.rust-lang.org/1.99.1/std/io/enum.ErrorKind.html#variant.WouldBlock,,evidenced,tests/std/i13_io_error_kinds.mt

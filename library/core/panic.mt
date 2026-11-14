@@ -4,6 +4,8 @@
 // Freestanding execution has no unwind runtime and aborts (trap).
 import super.text.Text
 
+pub import core.marker.{RefUnwindSafe, UnwindSafe}
+
 pub fn panic(read message: Text): Never {
     core.intrinsics.panic_message(message.as_bytes())
 }

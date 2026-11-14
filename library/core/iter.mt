@@ -2342,17 +2342,33 @@ extend f32 implements Sum {
     static fn zero(): f32 { 0.0f32 }
     fn plus(take other: f32): f32 { self + other }
 }
+extend<region r> f32 implements Sum<read f32 from r> {
+    static fn zero(): f32 { 0.0f32 }
+    fn plus(take other: read f32 from r): f32 { self + *other }
+}
 extend f32 implements Product {
     static fn one(): f32 { 1.0f32 }
     fn times(take other: f32): f32 { self * other }
+}
+extend<region r> f32 implements Product<read f32 from r> {
+    static fn one(): f32 { 1.0f32 }
+    fn times(take other: read f32 from r): f32 { self * *other }
 }
 extend f64 implements Sum {
     static fn zero(): f64 { 0.0f64 }
     fn plus(take other: f64): f64 { self + other }
 }
+extend<region r> f64 implements Sum<read f64 from r> {
+    static fn zero(): f64 { 0.0f64 }
+    fn plus(take other: read f64 from r): f64 { self + *other }
+}
 extend f64 implements Product {
     static fn one(): f64 { 1.0f64 }
     fn times(take other: f64): f64 { self * other }
+}
+extend<region r> f64 implements Product<read f64 from r> {
+    static fn one(): f64 { 1.0f64 }
+    fn times(take other: read f64 from r): f64 { self * *other }
 }
 
 // Cloning preserves iterator position, buffered items and callable state.

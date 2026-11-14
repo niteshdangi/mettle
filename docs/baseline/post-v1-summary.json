@@ -4,10 +4,10 @@
     "covered-by-owner": 684,
     "excluded-deprecated": 629,
     "namespace": 176,
-    "post-v1-obligation": 41151,
-    "v1-obligation": 13295
+    "post-v1-obligation": 41150,
+    "v1-obligation": 13291
   },
-  "manifest_sha256": "fb6bdf95c62f23b3bba8baee134c948e85df8fbccbe04766dfa9ab5bffec26eb",
+  "manifest_sha256": "762c5b0b707383bfec95e5d4d1edfb792517604ff9a6d305a7670f4b54ed78bf",
   "not_in_operation_inventory": [
     "I15 self-hosting",
     "I16 independent backend",
@@ -25,7 +25,7 @@
   },
   "post_v1_by_category": {
     "architecture": 13153,
-    "library": 2633,
+    "library": 2632,
     "os-extension": 780,
     "trait-implementation": 24585
   },
@@ -47,15 +47,15 @@
     "tymethod": 152,
     "type": 63,
     "union": 1,
-    "variant": 74
+    "variant": 73
   },
-  "post_v1_distinct_work_units": 32355,
+  "post_v1_distinct_work_units": 32354,
   "post_v1_implementation_status": "unreviewed, not assumed missing",
   "post_v1_work_units_also_in_v1": 4864,
-  "post_v1_work_units_not_in_v1": 27491,
+  "post_v1_work_units_not_in_v1": 27490,
   "qualification": "no native declaration, execution or per-profile evidence inferred",
-  "stable_canonical_records": 106125,
-  "stable_exposures": 159995,
-  "v1_ledger_sha256": "d7169593f77e39f8e52c34e25a10e973b5186a377192bbea8baea13096d59e54",
+  "stable_canonical_records": 106120,
+  "stable_exposures": 159989,
+  "v1_ledger_sha256": "5d3bbca0b3fb5374d9a92f15e324b790cf58d459cad94ebd969ae2937f0ce154",
   "work_unit_boundary": "shared implementation code, not shared type/profile evidence"
 }

@@ -1,6 +1,7 @@
 // Hosted panic integration. Panics run their hook before unwinding; an
 // uncaught message panic ends the process with status 101.
 import core.text.Text
+pub import core.panic.{RefUnwindSafe, UnwindSafe}
 
 extern "C" {
     unsafe fn mettle_rt_set_panic_hook(hook: unsafe extern "C" fn(ptr<read u8>, u64): Unit): Unit;

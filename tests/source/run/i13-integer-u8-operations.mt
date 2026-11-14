@@ -14,7 +14,7 @@ fn parsed<T: Copy>(result: (Outcome<T, ParseIntError>)): T? {
 }
 
 fn kind<T: Copy>(result: (Outcome<T, ParseIntError>)): IntErrorKind? {
-    match result { success(_) => none, failure(error) => present(error.kind) }
+    match result { success(_) => none, failure(error) => present(*error.kind()) }
 }
 
 fn ascii_lower(value: u8): u8 {

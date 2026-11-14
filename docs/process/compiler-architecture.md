@@ -137,14 +137,24 @@ Literal-backed static views preserve the complete backing bytes, interior offset
 and explicit extent rather than copying a substring. `types::textConstantCount`
 shares their shape/extent validation between checked archives and IR admission;
 LLVM materializes interior addresses into the complete interned literal.
-This representation uses IR format 3 and checked-library contracts 6; older
+This representation uses IR format 3 and checked-library contracts 8; older
 archives must be rebuilt.
 Checked expressions retain interface dispatch identities and Outcome propagation
 so imported const bodies select concrete implementations and typed effects.
 
-Concrete nominal associated constants retain typed `StaticConstant` payloads
-through checked library contracts. Each expression constructs a fresh value
-with its own cleanup ownership, rather than moving from shared static storage.
+Generic nominal associated constants retain their checked symbolic initializer
+through checked library contracts. A concrete owner type supplies the complete
+type/const implementation binding vector; bounds and equalities are checked
+before the initializer is evaluated with the selected target's integer width,
+endianness and numeric evaluator. Results are cached per declaration and
+binding vector inside one target-specific checker, with cycles diagnosed per
+instantiation and the established constant-evaluation nesting limit covering
+expanding cycles. Uses whose owner remains symbolic are not yet lowered through
+generic function specialization. Region-generic nominal constants also remain
+unsupported because the current generic binding model does not substitute
+region arguments.
+The resulting typed `StaticConstant` is materialized as a fresh value at each
+use, with its own cleanup ownership, rather than moved from shared storage.
 Required projections preserve field visibility and evaluator storage lifetime.
 Region normalization decorates nominal arguments and associated bindings in
 source interface bounds before expanding their inherited obligations.

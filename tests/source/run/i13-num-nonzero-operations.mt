@@ -6,7 +6,7 @@ import core.num
 import core.num.{IntErrorKind, NonZero}
 import core.cmp.{Ordering, PartialEq, PartialOrd}
 import core.clone.Clone
-import core.convert.From
+import core.convert.{From, TryFrom}
 import core.fmt
 import core.fmt.{Debug, Display}
 import core.hash
@@ -45,6 +45,13 @@ fn construction_and_bits(): i32 {
     if eight.trailing_zeros() != 3u32 || eight.count_ones().get() != 1u32 { return 4 }
     if !eight.is_power_of_two() || NonZero<u8>.new(6u8).or_panic().is_power_of_two() { return 5 }
     if NonZero<u32>.new(11u32).or_panic().count_ones().get() != 3u32 { return 6 }
+    if one.bit_width().get() != 1u32 ||
+       NonZero<u8>.new(128u8).or_panic().bit_width().get() != 8u32 ||
+       eight.lowest_one() != 3u32 || eight.highest_one() != 3u32 ||
+       NonZero<u8>.new(12u8).or_panic().isolate_lowest_one().get() != 4u8 ||
+       NonZero<u8>.new(12u8).or_panic().isolate_highest_one().get() != 8u8 {
+        return 7
+    }
     0
 }
 
@@ -56,6 +63,12 @@ fn checked_and_saturating(): i32 {
     if three.checked_mul(NonZero<u8>.new(4u8).or_panic()).or_panic().get() != 12u8 { return 12 }
     if big.saturating_add(10u8).get() != 255u8 || NonZero<u8>.new(16u8).or_panic().saturating_mul(NonZero<u8>.new(16u8).or_panic()).get() != 255u8 { return 13 }
     if NonZero<u8>.new(2u8).or_panic().saturating_pow(9u32).get() != 255u8 { return 14 }
+    if three.div_ceil(NonZero<u8>.new(2u8).or_panic()).get() != 2u8 ||
+       three.midpoint(NonZero<u8>.new(8u8).or_panic()).get() != 5u8 ||
+       NonZero<u8>.new(15u8).or_panic().isqrt().get() != 3u8 ||
+       NonZero<u8>.new(129u8).or_panic().checked_next_power_of_two().is_present() {
+        return 15
+    }
     0
 }
 
@@ -64,6 +77,22 @@ fn signed_methods(): i32 {
     if minus_five.abs().get() != 5i8 || minus_five.unsigned_abs().get() != 5u8 { return 20 }
     if minus_five.is_positive() || !minus_five.is_negative() { return 21 }
     if negate(NonZero<i8>.new(5i8).or_panic()).get() != (-5i8) { return 22 }
+    let minimum = NonZero<i8>.new(-128i8).or_panic()
+    if minimum.checked_abs().is_present() || minimum.checked_neg().is_present() ||
+       minimum.saturating_abs().get() != 127i8 || minimum.wrapping_abs().get() != -128i8 ||
+       minimum.unsigned_abs().get() != 128u8 ||
+       minimum.overflowing_neg() != (minimum, true) ||
+       minimum.cast_unsigned().cast_signed() != minimum {
+        return 23
+    }
+    let minus_two = NonZero<i8>.new(-2i8).or_panic()
+    if minimum.saturating_mul(minus_two).get() != 127i8 ||
+       minimum.saturating_mul(NonZero<i8>.new(2i8).or_panic()).get() != -128i8 ||
+       minus_two.saturating_pow(7u32).get() != -128i8 ||
+       minus_two.saturating_pow(8u32).get() != 127i8 ||
+       minus_two.saturating_pow(0u32).get() != 1i8 {
+        return 24
+    }
     0
 }
 
@@ -85,7 +114,7 @@ fn parsing_and_conversions(): i32 {
     }
     match capture NonZero<u32>.(FromStr).from_str("0") {
         success(_) => { return 42 },
-        failure(error) => { if error.kind != IntErrorKind.Zero { return 43 } }
+        failure(error) => { if *error.kind() != IntErrorKind.Zero { return 43 } }
     }
     match capture NonZero<u32>.(FromStr).from_str("x") {
         success(_) => { return 44 },
@@ -95,6 +124,13 @@ fn parsing_and_conversions(): i32 {
     if back != 9u8 { return 45 }
     if NonZero<u32>.(From<NonZero<u8>>).from(NonZero<u8>.new(200u8).or_panic()).get() != 200u32 { return 46 }
     if NonZero<i64>.(From<NonZero<i32>>).from(NonZero<i32>.new((-7i32)).or_panic()).get() != (-7i64) { return 47 }
+    match NonZero<u16>.(TryFrom<NonZero<u8>>).try_from(NonZero<u8>.new(200u8).or_panic()) {
+        success(value) => { if value.get() != 200u16 { return 48 } }
+    }
+    match NonZero<u8>.(TryFrom<NonZero<u16>>).try_from(NonZero<u16>.new(256u16).or_panic()) {
+        success(_) => { return 49 },
+        failure(_) => {}
+    }
     0
 }
 

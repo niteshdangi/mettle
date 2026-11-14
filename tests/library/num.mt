@@ -3,7 +3,7 @@ import core.num.IntErrorKind
 import core.option
 
 fn kind<T: num.FromText>(read text: core.text.Text): IntErrorKind? {
-    match capture num.parse<T>(text) { success(v) => none, failure(e) => present(e.kind) }
+    match capture num.parse<T>(text) { success(v) => none, failure(e) => present(*e.kind()) }
 }
 fn main(): i32 {
     match capture num.parse<i32>("123") { success(v) => { if v != 123 { return 1 } }, failure(e) => { return 2 } }

@@ -1135,7 +1135,8 @@ Formatter exposes fill, alignment, width, precision, alternate, sign and
 zero-pad flags without altering them. Default fill is space; width is a
 minimum output width measured in scalar characters, not UTF-8 bytes.
 Text precision is a maximum scalar count. Numerical precision has the
-operation's digit meaning; fixed floating precision rounds ties to even.
+operation's digit meaning; fixed and exponential floating precision round ties
+to even, with exponential precision counting digits after the decimal point.
 Sign-aware zero padding occurs after sign/radix prefix and overrides ordinary
 numeric alignment. Alternate integer formatting supplies the radix prefix;
 alternate Debug selects multiline pretty structure formatting.

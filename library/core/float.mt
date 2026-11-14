@@ -7,7 +7,7 @@
 // negative zero `-0`. A specified precision rounds to that many fractional
 // digits, ties to even. Width, fill, alignment, `plus` and `zero` follow the
 // integer rules.
-import super.fmt.{Align, Formatter, Write, Display, Debug, Error}
+import super.fmt.{Align, Formatter, Write, Display, Debug, Error, LowerExp, UpperExp}
 import super.cmp.{Eq, Ordering, PartialEq}
 import super.clone.Clone
 import super.convert.From
@@ -871,14 +871,257 @@ fn fmt_float_precision(
     }
 }
 
+fn fmt_float_exponent(
+    mut f: Formatter,
+    negative: bool,
+    fraction: u64,
+    biased: u64,
+    fraction_bits: u64,
+    exponent_bias: i32,
+    special: u64,
+    uppercase: bool
+): Unit throws Error {
+    if biased == special {
+        if fraction != 0u64 { return try f.pad_integral(true, "", "NaN") }
+        return try f.pad_integral(!negative, "", "inf")
+    }
+
+    let hidden = 1u64 << fraction_bits
+    let mantissa = if biased == 0u64 { fraction } else { fraction | hidden }
+    let binary_exponent = if biased == 0u64 {
+        1 - exponent_bias - (fraction_bits as i32)
+    } else {
+        (biased as i32) - exponent_bias - (fraction_bits as i32)
+    }
+    // Binary floating-point values terminate within 1074 decimal places.
+    var digits = [0u8; 1075]
+    var stored_fraction = 0usize
+    var output_fraction = 0usize
+    var exponent10 = 0i32
+
+    match f.precision() {
+        present(precision) => {
+            output_fraction = precision
+            if mantissa == 0u64 {
+                digits[0usize] = 0x30u8
+            } else {
+                var scratch = [0u8; 24]
+                let decimal = shortest_digits(
+                    mantissa,
+                    binary_exponent,
+                    mantissa == hidden && biased > 1u64,
+                    mut scratch
+                )
+                exponent10 = decimal.1 - 1
+
+                var numerator = big_from(mantissa)
+                var denominator = big_from(1u64)
+                if binary_exponent >= 0 {
+                    numerator.shift_left(binary_exponent as usize)
+                } else {
+                    denominator.shift_left((0 - binary_exponent) as usize)
+                }
+                if exponent10 >= 0 {
+                    denominator.mul_pow10(exponent10 as usize)
+                } else {
+                    numerator.mul_pow10((0 - exponent10) as usize)
+                }
+
+                var ten_denominator = big_copy(read denominator)
+                ten_denominator.mul_small(10u32)
+                if big_compare(read numerator, read ten_denominator) >= 0 {
+                    denominator.mul_small(10u32)
+                    exponent10 += 1i32
+                }
+                while big_compare(read numerator, read denominator) < 0 {
+                    numerator.mul_small(10u32)
+                    exponent10 -= 1i32
+                }
+
+                var leading = 0u8
+                while big_compare(read numerator, read denominator) >= 0 {
+                    numerator.sub(read denominator)
+                    leading += 1u8
+                }
+                digits[0usize] = 0x30u8 + leading
+
+                while stored_fraction < precision &&
+                      stored_fraction < 1074usize &&
+                      numerator.len > 0usize {
+                    numerator.mul_small(10u32)
+                    var digit = 0u8
+                    while big_compare(read numerator, read denominator) >= 0 {
+                        numerator.sub(read denominator)
+                        digit += 1u8
+                    }
+                    digits[stored_fraction + 1usize] = 0x30u8 + digit
+                    stored_fraction += 1usize
+                }
+                if stored_fraction < precision && numerator.len > 0usize {
+                    super.panic.panic("float exponent precision invariant")
+                }
+
+                if numerator.len > 0usize {
+                    var twice = big_copy(read numerator)
+                    twice.mul_small(2u32)
+                    let comparison = big_compare(read twice, read denominator)
+                    let last = digits[stored_fraction]
+                    let odd = ((last - 0x30u8) % 2u8) != 0u8
+                    if comparison > 0 || (comparison == 0 && odd) {
+                        var carry = true
+                        var at = stored_fraction + 1usize
+                        while at > 0usize {
+                            at -= 1usize
+                            if digits[at] < 0x39u8 {
+                                digits[at] += 1u8
+                                carry = false
+                                break
+                            }
+                            digits[at] = 0x30u8
+                        }
+                        if carry {
+                            digits[0usize] = 0x31u8
+                            exponent10 += 1i32
+                        }
+                    }
+                }
+            }
+        },
+        none => {
+            if mantissa == 0u64 {
+                digits[0usize] = 0x30u8
+            } else {
+                let decimal = shortest_digits(
+                    mantissa,
+                    binary_exponent,
+                    mantissa == hidden && biased > 1u64,
+                    mut digits
+                )
+                stored_fraction = decimal.0 - 1usize
+                output_fraction = stored_fraction
+                exponent10 = decimal.1 - 1i32
+            }
+        }
+    }
+
+    var exponent_magnitude = if exponent10 < 0 {
+        (0 - exponent10) as u32
+    } else {
+        exponent10 as u32
+    }
+    var exponent_width = 1usize
+    var exponent_probe = exponent_magnitude
+    while exponent_probe >= 10u32 {
+        exponent_probe = exponent_probe / 10u32
+        exponent_width += 1usize
+    }
+    let options = f.options()
+    let has_point = output_fraction > 0usize || options.alternate
+    let sign_length = if negative || options.plus { 1usize } else { 0usize }
+    let point_length = if has_point { 1usize } else { 0usize }
+    let exponent_length = 1usize + exponent_width +
+        (if exponent10 < 0 { 1usize } else { 0usize })
+    let fixed_length = sign_length + 1usize + point_length + exponent_length
+    var padding = 0usize
+    match options.width {
+        present(width) => {
+            if fixed_length < width {
+                let remaining = width - fixed_length
+                if output_fraction < remaining {
+                    padding = remaining - output_fraction
+                }
+            }
+        },
+        none => {}
+    }
+
+    if options.zero && padding > 0usize {
+        if negative { try f.write_char('-') }
+        else if options.plus { try f.write_char('+') }
+        var zeros = padding
+        while zeros > 0usize {
+            try f.write_char('0')
+            zeros -= 1usize
+        }
+    } else {
+        var before = 0usize
+        if padding > 0usize {
+            match options.align {
+                Align.Left => {},
+                Align.Center => { before = padding / 2usize },
+                Align.Right => { before = padding },
+                Align.Unknown => { before = padding }
+            }
+        }
+        try fmt_padding(mut f, options.fill, before)
+        if negative { try f.write_char('-') }
+        else if options.plus { try f.write_char('+') }
+    }
+
+    try f.write_char(digits[0usize] as char)
+    if has_point { try f.write_char('.') }
+    var index = 0usize
+    while index < stored_fraction {
+        try f.write_char(digits[index + 1usize] as char)
+        index += 1usize
+    }
+    var zeros = output_fraction - stored_fraction
+    while zeros > 0usize {
+        try f.write_char('0')
+        zeros -= 1usize
+    }
+
+    try f.write_char(if uppercase { 'E' } else { 'e' })
+    if exponent10 < 0 { try f.write_char('-') }
+    var exponent_digits = [0u8; 10]
+    var exponent_count = 0usize
+    while exponent_magnitude > 0u32 {
+        exponent_digits[exponent_count] =
+            0x30u8 + (exponent_magnitude % 10u32) as u8
+        exponent_magnitude = exponent_magnitude / 10u32
+        exponent_count += 1usize
+    }
+    if exponent_count == 0usize {
+        try f.write_char('0')
+    } else {
+        while exponent_count > 0usize {
+            exponent_count -= 1usize
+            try f.write_char(exponent_digits[exponent_count] as char)
+        }
+    }
+
+    if !(options.zero && padding > 0usize) {
+        var before = 0usize
+        if padding > 0usize {
+            match options.align {
+                Align.Left => {},
+                Align.Center => { before = padding / 2usize },
+                Align.Right => { before = padding },
+                Align.Unknown => { before = padding }
+            }
+        }
+        try fmt_padding(mut f, options.fill, padding - before)
+    }
+}
+
 fn fmt_f64(mut f: Formatter, value: f64, keep_point: bool): Unit throws Error {
     let bits = unsafe { core.mem.transmute<u64>(value) }
     try fmt_float(mut f, (bits >> 63u64) != 0u64, bits & 0xfffffffffffffu64, (bits >> 52u64) & 0x7ffu64, 52u64, 1023, 0x7ffu64, keep_point)
 }
 
+fn fmt_f64_exponent(mut f: Formatter, value: f64, uppercase: bool): Unit throws Error {
+    let bits = unsafe { core.mem.transmute<u64>(value) }
+    try fmt_float_exponent(mut f, (bits >> 63u64) != 0u64, bits & 0xfffffffffffffu64, (bits >> 52u64) & 0x7ffu64, 52u64, 1023, 0x7ffu64, uppercase)
+}
+
 fn fmt_f32(mut f: Formatter, value: f32, keep_point: bool): Unit throws Error {
     let bits = unsafe { core.mem.transmute<u32>(value) }
     try fmt_float(mut f, (bits >> 31u32) != 0u32, (bits & 0x7fffffu32) as u64, ((bits >> 23u32) & 0xffu32) as u64, 23u64, 127, 0xffu64, keep_point)
+}
+
+fn fmt_f32_exponent(mut f: Formatter, value: f32, uppercase: bool): Unit throws Error {
+    let bits = unsafe { core.mem.transmute<u32>(value) }
+    try fmt_float_exponent(mut f, (bits >> 31u32) != 0u32, (bits & 0x7fffffu32) as u64, ((bits >> 23u32) & 0xffu32) as u64, 23u64, 127, 0xffu64, uppercase)
 }
 
 extend f64 implements Display {
@@ -887,11 +1130,23 @@ extend f64 implements Display {
 extend f64 implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error { try fmt_f64(mut f, self, true) }
 }
+extend f64 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_f64_exponent(mut f, self, false) }
+}
+extend f64 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_f64_exponent(mut f, self, true) }
+}
 extend f32 implements Display {
     fn fmt(mut f: Formatter): Unit throws Error { try fmt_f32(mut f, self, false) }
 }
 extend f32 implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error { try fmt_f32(mut f, self, true) }
+}
+extend f32 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_f32_exponent(mut f, self, false) }
+}
+extend f32 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_f32_exponent(mut f, self, true) }
 }
 // Map IEEE bit patterns to integer keys in total-order sequence.
 extend f64 {

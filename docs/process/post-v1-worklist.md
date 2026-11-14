@@ -9,17 +9,27 @@ implement deprecated stable contracts, not their frozen reference provenance.
 
 Inputs and their SHA-256 identities are recorded in
 [post-v1-summary.json](../baseline/post-v1-summary.json). This snapshot accounts
-for 159,995 stable exposures and all **106,125 stable canonical records**:
+for 159,989 stable exposures and all **106,120 stable canonical records**:
 
 | Disposition | Canonical records | Meaning |
 | --- | ---: | --- |
-| V1 obligations | 13,295 | Existing selector/ledger membership; not proof of completed I13 |
-| Post-V1 contextual obligations | 41,151 | Declarations and implementation relations outside that selector |
+| V1 obligations | 13,291 | Existing selector/ledger membership; not proof of completed I13 |
+| Post-V1 contextual obligations | 41,150 | Declarations and implementation relations outside that selector |
 | Attached implementation members | 50,190 | Methods/associated types owned by implementation obligations, not separate implementations |
 | Attached inherent blocks | 684 | Structural containers owned by type declarations; their methods remain obligations |
 | Namespaces | 176 | Module containers, not ordinary callable operations |
 | Excluded deprecated | 629 | All stable exposures of the identity are deprecated, including inherited deprecation |
-| **Total** | **106,125** | No stable canonical ID lost |
+| **Total** | **106,120** | No stable canonical ID lost |
+
+Member stability includes the immediately following rustdoc `item-info`, not
+just the declaration header. This excludes five previously misclassified
+nightly variants: `IntErrorKind::NotAPowerOfTwo` and `ErrorKind::FilesystemLoop`,
+`InProgress`, `InputOutputError`, and `TooManyOpenFiles`. Their frozen exposures
+remain in `operations.jsonl.gz`; this corrects eligibility, not native evidence.
+The regenerated metadata changes 10,295 exposure evidence chains, including
+10,271 `own` entries. The 36 classification/availability changes are only a
+projection: six exposures change eligibility and 30 change applicability
+metadata, including the added `ScmCredentials` platform condition.
 
 Of the attached implementation members, 17,100 belong to V1 implementation
 obligations and 33,090 to post-V1 ones. They are retained acceptance requirements,
@@ -30,7 +40,7 @@ ledger from the raw canonical total. It was not an independent-work count.
 
 ## What the post-V1 obligations contain
 
-These categories partition the **41,151 contextual obligations**, before
+These categories partition the **41,150 contextual obligations**, before
 per-profile source-cfg applicability and native implementation review:
 
 | Category | Records | Examples / work |
@@ -38,7 +48,7 @@ per-profile source-cfg applicability and native implementation review:
 | Architecture | 13,153 | Intrinsic declarations, vector types and associated contracts; feature guards, ABI and instruction semantics |
 | OS extensions | 780 | Platform-specific filesystem and other service contracts, extension interfaces and their implementations |
 | Trait implementations outside the above categories | 24,585 | Generic blanket, concrete and auto-property relations; preserve bounds, substitutions and associated members |
-| Other library declarations | 2,633 | Types, methods, constants, macros, functions and interfaces outside the V1 selector |
+| Other library declarations | 2,632 | Types, methods, constants, macros, functions and interfaces outside the V1 selector |
 
 There are 27,043 implementation relations across all categories. A category is
 where the reference exposes the contract, not an effort rating or a claim that
@@ -48,9 +58,9 @@ explicitly accepted allocator contracts. They must be mapped, not assumed absent
 
 ## Shared code versus distinct acceptance work
 
-The post-V1 contextual obligations group into **32,355 declaration work units**:
+The post-V1 contextual obligations group into **32,354 declaration work units**:
 
-- **27,491** units are not represented by the current V1 selector.
+- **27,490** units are not represented by the current V1 selector.
 - **4,864** units share implementation source declarations with V1; their
   additional type/profile contexts still need mapping and evidence.
 
@@ -123,7 +133,7 @@ evidence; a genuinely new reduction needs an owner decision.
 
 ## Work groups and sequencing
 
-Groups partition the 41,151 contextual obligations by owning module of the
+Groups partition the 41,150 contextual obligations by owning module of the
 reference contract (counts of canonical records, approximate for D-J because
 they bucket by reference path, not by native file). They are not effort ratings.
 

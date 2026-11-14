@@ -12,11 +12,14 @@ pub module convert
 pub module default
 pub module error
 pub module ffi
+pub module f32
+pub module f64
 pub module float
 pub module fmt
 pub module future
 pub module hash
 pub module iter
+pub module marker
 pub module mem
 pub module num
 pub module ops

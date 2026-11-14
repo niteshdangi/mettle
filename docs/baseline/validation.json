@@ -4,8 +4,8 @@
   "native_unit_mappings_checked": 118,
   "native_never_mappings_checked": 140,
   "runtime_classification": {
-    "stable": 159995,
-    "unstable": 80612,
+    "stable": 159989,
+    "unstable": 80618,
     "language_documentation": 108,
     "external_implementation": 18
   },
@@ -17,7 +17,7 @@
   },
   "known_edge_cases_checked": 13,
   "documentation_checks": {
-    "markdown_files_checked": 29,
+    "markdown_files_checked": 31,
     "capabilities_checked": 107,
     "implementation_milestones_planned": 17,
     "milestone_capabilities_checked": 107,
@@ -101,5 +101,5 @@
   },
   "failures": [],
   "scope": "Documentation data, source identities, stability contexts, declaration-link closure and rule assignment; not compiler/soundness/runtime validation",
-  "manifest_sha256": "fb6bdf95c62f23b3bba8baee134c948e85df8fbccbe04766dfa9ab5bffec26eb"
+  "manifest_sha256": "762c5b0b707383bfec95e5d4d1edfb792517604ff9a6d305a7670f4b54ed78bf"
 }

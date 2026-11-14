@@ -4,6 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import v1_operations as v1
+import audit
 
 
 def record(path, kind, parent=None, interface=None, **changes):
@@ -117,6 +118,26 @@ class OperationSelectionTests(unittest.TestCase):
         self.assertEqual(v1.target_status({"availability": [
             "Available on a new target condition only.", "Available on Windows only.",
         ]}), "not-applicable")
+
+
+class AuditStabilityTests(unittest.TestCase):
+    def test_variant_stability_in_sibling_info_does_not_leak_to_neighbors(self):
+        document = audit.Document(
+            '<div class="variants">'
+            '<section id="variant.Stable"><h3 class="code-header">Stable</h3></section>'
+            '<div class="docblock">Stable variant.</div>'
+            '<section id="variant.Nightly"><h3 class="code-header">Nightly</h3></section>'
+            '<span class="item-info"><div class="stab unstable">Nightly API.</div></span>'
+            '<div class="docblock">Nightly variant.</div>'
+            '<section id="variant.Other"><h3 class="code-header">Other</h3></section>'
+            '</div>')
+        variants = {node.attrs["id"]: node for node in document.root.walk()
+                    if node.attrs.get("id", "").startswith("variant.")}
+        for name, unstable in (("Stable", False), ("Nightly", True), ("Other", False)):
+            with self.subTest(name=name):
+                metadata = audit.summary_nodes(variants["variant." + name])
+                self.assertEqual(audit.signals(metadata)["unstable"], unstable)
+                self.assertEqual(audit.header(metadata), name)
 
 
 class RemainingWorkTests(unittest.TestCase):

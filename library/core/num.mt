@@ -7,8 +7,9 @@ import super.convert.{From, TryFrom}
 import super.default.Default
 import super.error.{Error as CoreError}
 import super.fmt.{Binary, Debug, Display, Error, Formatter, LowerHex, Octal, UpperHex}
+import super.fmt.{LowerExp, UpperExp}
 import super.hash.{Hash, Hasher}
-import super.iter.{Iterator, Phantom, Product, Sum}
+import super.iter.{FusedIterator, Iterator, Phantom, Product, Sum}
 import super.slice
 import super.ops.{Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign}
 import super.ops.{BitXor, BitXorAssign, Div, DivAssign, Mul, MulAssign}
@@ -17,7 +18,7 @@ import super.ops.{Shr, ShrAssign, Sub, SubAssign}
 import super.text.{from_utf8_unchecked, FromStr, Text}
 
 pub copy enum IntErrorKind {
-    Empty, InvalidDigit, PosOverflow, NegOverflow, InvalidRadix, Zero
+    Empty, InvalidDigit, PosOverflow, NegOverflow, Zero
 }
 
 extend IntErrorKind implements PartialEq {
@@ -37,13 +38,16 @@ extend IntErrorKind implements Debug {
             IntErrorKind.InvalidDigit => try f.write_str("InvalidDigit"),
             IntErrorKind.PosOverflow => try f.write_str("PosOverflow"),
             IntErrorKind.NegOverflow => try f.write_str("NegOverflow"),
-            IntErrorKind.Zero => try f.write_str("Zero"),
-            IntErrorKind.InvalidRadix => try f.write_str("InvalidRadix")
+            IntErrorKind.Zero => try f.write_str("Zero")
         }
     }
 }
 
-pub copy type ParseIntError { pub kind: IntErrorKind }
+pub copy type ParseIntError { kind: IntErrorKind }
+
+extend ParseIntError {
+    pub const fn kind(): read IntErrorKind from self { read self.kind }
+}
 
 extend ParseIntError implements PartialEq {
     fn eq(read other: ParseIntError): bool { self.kind == other.kind }
@@ -66,15 +70,377 @@ extend ParseIntError implements Display {
             IntErrorKind.InvalidDigit => try f.write_str("invalid digit found in string"),
             IntErrorKind.PosOverflow => try f.write_str("number too large to fit in target type"),
             IntErrorKind.NegOverflow => try f.write_str("number too small to fit in target type"),
-            IntErrorKind.Zero => try f.write_str("number would be zero for non-zero type"),
-            IntErrorKind.InvalidRadix => try f.write_str("radix must be within 2..=36")
+            IntErrorKind.Zero => try f.write_str("number would be zero for non-zero type")
         }
     }
 }
 extend ParseIntError implements CoreError {}
-pub copy type Wrapping<T: Copy> { pub value: T }
 
-extend<T: Copy + Default> Wrapping<T> implements Default {
+@layout(transparent)
+pub copy type Saturating<T> { pub value: T }
+
+extend<T: Default> Saturating<T> implements Default {
+    static fn default(): Saturating<T> {
+        Saturating(T.(Default).default())
+    }
+}
+extend<T> Saturating<T> implements From<T> {
+    static fn from(take value: T): Saturating<T> { Saturating(value) }
+}
+extend<T: Clone> Saturating<T> implements Clone {
+    fn clone(): Saturating<T> { Saturating(self.value.clone()) }
+}
+extend<T: PartialEq> Saturating<T> implements PartialEq {
+    fn eq(read other: Saturating<T>): bool { self.value == other.value }
+}
+extend<T: Eq> Saturating<T> implements Eq {}
+extend<T: PartialOrd> Saturating<T> implements PartialOrd {
+    fn partial_cmp(read other: Saturating<T>): Ordering? {
+        self.value.partial_cmp(read other.value)
+    }
+}
+extend<T: Ord> Saturating<T> implements Ord {
+    fn cmp(read other: Saturating<T>): Ordering {
+        self.value.cmp(read other.value)
+    }
+}
+extend<T: Hash> Saturating<T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit { self.value.hash(mut state) }
+}
+extend<T: Debug> Saturating<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try T.(Debug).fmt(read self.value, mut f)
+    }
+}
+extend<T: Display> Saturating<T> implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try T.(Display).fmt(read self.value, mut f)
+    }
+}
+extend<T: Binary> Saturating<T> implements Binary {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try T.(Binary).fmt(read self.value, mut f)
+    }
+}
+extend<T: Octal> Saturating<T> implements Octal {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try T.(Octal).fmt(read self.value, mut f)
+    }
+}
+extend<T: LowerHex> Saturating<T> implements LowerHex {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try T.(LowerHex).fmt(read self.value, mut f)
+    }
+}
+extend<T: UpperHex> Saturating<T> implements UpperHex {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try T.(UpperHex).fmt(read self.value, mut f)
+    }
+}
+macro saturating_integer {
+    ($type:ident) => {
+        extend Saturating<$type> {
+            pub const fn count_ones(): u32 { self.value.count_ones() }
+            pub const fn count_zeros(): u32 { self.value.count_zeros() }
+            pub const fn leading_zeros(): u32 { self.value.leading_zeros() }
+            pub const fn trailing_zeros(): u32 { self.value.trailing_zeros() }
+            pub const fn reverse_bits(): Saturating<$type> {
+                Saturating(self.value.reverse_bits())
+            }
+            pub const fn rotate_left(count: u32): Saturating<$type> {
+                Saturating(self.value.rotate_left(count))
+            }
+            pub const fn rotate_right(count: u32): Saturating<$type> {
+                Saturating(self.value.rotate_right(count))
+            }
+            pub const fn swap_bytes(): Saturating<$type> {
+                Saturating(self.value.swap_bytes())
+            }
+            pub const fn to_be(): Saturating<$type> {
+                Saturating(self.value.to_be())
+            }
+            pub const fn to_le(): Saturating<$type> {
+                Saturating(self.value.to_le())
+            }
+            pub static const fn from_be(value: Saturating<$type>): Saturating<$type> {
+                Saturating($type.from_be(value.value))
+            }
+            pub static const fn from_le(value: Saturating<$type>): Saturating<$type> {
+                Saturating($type.from_le(value.value))
+            }
+            pub const fn pow(exponent: u32): Saturating<$type> {
+                Saturating(self.value.saturating_pow(exponent))
+            }
+        }
+        extend Saturating<$type> implements Add<Saturating<$type>> {
+            type Output = Saturating<$type>
+            fn add(read rhs: Saturating<$type>): Saturating<$type> {
+                Saturating(self.value.saturating_add(rhs.value))
+            }
+        }
+        extend Saturating<$type> implements Sub<Saturating<$type>> {
+            type Output = Saturating<$type>
+            fn sub(read rhs: Saturating<$type>): Saturating<$type> {
+                Saturating(self.value.saturating_sub(rhs.value))
+            }
+        }
+        extend Saturating<$type> implements Mul<Saturating<$type>> {
+            type Output = Saturating<$type>
+            fn mul(read rhs: Saturating<$type>): Saturating<$type> {
+                Saturating(self.value.saturating_mul(rhs.value))
+            }
+        }
+        extend Saturating<$type> implements Div<Saturating<$type>> {
+            type Output = Saturating<$type>
+            fn div(read rhs: Saturating<$type>): Saturating<$type> {
+                Saturating(self.value.saturating_div(rhs.value))
+            }
+        }
+        extend Saturating<$type> implements Rem<Saturating<$type>> {
+            type Output = Saturating<$type>
+            fn rem(read rhs: Saturating<$type>): Saturating<$type> {
+                Saturating(self.value % rhs.value)
+            }
+        }
+        extend Saturating<$type> implements BitAnd<Saturating<$type>> {
+            type Output = Saturating<$type>
+            fn bitand(read rhs: Saturating<$type>): Saturating<$type> {
+                Saturating(self.value & rhs.value)
+            }
+        }
+        extend Saturating<$type> implements BitOr<Saturating<$type>> {
+            type Output = Saturating<$type>
+            fn bitor(read rhs: Saturating<$type>): Saturating<$type> {
+                Saturating(self.value | rhs.value)
+            }
+        }
+        extend Saturating<$type> implements BitXor<Saturating<$type>> {
+            type Output = Saturating<$type>
+            fn bitxor(read rhs: Saturating<$type>): Saturating<$type> {
+                Saturating(self.value ^ rhs.value)
+            }
+        }
+        extend Saturating<$type> implements AddAssign<Saturating<$type>> {
+            mut fn add_assign(read rhs: Saturating<$type>): Unit {
+                self.value = self.value.saturating_add(rhs.value)
+            }
+        }
+        extend Saturating<$type> implements SubAssign<Saturating<$type>> {
+            mut fn sub_assign(read rhs: Saturating<$type>): Unit {
+                self.value = self.value.saturating_sub(rhs.value)
+            }
+        }
+        extend Saturating<$type> implements MulAssign<Saturating<$type>> {
+            mut fn mul_assign(read rhs: Saturating<$type>): Unit {
+                self.value = self.value.saturating_mul(rhs.value)
+            }
+        }
+        extend Saturating<$type> implements DivAssign<Saturating<$type>> {
+            mut fn div_assign(read rhs: Saturating<$type>): Unit {
+                self.value = self.value.saturating_div(rhs.value)
+            }
+        }
+        extend Saturating<$type> implements RemAssign<Saturating<$type>> {
+            mut fn rem_assign(read rhs: Saturating<$type>): Unit {
+                self.value = self.value % rhs.value
+            }
+        }
+        extend Saturating<$type> implements BitAndAssign<Saturating<$type>> {
+            mut fn bitand_assign(read rhs: Saturating<$type>): Unit {
+                self.value = self.value & rhs.value
+            }
+        }
+        extend Saturating<$type> implements BitOrAssign<Saturating<$type>> {
+            mut fn bitor_assign(read rhs: Saturating<$type>): Unit {
+                self.value = self.value | rhs.value
+            }
+        }
+        extend Saturating<$type> implements BitXorAssign<Saturating<$type>> {
+            mut fn bitxor_assign(read rhs: Saturating<$type>): Unit {
+                self.value = self.value ^ rhs.value
+            }
+        }
+        extend Saturating<$type> implements Not {
+            type Output = Saturating<$type>
+            fn not(): Saturating<$type> { Saturating(!self.value) }
+        }
+        extend Saturating<$type> implements Sum {
+            static fn zero(): Saturating<$type> { Saturating(0 as $type) }
+            fn plus(take other: Saturating<$type>): Saturating<$type> {
+                Saturating(self.value.saturating_add(other.value))
+            }
+        }
+        extend<region r> Saturating<$type> implements Sum<read Saturating<$type> from r> {
+            static fn zero(): Saturating<$type> { Saturating(0 as $type) }
+            fn plus(take other: read Saturating<$type> from r): Saturating<$type> {
+                let value = *other
+                Saturating(self.value.saturating_add(value.value))
+            }
+        }
+        extend Saturating<$type> implements Product {
+            static fn one(): Saturating<$type> { Saturating(1 as $type) }
+            fn times(take other: Saturating<$type>): Saturating<$type> {
+                Saturating(self.value.saturating_mul(other.value))
+            }
+        }
+        extend<region r> Saturating<$type> implements Product<read Saturating<$type> from r> {
+            static fn one(): Saturating<$type> { Saturating(1 as $type) }
+            fn times(take other: read Saturating<$type> from r): Saturating<$type> {
+                let value = *other
+                Saturating(self.value.saturating_mul(value.value))
+            }
+        }
+    };
+}
+
+macro saturating_signed_integer {
+    ($type:ident) => {
+        saturating_integer!($type)
+        extend Saturating<$type> {
+            pub const fn abs(): Saturating<$type> {
+                Saturating(self.value.saturating_abs())
+            }
+            pub const fn is_negative(): bool { self.value.is_negative() }
+            pub const fn is_positive(): bool { self.value.is_positive() }
+            pub const fn signum(): Saturating<$type> {
+                Saturating(self.value.signum())
+            }
+        }
+        extend Saturating<$type> implements Neg {
+            type Output = Saturating<$type>
+            fn neg(): Saturating<$type> {
+                Saturating(self.value.saturating_neg())
+            }
+        }
+    };
+}
+
+macro saturating_unsigned_integer {
+    ($type:ident) => {
+        saturating_integer!($type)
+        extend Saturating<$type> {
+            pub const fn is_power_of_two(): bool {
+                self.value.is_power_of_two()
+            }
+        }
+    };
+}
+
+saturating_signed_integer!(i8)
+saturating_signed_integer!(i16)
+saturating_signed_integer!(i32)
+saturating_signed_integer!(i64)
+saturating_signed_integer!(i128)
+saturating_signed_integer!(isize)
+saturating_unsigned_integer!(u8)
+saturating_unsigned_integer!(u16)
+saturating_unsigned_integer!(u32)
+saturating_unsigned_integer!(u64)
+saturating_unsigned_integer!(u128)
+saturating_unsigned_integer!(usize)
+
+macro saturating_reference_binary {
+    ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
+        extend<region lhs_region> read Saturating<$type> from lhs_region implements $trait<Saturating<$type>> {
+            type Output = Saturating<$type>
+            fn $method(read rhs: Saturating<$type>): Saturating<$type> {
+                *self $operator rhs
+            }
+        }
+        extend<region rhs_region> Saturating<$type> implements $trait<read Saturating<$type> from rhs_region> {
+            type Output = Saturating<$type>
+            fn $method(read rhs: read Saturating<$type> from rhs_region): Saturating<$type> {
+                self $operator *rhs
+            }
+        }
+        extend<region lhs_region, region rhs_region> read Saturating<$type> from lhs_region implements $trait<read Saturating<$type> from rhs_region> {
+            type Output = Saturating<$type>
+            fn $method(read rhs: read Saturating<$type> from rhs_region): Saturating<$type> {
+                *self $operator *rhs
+            }
+        }
+    };
+}
+
+macro saturating_reference_assignment {
+    ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
+        extend<region rhs_region> Saturating<$type> implements $trait<read Saturating<$type> from rhs_region> {
+            mut fn $method(read rhs: read Saturating<$type> from rhs_region): Unit {
+                self = self $operator *rhs
+            }
+        }
+        extend<region rhs_region> Saturating<$type> implements $trait<read $type from rhs_region> {
+            mut fn $method(read rhs: read $type from rhs_region): Unit {
+                self = self $operator Saturating(*rhs)
+            }
+        }
+    };
+}
+
+macro saturating_mixed_assignment {
+    ($type:ident, $trait:ident, $method:ident, $operation:ident) => {
+        extend Saturating<$type> implements $trait<$type> {
+            mut fn $method(read rhs: $type): Unit {
+                self.value = self.value.$operation(rhs)
+            }
+        }
+    };
+}
+
+macro saturating_reference_unary {
+    ($type:ident, $trait:ident, $method:ident, $operator:tt) => {
+        extend<region receiver_region> read Saturating<$type> from receiver_region implements $trait {
+            type Output = Saturating<$type>
+            fn $method(): Saturating<$type> {
+                $operator (*self)
+            }
+        }
+    };
+}
+
+macro saturating_reference_operators {
+    ($($type:ident),*) => {
+        $(
+            saturating_reference_binary!($type, Add, add, +)
+            saturating_reference_binary!($type, Sub, sub, -)
+            saturating_reference_binary!($type, Mul, mul, *)
+            saturating_reference_binary!($type, Div, div, /)
+            saturating_reference_binary!($type, Rem, rem, %)
+            saturating_reference_binary!($type, BitAnd, bitand, &)
+            saturating_reference_binary!($type, BitOr, bitor, |)
+            saturating_reference_binary!($type, BitXor, bitxor, ^)
+            saturating_reference_assignment!($type, AddAssign, add_assign, +)
+            saturating_reference_assignment!($type, SubAssign, sub_assign, -)
+            saturating_reference_assignment!($type, MulAssign, mul_assign, *)
+            saturating_reference_assignment!($type, DivAssign, div_assign, /)
+            saturating_reference_assignment!($type, RemAssign, rem_assign, %)
+            saturating_reference_assignment!($type, BitAndAssign, bitand_assign, &)
+            saturating_reference_assignment!($type, BitOrAssign, bitor_assign, |)
+            saturating_reference_assignment!($type, BitXorAssign, bitxor_assign, ^)
+            saturating_mixed_assignment!($type, AddAssign, add_assign, saturating_add)
+            saturating_mixed_assignment!($type, SubAssign, sub_assign, saturating_sub)
+            saturating_mixed_assignment!($type, MulAssign, mul_assign, saturating_mul)
+            saturating_mixed_assignment!($type, DivAssign, div_assign, saturating_div)
+            saturating_mixed_assignment!($type, RemAssign, rem_assign, rem)
+            saturating_mixed_assignment!($type, BitAndAssign, bitand_assign, bitand)
+            saturating_mixed_assignment!($type, BitOrAssign, bitor_assign, bitor)
+            saturating_mixed_assignment!($type, BitXorAssign, bitxor_assign, bitxor)
+            saturating_reference_unary!($type, Not, not, !)
+        )*
+    };
+}
+
+saturating_reference_operators!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize)
+saturating_reference_unary!(i8, Neg, neg, -)
+saturating_reference_unary!(i16, Neg, neg, -)
+saturating_reference_unary!(i32, Neg, neg, -)
+saturating_reference_unary!(i64, Neg, neg, -)
+saturating_reference_unary!(i128, Neg, neg, -)
+saturating_reference_unary!(isize, Neg, neg, -)
+
+pub copy type Wrapping<T> { pub value: T }
+
+extend<T: Default> Wrapping<T> implements Default {
     static fn default(): Wrapping<T> {
         Wrapping(T.(Default).default())
     }
@@ -2652,117 +3018,117 @@ extend Wrapping<usize> implements Not {
     fn not(): Wrapping<usize> { Wrapping(!self.value) }
 }
 
-extend<T: Copy + Clone> Wrapping<T> implements Clone {
+extend<T: Clone> Wrapping<T> implements Clone {
     fn clone(): Wrapping<T> { Wrapping(self.value.clone()) }
 }
 
-extend<T: Copy + PartialEq> Wrapping<T> implements PartialEq {
+extend<T: PartialEq> Wrapping<T> implements PartialEq {
     fn eq(read other: Wrapping<T>): bool { self.value == other.value }
 }
-extend<T: Copy + Eq> Wrapping<T> implements Eq {}
-extend<T: Copy + PartialOrd> Wrapping<T> implements PartialOrd {
+extend<T: Eq> Wrapping<T> implements Eq {}
+extend<T: PartialOrd> Wrapping<T> implements PartialOrd {
     fn partial_cmp(read other: Wrapping<T>): Ordering? {
         self.value.partial_cmp(read other.value)
     }
 }
-extend<T: Copy + Ord> Wrapping<T> implements Ord {
+extend<T: Ord> Wrapping<T> implements Ord {
     fn cmp(read other: Wrapping<T>): Ordering {
         self.value.cmp(read other.value)
     }
 }
-extend<T: Copy + Hash> Wrapping<T> implements Hash {
+extend<T: Hash> Wrapping<T> implements Hash {
     fn hash<State: Hasher>(mut state: State): Unit {
         self.value.hash(mut state)
     }
 }
-extend<T: Copy + Debug> Wrapping<T> implements Debug {
+extend<T: Debug> Wrapping<T> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         try T.(Debug).fmt(read self.value, mut f)
     }
 }
-extend<T: Copy + Display> Wrapping<T> implements Display {
+extend<T: Display> Wrapping<T> implements Display {
     fn fmt(mut f: Formatter): Unit throws Error {
         try T.(Display).fmt(read self.value, mut f)
     }
 }
-extend<T: Copy + Binary> Wrapping<T> implements Binary {
+extend<T: Binary> Wrapping<T> implements Binary {
     fn fmt(mut f: Formatter): Unit throws Error {
         try T.(Binary).fmt(read self.value, mut f)
     }
 }
-extend<T: Copy + Octal> Wrapping<T> implements Octal {
+extend<T: Octal> Wrapping<T> implements Octal {
     fn fmt(mut f: Formatter): Unit throws Error {
         try T.(Octal).fmt(read self.value, mut f)
     }
 }
-extend<T: Copy + LowerHex> Wrapping<T> implements LowerHex {
+extend<T: LowerHex> Wrapping<T> implements LowerHex {
     fn fmt(mut f: Formatter): Unit throws Error {
         try T.(LowerHex).fmt(read self.value, mut f)
     }
 }
-extend<T: Copy + UpperHex> Wrapping<T> implements UpperHex {
+extend<T: UpperHex> Wrapping<T> implements UpperHex {
     fn fmt(mut f: Formatter): Unit throws Error {
         try T.(UpperHex).fmt(read self.value, mut f)
     }
 }
 
 extend Wrapping<u8> {
-    pub fn reverse_bits(): Wrapping<u8> {
+    pub const fn reverse_bits(): Wrapping<u8> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<u16> {
-    pub fn reverse_bits(): Wrapping<u16> {
+    pub const fn reverse_bits(): Wrapping<u16> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<u32> {
-    pub fn reverse_bits(): Wrapping<u32> {
+    pub const fn reverse_bits(): Wrapping<u32> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<u64> {
-    pub fn reverse_bits(): Wrapping<u64> {
+    pub const fn reverse_bits(): Wrapping<u64> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<u128> {
-    pub fn reverse_bits(): Wrapping<u128> {
+    pub const fn reverse_bits(): Wrapping<u128> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<usize> {
-    pub fn reverse_bits(): Wrapping<usize> {
+    pub const fn reverse_bits(): Wrapping<usize> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<i8> {
-    pub fn reverse_bits(): Wrapping<i8> {
+    pub const fn reverse_bits(): Wrapping<i8> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<i16> {
-    pub fn reverse_bits(): Wrapping<i16> {
+    pub const fn reverse_bits(): Wrapping<i16> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<i32> {
-    pub fn reverse_bits(): Wrapping<i32> {
+    pub const fn reverse_bits(): Wrapping<i32> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<i64> {
-    pub fn reverse_bits(): Wrapping<i64> {
+    pub const fn reverse_bits(): Wrapping<i64> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<i128> {
-    pub fn reverse_bits(): Wrapping<i128> {
+    pub const fn reverse_bits(): Wrapping<i128> {
         Wrapping(self.value.reverse_bits())
     }
 }
 extend Wrapping<isize> {
-    pub fn reverse_bits(): Wrapping<isize> {
+    pub const fn reverse_bits(): Wrapping<isize> {
         Wrapping(self.value.reverse_bits())
     }
 }
@@ -3071,6 +3437,9 @@ extend TryFromIntError implements Display {
     }
 }
 extend TryFromIntError implements CoreError {}
+extend TryFromIntError implements From<Never> {
+    static fn from(take value: Never): TryFromIntError { value }
+}
 
 // Lossless integer widenings (and bool as 0 or 1).
 macro integer_from {
@@ -3078,12 +3447,6 @@ macro integer_from {
         $(
             extend $target implements From<$source> {
                 static fn from(take value: $source): $target { value as $target }
-            }
-            extend $target implements TryFrom<$source> {
-                type Error = Never
-                static fn try_from(take value: $source): Outcome<$target, Never> {
-                    success(value as $target)
-                }
             }
         )*
     };
@@ -3305,6 +3668,7 @@ extend EscapeDefault implements Iterator {
         present(value)
     }
 }
+extend EscapeDefault implements FusedIterator {}
 
 fn escape_hex_nibble(value: u8): u8 {
     if value < 10u8 { 0x30u8 + value } else { 0x61u8 + value - 10u8 }
@@ -3329,40 +3693,179 @@ extend u8 {
     pub fn escape_ascii(): EscapeDefault { escape_default_byte(self) }
 }
 
-// Non-zero integers; the wrapped value is never zero.
-pub copy type NonZero<T: Copy> { value: T }
+interface IntegerBounds {
+    const MIN: Self;
+    const MAX: Self;
+    const NONZERO_MIN: Self;
+}
 
-extend<T: Copy + Default + PartialEq> NonZero<T> {
-    pub static fn new(value: T): NonZero<T>? {
-        if value == T.(Default).default() { none } else { present(NonZero(value)) }
+// Non-zero integers; the wrapped value is never zero.
+@layout(transparent)
+pub copy type NonZero<T: Copy + IntegerBounds> { value: T }
+pub alias NonZeroI8 = NonZero<i8>
+pub alias NonZeroI16 = NonZero<i16>
+pub alias NonZeroI32 = NonZero<i32>
+pub alias NonZeroI64 = NonZero<i64>
+pub alias NonZeroI128 = NonZero<i128>
+pub alias NonZeroIsize = NonZero<isize>
+pub alias NonZeroU8 = NonZero<u8>
+pub alias NonZeroU16 = NonZero<u16>
+pub alias NonZeroU32 = NonZero<u32>
+pub alias NonZeroU64 = NonZero<u64>
+pub alias NonZeroU128 = NonZero<u128>
+pub alias NonZeroUsize = NonZero<usize>
+
+macro nonzero_constructor {
+    ($type:ident) => {
+        extend NonZero<$type> {
+            pub static const fn new(value: $type): NonZero<$type>? {
+                if value == 0 { none } else { present(NonZero(value)) }
+            }
+            pub static unsafe const fn new_unchecked(value: $type): NonZero<$type> {
+                NonZero(value)
+            }
+        }
+    };
+}
+
+nonzero_constructor!(i8)
+nonzero_constructor!(i16)
+nonzero_constructor!(i32)
+nonzero_constructor!(i64)
+nonzero_constructor!(i128)
+nonzero_constructor!(isize)
+nonzero_constructor!(u8)
+nonzero_constructor!(u16)
+nonzero_constructor!(u32)
+nonzero_constructor!(u64)
+nonzero_constructor!(u128)
+nonzero_constructor!(usize)
+
+interface IntegerBits {
+    const BITS: u32;
+}
+
+macro integer_bits {
+    ($($type:ident),*) => {
+        $(
+            extend $type implements IntegerBits {
+                const BITS: u32 = $type.BITS
+            }
+        )*
+    };
+}
+
+integer_bits!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize)
+
+extend<T: Copy + IntegerBits> Saturating<T> {
+    pub const BITS: u32 = T.(IntegerBits).BITS
+}
+
+extend<T: Copy + IntegerBounds + IntegerBits> NonZero<T> {
+    pub const BITS: u32 = T.(IntegerBits).BITS
+}
+
+macro signed_integer_bounds {
+    ($($type:ident),*) => {
+        $(
+            extend $type implements IntegerBounds {
+                const MIN: $type = $type.MIN
+                const MAX: $type = $type.MAX
+                const NONZERO_MIN: $type = $type.MIN
+            }
+        )*
+    };
+}
+
+macro unsigned_integer_bounds {
+    ($($type:ident),*) => {
+        $(
+            extend $type implements IntegerBounds {
+                const MIN: $type = $type.MIN
+                const MAX: $type = $type.MAX
+                const NONZERO_MIN: $type = 1
+            }
+        )*
+    };
+}
+
+signed_integer_bounds!(i8, i16, i32, i64, i128, isize)
+unsigned_integer_bounds!(u8, u16, u32, u64, u128, usize)
+
+extend<T: Copy + IntegerBounds + LowerExp> NonZero<T> implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try T.(LowerExp).fmt(read self.value, mut f)
     }
-    pub static unsafe const fn new_unchecked(value: T): NonZero<T> { NonZero(value) }
+}
+
+extend<T: Copy + IntegerBounds + UpperExp> NonZero<T> implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try T.(UpperExp).fmt(read self.value, mut f)
+    }
+}
+
+extend<T: Copy + IntegerBounds> Saturating<T> {
+    pub const MIN: Saturating<T> = Saturating(T.(IntegerBounds).MIN)
+    pub const MAX: Saturating<T> = Saturating(T.(IntegerBounds).MAX)
+}
+
+extend<T: Copy + IntegerBounds> NonZero<T> {
+    pub const MIN: NonZero<T> = NonZero(T.(IntegerBounds).NONZERO_MIN)
+    pub const MAX: NonZero<T> = NonZero(T.(IntegerBounds).MAX)
 }
 
 macro nonzero_common {
     ($type:ident) => {
         extend NonZero<$type> {
             pub const fn get(): $type { self.value }
-            pub fn leading_zeros(): u32 { self.value.leading_zeros() }
-            pub fn trailing_zeros(): u32 { self.value.trailing_zeros() }
-            pub fn count_ones(): NonZero<u32> { NonZero(self.value.count_ones()) }
-            pub fn checked_add(other: $type): NonZero<$type>? {
+            pub const fn leading_zeros(): u32 { self.value.leading_zeros() }
+            pub const fn trailing_zeros(): u32 { self.value.trailing_zeros() }
+            pub const fn lowest_one(): u32 { self.value.trailing_zeros() }
+            pub const fn highest_one(): u32 {
+                $type.BITS - self.value.leading_zeros() - 1u32
+            }
+            pub const fn count_ones(): NonZero<u32> {
+                NonZero(self.value.count_ones())
+            }
+            pub const fn isolate_lowest_one(): NonZero<$type> {
+                NonZero(self.value.isolate_lowest_one())
+            }
+            pub const fn isolate_highest_one(): NonZero<$type> {
+                NonZero(self.value.isolate_highest_one())
+            }
+            pub const fn ilog2(): u32 { self.value.ilog2() }
+            pub const fn ilog10(): u32 { self.value.ilog10() }
+            pub static const fn from_str_radix(
+                read input: Text,
+                radix: u32
+            ): NonZero<$type> throws ParseIntError {
+                let value = try parse_radix<$type>(input, radix)
+                if value == 0 { throw ParseIntError(IntErrorKind.Zero) }
+                NonZero(value)
+            }
+            pub const fn checked_add(other: $type): NonZero<$type>? {
                 match self.value.checked_add(other) {
                     present(sum) => { if sum == 0 { none } else { present(NonZero(sum)) } },
                     none => none
                 }
             }
-            pub fn checked_mul(other: NonZero<$type>): NonZero<$type>? {
+            pub const fn checked_mul(other: NonZero<$type>): NonZero<$type>? {
                 match self.value.checked_mul(other.value) {
                     present(product) => present(NonZero(product)),
                     none => none
                 }
             }
-            pub fn checked_pow(exponent: u32): NonZero<$type>? {
+            pub const fn checked_pow(exponent: u32): NonZero<$type>? {
                 match self.value.checked_pow(exponent) {
                     present(power) => present(NonZero(power)),
                     none => none
                 }
+            }
+            pub const fn saturating_mul(other: NonZero<$type>): NonZero<$type> {
+                NonZero(self.value.saturating_mul(other.value))
+            }
+            pub const fn saturating_pow(exponent: u32): NonZero<$type> {
+                NonZero(self.value.saturating_pow(exponent))
             }
         }
         extend $type implements BitOr<NonZero<$type>> {
@@ -3372,6 +3875,20 @@ macro nonzero_common {
         extend NonZero<$type> implements BitOr<$type> {
             type Output = NonZero<$type>
             fn bitor(read rhs: $type): NonZero<$type> { NonZero(self.value | rhs) }
+        }
+        extend NonZero<$type> implements BitOr<NonZero<$type>> {
+            type Output = NonZero<$type>
+            fn bitor(read rhs: NonZero<$type>): NonZero<$type> {
+                NonZero(self.value | rhs.value)
+            }
+        }
+        extend NonZero<$type> implements BitOrAssign<$type> {
+            mut fn bitor_assign(read rhs: $type): Unit { self.value = self.value | rhs }
+        }
+        extend NonZero<$type> implements BitOrAssign<NonZero<$type>> {
+            mut fn bitor_assign(read rhs: NonZero<$type>): Unit {
+                self.value = self.value | rhs.value
+            }
         }
         extend NonZero<$type> implements Clone {
             fn clone(): NonZero<$type> { self }
@@ -3395,6 +3912,18 @@ macro nonzero_common {
         extend NonZero<$type> implements Display {
             fn fmt(mut f: Formatter): Unit throws Error { try $type.(Display).fmt(read self.value, mut f) }
         }
+        extend NonZero<$type> implements Binary {
+            fn fmt(mut f: Formatter): Unit throws Error { try $type.(Binary).fmt(read self.value, mut f) }
+        }
+        extend NonZero<$type> implements Octal {
+            fn fmt(mut f: Formatter): Unit throws Error { try $type.(Octal).fmt(read self.value, mut f) }
+        }
+        extend NonZero<$type> implements LowerHex {
+            fn fmt(mut f: Formatter): Unit throws Error { try $type.(LowerHex).fmt(read self.value, mut f) }
+        }
+        extend NonZero<$type> implements UpperHex {
+            fn fmt(mut f: Formatter): Unit throws Error { try $type.(UpperHex).fmt(read self.value, mut f) }
+        }
         extend NonZero<$type> implements FromStr {
             type Error = ParseIntError
             static fn from_str(read input: Text): NonZero<$type> throws ParseIntError {
@@ -3410,14 +3939,33 @@ macro nonzero_common {
 }
 
 macro nonzero_unsigned {
-    ($type:ident) => {
+    ($type:ident, $signed:ident) => {
         extend NonZero<$type> {
-            pub fn is_power_of_two(): bool { self.value.is_power_of_two() }
-            pub fn saturating_add(other: $type): NonZero<$type> { NonZero(self.value.saturating_add(other)) }
-            pub fn saturating_mul(other: NonZero<$type>): NonZero<$type> {
-                NonZero(self.value.saturating_mul(other.value))
+            pub const fn bit_width(): NonZero<u32> {
+                NonZero($type.BITS - self.value.leading_zeros())
             }
-            pub fn saturating_pow(exponent: u32): NonZero<$type> { NonZero(self.value.saturating_pow(exponent)) }
+            pub const fn is_power_of_two(): bool { self.value.is_power_of_two() }
+            pub const fn saturating_add(other: $type): NonZero<$type> {
+                NonZero(self.value.saturating_add(other))
+            }
+            pub const fn checked_next_power_of_two(): NonZero<$type>? {
+                match self.value.checked_next_power_of_two() {
+                    present(value) => present(NonZero(value)),
+                    none => none
+                }
+            }
+            pub const fn div_ceil(rhs: NonZero<$type>): NonZero<$type> {
+                NonZero(self.value.div_ceil(rhs.value))
+            }
+            pub const fn midpoint(rhs: NonZero<$type>): NonZero<$type> {
+                NonZero(self.value.midpoint(rhs.value))
+            }
+            pub const fn isqrt(): NonZero<$type> {
+                NonZero(self.value.isqrt())
+            }
+            pub const fn cast_signed(): NonZero<$signed> {
+                NonZero(self.value as $signed)
+            }
         }
         extend $type implements Div<NonZero<$type>> {
             type Output = $type
@@ -3439,14 +3987,55 @@ macro nonzero_unsigned {
 macro nonzero_signed {
     ($type:ident, $unsigned:ident) => {
         extend NonZero<$type> {
-            pub fn abs(): NonZero<$type> { NonZero(self.value.abs()) }
-            pub fn unsigned_abs(): NonZero<$unsigned> { NonZero(self.value.unsigned_abs()) }
-            pub fn is_positive(): bool { self.value > 0 }
-            pub fn is_negative(): bool { self.value < 0 }
+            pub const fn abs(): NonZero<$type> { NonZero(self.value.abs()) }
+            pub const fn unsigned_abs(): NonZero<$unsigned> {
+                NonZero(self.value.unsigned_abs())
+            }
+            pub const fn is_positive(): bool { self.value > 0 }
+            pub const fn is_negative(): bool { self.value < 0 }
+            pub const fn checked_abs(): NonZero<$type>? {
+                match self.value.checked_abs() {
+                    present(value) => present(NonZero(value)),
+                    none => none
+                }
+            }
+            pub const fn checked_neg(): NonZero<$type>? {
+                match self.value.checked_neg() {
+                    present(value) => present(NonZero(value)),
+                    none => none
+                }
+            }
+            pub const fn overflowing_abs(): (NonZero<$type>, bool) {
+                let result = self.value.overflowing_abs()
+                (NonZero(result.0), result.1)
+            }
+            pub const fn overflowing_neg(): (NonZero<$type>, bool) {
+                let result = self.value.overflowing_neg()
+                (NonZero(result.0), result.1)
+            }
+            pub const fn saturating_abs(): NonZero<$type> {
+                NonZero(self.value.saturating_abs())
+            }
+            pub const fn saturating_neg(): NonZero<$type> {
+                NonZero(self.value.saturating_neg())
+            }
+            pub const fn wrapping_abs(): NonZero<$type> {
+                NonZero(self.value.wrapping_abs())
+            }
+            pub const fn wrapping_neg(): NonZero<$type> {
+                NonZero(self.value.wrapping_neg())
+            }
+            pub const fn cast_unsigned(): NonZero<$unsigned> {
+                NonZero(self.value as $unsigned)
+            }
         }
         extend NonZero<$type> implements Neg {
             type Output = NonZero<$type>
             fn neg(): NonZero<$type> { NonZero(-self.value) }
+        }
+        extend<region receiver_region> read NonZero<$type> from receiver_region implements Neg {
+            type Output = NonZero<$type>
+            fn neg(): NonZero<$type> { -(*self) }
         }
     };
 }
@@ -3458,6 +4047,35 @@ macro nonzero_from {
             extend NonZero<$target> implements From<NonZero<$source>> {
                 static fn from(take value: NonZero<$source>): NonZero<$target> {
                     NonZero(value.value as $target)
+                }
+            }
+        )*
+    };
+}
+
+macro nonzero_try_from_value {
+    ($type:ident) => {
+        extend NonZero<$type> implements TryFrom<$type> {
+            type Error = TryFromIntError
+            static fn try_from(take value: $type): Outcome<NonZero<$type>, TryFromIntError> {
+                if value == 0 { failure(TryFromIntError()) } else { success(NonZero(value)) }
+            }
+        }
+    };
+}
+
+macro nonzero_try_from {
+    ($target:ident; $($source:ident),*) => {
+        $(
+            extend NonZero<$target> implements TryFrom<NonZero<$source>> {
+                type Error = TryFromIntError
+                static fn try_from(
+                    take value: NonZero<$source>
+                ): Outcome<NonZero<$target>, TryFromIntError> {
+                    match $target.(TryFrom<$source>).try_from(value.value) {
+                        success(converted) => success(NonZero(converted)),
+                        failure(error) => failure(error)
+                    }
                 }
             }
         )*
@@ -3477,12 +4095,12 @@ nonzero_common!(u64)
 nonzero_common!(u128)
 nonzero_common!(usize)
 
-nonzero_unsigned!(u8)
-nonzero_unsigned!(u16)
-nonzero_unsigned!(u32)
-nonzero_unsigned!(u64)
-nonzero_unsigned!(u128)
-nonzero_unsigned!(usize)
+nonzero_unsigned!(u8, i8)
+nonzero_unsigned!(u16, i16)
+nonzero_unsigned!(u32, i32)
+nonzero_unsigned!(u64, i64)
+nonzero_unsigned!(u128, i128)
+nonzero_unsigned!(usize, isize)
 
 nonzero_signed!(i8, u8)
 nonzero_signed!(i16, u16)
@@ -3501,6 +4119,32 @@ nonzero_from!(i32; u8, u16, i8, i16)
 nonzero_from!(i64; u8, u16, u32, i8, i16, i32)
 nonzero_from!(i128; u8, u16, u32, u64, i8, i16, i32, i64)
 nonzero_from!(isize; u8, i8, i16)
+
+nonzero_try_from_value!(i8)
+nonzero_try_from_value!(i16)
+nonzero_try_from_value!(i32)
+nonzero_try_from_value!(i64)
+nonzero_try_from_value!(i128)
+nonzero_try_from_value!(isize)
+nonzero_try_from_value!(u8)
+nonzero_try_from_value!(u16)
+nonzero_try_from_value!(u32)
+nonzero_try_from_value!(u64)
+nonzero_try_from_value!(u128)
+nonzero_try_from_value!(usize)
+
+nonzero_try_from!(u8; u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize)
+nonzero_try_from!(u16; u32, u64, u128, usize, i8, i16, i32, i64, i128, isize)
+nonzero_try_from!(u32; u64, u128, usize, i8, i16, i32, i64, i128, isize)
+nonzero_try_from!(u64; u128, usize, i8, i16, i32, i64, i128, isize)
+nonzero_try_from!(u128; usize, i8, i16, i32, i64, i128, isize)
+nonzero_try_from!(usize; u32, u64, u128, i8, i16, i32, i64, i128, isize)
+nonzero_try_from!(i8; u8, u16, u32, u64, u128, usize, i16, i32, i64, i128, isize)
+nonzero_try_from!(i16; u16, u32, u64, u128, usize, i32, i64, i128, isize)
+nonzero_try_from!(i32; u32, u64, u128, usize, i64, i128, isize)
+nonzero_try_from!(i64; u64, u128, usize, i128, isize)
+nonzero_try_from!(i128; u128, usize, isize)
+nonzero_try_from!(isize; u16, u32, u64, u128, usize, i32, i64, i128)
 
 // Decimal text of an integer, formatted into a fixed buffer that holds the longest value.
 pub type NumBuffer<T> { bytes: [u8; 40]; marker: Phantom<T> }

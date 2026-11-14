@@ -19,6 +19,8 @@ pub interface TryInto<T>: Sized {
     take fn try_into(): (Outcome<T, Self.Error>);
 }
 
+pub const fn identity<T>(take value: T): T { value }
+
 extend<T> T implements From<T> {
     static fn from(take value: T): T { value }
 }
@@ -45,10 +47,10 @@ extend<T, U> T implements Into<U> where U: From<T> {
     take fn into(): U { U.(From<T>).from(self) }
 }
 
-extend<T> T implements TryFrom<T> {
+extend<T, U> T implements TryFrom<U> where U: Into<T> {
     type Error = Never
-    static fn try_from(take value: T): (Outcome<T, Never>) {
-        success(value)
+    static fn try_from(take value: U): (Outcome<T, Never>) {
+        success(value.into())
     }
 }
 
