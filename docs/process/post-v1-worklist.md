@@ -143,6 +143,12 @@ they bucket by reference path, not by native file). They are not effort ratings.
 Sequencing (implementation-plan.md section 8.6): I17 depends on I14, not I15,
 and may proceed alongside I15-I16.
 
+Group F includes two rows for calling a closure wrapped in `AssertUnwindSafe`
+(the `FnOnce<()>` implementation and its `Output`). Mettle accepts only functions and closures
+as callables, not named wrapper types, and `Deref` alone does not make the wrapper
+callable. These rows need compiler support to consume the enclosed closure safely,
+so they follow the compiler-first rule rather than a library workaround.
+
 - Groups C-J are Mettle library work under `library/` and can start after I14.
   Split by file; D-J extend V1 types, so serialize work within a module.
 - Groups A and B wait for compiler support for vector types and instruction
