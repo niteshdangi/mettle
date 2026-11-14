@@ -29,9 +29,9 @@ fn borrow_text<T: Borrow<Text>>(read owner: T): usize {
 }
 
 fn main(): i32 {
-    let boxed_owner = boxed.Box<Value>.(From<Value>).from(Value(31))
-    let local_owner = rc.Rc<Value>.(From<Value>).from(Value(32))
-    let atomic = arc.Arc<Value>.(From<Value>).from(Value(33))
+    let boxed_owner = boxed.Heap<Value>.(From<Value>).from(Value(31))
+    let local_owner = rc.LocalShared<Value>.(From<Value>).from(Value(32))
+    let atomic = arc.Shared<Value>.(From<Value>).from(Value(33))
     if as_ref_value(boxed_owner) != 31 ||
         borrow_value(boxed_owner) != 31 ||
         as_ref_value(local_owner) != 32 ||
@@ -55,13 +55,13 @@ fn main(): i32 {
 
     var drops = 0
     {
-        let _boxed_drop = boxed.Box<DropValue>.(From<DropValue>).from(
+        let _boxed_drop = boxed.Heap<DropValue>.(From<DropValue>).from(
             DropValue(core.ptr.from_mut(drops))
         )
-        let _local_drop = rc.Rc<DropValue>.(From<DropValue>).from(
+        let _local_drop = rc.LocalShared<DropValue>.(From<DropValue>).from(
             DropValue(core.ptr.from_mut(drops))
         )
-        let _atomic_drop = arc.Arc<DropValue>.(From<DropValue>).from(
+        let _atomic_drop = arc.Shared<DropValue>.(From<DropValue>).from(
             DropValue(core.ptr.from_mut(drops))
         )
     }

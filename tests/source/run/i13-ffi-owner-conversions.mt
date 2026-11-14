@@ -1,6 +1,6 @@
 // profiles: debug release
 import alloc.borrow.BorrowedOrOwned
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import alloc.vec
 import alloc.vec.List
 import core.borrow.ToOwned
@@ -19,15 +19,15 @@ fn main(): i32 {
     if !CString.(PartialEq<BorrowedOrOwned<region static, CStr>>).eq(owned, moved.clone()) { return 2 }
     if !CString.(From<BorrowedOrOwned<region static, CStr>>).from(borrowed).eq(owned) { return 3 }
     if !CString.(From<BorrowedOrOwned<region static, CStr>>).from(moved).eq(owned) { return 4 }
-    let boxed = Box<CStr>.(From<CString>).from(cstr.to_owned())
-    if !CString.(From<Box<CStr>>).from(boxed).eq(owned) { return 5 }
+    let boxed = Heap<CStr>.(From<CString>).from(cstr.to_owned())
+    if !CString.(From<Heap<CStr>>).from(boxed).eq(owned) { return 5 }
 
     let word = std.ffi.os_str("ab".as_bytes())
     let os_borrowed: BorrowedOrOwned<region static, OsStr> = BorrowedOrOwned.Borrowed(read *word)
     let os_owned: BorrowedOrOwned<region static, OsStr> = BorrowedOrOwned.Owned(word.to_owned())
     if !OsString.(From<BorrowedOrOwned<region static, OsStr>>).from(os_borrowed.clone()).eq(os_string_from_text("ab")) { return 6 }
-    let os_box = Box<OsStr>.(From<OsString>).from(os_string_from_text("ab"))
-    if !OsString.(From<Box<OsStr>>).from(os_box).eq(os_string_from_text("ab")) { return 7 }
+    let os_box = Heap<OsStr>.(From<OsString>).from(os_string_from_text("ab"))
+    if !OsString.(From<Heap<OsStr>>).from(os_box).eq(os_string_from_text("ab")) { return 7 }
 
     let views: List<read OsStr from static> = List<read OsStr from static>.(From<[read OsStr from static; 2]>).from([word, word])
     if !OsString.(FromItems<read OsStr from static>).from_iter(views).eq(os_string_from_text("abab")) { return 8 }

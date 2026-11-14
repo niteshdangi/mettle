@@ -455,7 +455,7 @@ extend<T, A: Allocator> List<T, A> {
         unsafe { mut *view }
     }
 
-    pub take fn into_boxed_slice(): super.boxed.Box<[T], A> {
+    pub take fn into_heap_slice(): super.boxed.Heap<[T], A> {
         let size = core.mem.size_of<T>()
         let old_ptr = self.ptr
         let old_cap = self.cap
@@ -1181,9 +1181,9 @@ extend<T, const N: usize, A: Allocator> [T; N] implements TryFrom<List<T, A>> {
     }
 }
 
-// The boxed slice's allocation becomes the list's buffer; nothing is copied.
-extend<T, A: Allocator> List<T, A> implements From<super.boxed.Box<[T], A>> {
-    static fn from(take items: super.boxed.Box<[T], A>): List<T, A> {
+// The heap slice's allocation becomes the list's buffer; nothing is copied.
+extend<T, A: Allocator> List<T, A> implements From<super.boxed.Heap<[T], A>> {
+    static fn from(take items: super.boxed.Heap<[T], A>): List<T, A> {
         let length = items.get().len()
         let raw = items.into_raw()
         var list = new_in<T, A>(take raw.1)

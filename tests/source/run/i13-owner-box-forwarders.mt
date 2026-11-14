@@ -55,7 +55,7 @@ type DropItem {
 }
 
 fn check_boxed_iterator<I: Iterator<Item = i32> + BidirectionalIterator + ExactSizeIterator + FusedIterator + unsized>(
-    take items: boxed.Box<I>
+    take items: boxed.Heap<I>
 ): bool {
     var values = items
     if values.len() != 4usize { return false }
@@ -92,7 +92,7 @@ fn main(): i32 {
 
     if !check_boxed_iterator(boxed.new(0i32..4i32)) { return 3 }
 
-    var values: boxed.Box<[i32]> = collect(
+    var values: boxed.Heap<[i32]> = collect(
         once(1i32).chain(once(2i32)).chain(once(3i32))
     )
     var total = 0i32
@@ -101,35 +101,35 @@ fn main(): i32 {
     for value in read values { total += *value }
     if total != 24i32 { return 4 }
 
-    let collected_chars: boxed.Box<Text> = collect(
+    let collected_chars: boxed.Heap<Text> = collect(
         once('o').chain(once('k'))
     )
     if collected_chars.get() != "ok" { return 5 }
 
     let chars = ['r', 'e']
-    let borrowed_chars: boxed.Box<Text> = collect(
+    let borrowed_chars: boxed.Heap<Text> = collect(
         once(read chars[0usize]).chain(once(read chars[1usize]))
     )
     if borrowed_chars.get() != "re" { return 6 }
 
-    let collected_parts: boxed.Box<Text> = collect(
+    let collected_parts: boxed.Heap<Text> = collect(
         once("box").chain(once("ed"))
     )
     if collected_parts.get() != "boxed" { return 7 }
 
-    let collected_strings: boxed.Box<Text> = collect(
+    let collected_strings: boxed.Heap<Text> = collect(
         once(string.from_text("str")).chain(once(string.from_text("ing")))
     )
     if collected_strings.get() != "string" { return 8 }
 
-    let collected_boxes: boxed.Box<Text> = collect(
+    let collected_boxes: boxed.Heap<Text> = collect(
         once(boxed.copy_text("boxed")).chain(once(boxed.copy_text(" text")))
     )
     if collected_boxes.get() != "boxed text" { return 9 }
 
     var drops = 0
     {
-        let items: boxed.Box<[DropItem]> = collect(
+        let items: boxed.Heap<[DropItem]> = collect(
             once(DropItem(core.ptr.from_mut(drops)))
             .chain(once(DropItem(core.ptr.from_mut(drops))))
             .chain(once(DropItem(core.ptr.from_mut(drops))))

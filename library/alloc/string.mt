@@ -14,8 +14,8 @@ import core.text.{
     from_utf8_unchecked,
     from_utf8_unchecked_mut
 }
-extend<A: Allocator> String implements ExtendItems<alloc.boxed.Box<Text, A>> {
-    mut fn extend<I: OwnedIterable<Item = alloc.boxed.Box<Text, A>>>(
+extend<A: Allocator> String implements ExtendItems<alloc.boxed.Heap<Text, A>> {
+    mut fn extend<I: OwnedIterable<Item = alloc.boxed.Heap<Text, A>>>(
         take items: I
     ): Unit {
         var source = items.into_iter()
@@ -27,12 +27,12 @@ extend<A: Allocator> String implements ExtendItems<alloc.boxed.Box<Text, A>> {
         }
     }
 }
-extend<A: Allocator> String implements FromItems<alloc.boxed.Box<Text, A>> {
-    static fn from_iter<I: OwnedIterable<Item = alloc.boxed.Box<Text, A>>>(
+extend<A: Allocator> String implements FromItems<alloc.boxed.Heap<Text, A>> {
+    static fn from_iter<I: OwnedIterable<Item = alloc.boxed.Heap<Text, A>>>(
         take items: I
     ): String {
         var result = new()
-        String.(ExtendItems<alloc.boxed.Box<Text, A>>).extend(mut result, take items)
+        String.(ExtendItems<alloc.boxed.Heap<Text, A>>).extend(mut result, take items)
         result
     }
 }
@@ -534,7 +534,7 @@ extend<A: Allocator> String<A> {
     pub fn substr_range(read substring: Text): core.iter.Range<usize>? {
         self.as_text().substr_range(substring)
     }
-    pub take fn into_boxed_str(): alloc.boxed.Box<Text, A> {
+    pub take fn into_heap_str(): alloc.boxed.Heap<Text, A> {
         alloc.boxed.from_string(take self)
     }
     pub take fn leak(): mut Text from static {
@@ -988,20 +988,20 @@ extend String implements From<char> {
         result
     }
 }
-extend<A: Allocator> String<A> implements From<alloc.boxed.Box<Text, A>> {
+extend<A: Allocator> String<A> implements From<alloc.boxed.Heap<Text, A>> {
     static fn from(
-        take value: alloc.boxed.Box<Text, A>
+        take value: alloc.boxed.Heap<Text, A>
     ): String<A> {
         let raw = value.into_raw()
         // Text and byte slices share length metadata and retain the allocator.
         let bytes_pointer = unsafe {
             core.mem.transmute<ptr<mut [u8]>>(raw.0)
         }
-        let byte_box: alloc.boxed.Box<[u8], A> = unsafe {
+        let byte_box: alloc.boxed.Heap<[u8], A> = unsafe {
             alloc.boxed.from_raw_in(bytes_pointer, raw.1)
         }
         let bytes = List<u8, A>.(
-            From<alloc.boxed.Box<[u8], A>>
+            From<alloc.boxed.Heap<[u8], A>>
         ).from(take byte_box)
         from_valid_bytes(take bytes)
     }

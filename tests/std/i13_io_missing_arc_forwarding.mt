@@ -55,8 +55,8 @@ fn run(): i32 throws Error {
     let raw = file.as_raw_fd()
     var first = arc.new(SharedOnly(file))
     var second = first.clone()
-    assert(try read_byte(mut first) == 97u8, "Arc forwards shared-only Reader")
-    assert(try position(mut second) == 1u64, "cloned Arc shares the OS offset")
+    assert(try read_byte(mut first) == 97u8, "Shared forwards shared-only Reader")
+    assert(try position(mut second) == 1u64, "cloned Shared shares the OS offset")
     try write_bytes(mut second, "XY".as_bytes())
     assert(try position(mut first) == 3u64, "shared-only Writer advances the same offset")
     assert(try read_byte(mut first) == 100u8, "read observes the shared writer position")
@@ -64,20 +64,20 @@ fn run(): i32 throws Error {
     var content = [0u8; 6]
     try first.read_exact(mut content)
     let actual: read [u8] = read content
-    assert(actual == "aXYdef".as_bytes(), "writes preserve data through both Arc handles")
+    assert(actual == "aXYdef".as_bytes(), "writes preserve data through both Shared handles")
     core.mem.drop(take first)
     try rewind(mut second)
-    assert(try read_byte(mut second) == 97u8, "dropping one Arc does not close the file")
+    assert(try read_byte(mut second) == 97u8, "dropping one Shared does not close the file")
     core.mem.drop(take second)
     var byte = [0u8]
     match take capture std.io.read_fd(raw, mut byte) {
-        failure(error) => { assert(error.raw_os_error() == present(9i32), "last Arc closes the shared file exactly once") },
+        failure(error) => { assert(error.raw_os_error() == present(9i32), "last Shared closes the shared file exactly once") },
         success(_) => { return 1 }
     }
 
     var readonly = arc.new(try File.open(path))
     match take capture write_bytes(mut readonly, "x".as_bytes()) {
-        failure(error) => { assert(error.raw_os_error() == present(9i32), "Arc preserves OS write errors") },
+        failure(error) => { assert(error.raw_os_error() == present(9i32), "Shared preserves OS write errors") },
         success(_) => { return 2 }
     }
     assert(try read_byte(mut readonly) == 97u8, "failed writes preserve the live shared handle and cursor")

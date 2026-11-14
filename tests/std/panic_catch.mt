@@ -1,17 +1,17 @@
 // expect-stdout: hook: main caught\nhook: replacement cleanup\nhook: nested inner\nhook: nested outer\ncontinued\n
 import alloc.arc
-import alloc.arc.Arc
+import alloc.arc.Shared
 import std.panic.CatchResult
 
 type Counted {
-    drops: Arc<core.sync.atomic.AtomicUsize>
+    drops: Shared<core.sync.atomic.AtomicUsize>
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
     }
 }
 
 type Replacement {
-    drops: Arc<core.sync.atomic.AtomicUsize>
+    drops: Shared<core.sync.atomic.AtomicUsize>
     value: i32
     panic_on_drop: bool
     drop {

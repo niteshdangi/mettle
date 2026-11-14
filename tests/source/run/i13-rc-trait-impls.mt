@@ -53,8 +53,8 @@ fn hash_matches<T: Hash>(read value: T, read expected: i32): bool {
 }
 
 fn main(): i32 {
-    let one = rc.Rc<i32>.(From<i32>).from(1)
-    let two = rc.Rc<i32>.(From<i32>).from(2)
+    let one = rc.LocalShared<i32>.(From<i32>).from(1)
+    let two = rc.LocalShared<i32>.(From<i32>).from(2)
     if one == two || !(one < two) { return 1 }
     match one.cmp(two) {
         Ordering.Less => {},
@@ -64,27 +64,27 @@ fn main(): i32 {
     let _partial: core.cmp.Ordering? = one.partial_cmp(two)
     let dereferenced: read i32 = one.deref()
     if *dereferenced != 1 { return 3 }
-    let borrowed: read i32 = rc.Rc<i32>.(Borrow<i32>).borrow(one)
+    let borrowed: read i32 = rc.LocalShared<i32>.(Borrow<i32>).borrow(one)
     if *borrowed != 1 { return 4 }
     if !debug_is(one, "1") || !display_is(one, "1") { return 5 }
     if !hash_matches(one, 1) { return 6 }
 
     let values = List<i32>.(From<[i32; 2]>).from([3, 4])
-    let slice = rc.Rc<[i32]>.(FromItems<i32>).from_iter(values.into_iter())
+    let slice = rc.LocalShared<[i32]>.(FromItems<i32>).from_iter(values.into_iter())
     if slice.get().len() != 2usize || slice.get()[1usize] != 4 { return 7 }
 
-    let array_slice = rc.Rc<[i32]>.(From<[i32; 3]>).from([5, 6, 7])
+    let array_slice = rc.LocalShared<[i32]>.(From<[i32; 3]>).from([5, 6, 7])
     if array_slice.get().len() != 3usize || array_slice.get()[2usize] != 7 {
         return 10
     }
-    match take rc.Rc<[i32; 3]>.(TryFrom<rc.Rc<[i32]>>).try_from(array_slice) {
+    match take rc.LocalShared<[i32; 3]>.(TryFrom<rc.LocalShared<[i32]>>).try_from(array_slice) {
         success(array) => {
             if array.get()[0usize] != 5 || array.get()[2usize] != 7 { return 11 }
         },
         failure(_) => { return 12 }
     }
-    let wrong_length = rc.Rc<[i32]>.(From<[i32; 2]>).from([8, 9])
-    match take rc.Rc<[i32; 3]>.(TryFrom<rc.Rc<[i32]>>).try_from(wrong_length) {
+    let wrong_length = rc.LocalShared<[i32]>.(From<[i32; 2]>).from([8, 9])
+    match take rc.LocalShared<[i32; 3]>.(TryFrom<rc.LocalShared<[i32]>>).try_from(wrong_length) {
         success(_) => { return 13 },
         failure(original) => {
             if original.get().len() != 2usize || original.get()[1usize] != 9 {
@@ -93,12 +93,12 @@ fn main(): i32 {
         }
     }
 
-    let erased: rc.Rc<any Any> = rc.new(25i32)
+    let erased: rc.LocalShared<any Any> = rc.new(25i32)
     match take erased.downcast<i32>() {
         success(value) => { if *value.get() != 25 { return 15 } },
         failure(_) => { return 16 }
     }
-    let erased_wrong: rc.Rc<any Any> = rc.new(26i32)
+    let erased_wrong: rc.LocalShared<any Any> = rc.new(26i32)
     match take erased_wrong.downcast<u32>() {
         success(_) => { return 17 },
         failure(value) => {

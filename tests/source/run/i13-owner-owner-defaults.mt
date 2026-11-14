@@ -12,27 +12,27 @@ extend Seed implements Default {
 fn default_value<T: Default>(): T { T.(Default).default() }
 
 fn main(): i32 {
-    let boxed_value = default_value<boxed.Box<Seed>>()
-    let local_value = default_value<rc.Rc<Seed>>()
-    let atomic_value = default_value<arc.Arc<Seed>>()
+    let boxed_value = default_value<boxed.Heap<Seed>>()
+    let local_value = default_value<rc.LocalShared<Seed>>()
+    let atomic_value = default_value<arc.Shared<Seed>>()
     if boxed_value.get().value != 73 ||
         local_value.get().value != 73 ||
         atomic_value.get().value != 73 {
         return 1
     }
 
-    let boxed_slice = default_value<boxed.Box<[Seed]>>()
-    let local_slice = default_value<rc.Rc<[Seed]>>()
-    let atomic_slice = default_value<arc.Arc<[Seed]>>()
+    let boxed_slice = default_value<boxed.Heap<[Seed]>>()
+    let local_slice = default_value<rc.LocalShared<[Seed]>>()
+    let atomic_slice = default_value<arc.Shared<[Seed]>>()
     if boxed_slice.get().len() != 0usize ||
         local_slice.get().len() != 0usize ||
         atomic_slice.get().len() != 0usize {
         return 2
     }
 
-    let boxed_text = default_value<boxed.Box<core.text.Text>>()
-    let local_text = default_value<rc.Rc<core.text.Text>>()
-    let atomic_text = default_value<arc.Arc<core.text.Text>>()
+    let boxed_text = default_value<boxed.Heap<core.text.Text>>()
+    let local_text = default_value<rc.LocalShared<core.text.Text>>()
+    let atomic_text = default_value<arc.Shared<core.text.Text>>()
     if boxed_text.get().len() != 0usize ||
         local_text.get().len() != 0usize ||
         atomic_text.get().len() != 0usize {

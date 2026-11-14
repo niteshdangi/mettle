@@ -88,7 +88,7 @@ fn main(): i32 {
     unsafe { spliced.set_len(5usize) }
     if spliced[4usize] != 10 { return 23 }
     spliced.shrink_to(5usize)
-    let boxed = spliced.into_boxed_slice()
+    let boxed = spliced.into_heap_slice()
     if boxed.get().len() != 5usize || boxed.get()[4usize] != 10 { return 24 }
     var to_leak = alloc.vec.new<i32>()
     to_leak.push(42)

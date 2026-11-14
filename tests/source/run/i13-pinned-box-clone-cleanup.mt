@@ -71,7 +71,7 @@ fn main(): i32 {
             let copied = core.ptr.from_ref(duplicate.get_ref())
             assert(original != copied && copied.addr() % 64usize == 0usize &&
                 duplicate.get_ref().value == 17 && owner.get_ref().value == 17,
-                "cloned pinned Box owns a distinct aligned allocation")
+                "cloned pinned Heap owns a distinct aligned allocation")
             let moved_handle = duplicate
             assert(core.ptr.from_ref(moved_handle.get_ref()) == copied, "moving the pin handle does not move its cloned payload")
         }

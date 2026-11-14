@@ -201,7 +201,7 @@ fn main(): i32 {
     var sc = vec.with_capacity<i32>(4usize)
     sc.push(1)
     if sc.spare_capacity_mut().len() < 3usize { return 43 }
-    let boxed = filled(3).into_boxed_slice()
+    let boxed = filled(3).into_heap_slice()
     if boxed.get().len() != 3usize { return 44 }
     let leaked = filled(2).leak()
     if leaked.len() != 2usize { return 45 }
@@ -223,7 +223,7 @@ fn main(): i32 {
     let same = [1, 2, 3]
     let other = [1, 2, 4]
     if !(from_array == same) || from_array == other { return 53 }
-    let boxed_back = List<i32>.(From<alloc.boxed.Box<[i32]>>).from(from_array.into_boxed_slice())
+    let boxed_back = List<i32>.(From<alloc.boxed.Heap<[i32]>>).from(from_array.into_heap_slice())
     if boxed_back.len() != 3usize || boxed_back[1usize] != 2 { return 54 }
     // Accessors, iteration and slice-owned conversions.
     var acc = filled(4)

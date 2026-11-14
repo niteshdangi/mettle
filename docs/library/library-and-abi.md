@@ -131,7 +131,7 @@ provides borrowed iteration and `FromItems`/`ExtendItems` (over any
 the matching `core.cmp`, `core.hash`, `core.ops` (`Deref`, `IndexRange`) and
 `core.fmt` interfaces; `String` is a `core.fmt.Write` sink.
 
-`Box<[T; N], A>` supports consuming, borrowed and mutable iteration. Consuming
+`Heap<[T; N], A>` supports consuming, borrowed and mutable iteration. Consuming
 iteration yields each initialized `T` by move and keeps the original allocation,
 layout and allocator with the iterator; dropping a partially consumed iterator
 drops only the remaining elements, exactly once, before deallocation. Borrowed

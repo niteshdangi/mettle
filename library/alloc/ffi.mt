@@ -10,7 +10,7 @@ import core.iter.{Iterator, OwnedIterable}
 import core.ops.Deref
 import core.text.{FromStr, Text, Utf8Error}
 import super.borrow.BorrowedOrOwned
-import super.boxed.Box
+import super.boxed.Heap
 import super.string.String
 import super.vec
 import super.vec.List
@@ -135,20 +135,20 @@ extend CString {
             none => core.panic.panic("invalid C string")
         }
     }
-    pub take fn into_boxed_c_str(): Box<CStr> {
-        let raw = self.v.into_boxed_slice().into_raw()
+    pub take fn into_heap_c_str(): Heap<CStr> {
+        let raw = self.v.into_heap_slice().into_raw()
         let pointer = unsafe { core.mem.transmute<ptr<mut CStr>>(raw.0) }
         unsafe { super.boxed.from_raw_in(pointer, raw.1) }
     }
-    pub take fn into_raw(): ptr<mut i8> { self.into_boxed_c_str().into_raw().0.cast<i8>() }
+    pub take fn into_raw(): ptr<mut i8> { self.into_heap_c_str().into_raw().0.cast<i8>() }
 
     // Safety: the exact outstanding into_raw pointer retains its original first NUL and allocation.
     pub static unsafe fn from_raw(pointer: ptr<mut i8>): CString {
         let length = unsafe { CStr.from_ptr(pointer.cast_const()) }.count_bytes() + 1usize
         let bytes = vec.slice_ptr_mut(pointer.cast<u8>(), length)
         let view = unsafe { core.mem.transmute<ptr<mut CStr>>(bytes) }
-        let boxed: Box<CStr> = unsafe { super.boxed.from_raw(view) }
-        CString.(core.convert.From<Box<CStr>>).from(take boxed)
+        let boxed: Heap<CStr> = unsafe { super.boxed.from_raw(view) }
+        CString.(core.convert.From<Heap<CStr>>).from(take boxed)
     }
     pub take fn into_string(): String throws IntoStringError {
         let invalid = match core.text.from_utf8(self.as_bytes()) {
@@ -170,17 +170,17 @@ extend CStr {
     pub fn into_c_string(): CString { self.to_owned() }
 }
 
-extend CString implements core.convert.From<Box<CStr>> {
-    static fn from(take value: Box<CStr>): CString {
+extend CString implements core.convert.From<Heap<CStr>> {
+    static fn from(take value: Heap<CStr>): CString {
         let raw = value.into_raw()
         let pointer = unsafe { core.mem.transmute<ptr<mut [u8]>>(raw.0) }
-        let bytes: Box<[u8]> = unsafe { super.boxed.from_raw_in(pointer, raw.1) }
-        CString(List<u8>.(core.convert.From<Box<[u8]>>).from(take bytes))
+        let bytes: Heap<[u8]> = unsafe { super.boxed.from_raw_in(pointer, raw.1) }
+        CString(List<u8>.(core.convert.From<Heap<[u8]>>).from(take bytes))
     }
 }
-extend Box<CStr> {
+extend Heap<CStr> {
     pub take fn into_c_string(): CString {
-        CString.(core.convert.From<Box<CStr>>).from(take self)
+        CString.(core.convert.From<Heap<CStr>>).from(take self)
     }
 }
 extend<region r> CString implements core.convert.From<BorrowedOrOwned<region r, CStr>> {

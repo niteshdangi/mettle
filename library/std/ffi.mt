@@ -4,9 +4,9 @@
 // C string is required (`cstring`).
 import alloc.vec
 import alloc.vec.List
-import alloc.boxed.Box
-import alloc.arc.Arc
-import alloc.rc.Rc
+import alloc.boxed.Heap
+import alloc.arc.Shared
+import alloc.rc.LocalShared
 import alloc.borrow.BorrowedOrOwned
 import alloc.alloc.AllocError
 import alloc.string.String
@@ -243,9 +243,9 @@ extend OsString {
     }
     pub take fn into_bytes(): List<u8> { self.v }
     pub take fn into_encoded_bytes(): List<u8> { self.v }
-    pub take fn into_boxed_os_str(): Box<OsStr> {
-        let raw = self.v.into_boxed_slice().into_raw()
-        // OsStr preserves the boxed byte slice's layout and length metadata.
+    pub take fn into_heap_os_str(): Heap<OsStr> {
+        let raw = self.v.into_heap_slice().into_raw()
+        // OsStr preserves the heap byte slice's layout and length metadata.
         let pointer = unsafe { core.mem.transmute<ptr<mut OsStr>>(raw.0) }
         unsafe { alloc.boxed.from_raw_in(pointer, raw.1) }
     }
@@ -545,69 +545,69 @@ extend<region r, T: AsRef<OsStr> + unsized> OsString implements core.convert.Fro
     }
 }
 
-extend OsString implements core.convert.From<Box<OsStr>> {
-    static fn from(take value: Box<OsStr>): OsString {
+extend OsString implements core.convert.From<Heap<OsStr>> {
+    static fn from(take value: Heap<OsStr>): OsString {
         let raw = value.into_raw()
         let pointer = unsafe { core.mem.transmute<ptr<mut [u8]>>(raw.0) }
-        let bytes: Box<[u8]> = unsafe { alloc.boxed.from_raw_in(pointer, raw.1) }
-        OsString(List<u8>.(core.convert.From<Box<[u8]>>).from(take bytes))
+        let bytes: Heap<[u8]> = unsafe { alloc.boxed.from_raw_in(pointer, raw.1) }
+        OsString(List<u8>.(core.convert.From<Heap<[u8]>>).from(take bytes))
     }
 }
 
-extend Box<OsStr> {
+extend Heap<OsStr> {
     pub take fn into_os_string(): OsString {
-        OsString.(core.convert.From<Box<OsStr>>).from(take self)
+        OsString.(core.convert.From<Heap<OsStr>>).from(take self)
     }
 }
 
-extend Arc<OsStr> implements From<OsString> {
-    static fn from(take value: OsString): Arc<OsStr> {
-        Arc<OsStr>.(From<Box<OsStr>>).from(value.into_boxed_os_str())
+extend Shared<OsStr> implements From<OsString> {
+    static fn from(take value: OsString): Shared<OsStr> {
+        Shared<OsStr>.(From<Heap<OsStr>>).from(value.into_heap_os_str())
     }
 }
-extend Box<OsStr> implements From<OsString> {
-    static fn from(take value: OsString): Box<OsStr> {
-        value.into_boxed_os_str()
+extend Heap<OsStr> implements From<OsString> {
+    static fn from(take value: OsString): Heap<OsStr> {
+        value.into_heap_os_str()
     }
 }
-extend<region r> Box<OsStr> implements From<read OsStr from r> {
-    static fn from(take value: read OsStr from r): Box<OsStr> {
-        value.to_os_string().into_boxed_os_str()
+extend<region r> Heap<OsStr> implements From<read OsStr from r> {
+    static fn from(take value: read OsStr from r): Heap<OsStr> {
+        value.to_os_string().into_heap_os_str()
     }
 }
-extend<region r> Box<OsStr> implements From<mut OsStr from r> {
-    static fn from(take value: mut OsStr from r): Box<OsStr> {
-        value.to_os_string().into_boxed_os_str()
+extend<region r> Heap<OsStr> implements From<mut OsStr from r> {
+    static fn from(take value: mut OsStr from r): Heap<OsStr> {
+        value.to_os_string().into_heap_os_str()
     }
 }
-extend<region r> Box<OsStr> implements From<BorrowedOrOwned<region r, OsStr>> {
-    static fn from(take value: BorrowedOrOwned<region r, OsStr>): Box<OsStr> {
-        value.into_owned().into_boxed_os_str()
+extend<region r> Heap<OsStr> implements From<BorrowedOrOwned<region r, OsStr>> {
+    static fn from(take value: BorrowedOrOwned<region r, OsStr>): Heap<OsStr> {
+        value.into_owned().into_heap_os_str()
     }
 }
-extend Rc<OsStr> implements From<OsString> {
-    static fn from(take value: OsString): Rc<OsStr> {
-        Rc<OsStr>.(From<Box<OsStr>>).from(value.into_boxed_os_str())
+extend LocalShared<OsStr> implements From<OsString> {
+    static fn from(take value: OsString): LocalShared<OsStr> {
+        LocalShared<OsStr>.(From<Heap<OsStr>>).from(value.into_heap_os_str())
     }
 }
-extend<region r> Rc<OsStr> implements From<read OsStr from r> {
-    static fn from(take value: read OsStr from r): Rc<OsStr> {
-        Rc<OsStr>.(From<OsString>).from(value.to_os_string())
+extend<region r> LocalShared<OsStr> implements From<read OsStr from r> {
+    static fn from(take value: read OsStr from r): LocalShared<OsStr> {
+        LocalShared<OsStr>.(From<OsString>).from(value.to_os_string())
     }
 }
-extend<region r> Rc<OsStr> implements From<mut OsStr from r> {
-    static fn from(take value: mut OsStr from r): Rc<OsStr> {
-        Rc<OsStr>.(From<OsString>).from(value.to_os_string())
+extend<region r> LocalShared<OsStr> implements From<mut OsStr from r> {
+    static fn from(take value: mut OsStr from r): LocalShared<OsStr> {
+        LocalShared<OsStr>.(From<OsString>).from(value.to_os_string())
     }
 }
-extend<region r> Arc<OsStr> implements From<read OsStr from r> {
-    static fn from(take value: read OsStr from r): Arc<OsStr> {
-        Arc<OsStr>.(From<OsString>).from(value.to_os_string())
+extend<region r> Shared<OsStr> implements From<read OsStr from r> {
+    static fn from(take value: read OsStr from r): Shared<OsStr> {
+        Shared<OsStr>.(From<OsString>).from(value.to_os_string())
     }
 }
-extend<region r> Arc<OsStr> implements From<mut OsStr from r> {
-    static fn from(take value: mut OsStr from r): Arc<OsStr> {
-        Arc<OsStr>.(From<OsString>).from(value.to_os_string())
+extend<region r> Shared<OsStr> implements From<mut OsStr from r> {
+    static fn from(take value: mut OsStr from r): Shared<OsStr> {
+        Shared<OsStr>.(From<OsString>).from(value.to_os_string())
     }
 }
 

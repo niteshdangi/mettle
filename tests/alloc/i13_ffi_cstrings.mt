@@ -2,7 +2,7 @@ import core.ffi.CStr
 import core.cmp.PartialEq
 import core.convert.From
 import alloc.borrow.BorrowedOrOwned
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import alloc.ffi.{CString, NulError}
 import alloc.string.ToString
 import alloc.vec
@@ -13,8 +13,8 @@ fn main(): i32 {
     let owner = borrowed.to_owned()
     if !CStr.(PartialEq).eq(owner.as_c_str(), borrowed) { return 1 }
     let pointer = owner.as_ptr()
-    let boxed = owner.into_boxed_c_str()
-    let moved = CString.(From<Box<CStr>>).from(take boxed)
+    let boxed = owner.into_heap_c_str()
+    let moved = CString.(From<Heap<CStr>>).from(take boxed)
     if moved.as_ptr() != pointer { return 2 }
     let raw = moved.into_raw()
     unsafe { *raw = 98i8 }

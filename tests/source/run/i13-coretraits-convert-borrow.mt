@@ -7,7 +7,7 @@ import core.convert.From
 import core.convert.Into
 import core.convert.TryFrom
 import core.convert.TryInto
-import alloc.boxed.Box
+import alloc.boxed.Heap
 
 type Wrapped { value: i32 }
 enum ConversionError { Negative }
@@ -32,8 +32,8 @@ extend Positive implements TryFrom<i32> {
     }
 }
 
-type OwnedInput { value: Box<i32> }
-type OwnedOutput { value: Box<i32> }
+type OwnedInput { value: Heap<i32> }
+type OwnedOutput { value: Heap<i32> }
 extend OwnedInput implements Into<OwnedOutput> {
     take fn into(): OwnedOutput { OwnedOutput(self.value) }
 }

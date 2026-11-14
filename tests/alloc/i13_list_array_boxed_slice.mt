@@ -1,5 +1,5 @@
 import alloc.boxed
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import alloc.vec
 import alloc.vec.List
 import core.convert.{From, TryFrom}
@@ -21,7 +21,7 @@ fn main(): i32 {
         failure(returned) => { if returned.len() != 1usize { return 4 } }
     }
 
-    let slice = Box<[i32]>.(From<[i32; 3]>).from([4, 5, 6])
+    let slice = Heap<[i32]>.(From<[i32; 3]>).from([4, 5, 6])
     let list = slice.into_vec()
     if list.len() != 3usize || list.as_slice()[2usize] != 6 { return 5 }
     0

@@ -1,5 +1,5 @@
 import alloc.boxed
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import alloc.vec
 import core.iter.OwnedIterable
 import std.io.{BufRead, Cursor, Error, Reader, Seek, SeekFrom, Writer}
@@ -16,12 +16,12 @@ fn peek<B: BufRead>(mut reader: B): u8 throws Error {
 }
 
 fn run(): i32 throws Error {
-    let owned_slice = Box<[i32]>.(core.convert.From<[i32; 3]>).from([1, 2, 3])
+    let owned_slice = Heap<[i32]>.(core.convert.From<[i32; 3]>).from([1, 2, 3])
     var total = 0
     for value in read owned_slice { total += *value }
-    var mutable = Box<[i32]>.(core.convert.From<[i32; 3]>).from([1, 2, 3])
+    var mutable = Heap<[i32]>.(core.convert.From<[i32; 3]>).from([1, 2, 3])
     for value in mut mutable { *value += 1 }
-    for value in Box<[i32]>.(OwnedIterable).into_iter(mutable) { total += value }
+    for value in Heap<[i32]>.(OwnedIterable).into_iter(mutable) { total += value }
     if total != 6 + 9 { return 1 }
 
     var fixed = boxed.new([4, 5])
@@ -30,7 +30,7 @@ fn run(): i32 throws Error {
     for value in mut fixed { *value -= 1 }
     var sum = 0
     for value in read fixed { sum += *value }
-    for value in Box<[i32; 2]>.(OwnedIterable).into_iter(fixed) { sum += value }
+    for value in Heap<[i32; 2]>.(OwnedIterable).into_iter(fixed) { sum += value }
     if sum != 18 { return 2 }
 
     if try read_one(boxed.new(Cursor.new([7u8, 8u8]))) != 7u8 { return 3 }

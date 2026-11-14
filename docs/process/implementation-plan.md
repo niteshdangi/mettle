@@ -324,7 +324,7 @@ clean/warm equivalence, invalidation, corruption and eviction cases. Front-end
 dependency separation and the retained-byte and compile-time measurements
 (performance.md section 5.1.1) are I14 work.
 
-I10: owned and scoped threads, Transferable/Shareable, Arc/weak races,
+I10: owned and scoped threads, Transferable/Shareable, Shared/weak races,
 mutex/RwLock guards, condition variables, barriers, once, channels and TLS.
 Test scope exit during panic, last-owner destruction, guard affinity, channel
 shutdown and atomic publication under contention. Race freedom is not a claim
@@ -373,7 +373,7 @@ I11 implementation contracts:
   correct families (`ir::Function::interfaceResult`). Captured read/mut parameters
   remain views; invariant nominal region inference uses same-origin fields.
   Pinned erased Future.poll dispatch requires fixed Output; witness adapters
-  reconstruct Pin<mut Concrete> from erased data. Box<any Future> uses ordinary
+  reconstruct Pin<mut Concrete> from erased data. Heap<any Future> uses ordinary
   unsizing/drop with unsafe payload pin; safe pinned owners remain S003.
   **Erased async-interface dispatch** still requires an explicit future-storage
   contract; borrowed heap-erased futures require region-carrying erasure.

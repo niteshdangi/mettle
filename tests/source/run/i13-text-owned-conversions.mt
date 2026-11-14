@@ -1,6 +1,6 @@
 // profiles: debug release
 import alloc.borrow.BorrowedOrOwned
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import alloc.string.String
 import alloc.vec
 import core.borrow.AsRef
@@ -46,9 +46,9 @@ fn text(): Unit {
 fn c_strings(): Unit {
     let terminated = [255u8, 65u8, 0u8]
     let value = unsafe { CString.from_vec_with_nul_unchecked(os_string_from_bytes(terminated).into_bytes()) }
-    let boxed = value.into_boxed_c_str()
+    let boxed = value.into_heap_c_str()
     let pointer = boxed.get().as_ptr()
-    let restored = CString.(From<Box<CStr>>).from(take boxed)
+    let restored = CString.(From<Heap<CStr>>).from(take boxed)
     assert(restored.as_ptr() == pointer && bytes_equal(restored.as_bytes_with_nul(), terminated),
         "boxed C strings transfer arbitrary terminated bytes")
     let raw = restored.into_raw()
@@ -56,7 +56,7 @@ fn c_strings(): Unit {
     let recovered = unsafe { CString.from_raw(raw) }
     assert(bytes_equal(recovered.as_bytes_with_nul(), [255u8, 90u8, 0u8]),
         "raw reconstruction retains foreign non-NUL writes")
-    let boxed_again = recovered.into_boxed_c_str()
+    let boxed_again = recovered.into_heap_c_str()
     let pointer_again = boxed_again.get().as_ptr()
     let from_method = boxed_again.into_c_string()
     assert(from_method.as_ptr() == pointer_again, "boxed method consumes without copying")
@@ -117,11 +117,11 @@ fn os_strings(): Unit {
     let valid_text = valid.to_string_lossy()
     assert(valid_text.is_borrowed() && valid_text.as_ref().as_bytes().as_ptr() == valid.as_bytes().as_ptr(),
         "valid native UTF-8 conversion borrows its owner")
-    let boxed = copied.into_boxed_os_str()
+    let boxed = copied.into_heap_os_str()
     let pointer = boxed.get().as_bytes().as_ptr()
-    let restored = OsString.(From<Box<OsStr>>).from(take boxed)
+    let restored = OsString.(From<Heap<OsStr>>).from(take boxed)
     assert(restored.as_bytes().as_ptr() == pointer, "boxed OS strings transfer their allocation")
-    let boxed_again = restored.into_boxed_os_str()
+    let boxed_again = restored.into_heap_os_str()
     let pointer_again = boxed_again.get().as_bytes().as_ptr()
     let restored_again = boxed_again.into_os_string()
     assert(restored_again.as_bytes().as_ptr() == pointer_again, "boxed OS method transfers its allocation")
@@ -137,7 +137,7 @@ fn os_strings(): Unit {
     let os = OsString.(From<CString>).from(take c_string)
     assert(os.as_bytes().as_ptr() == c_pointer && bytes_equal(os.as_bytes(), [255u8, 65u8]),
         "C to OS conversion transfers storage and removes only its terminator")
-    let empty_box = OsString.new().into_boxed_os_str()
+    let empty_box = OsString.new().into_heap_os_str()
     assert(empty_box.into_os_string().is_empty(), "empty boxed OS strings remain valid")
     var pieces = vec.new<BorrowedOrOwned<region static, OsStr>>()
     pieces.push(BorrowedOrOwned.Borrowed(OsStr.new("a".as_bytes())))

@@ -5,7 +5,7 @@ import alloc.rc
 
 async fn one(): i32 { 1 }
 
-// An Rc whose scope ends before the await is not part of the future's state.
+// An LocalShared whose scope ends before the await is not part of the future's state.
 async fn two(): i32 {
     var first = 0
     {

@@ -1,5 +1,5 @@
 import alloc.arc
-import alloc.arc.Arc
+import alloc.arc.Shared
 import core.clone.Clone
 import core.future.{Context, Future, Poll, Waker}
 import std.sync.barrier
@@ -7,12 +7,12 @@ import std.task
 import std.thread
 
 type ParentWake {
-    entered: Arc<barrier.Barrier>
-    release: Arc<barrier.Barrier>
+    entered: Shared<barrier.Barrier>
+    release: Shared<barrier.Barrier>
 }
 
 extend ParentWake implements task.Wake {
-    fn wake(read me: Arc<ParentWake>): Unit {
+    fn wake(read me: Shared<ParentWake>): Unit {
         let _entered = me.get().entered.get().wait()
         let _release = me.get().release.get().wait()
     }
@@ -41,7 +41,7 @@ fn main(): i32 {
     let entered = arc.new(barrier.new(2usize))
     let release = arc.new(barrier.new(2usize))
     let parent = arc.new(ParentWake(entered.retain(), release.retain()))
-    let parent_waker = task.waker_from_arc(read parent)
+    let parent_waker = task.waker_from_shared(read parent)
     var saved: Waker? = none
 
     let worker = {

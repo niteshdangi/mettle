@@ -4,9 +4,9 @@
 // `.` components are ignored, while a leading `.` in a relative path remains.
 import alloc.vec
 import alloc.vec.List
-import alloc.boxed.Box
-import alloc.arc.Arc
-import alloc.rc.Rc
+import alloc.boxed.Heap
+import alloc.arc.Shared
+import alloc.rc.LocalShared
 import alloc.borrow.BorrowedOrOwned
 import alloc.alloc.AllocError
 import alloc.string.String
@@ -781,11 +781,11 @@ extend PathBuf {
         self.as_path().display()
     }
     pub fn to_path_buf(): PathBuf { path_buf_from_bytes(self.v.as_bytes()) }
-    pub take fn into_boxed_path(): Box<Path> {
-        let bytes = self.v.into_encoded_bytes().into_boxed_slice()
+    pub take fn into_heap_path(): Heap<Path> {
+        let bytes = self.v.into_encoded_bytes().into_heap_slice()
         let raw = bytes.into_raw()
         // Path is a single unsized byte-slice field, preserving the allocation
-        // and length metadata used by Box<[u8]>.
+        // and length metadata used by Heap<[u8]>.
         let path_pointer = unsafe {
             core.mem.transmute<ptr<mut Path>>(raw.0)
         }
@@ -1082,17 +1082,17 @@ extend PathBuf implements From<String> {
         PathBuf(ffi.os_string_from_vec(value.into_bytes()))
     }
 }
-extend PathBuf implements From<Box<Path>> {
-    static fn from(take value: Box<Path>): PathBuf {
+extend PathBuf implements From<Heap<Path>> {
+    static fn from(take value: Heap<Path>): PathBuf {
         let raw = value.into_raw()
         // The inverse cast preserves the same byte-slice layout and metadata.
         let bytes_pointer = unsafe {
             core.mem.transmute<ptr<mut [u8]>>(raw.0)
         }
-        let byte_box: Box<[u8]> = unsafe {
+        let byte_box: Heap<[u8]> = unsafe {
             alloc.boxed.from_raw_in(bytes_pointer, raw.1)
         }
-        PathBuf(ffi.os_string_from_vec(List<u8>.(From<Box<[u8]>>).from(take byte_box)))
+        PathBuf(ffi.os_string_from_vec(List<u8>.(From<Heap<[u8]>>).from(take byte_box)))
     }
 }
 extend<region r> read Path from r implements OwnedIterable {
@@ -1170,54 +1170,54 @@ extend<region r> OsString implements PartialOrd<BorrowedOrOwned<region r, Path>>
         present(path_from_os_str(self.as_os_str()).cmp(other.as_ref()))
     }
 }
-extend Box<Path> implements From<PathBuf> {
-    static fn from(take value: PathBuf): Box<Path> {
-        value.into_boxed_path()
+extend Heap<Path> implements From<PathBuf> {
+    static fn from(take value: PathBuf): Heap<Path> {
+        value.into_heap_path()
     }
 }
-extend<region r> Box<Path> implements From<read Path from r> {
-    static fn from(take value: read Path from r): Box<Path> {
-        value.to_path_buf().into_boxed_path()
+extend<region r> Heap<Path> implements From<read Path from r> {
+    static fn from(take value: read Path from r): Heap<Path> {
+        value.to_path_buf().into_heap_path()
     }
 }
-extend<region r> Box<Path> implements From<mut Path from r> {
-    static fn from(take value: mut Path from r): Box<Path> {
-        value.to_path_buf().into_boxed_path()
+extend<region r> Heap<Path> implements From<mut Path from r> {
+    static fn from(take value: mut Path from r): Heap<Path> {
+        value.to_path_buf().into_heap_path()
     }
 }
-extend<region r> Box<Path> implements From<BorrowedOrOwned<region r, Path>> {
-    static fn from(take value: BorrowedOrOwned<region r, Path>): Box<Path> {
-        value.into_owned().into_boxed_path()
+extend<region r> Heap<Path> implements From<BorrowedOrOwned<region r, Path>> {
+    static fn from(take value: BorrowedOrOwned<region r, Path>): Heap<Path> {
+        value.into_owned().into_heap_path()
     }
 }
-extend Rc<Path> implements From<PathBuf> {
-    static fn from(take value: PathBuf): Rc<Path> {
-        Rc<Path>.(From<Box<Path>>).from(value.into_boxed_path())
+extend LocalShared<Path> implements From<PathBuf> {
+    static fn from(take value: PathBuf): LocalShared<Path> {
+        LocalShared<Path>.(From<Heap<Path>>).from(value.into_heap_path())
     }
 }
-extend<region r> Rc<Path> implements From<read Path from r> {
-    static fn from(take value: read Path from r): Rc<Path> {
-        Rc<Path>.(From<PathBuf>).from(value.to_path_buf())
+extend<region r> LocalShared<Path> implements From<read Path from r> {
+    static fn from(take value: read Path from r): LocalShared<Path> {
+        LocalShared<Path>.(From<PathBuf>).from(value.to_path_buf())
     }
 }
-extend<region r> Rc<Path> implements From<mut Path from r> {
-    static fn from(take value: mut Path from r): Rc<Path> {
-        Rc<Path>.(From<PathBuf>).from(value.to_path_buf())
+extend<region r> LocalShared<Path> implements From<mut Path from r> {
+    static fn from(take value: mut Path from r): LocalShared<Path> {
+        LocalShared<Path>.(From<PathBuf>).from(value.to_path_buf())
     }
 }
-extend Arc<Path> implements From<PathBuf> {
-    static fn from(take value: PathBuf): Arc<Path> {
-        Arc<Path>.(From<Box<Path>>).from(value.into_boxed_path())
+extend Shared<Path> implements From<PathBuf> {
+    static fn from(take value: PathBuf): Shared<Path> {
+        Shared<Path>.(From<Heap<Path>>).from(value.into_heap_path())
     }
 }
-extend<region r> Arc<Path> implements From<read Path from r> {
-    static fn from(take value: read Path from r): Arc<Path> {
-        Arc<Path>.(From<PathBuf>).from(value.to_path_buf())
+extend<region r> Shared<Path> implements From<read Path from r> {
+    static fn from(take value: read Path from r): Shared<Path> {
+        Shared<Path>.(From<PathBuf>).from(value.to_path_buf())
     }
 }
-extend<region r> Arc<Path> implements From<mut Path from r> {
-    static fn from(take value: mut Path from r): Arc<Path> {
-        Arc<Path>.(From<PathBuf>).from(value.to_path_buf())
+extend<region r> Shared<Path> implements From<mut Path from r> {
+    static fn from(take value: mut Path from r): Shared<Path> {
+        Shared<Path>.(From<PathBuf>).from(value.to_path_buf())
     }
 }
 extend<region r, T: PathInput + unsized> PathBuf implements From<read T from r> {

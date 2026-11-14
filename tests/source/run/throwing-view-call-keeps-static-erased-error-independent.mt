@@ -1,8 +1,8 @@
-import alloc.boxed.Box
+import alloc.boxed.Heap
 interface Show { fn value(): i32; }
 type Plain { value: i32 }
 extend Plain implements Show { fn value(): i32 { self.value } }
-type Fault { payload: Box<any Show>? }
+type Fault { payload: Heap<any Show>? }
 
 interface Buffer {
     mut fn fill(): read i32 from self throws Fault;
@@ -15,7 +15,7 @@ type Source { value: i32; failed: bool }
 extend Source implements Buffer {
     mut fn fill(): read i32 from self throws Fault {
         if self.failed {
-            let payload: Box<any Show> = heap Plain(7)
+            let payload: Heap<any Show> = heap Plain(7)
             throw Fault(present(payload))
         }
         read self.value

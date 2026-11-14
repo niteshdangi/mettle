@@ -1,16 +1,16 @@
 module source_helpers;
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import core.future.Future
 
 interface Show { fn value(): i32; }
 type Plain { value: i32 }
 extend Plain implements Show { fn value(): i32 { self.value } }
-type Fault { payload: Box<any Show> }
+type Fault { payload: Heap<any Show> }
 type Input { value: i32 }
 
 async fn compute(read input: Input): i32 throws Fault {
     if input.value < 0 {
-        let payload: Box<any Show> = heap Plain(7)
+        let payload: Heap<any Show> = heap Plain(7)
         throw Fault(payload)
     }
     input.value

@@ -54,13 +54,13 @@ fn run(): i32 throws Error {
         return 44
     }
     if !(try check_backing(alloc.string.from_text("abcd"))) { return 45 }
-    if !(try check_backing(vec.from_array([97u8, 98u8, 99u8, 100u8]).into_boxed_slice())) {
+    if !(try check_backing(vec.from_array([97u8, 98u8, 99u8, 100u8]).into_heap_slice())) {
         return 46
     }
-    if !(try check_backing(rc.Rc<[u8]>.(From<[u8; 4]>).from([97u8, 98u8, 99u8, 100u8]))) {
+    if !(try check_backing(rc.LocalShared<[u8]>.(From<[u8; 4]>).from([97u8, 98u8, 99u8, 100u8]))) {
         return 47
     }
-    if !(try check_backing(arc.Arc<[u8]>.(From<[u8; 4]>).from([97u8, 98u8, 99u8, 100u8]))) {
+    if !(try check_backing(arc.Shared<[u8]>.(From<[u8; 4]>).from([97u8, 98u8, 99u8, 100u8]))) {
         return 48
     }
     let shared_bytes = [97u8, 98u8, 99u8, 100u8]

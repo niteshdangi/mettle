@@ -12,7 +12,7 @@ specified; they do not incorporate another language's behavioral authority.
 
 `List` (Vec), `Map` (HashMap), `Set` (HashSet), `SortedMap` (BTreeMap) and
 `SortedSet` (BTreeSet) are the native collection identities. VecDeque,
-LinkedList, BinaryHeap, String, Box, Rc, Arc and Weak retain their specified
+LinkedList, BinaryHeap, String, Heap, LocalShared, Shared and Weak retain their specified
 module/type identities. Reexports and aliases do not create a second owner.
 Allocator type A defaults to Global; an `_in` constructor consumes an explicit
 A and every surviving allocation remains associated with a compatible A.
@@ -134,7 +134,7 @@ policy; it does not return or unwind through allocator callbacks.
 
 ## 3. Unique allocation owners
 
-`Box<T: unsized,A>` owns exactly one initialized T and the allocation needed
+`Heap<T: unsized,A>` owns exactly one initialized T and the allocation needed
 for it. Drop destroys T once and then releases its allocation with the
 compatible allocator/layout; a cleanup guard protects deallocation during
 payload unwind. A zero-sized payload still has a non-null aligned pointer
@@ -144,18 +144,18 @@ and its destructor still runs.
 storage without cloning it. Fallible `try_new[_in]` return AllocError and
 clean the consumed value/allocator on failure; they do not promise the input
 value in the error. `get/as_ref/Deref` lend T; `get_mut/as_mut/DerefMut`
-require exclusive Box access. `allocator` lends A. `into_inner` transfers T
+require exclusive Heap access. `allocator` lends A. `into_inner` transfers T
 and frees only its former storage without destroying the returned T.
 
 `new_uninit[_in]` owns MaybeUninit<T>; zeroed variants initialize bytes to
 zero without asserting T validity. Slice variants take a length and own
 that many MaybeUninit elements. Unsafe `assume_init` requires every selected
 element/payload to be valid and initialized and transfers the same allocation
-to Box<T>/Box<[T]>. `write(take T)` on Box<MaybeUninit<T>> initializes once
+to Heap<T>/Heap<[T]>. `write(take T)` on Heap<MaybeUninit<T>> initializes once
 and converts ownership without a second allocation. Partial initialization
 remains the caller's responsibility until an initialized owner is formed.
 
-`into_raw` consumes the Box, suppressing drop and transferring one destruction/
+`into_raw` consumes the Heap, suppressing drop and transferring one destruction/
 deallocation responsibility to the caller. For explicit allocators,
 `into_raw_with_allocator` returns both pointer and A; the caller must retain
 the allocation's actual compatible allocator even when using a pointer-only
@@ -166,37 +166,37 @@ as_ptr, interior pointer, stack pointer or already reconstructed owner.
 NonNull raw forms have identical ownership rules plus non-null representation.
 Obtaining a raw address does not itself transfer ownership.
 
-`leak(take Box)` transfers an exclusive T view while deliberately suppressing
+`leak(take Heap)` transfers an exclusive T view while deliberately suppressing
 deallocation; its region may not outlive any region embedded in T or allocator
 obligations. It does not erase borrowed payload lifetimes.
-`pin(take T)` allocates pinned payload storage; `into_pin(take Box)` pins
+`pin(take T)` allocates pinned payload storage; `into_pin(take Heap)` pins
 existing storage without moving it or allocating again.
 Unsizing/coercion preserves allocation identity, metadata and destruction.
-Checked erased-owner `downcast<T: Any>` returns Box<T> on exact type identity,
-otherwise returns the original erased Box unchanged.
+Checked erased-owner `downcast<T: Any>` returns Heap<T> on exact type identity,
+otherwise returns the original erased Heap unchanged.
 
-Borrowed Box<[T]>/Box<[T; N]> iteration lends slice elements.
+Borrowed Heap<[T]>/Heap<[T; N]> iteration lends slice elements.
 Consuming iteration moves each initialized T exactly once and owns the
 original allocation/allocator until completion or iterator destruction.
 It is exact-size, bidirectional and fused; unyielded elements are dropped
 before deallocation. Empty/zero-length iteration never dereferences an
-element pointer. Box conversions from List/String may shrink/reallocate
+element pointer. Heap conversions from List/String may shrink/reallocate
 to the slice/text allocation; converting the resulting boxed slice back to
-List preserves elements without cloning. Box delegation of Iterator,
+List preserves elements without cloning. Heap delegation of Iterator,
 Future, callable, formatting or Error operations preserves the underlying
-protocol and requires its declared bounds; Box does not itself make an
+protocol and requires its declared bounds; Heap does not itself make an
 unpollable/uncloneable payload satisfy those interfaces.
 
 ## 4. Shared owners and weak handles
 
-Rc is local reference-counted ownership; Arc uses thread-safe counting.
+LocalShared is local reference-counted ownership; Shared uses thread-safe counting.
 Each owns a handle to one payload/control allocation. `new[_in]` consumes
 T and A, creates one strong handle and no user weak handles.
 Fallible construction returns typed allocation failure with ordinary consumed
-argument cleanup. Arc requires target-supported atomic counting; it is not
+argument cleanup. Shared requires target-supported atomic counting; it is not
 an automatic mutex around T. Cross-thread transfer/sharing additionally
 requires the payload and allocator's appropriate structural properties.
-Rc and its Weak do not cross threads.
+LocalShared and its Weak do not cross threads.
 
 `get/as_ref/Deref` lends read T. Explicit `retain` and owner Clone acquire
 another strong handle, never clone T. Moving transfers one handle.
@@ -209,19 +209,19 @@ Counter overflow aborts safely instead of wrapping.
 
 `upgrade` attempts to acquire a strong handle and returns none after strong
 ownership has reached zero; it cannot race with destruction to resurrect T.
-Arc's successful upgrade coordinates with payload lifetime using its atomic
+Shared's successful upgrade coordinates with payload lifetime using its atomic
 count protocol. `ptr_eq` compares allocation identity/addresses without
 payload comparison, ignoring irrelevant erased metadata.
 `strong_count/weak_count` exclude internal implementation weak bookkeeping.
-For local owners counts are exact at observation; Arc observations are
+For local owners counts are exact at observation; Shared observations are
 snapshots immediately subject to concurrent changes, never uniqueness proofs.
 Weak observations on expired payloads report no strong ownership and
 weak_count returns zero rather than the dead allocation's retained metadata
-count. Arc count observations remain inherently concurrent snapshots.
+count. Shared count observations remain inherently concurrent snapshots.
 
 `get_mut` returns an exclusive payload view only when the strong owner is
 unique and no other user weak handle can upgrade; otherwise none.
-Arc must synchronize that check against concurrent weak operations.
+Shared must synchronize that check against concurrent weak operations.
 Unsafe `get_mut_unchecked` requires no competing payload access and all
 aliases to refer to the identical concrete payload/region interpretation
 for the entire returned exclusive loan; counting alone is insufficient.
@@ -236,13 +236,13 @@ transferring T and releasing storage/control responsibility correctly;
 user weak handles do not prevent success. On failure it returns the original
 strong owner, not a new retained clone.
 `into_inner(take owner)` instead drops this handle and returns none if
-another strong handle exists. For Arc, when every strong handle is consumed
+another strong handle exists. For Shared, when every strong handle is consumed
 by into_inner, exactly one call must return the payload; separate
 try_unwrap-then-discard operations do not have that collective guarantee.
 `unwrap_or_clone<T: Clone>(take owner)` transfers T when unique, otherwise
 clones T and drops this strong handle.
 `downcast<T: Any + Static>(take erased_owner)` tests exact payload type
-identity. Success transfers the same counted responsibility as Rc<T>/Arc<T>
+identity. Success transfers the same counted responsibility as LocalShared<T>/Shared<T>
 without allocating or cloning T; failure returns the original erased owner
 with its count unchanged.
 
@@ -355,7 +355,7 @@ returning pointer,len,capacity (and allocator for explicit allocator forms).
 Raw pointer recovery must preserve that allocator; safe element views are
 not transferable ownership receipts.
 
-`into_boxed_slice` consumes the List and may discard excess capacity through
+`into_heap_slice` consumes the List and may discard excess capacity through
 reallocation; no element Clone is needed. `leak` suppresses cleanup while
 preserving embedded regions. `into_flattened` for List<[T;N]> transfers the
 same elements to a List<T> with checked product length/capacity; the zero-
@@ -758,7 +758,7 @@ sigma for whole-text lowercase), allocating O(output bytes);
 ASCII variants change only ASCII letters and retain every non-ASCII byte.
 `make_ascii_lowercase/uppercase` mutate without changing length/UTF-8.
 
-`into_bytes` transfers its byte List without cloning. `into_boxed_str`
+`into_bytes` transfers its byte List without cloning. `into_heap_str`
 consumes and may shrink; `leak` deliberately suppresses storage cleanup
 without extending embedded regions. Unsafe `as_mut_vec/as_bytes_mut` require
 restoring valid UTF-8 and the storage's owner invariants before safe String
@@ -786,7 +786,7 @@ the terminator as named. `into_bytes/into_bytes_with_nul` consume and transfer
 those owned byte sequences. `into_string` validates UTF-8, producing String
 or IntoStringError owning the original CString and Utf8Error; accessors
 preserve/recover those values without losing bytes.
-`into_boxed_c_str` transfers owned terminated content to boxed CStr;
+`into_heap_c_str` transfers owned terminated content to boxed CStr;
 borrowed/owned conversions copy only when ownership actually must be created.
 Comparison/order/hash use content bytes, not allocation addresses.
 
@@ -840,8 +840,8 @@ special case infers an owner or grants cloning without its bound.
 Collection Clone reads the original and constructs an independent container,
 cloning each stored element/key/value under the declared Clone bounds.
 It may reuse capacity in clone_from; it must clean partial clones on panic.
-Rc/Arc/Weak Clone instead retains ownership bookkeeping, not payloads.
-Box Clone duplicates T and its storage, not its pointer responsibility.
+LocalShared/Shared/Weak Clone instead retains ownership bookkeeping, not payloads.
+Heap Clone duplicates T and its storage, not its pointer responsibility.
 String/CString Clone duplicate owned bytes. Allocator cloning must preserve
 the allocator's stated compatibility, not select a convenient different heap.
 Default constructs the type's empty/default value only under its declared
@@ -859,7 +859,7 @@ its own effects/cost.
 
 All alloc operations require the explicit allocation layer but not an OS,
 process, threads or executor. Global freestanding programs must provide the
-selected allocator boundary. Arc additionally needs target atomic support;
+selected allocator boundary. Shared additionally needs target atomic support;
 its payload/allocator thread properties stay explicit.
 V1 execution scope is Linux x64; all eight reference profiles remain post-V1
 obligations. Layout arithmetic, pointer sizes and foreign scalar types are
@@ -879,8 +879,8 @@ The authored runtime coverage is the explicit groups in sections 1..11:
 | Native module/type (source family) | Assigned groups |
 | --- | --- |
 | `alloc.alloc`, core.alloc reexports | Layout construction/access/array/extension/alignment/padding/repetition/dangling; native allocator operations; raw global allocation/provider operations |
-| `alloc.boxed.Box` | Initialized/uninitialized/zeroed construction, projections, extraction/raw/leak/pin/downcast, array/slice iteration and listed conversions |
-| `alloc.rc.Rc/Weak`, `alloc.arc.Arc/Weak` (source sync) | Construction/retain/weak/count/uniqueness/extraction/cyclic/uninit/raw/pin groups |
+| `alloc.boxed.Heap` | Initialized/uninitialized/zeroed construction, projections, extraction/raw/leak/pin/downcast, array/slice iteration and listed conversions |
+| `alloc.rc.LocalShared/Weak`, `alloc.arc.Shared/Weak` (source sync) | Construction/retain/weak/count/uniqueness/extraction/cyclic/uninit/raw/pin groups |
 | `alloc.vec.List` | Capacity, mutation, raw/spare storage, drain/splice/extract, slice delegation, flatten/box/leak/iteration groups |
 | `alloc.vec_deque.VecDeque` | End/index movement, storage views/contiguity, range/drain/iteration, capacity/resize/retention/conversion groups |
 | `alloc.linked_list.LinkedList` | Endpoints, nodes/append/split, traversal/containment/extraction/cleanup |

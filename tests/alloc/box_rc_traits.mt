@@ -26,7 +26,7 @@ fn main(): i32 {
     var t = alloc.string.new()
     {
         var f = fmt.formatter(mut t, fmt.spec())
-        match capture boxed.Box<i32>.(Display).fmt(b, mut f) { success(u) => {}, failure(e) => { return 6 } }
+        match capture boxed.Heap<i32>.(Display).fmt(b, mut f) { success(u) => {}, failure(e) => { return 6 } }
     }
     if t.as_text() != "42" { return 7 }
     0

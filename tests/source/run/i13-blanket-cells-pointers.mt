@@ -8,11 +8,11 @@ import core.convert.From
 import core.convert.Into
 import core.convert.{TryFrom, TryInto}
 import alloc.string.ToString
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import core.cmp.Descending
 import core.num.Wrapping
 import core.ptr.NonNull
-import alloc.rc.Rc
+import alloc.rc.LocalShared
 import alloc.rc.Weak
 import core.iter.Range
 import core.iter.RangeInclusive
@@ -29,17 +29,17 @@ fn send_ok<T: Transferable>() {}
 fn sync_ok<T: Shareable>() {}
 
 fn main(): i32 {
-    // alloc.boxed.Box: Any Borrow From Into Send Sync ToOwned ToString
-    any_ok<Box<i32>>()
-    borrow_ok<Box<i32>>()
-    from_ok<Box<i32>>()
-    tryfrom_ok<Box<i32>>()
-    tryinto_ok<Box<i32>>()
-    into_ok<Box<i32>>()
-    send_ok<Box<i32>>()
-    sync_ok<Box<i32>>()
-    owned_ok<Box<i32>>()
-    string_ok<Box<i32>>()
+    // alloc.boxed.Heap: Any Borrow From Into Send Sync ToOwned ToString
+    any_ok<Heap<i32>>()
+    borrow_ok<Heap<i32>>()
+    from_ok<Heap<i32>>()
+    tryfrom_ok<Heap<i32>>()
+    tryinto_ok<Heap<i32>>()
+    into_ok<Heap<i32>>()
+    send_ok<Heap<i32>>()
+    sync_ok<Heap<i32>>()
+    owned_ok<Heap<i32>>()
+    string_ok<Heap<i32>>()
 
     // core.cell.Cell: Any Borrow From Into Send ToOwned (Sync is negative, see fail tests)
     any_ok<core.cell.Cell<i32>>()
@@ -99,15 +99,15 @@ fn main(): i32 {
     tryinto_ok<NonNull<i32>>()
     into_ok<NonNull<i32>>()
 
-    // alloc.rc.Rc: Any Borrow From Into ToOwned ToString (Send/Sync are negative, see fail tests)
-    any_ok<Rc<i32>>()
-    borrow_ok<Rc<i32>>()
-    from_ok<Rc<i32>>()
-    tryfrom_ok<Rc<i32>>()
-    tryinto_ok<Rc<i32>>()
-    into_ok<Rc<i32>>()
-    owned_ok<Rc<i32>>()
-    string_ok<Rc<i32>>()
+    // alloc.rc.LocalShared: Any Borrow From Into ToOwned ToString (Send/Sync are negative, see fail tests)
+    any_ok<LocalShared<i32>>()
+    borrow_ok<LocalShared<i32>>()
+    from_ok<LocalShared<i32>>()
+    tryfrom_ok<LocalShared<i32>>()
+    tryinto_ok<LocalShared<i32>>()
+    into_ok<LocalShared<i32>>()
+    owned_ok<LocalShared<i32>>()
+    string_ok<LocalShared<i32>>()
 
     // alloc.rc.Weak: Any Borrow From Into ToOwned (Send/Sync are negative, see fail tests)
     any_ok<Weak<i32>>()

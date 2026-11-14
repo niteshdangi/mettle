@@ -540,7 +540,7 @@ int Checker::indirectCall(Node &node, bool reachable, int calleeVariable) {
     type = checked.types->view(type).payload;
     ++facts(node).dereferences;
   }
-  // A callable reached through Deref (`Box<fn(i32): i32>`) is called in place.
+  // A callable reached through Deref (`Heap<fn(i32): i32>`) is called in place.
   if (!checked.types->isCallable(type) && checked.types->isProduct(type)) {
     ReceiverPlan plan{source, source, {}};
     while (checked.types->isView(plan.target)) {

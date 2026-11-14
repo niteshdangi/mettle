@@ -41,7 +41,7 @@ fn main(): i32 {
   let pr = capture p.join()
   match take pr { success(v) => { return 3 }, failure(e) => { if e.code != 101 { return 4 } } }
 
-  // contended counter behind Arc<Mutex>
+  // contended counter behind Shared<Mutex>
   let counter = arc.new(mutex.new(0))
   var handles = alloc.vec.new<thread.JoinHandle<i32>>()
   var t = 0

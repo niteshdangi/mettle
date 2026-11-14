@@ -12,7 +12,7 @@ import alloc.vec
 import alloc.vec.List
 import alloc.string.String
 import alloc.arc
-import alloc.arc.Arc
+import alloc.arc.Shared
 import super.io
 import super.io.{Error, ErrorKind, Reader, Writer}
 import super.sys
@@ -1061,7 +1061,7 @@ extend TcpStream implements From<sys.OwnedFd> {
 pub type TcpListener {
     fd: i32
     accept_millis: i32
-    nonblocking: Arc<core.sync.atomic.AtomicBool>
+    nonblocking: Shared<core.sync.atomic.AtomicBool>
     drop { if self.fd >= 0 { let closed = unsafe { sys.close(self.fd) } } }
 }
 

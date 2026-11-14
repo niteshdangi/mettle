@@ -57,9 +57,9 @@ Type TypeStore::vectorType(std::string name, Type element, unsigned lanes,
 }
 std::string_view ownerSpelling(std::string_view nominal) {
   static constexpr std::pair<std::string_view, std::string_view> owners[] = {
-      {"alloc::boxed::Box", "heap"},
-      {"alloc::arc::Arc", "shared"},
-      {"alloc::rc::Rc", "local shared"},
+      {"alloc::boxed::Heap", "heap"},
+      {"alloc::arc::Shared", "shared"},
+      {"alloc::rc::LocalShared", "local shared"},
       {"alloc::arc::Weak", "weak"},
       {"alloc::rc::Weak", "local weak"},
       {"alloc::boxed::Pinned", "pinned heap"},

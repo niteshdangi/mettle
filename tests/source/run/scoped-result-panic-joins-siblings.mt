@@ -3,7 +3,7 @@ import std.panic.{catch_panic, CatchResult}
 import alloc.arc
 
 type FailingResult {
-    release: arc.Arc<core.sync.atomic.AtomicBool>
+    release: arc.Shared<core.sync.atomic.AtomicBool>
     drop {
         self.release.get().store(true, core.sync.atomic.Ordering.Release)
         panic("unclaimed scoped result")

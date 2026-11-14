@@ -78,13 +78,13 @@ Type Checker::annotation(const TypeSyntax &syntax, Span span,
     TypeSyntax nominal;
     switch (syntax.ownerKind) {
     case OwnerKind::Heap:
-      nominal.name = "alloc::boxed::Box";
+      nominal.name = "alloc::boxed::Heap";
       break;
     case OwnerKind::Shared:
-      nominal.name = "alloc::arc::Arc";
+      nominal.name = "alloc::arc::Shared";
       break;
     case OwnerKind::LocalShared:
-      nominal.name = "alloc::rc::Rc";
+      nominal.name = "alloc::rc::LocalShared";
       break;
     case OwnerKind::Weak:
       nominal.name = "alloc::arc::Weak";
@@ -1032,7 +1032,7 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
           const auto &argumentSyntax = *syntax.arguments[argumentIndex].type;
           argument = decorate(argument, argumentSyntax, context, span, fallback,
                               stored);
-          // An erased handle payload (`Box<any I from r>`) is bounded like
+          // An erased handle payload (`Heap<any I from r>`) is bounded like
           // `heap any I`: by its `from` sources, else by nothing borrowed.
           if (types.isErased(argument) &&
               !ownerSpelling(types.product(origin).name).empty())

@@ -1,4 +1,4 @@
-import alloc.boxed.Box
+import alloc.boxed.Heap
 interface Show { fn value(): i32; }
 type Plain { value: i32 }
 extend Plain implements Show { fn value(): i32 { self.value } }
@@ -12,7 +12,7 @@ fn identity<T>(take value: T): T { value }
 fn wrap<region r>(read value: i32 from r): heap any Show from r {
     heap Held(read value)
 }
-fn pass<region r>(take shown: Box<any Show from r>): Box<any Show from r> {
+fn pass<region r>(take shown: Heap<any Show from r>): Heap<any Show from r> {
     identity(shown)
 }
 

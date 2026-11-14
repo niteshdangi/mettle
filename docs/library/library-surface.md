@@ -636,7 +636,7 @@ function pointer and formatting options; unsized values use a stack-resident
 view descriptor with their metadata, never a truncated fat pointer. The layout
 is compiler-owned, not a public or foreign ABI promise. This is explicit borrowed
 erasure at the format boundary: indirect
-renderer calls, no heap allocation, no Box, and no implicit retention or copy of
+renderer calls, no heap allocation, no Heap, and no implicit retention or copy of
 payloads. A fixed borrowed sink adapter keeps the renderer ABI independent of
 the concrete writer. Logger and relay functions therefore have one body across
 message shapes; renderer thunks may be shared per value-type/format operation;

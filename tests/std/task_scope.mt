@@ -1,6 +1,6 @@
 import alloc.arc
 import alloc.rc
-import alloc.rc.Rc
+import alloc.rc.LocalShared
 import core.clone.Clone
 import core.future.{Context, Future, Poll, Waker}
 import std.task
@@ -47,7 +47,7 @@ extend<region r> Parent<region r> implements Future {
 }
 
 type SelfCancel<region r> {
-    holder: Rc<core.cell.RefCell<task.JoinHandle<Unit>?>>
+    holder: LocalShared<core.cell.RefCell<task.JoinHandle<Unit>?>>
     drops: read core.sync.atomic.AtomicUsize from r
     drop { let _old = self.drops.fetch_add(1usize, core.sync.atomic.Ordering.SeqCst) }
 }

@@ -8,7 +8,7 @@ fn main(): i32 {
         let owned = boxed.new(captured)
         var builder = thread.Builder.new()
         builder.name("owned-output")
-        let handle = match take capture builder.spawn(take fn(): boxed.Box<i32> { owned }) {
+        let handle = match take capture builder.spawn(take fn(): boxed.Heap<i32> { owned }) {
             success(handle) => handle,
             failure(_) => { return 2 }
         }

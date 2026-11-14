@@ -39,15 +39,15 @@ fn text_is_render(read text: Text, message: format Message): bool {
 }
 
 fn main(): i32 {
-    // alloc.arc.Arc<i32>: Borrow, From<T>, Into<A>, ToOwned (via Clone), ToString
+    // alloc.arc.Shared<i32>: Borrow, From<T>, Into<A>, ToOwned (via Clone), ToString
     let arc_value = arc.new(41)
-    let arc_view = arc.Arc<i32>.(Borrow<arc.Arc<i32>>).borrow(arc_value)
+    let arc_view = arc.Shared<i32>.(Borrow<arc.Shared<i32>>).borrow(arc_value)
     if *arc_view.get() != 41 { return 1 }
 
-    let wrapped = arc.Arc<i32>.(From<arc.Arc<i32>>).`from`(arc_value)
+    let wrapped = arc.Shared<i32>.(From<arc.Shared<i32>>).`from`(arc_value)
     if *wrapped.get() != 41 { return 2 }
 
-    let carried = arc.Arc<i32>.(Into<arc.Arc<i32>>).into(arc.new(42))
+    let carried = arc.Shared<i32>.(Into<arc.Shared<i32>>).into(arc.new(42))
     if *carried.get() != 42 { return 3 }
 
     let kept = arc.new(43)

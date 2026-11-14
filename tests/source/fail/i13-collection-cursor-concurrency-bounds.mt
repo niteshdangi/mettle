@@ -11,6 +11,6 @@ fn main(): i32 {
     send_ok<alloc.btree.Keys<region static, i32, core.cell.Cell<i32>, alloc.alloc.Global>>()
     sync_ok<alloc.btree.IterMut<region static, i32, core.cell.Cell<i32>, alloc.alloc.Global>>()
     sync_ok<alloc.btree.MapIntoIter<i32, core.cell.Cell<i32>, alloc.alloc.Global>>()
-    send_ok<alloc.btree.Entry<region static, i32, alloc.rc.Rc<i32>, alloc.alloc.Global>>()
+    send_ok<alloc.btree.Entry<region static, i32, alloc.rc.LocalShared<i32>, alloc.alloc.Global>>()
     0
 }

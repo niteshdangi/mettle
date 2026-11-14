@@ -456,24 +456,24 @@ Bodyless interface signatures preserve their terminating newline. Nested blocks
 and interpolation holes isolate expression-header and generic-boundary state.
 
 Owner type annotations retain an `Owner` syntax form and resolve in semantics to
-the nominal `alloc` library types: `heap T` to `Box<T>`, `shared T` to `Arc<T>`,
-`local shared T` to `Rc<T>`, and the corresponding atomic/local `Weak<T>`
+the nominal `alloc` library types: `heap T` to `Heap<T>`, `shared T` to `Shared<T>`,
+`local shared T` to `LocalShared<T>`, and the corresponding atomic/local `Weak<T>`
 handles. Expression constructors and `weak owner` use ordinary checked library
 calls, so allocator defaults, methods, dereference projections and destruction
 remain library-owned. The loader mounts `alloc` for reserved owner syntax and
 reports a structured feature diagnostic when that library is unavailable.
-`Box<T: unsized>` supports ownership-preserving coercion from a sized array
+`Heap<T: unsized>` supports ownership-preserving coercion from a sized array
 owner to a slice owner and from a sized concrete owner to an erased-interface
 owner. `OwnerUnsize` transfers the original allocation and allocator while
 attaching slice-count or witness metadata; it never reallocates. Dynamic
 `size_of_val`/`align_of_val` and drop use that metadata, and erased witness
-tables carry size, alignment and a specialized drop callback. Unsized `Arc`,
-`Rc` and `Weak` use
+tables carry size, alignment and a specialized drop callback. Unsized `Shared`,
+`LocalShared` and `Weak` use
 a separate count header followed by a metadata-aligned payload in one allocation;
 their handles preserve both the fat payload pointer and the thin header pointer,
 and the header retains the exact allocation layout for final-weak deallocation.
 Droppable structural slice tails use the tail metadata to reach their specialized
-element-drop loop. `Arc<Text>.copy_text` and `Rc<Text>.copy_text` accept only
+element-drop loop. `Shared<Text>.copy_text` and `LocalShared<Text>.copy_text` accept only
 validated `Text` views, preserving UTF-8 validity while copying. Pinning does not
 follow merely from shared or unique heap ownership; safe pinned owning handles
 are a separate S003 obligation.
@@ -1052,7 +1052,7 @@ before the backend skip coroutine-dependent types (`types::coroutineDependent`).
 Pinned `Future.poll` through `any Future<Output = T>` requires a fixed associated
 output. Borrowed dispatch is distinct from the explicit Static heap owner
 `alloc.future.Erased<T>` with typed poll/release callbacks and from
-`Box<any Future>`'s general unsizing/drop path. Erased async-interface returns
+`Heap<any Future>`'s general unsizing/drop path. Erased async-interface returns
 still need an explicit source future-storage contract. Open items are tracked
 in implementation-plan section 8.4.
 

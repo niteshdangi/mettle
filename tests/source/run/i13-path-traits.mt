@@ -1,7 +1,7 @@
 // profiles: debug release
 
 import alloc.string.String
-import alloc.boxed.Box
+import alloc.boxed.Heap
 import alloc.vec
 import core.borrow.{AsRef, Borrow, ToOwned}
 import core.cmp.{Ordering, Ord, PartialEq, PartialOrd}
@@ -142,14 +142,14 @@ fn main(): i32 {
     let converted_os: OsString =
         OsString.(From<PathBuf>).from(path_buf_from_text("/a//./b"))
     if converted_os != std.ffi.os_string_from_text("/a//./b") { return 25 }
-    let boxed_path: Box<Path> = path_buf_from_text("/boxed/path").into_boxed_path()
+    let boxed_path: Heap<Path> = path_buf_from_text("/boxed/path").into_heap_path()
     let boxed_roundtrip =
-        PathBuf.(From<Box<Path>>).from(take boxed_path)
+        PathBuf.(From<Heap<Path>>).from(take boxed_path)
     if boxed_roundtrip.as_path() != path_from_text("/boxed/path") { return 26 }
     let boxed_from_trait =
-        Box<Path>.(From<PathBuf>).from(path_buf_from_text("/trait/box"))
+        Heap<Path>.(From<PathBuf>).from(path_buf_from_text("/trait/box"))
     let trait_roundtrip =
-        PathBuf.(From<Box<Path>>).from(take boxed_from_trait)
+        PathBuf.(From<Heap<Path>>).from(take boxed_from_trait)
     if trait_roundtrip.as_path() != path_from_text("/trait/box") { return 36 }
     let string_path: PathBuf = PathBuf.(From<String>).from(String("from/string"))
     if string_path.as_path() != path_from_text("from/string") { return 27 }

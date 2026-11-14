@@ -4,8 +4,8 @@
 import alloc.vec
 import alloc.vec.List
 import alloc.alloc.{AllocError, Allocator}
-import alloc.boxed.Box
-import alloc.arc.Arc
+import alloc.boxed.Heap
+import alloc.arc.Shared
 import alloc.collections.Deque
 import core.text.Text
 import core.cmp.{Eq, PartialEq}
@@ -92,7 +92,7 @@ pub type Error {
     code: i32
     os: bool
     kind: ErrorKind
-    payload: Box<any CoreError>?
+    payload: Heap<any CoreError>?
     payload_type: TypeId?
 }
 
@@ -310,7 +310,7 @@ pub interface Seek {
 extend Error {
     pub static fn last_os_error(): Error { super.io.last_os_error() }
     pub static fn new<E: CoreError + Static + Transferable + Shareable>(kind: ErrorKind, take payload: E): Error {
-        let erased: Box<any CoreError> = heap payload
+        let erased: Heap<any CoreError> = heap payload
         Error(0, false, kind, present(erased), present(type_id<E>()))
     }
     pub static fn other<E: CoreError + Static + Transferable + Shareable>(take payload: E): Error {
@@ -331,8 +331,8 @@ extend Error {
             none => none
         }
     }
-    pub take fn into_inner(): Box<any CoreError>? { self.payload }
-    pub take fn downcast<T: CoreError + Static>(): Outcome<Box<T>, Error> {
+    pub take fn into_inner(): Heap<any CoreError>? { self.payload }
+    pub take fn downcast<T: CoreError + Static>(): Outcome<Heap<T>, Error> {
         var this = self
         if this.payload_type != present(type_id<T>()) { return failure(this) }
         let erased = match take this.payload.`take`() {
@@ -1094,26 +1094,26 @@ extend<region r> read Stderr from r implements Writer {
     }
 }
 
-extend<T: Reader + unsized, A: Allocator> Box<T, A> implements Reader {
+extend<T: Reader + unsized, A: Allocator> Heap<T, A> implements Reader {
     mut fn read_some(mut buf: [u8]): usize throws Error {
         try self.get_mut().read_some(buf)
     }
 }
 
-extend<T: Writer + unsized, A: Allocator> Box<T, A> implements Writer {
+extend<T: Writer + unsized, A: Allocator> Heap<T, A> implements Writer {
     mut fn write_some(read buf: [u8]): usize throws Error {
         try self.get_mut().write_some(buf)
     }
     mut fn flush(): Unit throws Error { try self.get_mut().flush() }
 }
 
-extend<T: Seek + unsized, A: Allocator> Box<T, A> implements Seek {
+extend<T: Seek + unsized, A: Allocator> Heap<T, A> implements Seek {
     mut fn seek(pos: SeekFrom): u64 throws Error {
         try self.get_mut().seek(pos)
     }
 }
 
-extend<T: unsized, A: Allocator> Arc<T, A> implements Reader where read T: Reader {
+extend<T: unsized, A: Allocator> Shared<T, A> implements Reader where read T: Reader {
     mut fn read_some(mut buf: [u8]): usize throws Error {
         var view = self.get()
         try view.read_some(buf)
@@ -1136,7 +1136,7 @@ extend<T: unsized, A: Allocator> Arc<T, A> implements Reader where read T: Reade
     }
 }
 
-extend<T: unsized, A: Allocator> Arc<T, A> implements Writer where read T: Writer {
+extend<T: unsized, A: Allocator> Shared<T, A> implements Writer where read T: Writer {
     mut fn write_some(read buf: [u8]): usize throws Error {
         var view = self.get()
         try view.write_some(buf)
@@ -1167,7 +1167,7 @@ extend<T: unsized, A: Allocator> Arc<T, A> implements Writer where read T: Write
     }
 }
 
-extend<T: unsized, A: Allocator> Arc<T, A> implements Seek where read T: Seek {
+extend<T: unsized, A: Allocator> Shared<T, A> implements Seek where read T: Seek {
     mut fn seek(pos: SeekFrom): u64 throws Error {
         var view = self.get()
         try view.seek(pos)
@@ -1186,7 +1186,7 @@ extend<T: unsized, A: Allocator> Arc<T, A> implements Seek where read T: Seek {
     }
 }
 
-extend<T: BufRead + unsized, A: Allocator> Box<T, A> implements BufRead {
+extend<T: BufRead + unsized, A: Allocator> Heap<T, A> implements BufRead {
     mut fn fill_buf(): read [u8] from self throws Error {
         try self.get_mut().fill_buf()
     }

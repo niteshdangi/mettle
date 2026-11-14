@@ -1,4 +1,4 @@
-import alloc.boxed.Box
+import alloc.boxed.Heap
 
 interface Show { fn value(): i32; }
 type Held<region r> { value: read i32 from r; drop {} }
@@ -13,14 +13,14 @@ fn wrap<region r>(read value: i32 from r): heap any Show from r {
 macro selector {
     ($r:ident) => {
         for<region r> fn(
-            take Box<any Show from $r>, take Box<any Show from r>
-        ): Box<any Show from $r>
+            take Heap<any Show from $r>, take Heap<any Show from r>
+        ): Heap<any Show from $r>
     };
 }
 
 fn select_payload<region r, region s>(
-    take first: Box<any Show from r>, take second: Box<any Show from s>
-): Box<any Show from r> {
+    take first: Heap<any Show from r>, take second: Heap<any Show from s>
+): Heap<any Show from r> {
     let choose: selector!(r) = take fn(value, unused) { take value }
     choose(first, second)
 }

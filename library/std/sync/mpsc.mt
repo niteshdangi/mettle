@@ -1,7 +1,7 @@
 import super.mutex
 import super.condition
 import super.super.time
-import alloc.arc.Arc
+import alloc.arc.Shared
 import alloc.vec.List
 import alloc.vec_deque.Deque
 import core.iter.Iterator
@@ -16,10 +16,10 @@ extern "C" {
 
 type Envelope<T> {
     value: T
-    receipt: Arc<core.sync.atomic.AtomicBool>?
+    receipt: Shared<core.sync.atomic.AtomicBool>?
 }
 
-fn accepted(read receipt: Arc<core.sync.atomic.AtomicBool>?): bool {
+fn accepted(read receipt: Shared<core.sync.atomic.AtomicBool>?): bool {
     match receipt {
         present(flag) => flag.get().load(core.sync.atomic.Ordering.Acquire),
         none => false
@@ -34,7 +34,7 @@ fn receive<T>(take envelope: Envelope<T>): T {
     envelope.value
 }
 
-type Shared<T> {
+type ChannelShared<T> {
     queue: mutex.Mutex<Deque<Envelope<T>>>
     ready: condition.Condition
     space: condition.Condition
@@ -59,7 +59,7 @@ pub copy type EmptySelect {}
 
 // Sender for an unbounded FIFO channel.
 pub type Sender<T> {
-    chan: Arc<Shared<T>>
+    chan: Shared<ChannelShared<T>>
     drop {
         let previous = self.chan.get().senders.fetch_sub(1usize, core.sync.atomic.Ordering.AcqRel)
         if previous == 1usize {
@@ -73,7 +73,7 @@ pub type Sender<T> {
 
 // The channel's sole receiver; dropping it disconnects every sender.
 pub type Receiver<T> {
-    chan: Arc<Shared<T>>
+    chan: Shared<ChannelShared<T>>
     drop {
         var discarded = alloc.vec_deque.new<Envelope<T>>()
         {
@@ -104,7 +104,7 @@ extend<T> Receiver<T> not Shareable
 
 // Sender for a bounded channel; capacity zero requires a waiting receiver.
 pub type SyncSender<T> {
-    chan: Arc<Shared<T>>
+    chan: Shared<ChannelShared<T>>
     drop {
         let previous = self.chan.get().senders.fetch_sub(1usize, core.sync.atomic.Ordering.AcqRel)
         if previous == 1usize {
@@ -116,8 +116,8 @@ pub type SyncSender<T> {
     }
 }
 
-fn new_shared<T>(bound: usize, rendezvous: bool): Arc<Shared<T>> {
-    alloc.arc.new(Shared(
+fn new_shared<T>(bound: usize, rendezvous: bool): Shared<ChannelShared<T>> {
+    alloc.arc.new(ChannelShared(
         mutex.new(alloc.vec_deque.new<Envelope<T>>()),
         condition.new(),
         condition.new(),
@@ -189,7 +189,7 @@ extend<T> SyncSender<T> {
         if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
             throw SendError(value)
         }
-        let receipt: Arc<core.sync.atomic.AtomicBool>? = if rendezvous {
+        let receipt: Shared<core.sync.atomic.AtomicBool>? = if rendezvous {
             present(alloc.arc.new(core.sync.atomic.AtomicBool.new(false)))
         } else { none }
         let queued_receipt = match receipt {
@@ -264,7 +264,7 @@ extend<T> SyncSender<T> {
             let pair = match take waited { success(pair) => pair, failure(e) => e.into_inner() }
             guard = pair.0
         }
-        let receipt: Arc<core.sync.atomic.AtomicBool>? = if rendezvous {
+        let receipt: Shared<core.sync.atomic.AtomicBool>? = if rendezvous {
             present(alloc.arc.new(core.sync.atomic.AtomicBool.new(false)))
         } else { none }
         let queued_receipt = match receipt {
@@ -454,7 +454,7 @@ extend<T> IntoIter<T> implements Iterator {
     }
 }
 
-fn channel_ready<T>(read chan: Shared<T>): bool {
+fn channel_ready<T>(read chan: ChannelShared<T>): bool {
     let locked = capture chan.queue.lock()
     let guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
     !guard.get().is_empty() ||
@@ -462,14 +462,14 @@ fn channel_ready<T>(read chan: Shared<T>): bool {
         !chan.open.load(core.sync.atomic.Ordering.Acquire)
 }
 
-fn register_select_waiter<T>(read chan: Shared<T>): Unit {
+fn register_select_waiter<T>(read chan: ChannelShared<T>): Unit {
     let locked = capture chan.queue.lock()
     let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
     let _previous = chan.waiting_receivers.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
     chan.space.notify_one()
 }
 
-fn unregister_select_waiter<T>(read chan: Shared<T>): Unit {
+fn unregister_select_waiter<T>(read chan: ChannelShared<T>): Unit {
     let locked = capture chan.queue.lock()
     let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
     let _previous = chan.waiting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)

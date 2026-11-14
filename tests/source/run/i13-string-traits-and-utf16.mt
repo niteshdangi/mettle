@@ -110,11 +110,11 @@ fn main(): i32 {
     appended_items.push('c')
     String.(ExtendItems<char>).extend(mut appended_chars, take appended_items)
     if appended_chars.as_text() != "abc" { return 47 }
-    var boxed_parts = vec.new<alloc.boxed.Box<Text>>()
-    boxed_parts.push(String("one").into_boxed_str())
-    boxed_parts.push(String("two").into_boxed_str())
+    var boxed_parts = vec.new<alloc.boxed.Heap<Text>>()
+    boxed_parts.push(String("one").into_heap_str())
+    boxed_parts.push(String("two").into_heap_str())
     let from_boxes =
-        String.(FromItems<alloc.boxed.Box<Text>>).from_iter(take boxed_parts)
+        String.(FromItems<alloc.boxed.Heap<Text>>).from_iter(take boxed_parts)
     if from_boxes.as_text() != "onetwo" { return 48 }
     var string_parts = vec.new<String>()
     string_parts.push(String("one"))
@@ -195,10 +195,10 @@ fn main(): i32 {
     unchecked_utf8.push(0x6bu8)
     let unchecked_string = unsafe { String.from_utf8_unchecked(take unchecked_utf8) }
     if unchecked_string.as_text() != "ok" { return 65 }
-    let boxed: alloc.boxed.Box<Text> = String("boxed").into_boxed_str()
+    let boxed: alloc.boxed.Heap<Text> = String("boxed").into_heap_str()
     if boxed.get() != "boxed" { return 38 }
     let boxed_string =
-        String.(From<alloc.boxed.Box<Text>>).from(take boxed)
+        String.(From<alloc.boxed.Heap<Text>>).from(take boxed)
     if boxed_string.as_text() != "boxed" { return 41 }
     let raw = String("raw").into_raw_parts()
     let restored = unsafe { String.from_raw_parts(raw.0, raw.1, raw.2) }

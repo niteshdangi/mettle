@@ -37,7 +37,7 @@ fn checks_construction(): i32 {
         owned.display().to_string().as_text() != "hello" { return 6 }
     let copied = slice.into_os_string()
     if !copied.same(read owned) || copied.len() != 5usize { return 7 }
-    let boxed = os_string_from_text("boxed").into_boxed_os_str()
+    let boxed = os_string_from_text("boxed").into_heap_os_str()
     if !boxed.get().same(os_str_from_text("boxed")) { return 8 }
     0
 }
