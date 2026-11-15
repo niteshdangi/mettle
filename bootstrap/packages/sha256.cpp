@@ -1,5 +1,8 @@
 #include "packages/sha256.h"
 #include <algorithm>
+#if defined(__x86_64__)
+#include <immintrin.h>
+#endif
 
 namespace mettle::packages {
 namespace {
@@ -19,64 +22,132 @@ constexpr std::array<std::uint32_t, 64> k{
 std::uint32_t rotate(std::uint32_t value, unsigned bits) {
   return (value >> bits) | (value << (32 - bits));
 }
+
+void softwareBlocks(std::array<std::uint32_t, 8> &state,
+                    const unsigned char *bytes, std::size_t count) {
+  for (; count; --count, bytes += 64) {
+    std::uint32_t w[64];
+    for (std::size_t i = 0; i < 16; ++i)
+      w[i] = (std::uint32_t{bytes[i * 4]} << 24) |
+             (std::uint32_t{bytes[i * 4 + 1]} << 16) |
+             (std::uint32_t{bytes[i * 4 + 2]} << 8) | bytes[i * 4 + 3];
+    for (std::size_t i = 16; i < 64; ++i) {
+      auto s0 = rotate(w[i - 15], 7) ^ rotate(w[i - 15], 18) ^ (w[i - 15] >> 3);
+      auto s1 = rotate(w[i - 2], 17) ^ rotate(w[i - 2], 19) ^ (w[i - 2] >> 10);
+      w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    auto [a, b, c, d, e, f, g, h] = state;
+    for (std::size_t i = 0; i < 64; ++i) {
+      auto s1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25);
+      auto choose = (e & f) ^ (~e & g);
+      auto t1 = h + s1 + choose + k[i] + w[i];
+      auto s0 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
+      auto majority = (a & b) ^ (a & c) ^ (b & c);
+      auto t2 = s0 + majority;
+      h = g;
+      g = f;
+      f = e;
+      e = d + t1;
+      d = c;
+      c = b;
+      b = a;
+      a = t1 + t2;
+    }
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+    state[4] += e;
+    state[5] += f;
+    state[6] += g;
+    state[7] += h;
+  }
+}
+
+#if defined(__x86_64__)
+// The SHA extensions hash several times faster than the portable rounds, and
+// the build cache re-hashes every library blob it reads.
+__attribute__((target("sha,sse4.1,ssse3"))) void
+hardwareBlocks(std::array<std::uint32_t, 8> &state, const unsigned char *bytes,
+               std::size_t count) {
+  const __m128i swap =
+      _mm_set_epi64x(0x0c0d0e0f08090a0bLL, 0x0405060700010203LL);
+  __m128i swapped =
+      _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)&state[0]), 0xB1);
+  __m128i efgh =
+      _mm_shuffle_epi32(_mm_loadu_si128((const __m128i *)&state[4]), 0x1B);
+  __m128i abef = _mm_alignr_epi8(swapped, efgh, 8);
+  __m128i cdgh = _mm_blend_epi16(efgh, swapped, 0xF0);
+  for (; count; --count, bytes += 64) {
+    const __m128i savedAbef = abef, savedCdgh = cdgh;
+    __m128i w[4];
+    for (int i = 0; i < 4; ++i)
+      w[i] = _mm_shuffle_epi8(
+          _mm_loadu_si128((const __m128i *)(bytes + 16 * i)), swap);
+    for (int r = 0; r < 16; ++r) {
+      __m128i message = _mm_add_epi32(
+          w[r & 3], _mm_loadu_si128((const __m128i *)&k[4 * r]));
+      cdgh = _mm_sha256rnds2_epu32(cdgh, abef, message);
+      message = _mm_shuffle_epi32(message, 0x0E);
+      abef = _mm_sha256rnds2_epu32(abef, cdgh, message);
+      if (r < 12) {
+        __m128i next = _mm_sha256msg1_epu32(w[r & 3], w[(r + 1) & 3]);
+        next = _mm_add_epi32(
+            next, _mm_alignr_epi8(w[(r + 3) & 3], w[(r + 2) & 3], 4));
+        w[r & 3] = _mm_sha256msg2_epu32(next, w[(r + 3) & 3]);
+      }
+    }
+    abef = _mm_add_epi32(abef, savedAbef);
+    cdgh = _mm_add_epi32(cdgh, savedCdgh);
+  }
+  __m128i feba = _mm_shuffle_epi32(abef, 0x1B);
+  __m128i dchg = _mm_shuffle_epi32(cdgh, 0xB1);
+  _mm_storeu_si128((__m128i *)&state[0], _mm_blend_epi16(feba, dchg, 0xF0));
+  _mm_storeu_si128((__m128i *)&state[4], _mm_alignr_epi8(dchg, feba, 8));
+}
+#endif
+
+void blocks(std::array<std::uint32_t, 8> &state, const unsigned char *bytes,
+            std::size_t count) {
+#if defined(__x86_64__)
+  static const bool hardware = __builtin_cpu_supports("sha") &&
+                               __builtin_cpu_supports("sse4.1");
+  if (hardware)
+    return hardwareBlocks(state, bytes, count);
+#endif
+  softwareBlocks(state, bytes, count);
+}
 } // namespace
 
 Sha256::Sha256()
     : state{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
             0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19} {}
 
-void Sha256::block(const unsigned char *bytes) {
-  std::array<std::uint32_t, 64> w{};
-  for (std::size_t i = 0; i < 16; ++i)
-    w[i] = (std::uint32_t{bytes[i * 4]} << 24) |
-           (std::uint32_t{bytes[i * 4 + 1]} << 16) |
-           (std::uint32_t{bytes[i * 4 + 2]} << 8) | bytes[i * 4 + 3];
-  for (std::size_t i = 16; i < 64; ++i) {
-    auto s0 = rotate(w[i - 15], 7) ^ rotate(w[i - 15], 18) ^ (w[i - 15] >> 3);
-    auto s1 = rotate(w[i - 2], 17) ^ rotate(w[i - 2], 19) ^ (w[i - 2] >> 10);
-    w[i] = w[i - 16] + s0 + w[i - 7] + s1;
-  }
-  auto [a, b, c, d, e, f, g, h] = state;
-  for (std::size_t i = 0; i < 64; ++i) {
-    auto s1 = rotate(e, 6) ^ rotate(e, 11) ^ rotate(e, 25);
-    auto choose = (e & f) ^ (~e & g);
-    auto t1 = h + s1 + choose + k[i] + w[i];
-    auto s0 = rotate(a, 2) ^ rotate(a, 13) ^ rotate(a, 22);
-    auto majority = (a & b) ^ (a & c) ^ (b & c);
-    auto t2 = s0 + majority;
-    h = g;
-    g = f;
-    f = e;
-    e = d + t1;
-    d = c;
-    c = b;
-    b = a;
-    a = t1 + t2;
-  }
-  state[0] += a;
-  state[1] += b;
-  state[2] += c;
-  state[3] += d;
-  state[4] += e;
-  state[5] += f;
-  state[6] += g;
-  state[7] += h;
-}
+void Sha256::block(const unsigned char *bytes) { blocks(state, bytes, 1); }
 
 void Sha256::update(std::string_view data) {
   total += data.size();
   auto *bytes = reinterpret_cast<const unsigned char *>(data.data());
   std::size_t size = data.size();
-  while (size) {
+  if (buffered) {
     auto take = std::min(size, buffer.size() - buffered);
     std::copy_n(bytes, take, buffer.begin() + static_cast<long>(buffered));
     buffered += take;
     bytes += take;
     size -= take;
     if (buffered == buffer.size()) {
-      block(buffer.data());
+      blocks(state, buffer.data(), 1);
       buffered = 0;
     }
+  }
+  if (const auto whole = size / buffer.size()) {
+    blocks(state, bytes, whole);
+    bytes += whole * buffer.size();
+    size -= whole * buffer.size();
+  }
+  if (size) {
+    std::copy_n(bytes, size, buffer.begin());
+    buffered = size;
   }
 }
 

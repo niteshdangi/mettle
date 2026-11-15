@@ -253,10 +253,18 @@ struct Writer : Fields<Writer> {
   explicit Writer(const metadata::EncodeReferences &references)
       : references(references) {}
   void unsignedInteger(std::uint64_t number, unsigned width) {
-    if (bytes.size() > limits::sourceBytes - width)
+    if (bytes.size() > limits::sourceBytes - 10)
       reject("IR archive exceeds compiler file size limit");
-    for (unsigned i = 0; i < width; ++i)
-      bytes.push_back(static_cast<std::uint8_t>(number >> (i * 8)));
+    if (width == 1) {
+      bytes.push_back(static_cast<std::uint8_t>(number));
+      return;
+    }
+    // LEB128: identifiers, counts and offsets are almost always small.
+    while (number >= 0x80) {
+      bytes.push_back(static_cast<std::uint8_t>(number | 0x80));
+      number >>= 7;
+    }
+    bytes.push_back(static_cast<std::uint8_t>(number));
   }
   void boolean(bool v) { unsignedInteger(v, 1); }
   void text(const std::string &v) {
@@ -326,11 +334,22 @@ struct Reader : Fields<Reader> {
       reject("IR archive exceeds compiler file size limit");
   }
   std::uint64_t unsignedInteger(unsigned width) {
-    if (width > bytes.size() - position)
-      reject("truncated IR archive");
+    if (width == 1) {
+      if (position >= bytes.size())
+        reject("truncated IR archive");
+      return bytes[position++];
+    }
     std::uint64_t result = 0;
-    for (unsigned i = 0; i < width; ++i)
-      result |= std::uint64_t{bytes[position++]} << (i * 8);
+    for (unsigned shift = 0;; shift += 7) {
+      if (position >= bytes.size() || shift > 63)
+        reject("truncated IR archive");
+      auto byte = bytes[position++];
+      result |= std::uint64_t{byte & 0x7fu} << shift;
+      if (!(byte & 0x80))
+        break;
+    }
+    if (width < 8 && result >> (width * 8))
+      reject("IR integer exceeds its width");
     return result;
   }
   void boolean(bool &v) {
@@ -577,7 +596,7 @@ EncodeResult encodeProgram(const Program &program,
   try {
     Writer writer(references);
     writer.unsignedInteger(0x5249544d, 4);
-    writer.unsignedInteger(7, 4);
+    writer.unsignedInteger(8, 4);
     if ((!program.functionPackages.empty() &&
          program.functionPackages.size() != program.functions.size()) ||
         (!program.staticPackages.empty() &&
@@ -621,7 +640,7 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
   try {
     Reader reader(bytes, references);
     if (reader.unsignedInteger(4) != 0x5249544d ||
-        reader.unsignedInteger(4) != 7)
+        reader.unsignedInteger(4) != 8)
       reject("unsupported IR archive format or version");
     DecodeResult result;
     auto records = [&](auto &items, auto &packages, auto &names,

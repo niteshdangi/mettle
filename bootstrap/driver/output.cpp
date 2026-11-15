@@ -3,6 +3,7 @@
 #include "backend/llvm/object.h"
 #include "driver/cache.h"
 #include "packages/sha256.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Verifier.h"
@@ -159,9 +160,11 @@ std::optional<PackageObject> nativePackageObject(
     return left.getName() < right.getName();
   };
   module->getFunctionList().sort(byName);
+  // Bitcode is a faithful, much cheaper serialization than printed IR.
   std::string partition;
   llvm::raw_string_ostream stream(partition);
-  module->print(stream, nullptr);
+  llvm::WriteBitcodeToFile(*module, stream);
+  stream.flush();
   packages::Sha256 hash;
   hash.update(partition);
   auto key = inputs.packageObjectKey(identity, sources,

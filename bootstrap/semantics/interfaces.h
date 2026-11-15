@@ -95,6 +95,9 @@ struct Implementation {
   std::vector<RegionRequirement> regionRequirements{};
   std::vector<TypeBinding> equalities{};
   std::size_t declaration = static_cast<std::size_t>(-1);
+  // Mounted from a checked library, whose coherence was proven when it was
+  // built; only pairs involving the program's own implementations are new.
+  bool checkedImport = false;
 };
 struct Projection {
   Type parameter, subject, interfaceType;

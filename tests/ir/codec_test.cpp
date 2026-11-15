@@ -702,12 +702,19 @@ void rawFieldCoverage() {
   Program empty;
   auto minimal = encodeProgram(empty, encode);
   require(bool(minimal), minimal.error.c_str());
-  bad = minimal.bytes;
-  bad[24] = 2;
-  require(!decodeProgram(bad, decode), "invalid boolean accepted");
-  bad = minimal.bytes;
-  bad[29] = 255;
-  require(!decodeProgram(bad, decode), "invalid enum tag accepted");
+  // Integers are variable-length, so find the corruptible bytes by scanning.
+  auto rejectedAt = [&](std::uint8_t value, const char *message) {
+    for (std::size_t i = 0; i < minimal.bytes.size(); ++i) {
+      bad = minimal.bytes;
+      bad[i] = value;
+      auto result = decodeProgram(bad, decode);
+      if (!result && result.error.find(message) != std::string::npos)
+        return true;
+    }
+    return false;
+  };
+  require(rejectedAt(2, "boolean"), "invalid boolean accepted");
+  require(rejectedAt(255, "enumeration tag"), "invalid enum tag accepted");
 }
 } // namespace
 int main() {

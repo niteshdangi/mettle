@@ -37,30 +37,50 @@ public:
     if (!good())
       return;
     if constexpr (std::is_integral_v<T>) {
-      std::uint64_t bits = static_cast<std::uint64_t>(item);
+      // LEB128; signed values are zigzag-encoded so small magnitudes stay short.
+      constexpr bool isSigned = std::is_signed_v<T>;
       if (reading()) {
-        bits = 0;
-        if (input.size() - offset < 8) {
-          fail("truncated declaration integer");
-          return;
+        std::uint64_t bits = 0;
+        unsigned shift = 0;
+        for (;;) {
+          if (offset >= input.size() || shift > 63) {
+            fail("truncated declaration integer");
+            return;
+          }
+          auto byte = input[offset++];
+          bits |= std::uint64_t(byte & 0x7f) << shift;
+          if (!(byte & 0x80))
+            break;
+          shift += 7;
         }
-        for (unsigned i = 0; i != 8; ++i)
-          bits |= std::uint64_t(input[offset++]) << (8 * i);
         if constexpr (std::is_same_v<T, bool>) {
           if (bits > 1)
             fail("invalid declaration boolean");
-        } else if constexpr (std::is_unsigned_v<T>) {
+          item = bits != 0;
+        } else if constexpr (isSigned) {
+          auto decoded = static_cast<std::int64_t>(bits >> 1) ^
+                         -static_cast<std::int64_t>(bits & 1);
+          if (decoded < std::numeric_limits<T>::min() ||
+              decoded > std::numeric_limits<T>::max())
+            fail("declaration integer exceeds its representation");
+          item = static_cast<T>(decoded);
+        } else {
           if (bits > std::numeric_limits<T>::max())
             fail("declaration integer exceeds its representation");
-        } else if (static_cast<std::int64_t>(bits) <
-                       std::numeric_limits<T>::min() ||
-                   static_cast<std::int64_t>(bits) >
-                       std::numeric_limits<T>::max())
-          fail("declaration integer exceeds its representation");
-        item = static_cast<T>(bits);
+          item = static_cast<T>(bits);
+        }
       } else {
-        for (unsigned i = 0; i != 8; ++i)
-          output.push_back(static_cast<std::uint8_t>(bits >> (8 * i)));
+        std::uint64_t bits = static_cast<std::uint64_t>(item);
+        if constexpr (isSigned) {
+          auto number = static_cast<std::int64_t>(item);
+          bits = (static_cast<std::uint64_t>(number) << 1) ^
+                 static_cast<std::uint64_t>(number >> 63);
+        }
+        while (bits >= 0x80) {
+          output.push_back(static_cast<std::uint8_t>(bits | 0x80));
+          bits >>= 7;
+        }
+        output.push_back(static_cast<std::uint8_t>(bits));
       }
     } else if constexpr (std::is_enum_v<T>) {
       auto bits = static_cast<unsigned>(item);
@@ -95,7 +115,7 @@ public:
     if (!good())
       return;
     if (reading()) {
-      if (count > (input.size() - offset) / 8) {
+      if (count > input.size() - offset) {
         fail("declaration collection exceeds its payload");
         return;
       }
@@ -110,7 +130,7 @@ public:
     if (!good())
       return;
     if (reading()) {
-      if (count > (input.size() - offset) / 8) {
+      if (count > input.size() - offset) {
         fail("declaration collection exceeds its payload");
         return;
       }
@@ -1021,7 +1041,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   }
   result.header = std::move(header.output);
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.9");
+  contracts.tag("mettle.checked-contracts.10");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size();
   contracts(count);
@@ -1093,12 +1113,12 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
     return result;
   }
   Archive archive(bytes, references, types.get());
-  archive.tag("mettle.checked-contracts.9");
+  archive.tag("mettle.checked-contracts.10");
   auto value = std::make_shared<ImportedDeclarations>();
   value->types = std::move(types);
   std::uint64_t count = 0;
   archive(count);
-  if (count > bytes.size() / 8)
+  if (count > bytes.size())
     archive.fail("function inventory exceeds its payload");
   for (std::uint64_t i = 0; i < count && archive.good(); ++i) {
     std::uint32_t index = 0;
@@ -1112,7 +1132,7 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
       archive.fail("duplicate checked function identity");
   }
   archive(count);
-  if (count > bytes.size() / 8)
+  if (count > bytes.size())
     archive.fail("static inventory exceeds its payload");
   for (std::uint64_t i = 0; i < count && archive.good(); ++i) {
     std::uint32_t index = 0;
@@ -1126,7 +1146,7 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
   archive(value->products, value->aliases, value->interfaces,
           value->implementations, value->associated, value->inherentConstants);
   archive(count);
-  if (count > bytes.size() / 8)
+  if (count > bytes.size())
     archive.fail("closure inventory exceeds its payload");
   for (std::uint64_t i = 0; i < count && archive.good(); ++i) {
     std::uint32_t index = 0;

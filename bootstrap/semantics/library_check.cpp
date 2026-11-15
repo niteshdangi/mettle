@@ -205,7 +205,8 @@ void Checker::importDeclarations() {
                   [](const auto &closure) { return !closure; }))
     error("metadata", {}, "imported closure inventory is not contiguous");
   *checked.interfaceData = imports->checkingDatabase;
-  for (auto &rule : checked.interfaceData->implementations)
+  for (auto &rule : checked.interfaceData->implementations) {
+    rule.checkedImport = true;
     for (std::size_t i = 0; i < module.implementations.size(); ++i)
       if (rule.span.source == module.implementations[i].span.source &&
           rule.span.begin == module.implementations[i].span.begin &&
@@ -213,6 +214,7 @@ void Checker::importDeclarations() {
         rule.declaration = i;
         break;
       }
+  }
   for (std::size_t i = 0; i < module.interfaces.size(); ++i)
     if (imported(module.interfaces[i].span) &&
         (i >= checked.interfaceData->definitions.size() ||

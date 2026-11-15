@@ -19,6 +19,26 @@ void expect(bool condition, const char *message) {
 
 int main() {
   using namespace mettle;
+  auto digest = [](const std::string &text) {
+    packages::Sha256 hash;
+    hash.update(text);
+    return hash.finish();
+  };
+  expect(digest("abc") ==
+             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+         "SHA-256 of one block changed");
+  expect(digest("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
+             "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+         "SHA-256 across a padding boundary changed");
+  {
+    packages::Sha256 hash;
+    const std::string chunk(1000, 'a');
+    for (int i = 0; i < 1000; ++i)
+      hash.update(chunk);
+    expect(hash.finish() ==
+               "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+           "SHA-256 of a long input changed");
+  }
   Diagnostics original;
   Source first{"core/main.mt", "macro value", 4};
   Source generated{"core/main.mt", "generated", 9};
@@ -121,7 +141,7 @@ int main() {
       fs::remove_all(root, error);
     }
   } cleanup{root};
-  packages::Store store(root, {0, 0});
+  packages::Store store(root, {1, 0});
   auto key = std::string(64, 'a'), other = std::string(64, 'b');
   auto lease = store.acquireLease(key);
   expect(static_cast<bool>(lease), "must lease checked-library input");

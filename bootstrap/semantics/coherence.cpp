@@ -512,80 +512,84 @@ bool Solver::coherent() {
   bool valid = true;
   for (std::size_t i = 0; i < database.implementations.size(); ++i) {
     const auto &left = database.implementations[i];
-    std::set<Type> known;
-    for (auto parameter : identityParameters(left.target, types))
-      known.insert(parameter);
-    if (types.isErased(left.interfaceType))
-      for (auto argument : types.erased(left.interfaceType).arguments)
-        for (auto parameter : identityParameters(argument, types))
-          known.insert(parameter);
-    bool changed;
-    do {
-      auto count = known.size();
-      for (const auto &equation : left.equalities) {
-        if (determined(equation.parameter, left, known, types))
-          for (auto parameter : identityParameters(equation.argument, types))
+    if (!left.checkedImport) {
+      std::set<Type> known;
+      for (auto parameter : identityParameters(left.target, types))
+        known.insert(parameter);
+      if (types.isErased(left.interfaceType))
+        for (auto argument : types.erased(left.interfaceType).arguments)
+          for (auto parameter : identityParameters(argument, types))
             known.insert(parameter);
-        if (determined(equation.argument, left, known, types))
-          for (auto parameter : identityParameters(equation.parameter, types))
-            known.insert(parameter);
-      }
-      for (const auto &requirement : left.requirements) {
-        if (requirement.property != Property::Interface ||
-            !types.isErased(requirement.interfaceType) ||
-            !determined(requirement.subject, left, known, types))
-          continue;
-        for (const auto &binding :
-             types.erased(requirement.interfaceType).associated)
-          for (auto parameter : identityParameters(binding.argument, types))
-            known.insert(parameter);
-      }
-      for (auto parameter : left.parameters) {
-        if (!known.contains(parameter) || !types.isParameter(parameter))
-          continue;
-        auto contract = types.parameter(parameter).callableConstraint;
-        if (contract == Type::Unknown || !types.isFunctionPointer(contract))
-          continue;
-        for (auto result :
-             {types.callable(contract).result, types.callable(contract).error})
-          for (auto output : identityParameters(result, types))
-            known.insert(output);
-      }
-      changed = count != known.size();
-    } while (changed);
-    for (auto parameter : left.parameters)
-      if (!known.contains(parameter)) {
-        diagnostics.error("type", left.span,
-                          "unconstrained implementation parameter '" +
-                              displayType(types, parameter) + "'");
-        valid = false;
-      }
-    if (types.isErased(left.interfaceType)) {
-      const auto &definition =
-          database.definitions[types.erased(left.interfaceType).declaration];
-      auto nominal = left.target;
-      while (types.isView(nominal))
-        nominal = types.view(nominal).payload;
-      if (types.isProduct(nominal) &&
-          types.product(nominal).genericOrigin != Type::Unknown)
-        nominal = types.product(nominal).genericOrigin;
-      bool localType =
-          left.package != unknownPackage && types.isProduct(nominal) &&
-          (types.product(nominal).kind == AggregateKind::Product ||
-           types.product(nominal).kind == AggregateKind::Enumeration ||
-           types.product(nominal).kind == AggregateKind::Opaque) &&
-          types.product(nominal).package == left.package;
-      bool localInterface =
-          left.package != unknownPackage && definition.package == left.package;
-      if (!localInterface && !localType) {
-        diagnostics.error("type", left.span,
-                          "orphan interface implementation has no local owner");
-        valid = false;
+      bool changed;
+      do {
+        auto count = known.size();
+        for (const auto &equation : left.equalities) {
+          if (determined(equation.parameter, left, known, types))
+            for (auto parameter : identityParameters(equation.argument, types))
+              known.insert(parameter);
+          if (determined(equation.argument, left, known, types))
+            for (auto parameter : identityParameters(equation.parameter, types))
+              known.insert(parameter);
+        }
+        for (const auto &requirement : left.requirements) {
+          if (requirement.property != Property::Interface ||
+              !types.isErased(requirement.interfaceType) ||
+              !determined(requirement.subject, left, known, types))
+            continue;
+          for (const auto &binding :
+               types.erased(requirement.interfaceType).associated)
+            for (auto parameter : identityParameters(binding.argument, types))
+              known.insert(parameter);
+        }
+        for (auto parameter : left.parameters) {
+          if (!known.contains(parameter) || !types.isParameter(parameter))
+            continue;
+          auto contract = types.parameter(parameter).callableConstraint;
+          if (contract == Type::Unknown || !types.isFunctionPointer(contract))
+            continue;
+          for (auto result :
+               {types.callable(contract).result, types.callable(contract).error})
+            for (auto output : identityParameters(result, types))
+              known.insert(output);
+        }
+        changed = count != known.size();
+      } while (changed);
+      for (auto parameter : left.parameters)
+        if (!known.contains(parameter)) {
+          diagnostics.error("type", left.span,
+                            "unconstrained implementation parameter '" +
+                                displayType(types, parameter) + "'");
+          valid = false;
+        }
+      if (types.isErased(left.interfaceType)) {
+        const auto &definition =
+            database.definitions[types.erased(left.interfaceType).declaration];
+        auto nominal = left.target;
+        while (types.isView(nominal))
+          nominal = types.view(nominal).payload;
+        if (types.isProduct(nominal) &&
+            types.product(nominal).genericOrigin != Type::Unknown)
+          nominal = types.product(nominal).genericOrigin;
+        bool localType =
+            left.package != unknownPackage && types.isProduct(nominal) &&
+            (types.product(nominal).kind == AggregateKind::Product ||
+             types.product(nominal).kind == AggregateKind::Enumeration ||
+             types.product(nominal).kind == AggregateKind::Opaque) &&
+            types.product(nominal).package == left.package;
+        bool localInterface =
+            left.package != unknownPackage && definition.package == left.package;
+        if (!localInterface && !localType) {
+          diagnostics.error("type", left.span,
+                            "orphan interface implementation has no local owner");
+          valid = false;
+        }
       }
     }
     for (std::size_t j = 0; j < i; ++j) {
       steps = 0;
       const auto &right = database.implementations[j];
+      if (left.checkedImport && database.implementations[j].checkedImport)
+        continue;
       bool same = types.isErased(left.interfaceType) &&
                   types.isErased(right.interfaceType) &&
                   types.erased(left.interfaceType).declaration ==

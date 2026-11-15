@@ -36,7 +36,7 @@ endif()
 
 find_package(LLVM ${METTLE_LLVM_VERSION} EXACT REQUIRED CONFIG)
 llvm_map_components_to_libnames(METTLE_LLVM_LIBRARIES
-                               Core CodeGen MC Passes Instrumentation X86 AArch64
+                               Core BitWriter CodeGen MC Passes Instrumentation X86 AArch64
                                WebAssembly ARM)
 
 if(METTLE_ENABLE_SANITIZERS)
