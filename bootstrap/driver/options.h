@@ -43,7 +43,7 @@ struct Options {
   // Build cache (see docs/process/performance.md section 5.1.1). An empty directory
   // selects METTLE_CACHE_DIR, then the user cache directory.
   std::string cacheDir;
-  std::uint64_t cacheLimitKib = 512 * 1024, cacheMaxAgeDays = 30;
+  std::uint64_t cacheLimitKib = 4096 * 1024, cacheMaxAgeDays = 30;
   bool noCache = false, explain = false, dryRun = false;
   // Link libraries requested by build scripts.
   std::vector<std::string> extraLibraries;

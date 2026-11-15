@@ -405,6 +405,10 @@ Rust bridge (A009) belongs to I17. Cross-compiling is not a substitute for
 execution/probes; an inapplicable service is not a pass. Evidence must retain
 exact target applicability.
 
+I13 and I13B implementation is complete (2026-11-15). Their remaining test
+evidence comes from I14's single consolidated qualification run, built to share
+one primed library cache and use every core, not from per-milestone matrices.
+
 Moved into I14 by owner decision (2026-10-31): I09 compile-time and
 retained-byte measurement with front-end dependency separation (performance.md
 5.1.1), I10 benchmarks P08 and P09, and I11 benchmark P10 with its async

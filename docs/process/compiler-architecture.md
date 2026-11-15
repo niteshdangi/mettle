@@ -309,8 +309,8 @@ objects in both profiles. Cross-package optimization is explicit and optional;
 its additional dependency edges participate in invalidation. The future native
 backend consumes the same verified concrete IR through the pipeline boundary.
 
-**Storage.** Use one content-addressed, deduplicated store with the existing
-512 MiB default cache budget and configurable limit. Interface/query/object data
+**Storage.** Use one content-addressed, deduplicated store with a
+4 GiB default cache budget and configurable limit. Interface/query/object data
 share that budget; do not retain complete compiler heaps, duplicate syntax trees
 or full historical generations. Evict recomputable unused entries and reclaim
 unreferenced blobs; a missing/evicted entry changes work, never behavior. Active
