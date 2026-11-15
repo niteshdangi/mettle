@@ -425,6 +425,10 @@ private:
                          Span span);
   bool intrinsicProperty(const TypeSyntax &bound, std::string_view property,
                          Span span) const;
+  bool intrinsicProperty(const TypeSyntax &bound, std::string_view property,
+                         Span span, std::string canonicalName) const;
+  bool interfaceHasFunctions(const std::string &canonical) const;
+  mutable std::map<std::string, bool> interfaceFunctionOwners;
   void
   structuralPropertyDeclaration(const Module::Implementation &syntax,
                                 interfaces::Property property,

@@ -89,7 +89,13 @@ void Checker::interfaceHeaders() {
 
 bool Checker::intrinsicProperty(const TypeSyntax &bound,
                                 std::string_view property, Span span) const {
-  auto canonicalName = typeName(bound.name, span, {}, bound.context);
+  return intrinsicProperty(bound, property, span,
+                           typeName(bound.name, span, {}, bound.context));
+}
+
+bool Checker::intrinsicProperty(const TypeSyntax &bound,
+                                std::string_view property, Span span,
+                                std::string canonicalName) const {
   if (canonicalName.empty())
     canonicalName = bound.name;
   const bool reservedMarker =
@@ -106,6 +112,20 @@ bool Checker::intrinsicProperty(const TypeSyntax &bound,
          (reservedMarker || reservedThin || unqualifiedProperty) &&
          bound.arguments.empty() && bound.regions.empty() &&
          bound.binders.empty();
+}
+
+bool Checker::interfaceHasFunctions(const std::string &canonical) const {
+  auto [cached, inserted] = interfaceFunctionOwners.try_emplace(canonical, false);
+  if (inserted)
+    cached->second = std::any_of(
+        module.functions.begin(), module.functions.end(),
+        [&](const Function &function) {
+          return function.implementation < 0 &&
+                 !function.interfaceOwner.empty() &&
+                 typeName(function.interfaceOwner, function.span,
+                          function.owner) == canonical;
+        });
+  return cached->second;
 }
 
 std::optional<interfaces::Property>
@@ -128,24 +148,17 @@ Checker::propertyBound(const TypeSyntax &bound, Span span) const {
                                 {"RefUnwindSafe", Property::RefUnwindSafe},
                                 {"Freeze", Property::Freeze},
                                 {"Thin", Property::Thin}}) {
-    if (intrinsicProperty(bound, name, span))
+    if (intrinsicProperty(bound, name, span, canonical))
       return property;
     auto found = interfaceNames.find(canonical);
     if (found == interfaceNames.end())
       continue;
     const auto &syntax = module.interfaces[found->second];
-    const bool hasMethods =
-        std::any_of(module.functions.begin(), module.functions.end(),
-                    [&](const Function &function) {
-                      return function.implementation < 0 &&
-                             !function.interfaceOwner.empty() &&
-                             typeName(function.interfaceOwner, function.span,
-                                      function.owner) == canonical;
-                    });
     if (syntax.genericParameters.empty() && syntax.constraints.empty() &&
-        syntax.associated.empty() && syntax.methods.empty() && !hasMethods &&
+        syntax.associated.empty() && syntax.methods.empty() &&
         syntax.superinterfaces.size() == 1 &&
-        intrinsicProperty(syntax.superinterfaces.front(), name, syntax.span))
+        intrinsicProperty(syntax.superinterfaces.front(), name, syntax.span) &&
+        !interfaceHasFunctions(canonical))
       return property;
   }
   return std::nullopt;

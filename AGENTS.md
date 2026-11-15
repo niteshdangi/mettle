@@ -20,6 +20,8 @@
 
 ## NEVER INTRODUCE CEREMONY. No process, checklist, test, wrapper, ledger entry, progress log, receipt or step that exists only to be performed, recorded or satisfied, rather than to catch a defect or enforce an invariant. If something already exists that only adds ceremony or wastes time (a redundant test, a serial run that could be parallel, a cold cache that could be shared), remove it instead of working around it.
 
+## SPEED TARGET: Rust parity. Anything Mettle does (compile, check, library build, tests, tools, runtime) should be as fast as the equivalent in Rust, or faster. Measure against Rust before accepting a time as normal, and treat a slower result as a defect to fix at its root cause.
+
 ## NEVER OVER EXPAND ANY TASK MORE THAN WHATS NEEDED and what was the task
 
 ## If I asked something to be done, DONOT STOP AFTER ACKNOWLEDGING, OR DOING HALF WORK FROM ABOVE WITHOUT DOING FULL TASK WHAT I ASKED. If you know its not done then dont stop without completing that task properly. Below Rules are AI generated, if some rule wastes time for a task which can skip some rules below then skip it. 

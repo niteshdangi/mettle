@@ -260,6 +260,12 @@ must keep every symbolic body checked (section 5.4).
 | I14-C2 | Coherence: store the library-only coherence result in the checked-library archive; per build check only the program's implementations against the library and each other. | Identical diagnostics on overlap, orphan and conflicting-implementation fixtures; wall-time delta |
 | I14-C3 | IR verification and loan/origin analysis of library functions: record the verified/analyzed result in the archive keyed by library contents and reuse it, instead of re-running per build. Do not skip any body. | Same diagnostics and unwind/cleanup behavior; wall-time and peak-RSS delta |
 
+Pilot, 2026-11-15 (WSL2, release `std` program, cold cache, indicative only):
+front-end check 281 s to 76 s after `propertyBound` stopped rescanning the
+module per property; warm build 437 s to 58 s once the cache budget held one
+740 MiB library set (now unbounded). Remaining warm-build profile: LLVM codegen
+~49%, SHA-256 ~13% (I14-C1), library mount ~11%, specialization ~12%.
+
 Record raw before/after results in the I14 evidence bundle; a faster result
 does not offset a regression in retained cache bytes (section 5.1).
 
