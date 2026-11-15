@@ -368,7 +368,6 @@ void tlsThreadExitBody(void *raw) {
             failure = std::current_exception();
         }
       }
-      state->destroyingKeys.pop_back();
     }
   }
   while (!state->activeKeys.empty()) {

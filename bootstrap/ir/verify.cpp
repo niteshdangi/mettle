@@ -1515,15 +1515,17 @@ bool verify(const Program &program, Diagnostics &diagnostics,
                                     program.types->targetPointerBits()))
               return false;
             auto metadata = program.types->pointerMetadata(target);
-            return metadata == PointerMetadata::None
-                       ? value.scalar.magnitude[0] == 0
-                       : metadata == PointerMetadata::ElementCount;
+            if (metadata == PointerMetadata::None
+                    ? value.scalar.magnitude[0] != 0
+                    : metadata != PointerMetadata::ElementCount)
+              return false;
           }
           if (program.types->isView(expected) &&
               (program.types->view(expected).mode == ParameterMode::Mut ||
                program.statics[value.symbol].mutableBinding))
             return false;
-          if (program.types->view(expected).mode == ParameterMode::Mut &&
+          if (program.types->isView(expected) &&
+              program.types->view(expected).mode == ParameterMode::Mut &&
               !program.statics[value.symbol].mutableBinding)
             return false;
           if (payload == target && value.byteOffset == 0)

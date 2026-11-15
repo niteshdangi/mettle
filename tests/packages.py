@@ -19,6 +19,9 @@ from pathlib import Path
 import processes
 import scheduling
 
+# The default 512 MiB budget evicts the std/alloc/core release objects mid-test.
+os.environ.setdefault("METTLE_CACHE_LIMIT_KIB", "4194304")
+
 COMMANDS = []
 
 

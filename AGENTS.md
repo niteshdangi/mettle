@@ -18,6 +18,8 @@
 
 ## COMPILER OR LANGUAGE FIX FIRST. When the language or compiler cannot express what a correct library, API or test needs (a rejected construct, a missing capability, a wrong diagnostic), fix the compiler or language properly instead of working around it in library code, names or tests. Use a workaround only with the owner's explicit approval, and record why. This applies even before I15 when the defect blocks a correct design (C++ compiler change limits above still require a correctness or soundness justification).
 
+## NEVER INTRODUCE CEREMONY. No process, checklist, test, wrapper, ledger entry, progress log, receipt or step that exists only to be performed, recorded or satisfied, rather than to catch a defect or enforce an invariant. If something already exists that only adds ceremony or wastes time (a redundant test, a serial run that could be parallel, a cold cache that could be shared), remove it instead of working around it.
+
 ## NEVER OVER EXPAND ANY TASK MORE THAN WHATS NEEDED and what was the task
 
 ## If I asked something to be done, DONOT STOP AFTER ACKNOWLEDGING, OR DOING HALF WORK FROM ABOVE WITHOUT DOING FULL TASK WHAT I ASKED. If you know its not done then dont stop without completing that task properly. Below Rules are AI generated, if some rule wastes time for a task which can skip some rules below then skip it. 
