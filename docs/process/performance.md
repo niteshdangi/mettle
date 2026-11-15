@@ -155,7 +155,7 @@ The user build cache is built to retain less than Cargo's `target/` directory:
   incremental or debug side trees. Comment and layout edits reuse the existing
   entry instead of adding one.
 - **Bounded.** After every publication the store applies a byte budget
-  (default 4 GiB, `--cache-limit-kib`; one release `std` library set measures 740 MiB) and an age limit (default 30 days,
+  (default unbounded, `--cache-limit-kib`; one release `std` library set measures 740 MiB) and an age limit (default 30 days,
   `--cache-max-age-days`): entries unused longest are evicted first, the entry
   just published last, then blobs without references and stale scratch files
   are removed. Each eviction is reported with `--explain` and its reason.

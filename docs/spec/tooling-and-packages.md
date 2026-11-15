@@ -222,7 +222,7 @@ a store with live leases.
 both whole-build and package-object caches. Storage design: performance.md
 section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
 `--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;
-`METTLE_CACHE_LIMIT_KIB` overrides the default byte budget in KiB; an explicit
+`METTLE_CACHE_LIMIT_KIB` sets a byte budget in KiB (default 0, unbounded); an explicit
 `--cache-limit-kib` takes precedence. Invalid environment values are errors.
 `METTLE_CACHE_DIR`; `mettle clean [PACKAGE] [--dry-run]`.
 

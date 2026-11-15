@@ -677,7 +677,7 @@ std::vector<std::string> Store::pruneLocked(const std::set<std::string> &keep) {
                      return a.used < b.used;
                    });
   std::size_t next = 0;
-  while (total > bounds.bytes && next < live.size()) {
+  while (bounds.bytes && total > bounds.bytes && next < live.size()) {
     const auto &record = live[next++];
     if (!leased.contains(record.key))
       evict(record, "over the " + std::to_string(bounds.bytes) +

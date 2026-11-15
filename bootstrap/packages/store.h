@@ -22,8 +22,8 @@ namespace mettle::packages {
 //   tmp/               in-flight writes, published by atomic rename
 // Sizes are logical file sizes; allocated bytes are never smaller.
 struct StoreLimits {
-  // Upper bound on entry files plus referenced blobs after `prune`.
-  std::uint64_t bytes = std::uint64_t(512) << 20;
+  // Upper bound on entry files plus referenced blobs after `prune`; 0 is unbounded.
+  std::uint64_t bytes = 0;
   // Entries unused for longer are evicted; 0 disables the age limit.
   std::uint64_t maxAgeDays = 30;
 };

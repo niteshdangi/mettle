@@ -437,13 +437,4 @@ if(BUILD_TESTING)
   set_property(TEST ${primed} APPEND PROPERTY FIXTURES_REQUIRED mettle-cache-variants)
   set_property(TEST ${METTLE_TESTS} APPEND PROPERTY ENVIRONMENT
                "METTLE_CACHE_DIR=${PROJECT_BINARY_DIR}/test-cache")
-  set(METTLE_TEST_CACHE_LIMIT_KIB 8388608 CACHE STRING
-      "Shared fixture cache budget in KiB; the primed fixtures alone hold about 1.5 GiB, so a smaller budget evicts the variant entries")
-  if(NOT "${METTLE_TEST_CACHE_LIMIT_KIB}" MATCHES "^[1-9][0-9]*$")
-    message(FATAL_ERROR "METTLE_TEST_CACHE_LIMIT_KIB must be a positive integer")
-  endif()
-  set(METTLE_SHARED_CACHE_TESTS ${METTLE_TESTS})
-  list(FILTER METTLE_SHARED_CACHE_TESTS EXCLUDE REGEX "^packages\\.resolution\\.")
-  set_property(TEST ${METTLE_SHARED_CACHE_TESTS} APPEND PROPERTY ENVIRONMENT
-               "METTLE_CACHE_LIMIT_KIB=${METTLE_TEST_CACHE_LIMIT_KIB}")
 endif()
