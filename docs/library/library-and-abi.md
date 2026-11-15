@@ -19,7 +19,10 @@ the API contract is not a qualification receipt.
 
 `core` contains primitives, views, optional/outcome operations, traits/interfaces,
 iteration, formatting to an explicit sink, atomics supported by the target, and
-low-level memory facilities. It requires neither allocator nor OS.
+low-level memory facilities. `core.alloc` owns allocation-independent `Layout`,
+`LayoutError` (with the `LayoutErr` alias) and the `GlobalAlloc` interface; it
+provides no allocator implementation or allocation functions. Core requires no
+allocator implementation or OS.
 
 `alloc` adds unique/shared owners, owned text, growable/ordered/hash collections,
 allocation-backed formatting and explicitly erased values. It depends on a
@@ -34,7 +37,9 @@ non-`Static` borrows or grant cross-thread transfer; it does not select an
 executor. Polling, allocation failure and destructor panics retain their
 underlying contracts.
 
-`std` adds hosted files/paths, OS strings, clocks, threads, synchronization,
+`std.alloc` reexports the allocation types and raw global allocation functions
+and provides `System`, the hosted `GlobalAlloc` backed by the runtime's OS
+allocator. `std` adds hosted files/paths, OS strings, clocks, threads, synchronization,
 networking and processes. The official async runtime is separately selectable,
 not linked merely because a program imports core.
 
@@ -260,8 +265,9 @@ key on first use, and the initializer runs independently on each thread's first
 `with` access. `set` installs a value directly. `std.sync.tls.new<T>()`
 instead returns an owned, dynamically created key. Each thread destroys live
 values in reverse order of first installation. Values reinstalled by a
-destructor are considered in a later destructor pass, up to the host pthread
-destructor-iteration limit. The hosted Mettle entry point runs the main
+destructor under another key are considered in a later destructor pass, up to
+the host pthread destructor-iteration limit. A key whose destructor has started
+cannot be reinstalled on that thread. The hosted Mettle entry point runs the main
 thread's remaining TLS destructors after `main` returns or panics and before it
 returns the process status. Other process-termination paths do not promise this
 cleanup.
@@ -282,11 +288,19 @@ to a portable kind; operations that time out report kind `TimedOut` and keep the
 OS number. `OsStr`/`Path` preserve POSIX bytes without a Unicode requirement; Windows native
 storage and `write_path` display follow library-surface §12. A
 byte string containing NUL is rejected with `InvalidInput` before reaching the OS.
-The hosted panic hook (`std.panic.set_hook`) receives the message before
-unwinding. An uncaught message panic exits with status 101; hosted
-`std.panic.catch_panic` instead returns its code and owned message payload after
-cleanup completes. A panic raised by a hook aborts. Freestanding execution
-uses aborting traps and does not provide in-process panic recovery.
+The hosted panic hook (`std.panic.set_hook`) receives a C-layout
+`PanicHookInfo` record containing the borrowed message and source location
+before unwinding. The record and its message/file views are valid only during
+the callback. Location file bytes are preserved, with UTF-8 conversion exposed
+as a validated operation. Line and column are 1-based when present and zero
+when no location is available. The accessors are unsafe because the C callback
+type cannot encode the callback lifetime; returned views must not escape it.
+Mettle panic payloads are messages rather than
+arbitrary `Any` values because the language has no `panic_any` equivalent. An
+uncaught message panic exits with status 101; hosted `std.panic.catch_panic`
+instead returns its code and owned message payload after cleanup completes. A
+panic raised by a hook aborts. Freestanding execution uses aborting traps and
+does not provide in-process panic recovery.
 
 Wall time and monotonic elapsed time are distinct types. No monotonicity promise
 is made for wall time. Timeouts distinguish expiration from completed cleanup.

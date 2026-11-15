@@ -73,6 +73,44 @@ std::optional<std::uint32_t> characterLiteral(std::string_view text, bool byte,
     return fail("literal is not a valid Unicode scalar");
   return value;
 }
+std::string quoteText(std::string_view value) {
+  static constexpr char hex[] = "0123456789abcdef";
+  std::string result = "\"";
+  for (unsigned char c : value) {
+    switch (c) {
+    case '"':
+      result += "\\\"";
+      break;
+    case '\\':
+      result += "\\\\";
+      break;
+    case '\n':
+      result += "\\n";
+      break;
+    case '\r':
+      result += "\\r";
+      break;
+    case '\t':
+      result += "\\t";
+      break;
+    case '\0':
+      result += "\\0";
+      break;
+    default:
+      if (c < 0x20 || c == 0x7f) {
+        result += "\\u{";
+        if (c >= 16)
+          result += hex[c >> 4];
+        result += hex[c & 0xf];
+        result += '}';
+      } else {
+        result += static_cast<char>(c);
+      }
+    }
+  }
+  result += '"';
+  return result;
+}
 } // namespace mettle
 
 namespace mettle {

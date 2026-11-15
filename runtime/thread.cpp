@@ -264,10 +264,12 @@ struct TlsKeyInfo {
 struct TlsThreadState {
   // Contains each key with a live value once, in first-assignment order.
   std::vector<std::uintptr_t> activeKeys;
+  std::vector<std::uintptr_t> destroyingKeys;
 };
 
 pthread_mutex_t tlsKeyMutex = PTHREAD_MUTEX_INITIALIZER;
 std::vector<TlsKeyInfo> tlsKeys;
+std::uintptr_t nextTlsHandle = 1;
 pthread_once_t tlsStateOnce = PTHREAD_ONCE_INIT;
 pthread_key_t tlsStateKey{};
 int tlsStateStatus = 0;
@@ -319,6 +321,14 @@ void removeActiveKey(TlsThreadState &state, std::uintptr_t handle) {
   }
 }
 
+bool tlsKeyDestroying(const TlsThreadState &state, std::uintptr_t handle) {
+  for (const auto destroying : state.destroyingKeys) {
+    if (destroying == handle)
+      return true;
+  }
+  return false;
+}
+
 void tlsThreadExitBody(void *raw) {
   std::unique_ptr<TlsThreadState> state(static_cast<TlsThreadState *>(raw));
   if (!state)
@@ -349,6 +359,7 @@ void tlsThreadExitBody(void *raw) {
       void *value = pthread_getspecific(info.key);
       if (!value)
         continue;
+      state->destroyingKeys.push_back(handle);
       if (mettle_rt_tls_set(handle, nullptr) == 0 && info.destructor) {
         try {
           info.destructor(value);
@@ -357,6 +368,7 @@ void tlsThreadExitBody(void *raw) {
             failure = std::current_exception();
         }
       }
+      state->destroyingKeys.pop_back();
     }
   }
   while (!state->activeKeys.empty()) {
@@ -812,11 +824,17 @@ std::uintptr_t mettle_rt_tls_key_new(MettleTlsDestructor destructor) {
   pthread_key_t key{};
   if (pthread_key_create(&key, nullptr) != 0)
     return 0;
-  const auto handle = static_cast<std::uintptr_t>(key) + 1;
   if (pthread_mutex_lock(&tlsKeyMutex) != 0) {
     pthread_key_delete(key);
     return 0;
   }
+  const auto handle = nextTlsHandle;
+  if (handle == 0) {
+    pthread_mutex_unlock(&tlsKeyMutex);
+    pthread_key_delete(key);
+    return 0;
+  }
+  ++nextTlsHandle;
   try {
     tlsKeys.push_back(TlsKeyInfo{handle, key, destructor, nullptr, 0, false});
   } catch (...) {
@@ -846,7 +864,13 @@ std::uintptr_t mettle_rt_tls_static_key_new(const void *identity,
     pthread_mutex_unlock(&tlsKeyMutex);
     return 0;
   }
-  const auto handle = static_cast<std::uintptr_t>(key) + 1;
+  const auto handle = nextTlsHandle;
+  if (handle == 0) {
+    pthread_mutex_unlock(&tlsKeyMutex);
+    pthread_key_delete(key);
+    return 0;
+  }
+  ++nextTlsHandle;
   try {
     tlsKeys.push_back(TlsKeyInfo{handle, key, destructor, identity, 0, false});
   } catch (...) {
@@ -889,6 +913,10 @@ void *mettle_rt_tls_get(std::uintptr_t key) {
   pthread_mutex_unlock(&tlsKeyMutex);
   return found ? pthread_getspecific(info.key) : nullptr;
 }
+std::int32_t mettle_rt_tls_is_destroying(std::uintptr_t key) {
+  const auto *state = tlsThreadState(false);
+  return state && tlsKeyDestroying(*state, key) ? 1 : 0;
+}
 std::int32_t mettle_rt_tls_set(std::uintptr_t key, void *value) {
   if (pthread_mutex_lock(&tlsKeyMutex) != 0)
     return EINVAL;
@@ -898,6 +926,11 @@ std::int32_t mettle_rt_tls_set(std::uintptr_t key, void *value) {
     return EINVAL;
   }
   auto &info = tlsKeys[index];
+  const auto *currentState = tlsThreadState(false);
+  if (value && currentState && tlsKeyDestroying(*currentState, key)) {
+    pthread_mutex_unlock(&tlsKeyMutex);
+    return EBUSY;
+  }
   void *previous = pthread_getspecific(info.key);
   if (value && !previous && info.retired) {
     pthread_mutex_unlock(&tlsKeyMutex);

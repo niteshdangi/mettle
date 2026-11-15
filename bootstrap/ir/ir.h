@@ -75,7 +75,8 @@ enum class Op {
   DropPlace,
   Assembly,
   FeatureTest,
-  TextLiteral
+  TextLiteral,
+  RawAddress
 };
 struct Instruction {
   Op op;
@@ -125,6 +126,7 @@ struct Terminator {
   int first = -1;
   int second = -1;
   Span span{};
+  bool unpredictable = false;
   bool operator==(const Terminator &) const = default;
 };
 struct Block {
@@ -191,6 +193,7 @@ struct Function {
   Span span{};
   // Optimization policy only; never changes source-level execution.
   InlineHint inlineHint = InlineHint::Default;
+  bool trackCaller = false;
   bool operator==(const Function &) const = default;
 };
 struct Program {

@@ -68,7 +68,7 @@ fn main(): i32 {
         }
     }
     {
-        var tree_extracted = tree.extract_if(fn(read key: i32, mut value: i32): bool {
+        var tree_extracted = tree.extract_if(core.iter.range_full(), fn(read key: i32, mut value: i32): bool {
             value += 2
             key == 2
         })
@@ -89,7 +89,7 @@ fn main(): i32 {
         if *entry.key() != 5 || *entry.get() != 50 { return 32 }
     }
     {
-        var values = tree.range_mut(1, 6)
+        var values = tree.range_mut(core.iter.range(1, 6))
         while true {
             match take values.next() {
                 present(value) => { *value += 1 },
@@ -104,7 +104,7 @@ fn main(): i32 {
     var set_upper = set.split_off(2)
     if set.len() != 1 || set_upper.len() != 2 { return 20 }
     {
-        var set_extract = set_upper.extract_if(fn(read key: i32): bool { key == 2 })
+        var set_extract = set_upper.extract_if(core.iter.range_full(), fn(read key: i32): bool { key == 2 })
         match set_extract.next() {
             present(key) => { if key != 2 { return 21 } },
             none => { return 22 }

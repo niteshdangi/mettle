@@ -485,14 +485,17 @@ bool Checker::compatibleCallable(Type source, Type target) const {
   return true;
 }
 bool Checker::callableObligation(Type actual, Type contract, Span span) {
-  if (annotationRegionScopes.empty() && checked.types->isCallable(actual))
-    actual = checked.types->eraseRegions(
-        checked.types->callableType(checked.types->callable(actual)));
-  if (checked.types->satisfiesCallable(actual, contract))
-    return true;
-  error("type", span,
+  if (checked.types->isCallable(actual))
+    actual = checked.types->callableType(checked.types->callable(actual));
+  if (!checked.types->satisfiesCallable(
+          checked.types->eraseRegions(actual),
+          checked.types->eraseRegions(contract))) {
+    error(
+        "type", span,
         "callable does not satisfy its declared signature or invocation mode");
-  return false;
+    return false;
+  }
+  return true;
 }
 void Checker::contextualize(Node &node, Type expected) {
   if (expected == Type::Unknown)

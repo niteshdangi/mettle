@@ -214,10 +214,48 @@ extend<T: Copy + fmt.Debug> core.cell.Cell<T> implements fmt.Debug {
     }
 }
 
+extend<T> core.cell.UnsafeCell<T> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var structure = try f.debug_struct("UnsafeCell")
+        try take structure.finish_non_exhaustive()
+    }
+}
+
+extend<T: Default> core.cell.UnsafeCell<T> implements Default {
+    static fn default(): core.cell.UnsafeCell<T> {
+        core.cell.UnsafeCell.new(T.(Default).default())
+    }
+}
+
+extend<T> core.cell.UnsafeCell<T> implements From<T> {
+    static fn from(take value: T): core.cell.UnsafeCell<T> {
+        core.cell.UnsafeCell.new(value)
+    }
+}
+
+extend core.cell.BorrowError implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("BorrowError") }
+}
+
+extend core.cell.BorrowError implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("already mutably borrowed") }
+}
+
+extend core.cell.BorrowMutError implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("BorrowMutError") }
+}
+
+extend core.cell.BorrowMutError implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("already borrowed") }
+}
+
+extend core.cell.BorrowError implements super.error.Error {}
+extend core.cell.BorrowMutError implements super.error.Error {}
+
 extend<T: Clone> core.cell.RefCell<T> implements Clone {
     fn clone(): core.cell.RefCell<T> {
         let value = self.borrow()
-        core.cell.RefCell.new(value.get_ref().clone())
+        core.cell.RefCell.new(T.(Clone).clone(value.get_ref()))
     }
 }
 
@@ -373,7 +411,7 @@ extend<T> OnceCell<T> implements From<T> {
 extend<T: Clone> OnceCell<T> implements Clone {
     fn clone(): OnceCell<T> {
         match self.get() {
-            present(value) => OnceCell(core.cell.UnsafeCell.new(present(value.clone()))),
+            present(value) => OnceCell(core.cell.UnsafeCell.new(present(T.(Clone).clone(value)))),
             none => OnceCell<T>.new()
         }
     }
@@ -403,3 +441,113 @@ extend<T: fmt.Debug> OnceCell<T> implements fmt.Debug {
         try f.write_str(")")
     }
 }
+
+pub type LazyCell<T, F = fn(): T> {
+    value: OnceCell<T>
+    initializer: core.cell.UnsafeCell<F?>
+}
+
+extend<T, F> LazyCell<T, F> {
+    pub fn get(): (read T from self)? { self.value.get() }
+
+    pub mut fn get_mut(): (mut T from self)? { self.value.get_mut() }
+
+    pub take fn into_inner(): Outcome<T, F> {
+        match take self.value.into_inner() {
+            present(value) => success(value),
+            none => match take self.initializer.into_inner() {
+                present(initializer) => failure(initializer),
+                none => core.panic.panic("LazyCell instance has previously been poisoned")
+            }
+        }
+    }
+}
+
+extend<T, F: take fn(): T> LazyCell<T, F> {
+    pub static const fn new(take initializer: F): LazyCell<T, F> {
+        LazyCell(OnceCell<T>.new(), core.cell.UnsafeCell.new(present(initializer)))
+    }
+
+    pub fn force(): read T from self {
+        match self.value.get() {
+            present(value) => { return value },
+            none => {}
+        }
+
+        // Clear the one-shot slot before calling F so reentry or unwinding stays poisoned.
+        let state = unsafe { core.ptr.`read`(self.initializer.get()) }
+        unsafe { core.ptr.write(self.initializer.get(), none) }
+        let initializer = match take state {
+            present(initializer) => initializer,
+            none => core.panic.panic("LazyCell instance has previously been poisoned")
+        }
+        let value = initializer()
+        match capture self.value.set(value) {
+            success(_) => {},
+            failure(_) => core.panic.panic("LazyCell initialization was reentrant")
+        }
+        match self.value.get() {
+            present(value) => value,
+            none => core.intrinsics.abort()
+        }
+    }
+
+    pub mut fn force_mut(): mut T from self {
+        match take self.value.get_mut() {
+            present(value) => { return value },
+            none => {}
+        }
+
+        let initializer = match take self.initializer.get_mut().`take`() {
+            present(initializer) => initializer,
+            none => core.panic.panic("LazyCell instance has previously been poisoned")
+        }
+        let value = initializer()
+        match capture self.value.set(value) {
+            success(_) => {},
+            failure(_) => core.panic.panic("LazyCell initialization was reentrant")
+        }
+        match take self.value.get_mut() {
+            present(value) => value,
+            none => core.intrinsics.abort()
+        }
+    }
+}
+
+extend<T: Default> LazyCell<T> implements Default {
+    static fn default(): LazyCell<T> {
+        LazyCell<T>.new(fn(): T { T.(Default).default() })
+    }
+}
+
+extend<T, F> LazyCell<T, F> implements From<T> {
+    static fn from(take value: T): LazyCell<T, F> {
+        LazyCell(
+            OnceCell(core.cell.UnsafeCell.new(present(value))),
+            core.cell.UnsafeCell.new(none)
+        )
+    }
+}
+
+extend<T: fmt.Debug, F> LazyCell<T, F> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("LazyCell(")
+        match self.value.get() {
+            present(value) => try T.(fmt.Debug).fmt(value, mut f),
+            none => try f.write_str("<uninit>")
+        }
+        try f.write_str(")")
+    }
+}
+
+extend<T, F: take fn(): T> LazyCell<T, F> implements Deref {
+    type Target = T
+    fn deref(): read T from self { self.force() }
+}
+
+extend<T, F: take fn(): T> LazyCell<T, F> implements DerefMut {
+    mut fn deref_mut(): mut T from self { self.force_mut() }
+}
+
+extend<T, F> LazyCell<T, F> not Shareable;
+extend<T, F> LazyCell<T, F> not core.marker.RefUnwindSafe;

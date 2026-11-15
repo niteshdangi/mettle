@@ -56,6 +56,20 @@ fn applied<T: Add<T, Output = T> + Sub<T, Output = T>>(read left: T, read right:
     T.(Sub<T>).sub(T.(Add<T>).add(left, right), right)
 }
 
+fn bool_and<L: BitAnd<R, Output = bool>, R>(left: L, right: R): bool {
+    left.bitand(right)
+}
+
+fn bool_or<L: BitOr<R, Output = bool>, R>(left: L, right: R): bool {
+    left.bitor(right)
+}
+
+fn bool_xor<L: BitXor<R, Output = bool>, R>(left: L, right: R): bool {
+    left.bitxor(right)
+}
+
+fn bool_not<T: Not<Output = bool>>(value: T): bool { value.not() }
+
 fn main(): i32 {
     let six = Bits(6)
     let three = Bits(3)
@@ -64,6 +78,15 @@ fn main(): i32 {
     if (six & three).value != 2 || (six | three).value != 7 || (six ^ three).value != 5 { return 3 }
     if (six << 2).value != 24 || (six >> 1).value != 3 || (-six).value != -6 || (!six).value != -7 { return 4 }
     if applied(six, three).value != 6 { return 5 }
+    if !bool_and(true, true) || bool_and(true, false) { return 11 }
+    if !bool_or(true, false) || bool_or(false, false) { return 12 }
+    if !bool_xor(true, false) || bool_xor(true, true) { return 13 }
+    if !bool_not(false) || bool_not(true) { return 14 }
+    var bit_flag = true
+    bit_flag.bitand_assign(true)
+    bit_flag.bitor_assign(false)
+    bit_flag.bitxor_assign(true)
+    if !bit_flag { return 15 }
 
     var acc = Bits(6)
     acc += three

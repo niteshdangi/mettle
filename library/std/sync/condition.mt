@@ -49,6 +49,13 @@ extend Condition implements Debug {
 
 // Whether a timed wait ended by its deadline.
 pub copy type TimedOut { expired: bool }
+extend TimedOut implements core.clone.Clone {
+    fn clone(): TimedOut { self }
+}
+extend TimedOut implements core.cmp.PartialEq {
+    fn eq(read other: TimedOut): bool { self.expired == other.expired }
+}
+extend TimedOut implements core.cmp.Eq {}
 extend TimedOut {
     pub fn timed_out(): bool { self.expired }
 }

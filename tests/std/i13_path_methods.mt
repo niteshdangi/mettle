@@ -43,9 +43,14 @@ fn run(): i32 throws Error {
 
     // Ancestors walk the lexical parents down to the root.
     var ancestors = p.ancestors()
+    var duplicate_ancestors = ancestors
     match ancestors.next() {
         present(a) => { if !a.same(p) { return 11 } },
         none => { return 11 }
+    }
+    match duplicate_ancestors.next() {
+        present(a) => { if !a.same(p) { return 37 } },
+        none => { return 37 }
     }
     match ancestors.next() {
         present(a) => { if !a.same(path_from_text("/usr/lib")) { return 12 } },

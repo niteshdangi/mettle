@@ -3,6 +3,7 @@
 // operations, lossy and checked conversion, and capacity management.
 
 import core.iter.Iterator
+import alloc.collections.TryReserveError
 import alloc.string.ToString
 import std.ffi.{
     OsStr,
@@ -112,6 +113,12 @@ fn checks_capacity(): i32 {
         success(_) => {},
         failure(_) => { return 25 }
     }
+    let capacity = s.capacity()
+    let failed: Outcome<Unit, TryReserveError> = capture s.try_reserve(usize.MAX)
+    match failed { success(_) => { return 28 }, failure(_) => {} }
+    let exact_failed: Outcome<Unit, TryReserveError> = capture s.try_reserve_exact(usize.MAX)
+    match exact_failed { success(_) => { return 29 }, failure(_) => {} }
+    if s.capacity() != capacity || !string_is(s, "xyz") { return 38 }
     s.clear()
     if !s.is_empty() || s.len() != 0usize { return 26 }
     0

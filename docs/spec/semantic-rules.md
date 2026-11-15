@@ -467,6 +467,21 @@ error. A declaration audit resolves each collision explicitly. `none`, `present`
 grammar-owned constructors for native optionals/outcomes, not unqualified
 library-enum variants; user and library enums require qualification.
 
+Associated constant value types substitute the interface's `Self` and generic
+arguments at both projection and implementation-contract checking.
+
+An inherent nominal associated constant in a generic implementation is checked
+under that implementation's type/const parameters and constraints. Its checked
+initializer is evaluated only when the owner type is concrete: the owner
+determines every implementation argument, whose bounds and equalities must
+hold. Evaluation uses the selected target's integer width, endianness and
+numeric evaluator. A constant is cached by declaration and complete type/const
+binding vector for that target; recursion with the same instantiation is a
+cycle, and expanding recursion is subject to the constant-evaluation nesting
+limit. A use whose owner remains symbolic is currently diagnosed as unsupported,
+and region-generic nominal constants remain unsupported. Each concrete use
+materializes a fresh value with independent cleanup ownership.
+
 ### 13.4. Constructor selection
 
 `List<T, A = Global>` is contiguous and growable; `Map<K,V,S,A = Global>` and

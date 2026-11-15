@@ -304,7 +304,9 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
           readOnly)
         diagnostics.error("ownership", instruction.span,
                           "cannot write through a read parameter");
-      if (instruction.op == ir::Op::BorrowMut ||
+      if ((instruction.op == ir::Op::RawAddress &&
+           types.pointer(instruction.result.type).mode == ParameterMode::Mut) ||
+          instruction.op == ir::Op::BorrowMut ||
           instruction.op == ir::Op::DropPlace ||
           instruction.op == ir::Op::ArrayTake ||
           instruction.op == ir::Op::ArrayBorrowMut ||

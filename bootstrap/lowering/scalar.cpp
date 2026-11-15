@@ -18,7 +18,9 @@ ir::Function Builder::run(const mettle::Function &source, std::size_t index) {
   errorType = module.function(index).error;
   function.genericParameters = module.function(index).genericParameters;
   for (const auto &attribute : source.item.attributes)
-    if (attribute.name == "inline") {
+    if (attribute.name == "track_caller")
+      function.trackCaller = true;
+    else if (attribute.name == "inline") {
       if (attribute.arguments.empty())
         function.inlineHint = ir::InlineHint::Hint;
       else {

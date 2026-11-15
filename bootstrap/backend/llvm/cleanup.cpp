@@ -452,6 +452,8 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
     }
   resultField = addField(lowering.storageType(source.result),
                          lowering.alignment(source.result));
+  if (source.trackCaller)
+    callerField = addField(lowering.builder.getPtrTy(), 8);
   ir::Function pendingSource{};
   std::vector<int> pendingIds;
   for (const auto &block : source.blocks)
@@ -960,6 +962,14 @@ void CleanupFrame::emitCallbacks() {
   lowering.builder.restoreIP(saved);
 }
 
+llvm::Value *CleanupFrame::callerLocation() {
+  if (!source.trackCaller)
+    llvm::report_fatal_error(
+        "caller location requested from an untracked frame");
+  return lowering.builder.CreateLoad(lowering.builder.getPtrTy(),
+                                     field(callerField));
+}
+
 llvm::Value *CleanupFrame::createWrapper() {
   auto &builder = lowering.builder;
   builder.SetInsertPoint(
@@ -968,6 +978,10 @@ llvm::Value *CleanupFrame::createWrapper() {
   llvm::cast<llvm::AllocaInst>(frame)->setAlignment(
       llvm::Align(frameAlignment));
   clearFlags();
+  if (source.trackCaller)
+    builder.CreateStore(
+        wrapper->getArg(source.parameters + (source.variadicCursor >= 0)),
+        field(callerField));
   if (source.variadicCursor >= 0) {
     auto *cursor = field(localFields[source.variadicCursor]);
     builder.CreateStore(llvm::Constant::getNullValue(lowering.layoutType(

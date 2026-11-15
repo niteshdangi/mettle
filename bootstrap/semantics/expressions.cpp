@@ -13,6 +13,11 @@ void Checker::requireUnsafe(Span span) {
 void Checker::function(Function &f) {
   auto priorErrors = diagnostics.count();
   current = &f;
+  for (const auto &attribute : f.item.attributes)
+    if (attribute.name == "track_caller" &&
+        (!f.abi.empty() || f.asynchronous || f.destructor))
+      error("feature", attribute.span,
+            "track_caller requires a synchronous native function");
   guardedFeatures.clear();
   unsafeDepth = f.unsafeFunction ? 1 : 0;
   genericBindings(f);
@@ -69,6 +74,9 @@ void Checker::function(Function &f) {
     if (scopes.back().contains(nameKey(f.variadicCursor, f.variadicSpan)))
       error("name", f.variadicSpan, "duplicate variadic cursor binding");
     auto cursor = checked.types->structural(AggregateKind::VarArgs, {});
+    if (auto canonical = typeNames.find("core::ffi::VaList");
+        canonical != typeNames.end())
+      cursor = canonical->second;
     facts(f).variadicCursor =
         local(f.variadicCursor, inference.fresh(cursor), true, f.variadicSpan);
   }
@@ -257,7 +265,8 @@ int Checker::checkNode(Node &n, bool reachable) {
       }
       if (n.text == "*") {
         if (checked.types->isPointer(type)) {
-          requireUnsafe(n.span);
+          if (!rawAddressDereferences.contains(&n))
+            requireUnsafe(n.span);
           result = inference.fresh(checked.types->pointer(type).payload);
         } else if (!checked.types->isView(type))
           error("type", n.span, "dereference requires a view");

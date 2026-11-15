@@ -1,7 +1,6 @@
 import core.fmt.{Debug, Display, buffer_writer, formatter, spec, written_text}
 import core.text.Text
-import std.net.{Ipv6Addr, SocketAddr, ipv6}
-import std.io.{Error, ErrorKind}
+import std.net.{AddrParseError, Ipv6Addr, SocketAddr, ipv6}
 
 fn render<T: Display>(read value: T, mut buffer: [u8]): usize throws core.fmt.Error {
     var writer = buffer_writer(mut buffer)
@@ -28,7 +27,7 @@ fn equals<T: Display>(read value: T, read expected: Text, mut buffer: [u8]): boo
     }
 }
 
-fn run(): i32 throws Error {
+fn run(): i32 throws AddrParseError {
     var buffer = [0u8; 128]
     let zero = try Ipv6Addr.parse("::")
     if !equals(read zero, "::", mut buffer) { return 1 }
@@ -37,6 +36,10 @@ fn run(): i32 throws Error {
     let loopback = ipv6(0u16, 0u16, 0u16, 0u16, 0u16, 0u16, 0u16, 1u16)
     if !Ipv6Addr.localhost().same(loopback) { return 3 }
     if !Ipv6Addr.unspecified().is_unspecified() { return 4 }
+    let core_loopback: core.net.Ipv6Addr = Ipv6Addr.localhost()
+    if !core_loopback.same(core.net.ipv6_localhost()) { return 26 }
+    let core_v4 = core.net.ipv4(127u8, 0u8, 0u8, 1u8)
+    if !core_v4.is_loopback() { return 27 }
     let one = try std.net.parse_ipv6("0:0:0:0:0:0:0:1")
     if !equals(read one, "::1", mut buffer) { return 5 }
     let longest = try std.net.parse_ipv6("2001:0:0:1:0:0:0:1")
@@ -63,7 +66,9 @@ fn run(): i32 throws Error {
     if !equals(read mapped, "::ffff:192.0.2.1", mut buffer) { return 14 }
     match capture std.net.parse_ipv6(":::") {
         success(value) => { return 15 },
-        failure(error) => { if !error.kind().is(ErrorKind.InvalidInput) { return 16 } }
+        failure(error) => {
+            if !equals(read error, "invalid IP address syntax", mut buffer) { return 16 }
+        }
     }
     let middle = try Ipv6Addr.parse("1:2:3::4:5:6:7")
     if !middle.same(ipv6(1u16, 2u16, 3u16, 0u16, 4u16, 5u16, 6u16, 7u16)) { return 17 }
@@ -73,15 +78,21 @@ fn run(): i32 throws Error {
     if !trailing.same(ipv6(1u16, 2u16, 3u16, 4u16, 5u16, 6u16, 7u16, 0u16)) { return 19 }
     match capture Ipv6Addr.parse("1:2:3::4:5:6:7:8") {
         success(value) => { return 20 },
-        failure(error) => { if !error.kind().is(ErrorKind.InvalidInput) { return 21 } }
+        failure(error) => {
+            if !equals(read error, "invalid IP address syntax", mut buffer) { return 21 }
+        }
     }
     match capture Ipv6Addr.parse("1::2::3") {
         success(value) => { return 22 },
-        failure(error) => { if !error.kind().is(ErrorKind.InvalidInput) { return 23 } }
+        failure(error) => {
+            if !equals(read error, "invalid IP address syntax", mut buffer) { return 23 }
+        }
     }
     match capture Ipv6Addr.parse("::1:2:3:4:5:6:7:8:9") {
         success(value) => { return 24 },
-        failure(error) => { if !error.kind().is(ErrorKind.InvalidInput) { return 25 } }
+        failure(error) => {
+            if !equals(read error, "invalid IP address syntax", mut buffer) { return 25 }
+        }
     }
     0
 }

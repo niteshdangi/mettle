@@ -8,7 +8,7 @@ import core.text.from_utf8_unchecked
 const fn has_kind<T: Copy>(result: Outcome<T, ParseIntError>, expected: IntErrorKind): bool {
     match result {
         success(_) => false,
-        failure(error) => (error.kind as u8) == (expected as u8)
+        failure(error) => (*error.kind() as u8) == (expected as u8)
     }
 }
 

@@ -20,7 +20,7 @@ fn run(): i32 throws Error {
         success(text) => { if text.as_text() != "parent" { return 1 } },
         failure(_) => { return 2 }
     }
-    let snapshot = env.vars()
+    let snapshot = env.vars_os()
     let invalid = [255u8]
     unsafe { try env.set_var(name, ffi.os_str(invalid)) }
     match take capture env.`var`(name) {

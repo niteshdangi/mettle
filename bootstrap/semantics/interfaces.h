@@ -13,7 +13,8 @@
 
 namespace mettle::interfaces {
 // Transferable/Shareable are structural cross-thread properties; Static marks
-// a type holding no view with a non-static region.
+// a type holding no view with a non-static region. UnwindSafe and
+// RefUnwindSafe are structural panic-safety properties.
 enum class Property {
   Interface,
   Copy,
@@ -21,7 +22,11 @@ enum class Property {
   Unpin,
   Transferable,
   Shareable,
-  Static
+  Static,
+  UnwindSafe,
+  RefUnwindSafe,
+  Freeze,
+  Thin
 };
 struct Obligation {
   Type subject, interfaceType;
@@ -97,7 +102,7 @@ struct Projection {
   std::vector<Type> arguments{};
   std::vector<RegionId> regionArguments{};
 };
-struct ConcurrencyDeclaration {
+struct StructuralPropertyDeclaration {
   bool negative = false;
   Implementation implementation{};
 };
@@ -110,10 +115,10 @@ struct Database {
   mutable std::size_t indexedImplementations = 0;
   std::vector<Projection> projections;
   std::map<Type, Implementation> unpinImplementations;
-  // Manual (unsafe) positive and negative Transferable/Shareable declarations
+  // Manual (unsafe) positive and negative structural-property declarations
   // keyed by property and nominal origin.
-  std::map<std::pair<Property, Type>, ConcurrencyDeclaration>
-      concurrencyDeclarations;
+  std::map<std::pair<Property, Type>, StructuralPropertyDeclaration>
+      structuralDeclarations;
   bool argumentsReady = false;
 };
 std::vector<Type> hierarchy(TypeStore &types, const Database &database,
@@ -155,8 +160,11 @@ public:
                                   std::span<const Type> arguments, Span span);
   bool coherent();
   std::vector<Obligation> projectionBounds(Type projection, Span span);
-  std::optional<Type> implementedInterface(Type subject, Type interfaceType,
-                                           Span span);
+  std::optional<Type>
+  implementedInterface(Type subject, Type interfaceType, Span span,
+                       std::span<const Type> inferenceParameters = {});
+  std::optional<Type> inferredSubject(Type partial, Type interfaceType,
+                                      Span span);
   bool projectedBinding(Type subject, const ErasedType &wanted,
                         const TypeBinding &required, Span span);
   bool equalities(std::span<const TypeBinding> equations,
@@ -171,10 +179,10 @@ public:
   std::optional<std::vector<TypeBinding>>
   applicable(const Implementation &implementation, Type self, Span span,
              std::vector<RegionBinding> *regions = nullptr,
-             bool deferEqualities = false);
+             bool deferEqualities = false, bool potential = false);
   std::optional<std::vector<TypeBinding>>
   match(Type pattern, Type actual, bool symmetric = false,
-        RegionEnvironment *regions = nullptr);
+        RegionEnvironment *regions = nullptr, bool partialActual = false);
 
 private:
   CallableProof callableProof{};
@@ -192,8 +200,8 @@ private:
   unsigned normalizationDepth = 0;
   std::size_t normalizationSteps = 0;
   std::set<Type> provingUnpin;
-  std::set<std::pair<Property, Type>> provingConcurrency;
-  bool proveConcurrency(Property property, Type subject, Span span);
+  std::set<std::pair<Property, Type>> provingStructuralProperties;
+  bool proveStructuralProperty(Property property, Type subject, Span span);
   std::vector<TypeBinding> contextualEqualities;
   std::size_t steps = 0;
   bool regionInconclusive = false;

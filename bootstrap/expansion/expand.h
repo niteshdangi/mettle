@@ -7,13 +7,14 @@
 #include <string>
 
 namespace mettle::expansion {
-// Facts that `@cfg` predicates test. The driver derives the target facts from
-// the selected target and supplies the enabled package features; an empty
-// value matches no predicate on that key.
+// Facts that `@cfg` predicates test. The driver derives target and profile
+// facts and supplies the enabled package features; an empty value matches no
+// predicate on that key.
 struct Configuration {
   std::string os, arch, family, endian;
   unsigned pointerWidth = 0;
   std::set<std::string> targetFeatures, features;
+  bool debugAssertions = true;
   // Test builds: collect `@test`/`@bench` functions into `Module::tests` and
   // drop the root source's entry function (the harness supplies the entry).
   bool collectTests = false, dropEntry = false;

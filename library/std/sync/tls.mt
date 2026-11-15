@@ -1,4 +1,9 @@
 import core.panic.panic
+import core.outcome
+import core.clone.Clone
+import core.default.Default
+import core.cmp.{Eq, PartialEq}
+import core.fmt.{Debug, Display, Error as FmtError, Formatter}
 
 extern "C" {
     unsafe fn mettle_rt_tls_key_new(destructor: extern "C" fn(ptr<mut u8>): Unit): usize;
@@ -9,8 +14,23 @@ extern "C" {
     ): usize;
     unsafe fn mettle_rt_tls_get(key: usize): ptr<mut u8>;
     unsafe fn mettle_rt_tls_set(key: usize, value: ptr<mut u8>): i32;
+    unsafe fn mettle_rt_tls_is_destroying(key: usize): i32;
     unsafe fn mettle_rt_thread_yield(): Unit;
 }
+
+pub copy type AccessError {}
+extend AccessError implements Clone { fn clone(): AccessError { AccessError() } }
+extend AccessError implements PartialEq { fn eq(read other: AccessError): bool { true } }
+extend AccessError implements Eq {}
+extend AccessError implements Debug {
+    fn fmt(mut f: Formatter): Unit throws FmtError { try f.write_str("AccessError") }
+}
+extend AccessError implements Display {
+    fn fmt(mut f: Formatter): Unit throws FmtError {
+        try f.write_str("cannot access a thread-local value during or after destruction")
+    }
+}
+extend AccessError implements core.error.Error {}
 
 // A static declaration keeps only its initializer. The runtime keys this
 // descriptor by its static address, avoiding generic const-function evaluation.
@@ -21,6 +41,11 @@ pub type LocalKey<T> {
 // owning threads, and its methods require the descriptor's static address.
 unsafe extend<T> LocalKey<T> implements Transferable {}
 unsafe extend<T> LocalKey<T> implements Shareable {}
+extend<T> LocalKey<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws FmtError {
+        try f.write_str("LocalKey { .. }")
+    }
+}
 
 pub type OwnedLocalKey<T> {
     key: core.sync.atomic.AtomicUsize
@@ -37,15 +62,20 @@ unsafe extend<T> OwnedLocalKey<T> implements Transferable {}
 unsafe extend<T> OwnedLocalKey<T> implements Shareable {}
 
 // Only the owning thread accesses this count; a callback loan forbids replacement.
-type Value<T> { borrows: usize; value: T }
+type Value<T> { borrows: usize; mutable: bool; value: T }
 type ValueBorrow<T> {
     raw: ptr<mut Value<T>>
     drop { unsafe { (*self.raw).borrows -= 1usize } }
+}
+type ValueBorrowMut<T> {
+    raw: ptr<mut Value<T>>
+    drop { unsafe { (*self.raw).mutable = false } }
 }
 
 fn borrow_value<T>(raw: ptr<mut u8>): ValueBorrow<T> {
     let value = raw.cast<Value<T>>()
     unsafe {
+        if (*value).mutable { panic("cannot immutably borrow a mutably borrowed thread-local value") }
         (*value).borrows = match (*value).borrows.checked_add(1usize) {
             present(next) => next,
             none => core.intrinsics.abort()
@@ -54,9 +84,33 @@ fn borrow_value<T>(raw: ptr<mut u8>): ValueBorrow<T> {
     ValueBorrow(value)
 }
 
+fn borrow_value_mut<T>(raw: ptr<mut u8>): ValueBorrowMut<T> {
+    let value = raw.cast<Value<T>>()
+    unsafe {
+        if (*value).mutable || (*value).borrows != 0usize {
+            panic("cannot mutably borrow an already borrowed thread-local value")
+        }
+        (*value).mutable = true
+    }
+    ValueBorrowMut(value)
+}
+
 fn check_replace<T>(raw: ptr<mut u8>): Unit {
-    if raw != core.ptr.null_mut<u8>() && unsafe { (*raw.cast<Value<T>>()).borrows != 0usize } {
+    if raw != core.ptr.null_mut<u8>() && unsafe {
+        let value = raw.cast<Value<T>>()
+        (*value).borrows != 0usize || (*value).mutable
+    } {
         panic("cannot replace a borrowed thread-local value")
+    }
+}
+
+fn is_destroying(key: usize): bool {
+    unsafe { mettle_rt_tls_is_destroying(key) != 0 }
+}
+
+fn panic_if_destroying(key: usize): Unit {
+    if is_destroying(key) {
+        panic("cannot access a thread-local value during or after destruction")
     }
 }
 
@@ -82,10 +136,11 @@ extend<T> LocalKey<T> {
 
     fn value(receiver read self: LocalKey<T> from static): ptr<mut u8> {
         let key = self.key()
+        panic_if_destroying(key)
         var raw = unsafe { mettle_rt_tls_get(key) }
         if raw == core.ptr.null_mut<u8>() {
             let initialize = self.initialize
-            let value = alloc.boxed.new(Value(0usize, initialize())).into_raw().0
+            let value = alloc.boxed.new(Value(0usize, false, initialize())).into_raw().0
             raw = value.cast<u8>()
             if unsafe { mettle_rt_tls_set(key, raw) } != 0 {
                 let _owned = unsafe { alloc.boxed.from_raw_in(value, alloc.alloc.Global()) }
@@ -97,9 +152,10 @@ extend<T> LocalKey<T> {
 
     pub fn set(receiver read self: LocalKey<T> from static, take value: T): Unit {
         let key = self.key()
+        panic_if_destroying(key)
         let old = unsafe { mettle_rt_tls_get(key) }
         check_replace<T>(old)
-        let raw = alloc.boxed.new(Value(0usize, value)).into_raw().0.cast<u8>()
+        let raw = alloc.boxed.new(Value(0usize, false, value)).into_raw().0.cast<u8>()
         unsafe {
             if mettle_rt_tls_set(key, raw) != 0 {
                 let _owned = alloc.boxed.from_raw_in(raw.cast<Value<T>>(), alloc.alloc.Global())
@@ -113,13 +169,66 @@ extend<T> LocalKey<T> {
         unsafe { mettle_rt_tls_get(self.key()) != core.ptr.null_mut<u8>() }
     }
 
-    pub fn with<R>(
+    pub fn with<R, F: take fn(read T): R>(
         receiver read self: LocalKey<T> from static,
-        take f: fn(read T): R
-    ): R? {
-        let raw = self.value()
-        let borrowed = borrow_value<T>(raw)
-        present(unsafe { f(read (*borrowed.raw).value) })
+        take f: F
+    ): R {
+        self.with_borrow(take f)
+    }
+
+    pub fn try_with<R, F: take fn(read T): R>(
+        receiver read self: LocalKey<T> from static,
+        take f: F
+    ): Outcome<R, AccessError> {
+        let key = self.key()
+        if is_destroying(key) { return failure(AccessError()) }
+        let borrowed = borrow_value<T>(self.value())
+        success(unsafe { f(read (*borrowed.raw).value) })
+    }
+
+    pub fn with_borrow<R, F: take fn(read T): R>(
+        receiver read self: LocalKey<T> from static,
+        take f: F
+    ): R {
+        match take self.try_with(take f) {
+            success(value) => value,
+            failure(_) => panic("cannot access a thread-local value during or after destruction")
+        }
+    }
+
+    pub fn with_borrow_mut<R, F: take fn(mut T): R>(
+        receiver read self: LocalKey<T> from static,
+        take f: F
+    ): R {
+        let borrowed = borrow_value_mut<T>(self.value())
+        unsafe { f(mut (*borrowed.raw).value) }
+    }
+}
+
+extend<T: Copy> LocalKey<T> {
+    pub fn get(receiver read self: LocalKey<T> from static): T {
+        self.with_borrow(fn(read value: T): T { value })
+    }
+
+    pub fn update<F: take fn(T): T>(
+        receiver read self: LocalKey<T> from static,
+        take f: F
+    ): Unit {
+        self.with_borrow_mut(take fn(mut value: T): Unit { value = f(value) })
+    }
+}
+
+extend<T> LocalKey<T> {
+    pub fn replace(receiver read self: LocalKey<T> from static, take value: T): T {
+        self.with_borrow_mut(take fn(mut current: T): T {
+            core.mem.replace(mut current, value)
+        })
+    }
+}
+
+extend<T: Default> LocalKey<T> {
+    pub fn `take`(receiver read self: LocalKey<T> from static): T {
+        self.replace(T.(Default).default())
     }
 }
 
@@ -149,11 +258,12 @@ extend<T> OwnedLocalKey<T> {
 
     fn value(initialize: bool): ptr<mut u8> {
         let key = self.key()
+        panic_if_destroying(key)
         var raw = unsafe { mettle_rt_tls_get(key) }
         if raw == core.ptr.null_mut<u8>() && initialize {
             match self.initialize {
                 present(make) => {
-                    let value = alloc.boxed.new(Value(0usize, make())).into_raw().0
+                    let value = alloc.boxed.new(Value(0usize, false, make())).into_raw().0
                     raw = value.cast<u8>()
                     if unsafe { mettle_rt_tls_set(key, raw) } != 0 {
                         let _owned = unsafe { alloc.boxed.from_raw_in(value, alloc.alloc.Global()) }
@@ -168,9 +278,10 @@ extend<T> OwnedLocalKey<T> {
 
     pub fn set(take value: T): Unit {
         let key = self.key()
+        panic_if_destroying(key)
         let old = unsafe { mettle_rt_tls_get(key) }
         check_replace<T>(old)
-        let raw = alloc.boxed.new(Value(0usize, value)).into_raw().0.cast<u8>()
+        let raw = alloc.boxed.new(Value(0usize, false, value)).into_raw().0.cast<u8>()
         unsafe {
             if mettle_rt_tls_set(key, raw) != 0 {
                 let _owned = alloc.boxed.from_raw_in(raw.cast<Value<T>>(), alloc.alloc.Global())

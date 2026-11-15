@@ -23,7 +23,11 @@ extend<G> PoisonError<G> {
     pub take fn into_inner(): G { self.guard }
 }
 
-pub enum TryLockError<G> { WouldBlock; Poisoned(G) }
+pub enum TryLockError<G> { WouldBlock; Poisoned(PoisonError<G>) }
+
+extend<G> TryLockError<G> implements From<PoisonError<G>> {
+    static fn from(take error: PoisonError<G>): TryLockError<G> { TryLockError.Poisoned(error) }
+}
 
 extend<G> PoisonError<G> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
@@ -113,7 +117,7 @@ extend<T: unsized> Mutex<T> {
         if status != 0 { panic("mutex try_lock failed") }
         let guard = MutexGuard(read self, unsafe { mettle_rt_panicking() != 0 })
         if self.poisoned.load(core.sync.atomic.Ordering.Acquire) {
-            throw TryLockError.Poisoned(guard)
+            throw TryLockError.Poisoned(PoisonError(guard))
         }
         guard
     }
@@ -172,9 +176,9 @@ extend<T: Debug + unsized> Mutex<T> implements Debug {
             },
             failure(error) => match take error {
                 TryLockError.WouldBlock => { try debug.field("data", "<locked>"); },
-                TryLockError.Poisoned(guard) => {
+                TryLockError.Poisoned(error) => {
                     poisoned = true
-                    try debug.field("data", guard.get());
+                    try debug.field("data", error.get_ref().get());
                 }
             }
         }

@@ -113,6 +113,13 @@ fn run(): i32 throws Error {
         union_count += 1
     }
     if union_count != 5 || union_total != 15 { return 30 }
+    var union_cursor = left.`union`(read right)
+    if union_cursor.next().is_none() { return 37 }
+    var union_cursor_copy = union_cursor.clone()
+    match (union_cursor.next(), union_cursor_copy.next()) {
+        (present(a), present(b)) => { if *a != *b { return 38 } },
+        _ => { return 38 }
+    }
     var common = 0
     for value in left.intersection(read right) { common += *value }
     if common != 3 { return 31 }
@@ -161,6 +168,17 @@ fn run(): i32 throws Error {
     let sym = left ^ right
     if sym.len() != 4usize || sym.contains(3) || !sym.contains(5) { return 49 }
     if left.len() != 3usize || right.len() != 3usize { return 50 }
+    let borrowed_joined = read left | read right
+    if borrowed_joined.len() != 5usize || !borrowed_joined.contains(1) ||
+        !borrowed_joined.contains(5) { return 55 }
+    let borrowed_meet = read left & read right
+    if borrowed_meet.len() != 1usize || !borrowed_meet.contains(3) { return 56 }
+    let borrowed_diff = read left - read right
+    if borrowed_diff.len() != 2usize || borrowed_diff.contains(3) { return 57 }
+    let borrowed_sym = read left ^ read right
+    if borrowed_sym.len() != 4usize || borrowed_sym.contains(3) ||
+        !borrowed_sym.contains(5) { return 58 }
+    if left.len() != 3usize || right.len() != 3usize { return 59 }
     return 0
 }
 

@@ -8,8 +8,8 @@ import core.cmp.Eq
 import core.convert.From
 import core.default.Default
 import core.fmt.Debug
-import core.hash.{BuildHasher, SipHasher, sip13}
-import core.iter.{ExtendItems, FromItems, OwnedIterable}
+import core.hash.{BuildHasher, Hasher, SipHasher, sip13, hash_one}
+import core.iter.{BidirectionalIterator, ExtendItems, FromItems, OwnedIterable}
 
 fn require_debug<T: Debug>(read value: T): bool { true }
 fn require_eq<T: Eq>(read value: T): bool { true }
@@ -60,6 +60,9 @@ fn check_borrowed_iterator_defaults<region r, S: BuildHasher>(
 }
 
 fn main(): i32 {
+    var default_hasher = hash_map.DefaultHasher.new()
+    default_hasher.write_u64(42u64)
+    if default_hasher.finish() != hash_one(42u64) { return 66 }
     // Construction, capacity and reservations.
     var empty = hash_map.new<i32, i32>()
     if !empty.is_empty() || empty.len() != 0usize { return 1 }
@@ -242,6 +245,17 @@ fn main(): i32 {
     if keys_seen != 5 || key_total != 17 { return 60 }
     for value in map.values_mut() { *value += 1 }
     if sum_values(read map) != 185 { return 61 }
+    {
+        var mutable_values = map.values_mut()
+        let remaining = mutable_values.size_hint().0
+        if !mutable_values.next_back().is_present() ||
+            mutable_values.size_hint().0 != remaining - 1usize ||
+            !mutable_values.next().is_present() ||
+            mutable_values.size_hint().0 != remaining - 2usize {
+            return 65
+        }
+    }
+    if sum_values(read map) != 185 { return 65 }
     var seen_pairs = 0
     for pair in map.iter() { seen_pairs += 1 }
     if seen_pairs != 5 { return 62 }

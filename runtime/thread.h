@@ -76,6 +76,9 @@ std::uintptr_t mettle_rt_tls_static_key_new(const void *identity,
                                             MettleTlsDestructor destructor);
 void mettle_rt_tls_key_free(std::uintptr_t key);
 void *mettle_rt_tls_get(std::uintptr_t key);
+// Returns 1 from this thread's destructor start through TLS teardown, else 0.
+std::int32_t mettle_rt_tls_is_destroying(std::uintptr_t key);
+// Non-null sets after this thread starts the key's destructor return EBUSY.
 std::int32_t mettle_rt_tls_set(std::uintptr_t key, void *value);
 // Runs the current thread's remaining TLS destructors. A destructor panic
 // propagates to the surrounding runtime catch boundary. The hosted main entry

@@ -1,5 +1,16 @@
 // profiles: debug release
 import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator}
+import core.borrow.AsRef
+
+fn require_fused<I: FusedIterator>(mut items: I): Unit {
+    while items.next().is_present() {}
+    assert(items.next().is_none(), "fused exhaustion")
+}
+
+fn require_bidirectional<I: Iterator + BidirectionalIterator>(mut items: I): Unit {
+    let _ = items.next_back()
+    let _ = items.next()
+}
 
 fn check<I: Iterator + BidirectionalIterator + ExactSizeIterator + FusedIterator>(
     take input: I, expected: usize
@@ -27,7 +38,26 @@ fn check<I: Iterator + BidirectionalIterator + ExactSizeIterator + FusedIterator
 fn main(): i32 {
     var values = [1, 2, 3, 4, 5, 6, 7]
     {
+        var items = values.iter()
+        let _first = items.next()
+        let remaining = items.as_ref()
+        assert(
+            remaining.len() == 6usize && remaining[0usize] == 2 && remaining[5usize] == 7,
+            "slice iterator AsRef exposes the remaining elements"
+        )
+    }
+    {
+        var items = values.iter_mut()
+        let remaining = items.as_ref()
+        assert(
+            remaining.len() == 7usize && remaining[0usize] == 1 && remaining[6usize] == 7,
+            "mutable slice iterator AsRef exposes unconsumed elements"
+        )
+    }
+    {
         let view: read [i32] = read values
+        require_fused(view.split(fn(value: i32): bool { value == 0 }))
+        require_fused(view.chunk_by(fn(a: i32, b: i32): bool { a == b }))
         check(view.chunks(3usize), 3usize)
         check(view.chunks_exact(3usize), 2usize)
         check(view.rchunks(3usize), 3usize)
@@ -46,6 +76,11 @@ fn main(): i32 {
     }
     {
         let view: mut [i32] = mut values
+        require_fused(view.split_mut(fn(value: i32): bool { value == 0 }))
+        require_fused(view.chunk_by_mut(fn(a: i32, b: i32): bool { a == b }))
+        require_bidirectional(view.split_mut(fn(value: i32): bool { value == 0 }))
+        require_bidirectional(view.split_inclusive_mut(fn(value: i32): bool { value == 0 }))
+        require_bidirectional(view.rsplit_mut(fn(value: i32): bool { value == 0 }))
         check(view.chunks_mut(3usize), 3usize)
         check(view.chunks_exact_mut(3usize), 2usize)
         check(view.rchunks_mut(3usize), 3usize)

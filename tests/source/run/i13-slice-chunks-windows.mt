@@ -134,6 +134,20 @@ fn main(): i32 {
             }
         }
         if group_count != 3usize { return 26 }
+        var clone_groups = run_slice.chunk_by(fn(read a: i32, read b: i32): bool { a == b })
+        match clone_groups.next() {
+            present(part) => { if part.len() != 2usize || part[0usize] != 1 { return 27 } },
+            none => { return 27 }
+        }
+        var clone_groups_copy = clone_groups.clone()
+        match clone_groups.next() {
+            present(part) => { if part.len() != 1usize || part[0usize] != 2 { return 28 } },
+            none => { return 28 }
+        }
+        match clone_groups_copy.next() {
+            present(part) => { if part.len() != 1usize || part[0usize] != 2 { return 28 } },
+            none => { return 28 }
+        }
     }
 
     // Mutable chunking writes through every group.

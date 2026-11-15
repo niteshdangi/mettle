@@ -27,7 +27,7 @@ struct Flow {
   std::set<int> continues;
 };
 struct ReceiverStep {
-  enum class Kind { Native, Projection, Unsize, Erase };
+  enum class Kind { Native, Projection, Unsize, Erase, Borrow };
   Kind kind = Kind::Native;
   Type source = Type::Unknown, target = Type::Unknown;
   Type resultView = Type::Unknown;

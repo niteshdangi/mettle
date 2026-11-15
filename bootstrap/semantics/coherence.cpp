@@ -178,11 +178,16 @@ bool Solver::constraints(const Implementation &implementation,
           });
       if (item == definition.associated.end() || !item->parameters.empty())
         continue;
+      const auto &associatedType = types.parameter(item->parameter);
       equations.push_back(
           {types.substituteRegions(
-               types.projection(requirement.subject, interfaceType,
-                                static_cast<std::size_t>(
-                                    item - definition.associated.begin())),
+               types.projection(
+                   requirement.subject, interfaceType,
+                   static_cast<std::size_t>(item -
+                                            definition.associated.begin()),
+                   {}, associatedType.valueType, associatedType.copyRequested,
+                   associatedType.sized, associatedType.regionArguments,
+                   associatedType.thin),
                regions),
            types.substituteRegions(binding.argument, regions)});
     }
@@ -277,20 +282,53 @@ bool Solver::constraints(const Implementation &implementation,
             !types.isCopy(requirement.subject)) ||
            (requirement.property == Property::Sized &&
             !types.isSized(requirement.subject)) ||
+           (requirement.property == Property::Thin &&
+            !types.isThin(requirement.subject)) ||
            (requirement.property == Property::Unpin &&
-            !types.isUnpin(requirement.subject))))
+            !types.isUnpin(requirement.subject)) ||
+           ((requirement.property == Property::UnwindSafe ||
+             requirement.property == Property::RefUnwindSafe ||
+             requirement.property == Property::Freeze) &&
+            !proveStructuralProperty(requirement.property, requirement.subject,
+                                     span))))
         return false;
-      // A concrete nominal subject only satisfies an interface requirement
-      // when some implementation could apply to it.
+      // Closed function-pointer markers can rule out known outer shapes even
+      // when their generic arguments remain symbolic.
       if (requirement.property == Property::Interface &&
           types.isErased(requirement.interfaceType) &&
+          requirement.subject != Type::Unknown &&
           !types.isParameter(requirement.subject) &&
           !types.isProjection(requirement.subject) &&
           !types.isOpaque(requirement.subject) &&
-          !types.isErased(requirement.subject) &&
-          !someImplementationCouldApply(requirement.subject,
-                                        requirement.interfaceType))
-        return false;
+          !types.isErased(requirement.subject)) {
+        const auto &name =
+            database
+                .definitions[types.erased(requirement.interfaceType)
+                                 .declaration]
+                .name;
+        bool functionPointerMarker = name == "core::clone::FunctionPointer" ||
+                                     name == "core::ops::FnPtr";
+        bool knownStructuralShape =
+            types.isView(requirement.subject) ||
+            types.isPointer(requirement.subject) ||
+            types.isSlice(requirement.subject) ||
+            types.isFunctionPointer(requirement.subject);
+        bool knownNominalShape = false;
+        if (types.isProduct(requirement.subject)) {
+          auto kind = types.product(requirement.subject).kind;
+          knownStructuralShape |= kind != AggregateKind::Product &&
+                                  kind != AggregateKind::Enumeration &&
+                                  kind != AggregateKind::NativeVector &&
+                                  kind != AggregateKind::Opaque;
+          knownNominalShape = kind == AggregateKind::Product ||
+                              kind == AggregateKind::Enumeration;
+        }
+        if ((functionPointerMarker || knownStructuralShape ||
+             knownNominalShape || !types.isSymbolic(requirement.subject)) &&
+            !someImplementationCouldApply(requirement.subject,
+                                          requirement.interfaceType))
+          return false;
+      }
     } else {
       auto saved = regionEnvironment;
       if (types.regions().get(elided).kind == RegionKind::Inference) {
@@ -338,7 +376,8 @@ bool Solver::constraints(const Implementation &implementation,
 
 std::optional<std::vector<TypeBinding>>
 Solver::applicable(const Implementation &implementation, Type self, Span span,
-                   std::vector<RegionBinding> *selectedRegions, bool) {
+                   std::vector<RegionBinding> *selectedRegions, bool,
+                   bool potential) {
   std::vector<TypeBinding> bindings;
   auto environment = regionEnvironment;
   auto scope = types.regions().binder(environment.universe);
@@ -393,7 +432,7 @@ Solver::applicable(const Implementation &implementation, Type self, Span span,
   }
   auto saved = regionEnvironment;
   regionEnvironment = environment;
-  bool valid = constraints(implementation, bindings, span, regions);
+  bool valid = constraints(implementation, bindings, span, regions, potential);
   if (valid && selectedRegions)
     *selectedRegions = regions;
   regionEnvironment = std::move(saved);
@@ -407,8 +446,34 @@ Solver::applicable(const Implementation &implementation, Type self, Span span,
 
 bool Solver::someImplementationCouldApply(Type subject, Type interfaceType) {
   auto declaration = types.erased(interfaceType).declaration;
-  if (database.definitions[declaration].name == "core::clone::FunctionPointer")
+  const auto &definition = database.definitions[declaration];
+  if (definition.name == "core::clone::FunctionPointer" ||
+      definition.name == "core::ops::FnPtr")
     return types.isFunctionPointer(subject);
+  auto owner = subject;
+  while (types.isView(owner))
+    owner = types.view(owner).payload;
+  while (types.isProduct(owner)) {
+    const auto &record = types.product(owner);
+    if (record.regionOrigin != Type::Unknown)
+      owner = record.regionOrigin;
+    else if (record.genericOrigin != Type::Unknown)
+      owner = record.genericOrigin;
+    else
+      break;
+  }
+  // Unknown owners can become downstream-local types, permitting new impls.
+  if (definition.package == unknownPackage || owner == Type::Unknown ||
+      types.isParameter(owner) || types.isProjection(owner) ||
+      types.isOpaque(owner) || types.isErased(owner))
+    return true;
+  if (types.isProduct(owner)) {
+    const auto &record = types.product(owner);
+    if ((record.kind == AggregateKind::Product ||
+         record.kind == AggregateKind::Enumeration) &&
+        record.package == unknownPackage)
+      return true;
+  }
   auto key = std::pair(subject, interfaceType);
   // Recursive requirements cannot establish that two implementations are
   // disjoint.
@@ -559,7 +624,9 @@ bool Solver::coherent() {
         continue;
       diagnostics.error(
           "type", left.span,
-          "overlapping implementations cannot be selected by order");
+          "overlapping implementations cannot be selected by order",
+          {{"note", right.span,
+            "conflicting implementation is declared here"}});
       valid = false;
     }
   }

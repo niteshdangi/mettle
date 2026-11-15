@@ -190,12 +190,13 @@ Mettle, not C++.
 | I11 | Async and scoped tasks | Optional executor drives async I/O; owned/direct-borrowed/scoped tasks pass wake, cancellation, panic and forgetting cases | I08, I10 |
 | I12 | Complete developer workflow | Native build/run/test/bench/doc/fmt/lint commands, LSP and debugger workflows pass end to end | I09, I11 |
 | I13 | Platform and capability closure | All 107 capability requirements and the V1 operation subset (library-surface.md section 6.1) have checked declarations and evidence across selected profiles | I12 |
-| I14 | V1 release qualification | Reproducible installable C++/LLVM toolchain passes safety, capability, target and Rust runtime, compile-time and build-storage gates | I13 |
+| I13B | Library and trait-implementation closure | The 27,217 reconciled library and trait-implementation obligations (post-V1 worklist groups D-J) have checked declarations and evidence on Linux, in addition to I13's V1 subset | I13 |
+| I14 | V1 release qualification | Reproducible installable C++/LLVM toolchain passes safety, capability, target and Rust runtime, compile-time and build-storage gates | I13B |
 | I15 | V1.1 substantive self-hosting | Mettle compiler builds itself through repeatable bootstrap stages and preserves V1 capability/performance gates | I14 |
 | I16 | V1.2 independent production backend | LLVM-free code generation covers every accepted profile/capability and passes Rust/LLVM-path comparisons | I15 |
-| I17 | Complete stable-operation closure | Every applicable non-deprecated stable obligation outside the V1 subset, including architecture intrinsics and OS extensions, has checked declarations and evidence across all reference profiles | I14 |
+| I17 | Complete stable-operation closure | Every applicable non-deprecated stable architecture-intrinsic and OS-extension obligation outside I13/I13B, has checked declarations and evidence across all reference profiles | I14 |
 
-This is fourteen delivery milestones to V1, followed by two architectural
+This is fifteen delivery milestones to V1, followed by two architectural
 evolution milestones and I17's post-V1 completion of the operation inventory. I02 is the first useful native compiler, not a reduced V1.
 Dependencies are completion gates; a component's preparatory work may start once
 its own contracts/inputs exist, without marking the enclosing milestone complete.
@@ -448,20 +449,20 @@ backend must provide address/undefined-behavior and thread checking equivalent
 to the current ASan/UBSan/TSan qualification, or run the full unsafe/runtime
 corpus under it; losing sanitizer coverage blocks I16.
 
-I17 closes the applicable non-deprecated pinned stable obligations outside the V1 subset:
-remaining inherent operations and trait
-implementations, architecture intrinsics and OS extension modules, each with
+I13B closes the library and trait-implementation obligations of worklist groups D-J
+before V1 qualification. I17 closes the applicable non-deprecated pinned stable
+obligations outside I13/I13B: architecture intrinsics and OS extension modules, each with
 the same declaration, applicability and per-operation evidence rules as I13.
 It may proceed alongside I15-I16.
 
 Owner worklist amendment (2026-11-09): deprecated APIs are no longer required,
 and all eight [reference profiles](../spec/platform-contracts.md#8-reference-profiles) remain in post-V1
-scope. The [reconciled worklist](post-v1-worklist.md) accounts for all 106,125
-stable canonical records: 629 excluded deprecated records, 13,295 V1
-obligations, 41,151 post-V1 contextual obligations, 50,190 attached
+scope. The [reconciled worklist](post-v1-worklist.md) accounts for all 106,120
+stable canonical records: 629 excluded deprecated records, 13,291 V1
+obligations, 41,150 post-V1 contextual obligations, 50,190 attached
 implementation members, 684 attached inherent blocks and 176 namespaces.
-The post-V1 obligations group into 32,355 source-declaration work units;
-4,864 also occur in V1, leaving 27,491 units not represented there.
+The post-V1 obligations group into 32,354 source-declaration work units;
+4,864 also occur in V1, leaving 27,490 units not represented there.
 Shared code does not discharge type/profile evidence. These are inventory
 counts before source-cfg and implementation-state review, not missing-code
 counts or I17 qualification. A009 and profile/toolchain work remain separate.

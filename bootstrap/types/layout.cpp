@@ -14,7 +14,10 @@ std::optional<std::uint64_t> textConstantCount(const TypeStore &types,
       value.selection != -1 || value.scalar != NumericLiteral{} ||
       value.text.size() >
           integerMaximum(Type::Isize, types.targetPointerBits()).magnitude[0] ||
-      value.byteOffset > value.text.size() || value.fields.size() > 1)
+      !integerLiteralFits(integerLiteral(value.byteOffset), Type::Usize,
+                          types.targetPointerBits()) ||
+      (types.isView(value.type) && value.byteOffset > value.text.size()) ||
+      value.fields.size() > 1)
     return std::nullopt;
   const auto &view = types.view(value.type);
   if (types.isView(value.type) && view.mode != ParameterMode::Read)
@@ -35,6 +38,8 @@ std::optional<std::uint64_t> textConstantCount(const TypeStore &types,
   auto metadata = types.pointerMetadata(target);
   if (metadata == PointerMetadata::None && types.isPointer(value.type))
     return value.fields.empty() ? std::optional(count) : std::nullopt;
+  if (metadata == PointerMetadata::ElementCount && types.isPointer(value.type))
+    return count;
   if (metadata == PointerMetadata::ElementCount) {
     while (types.isProduct(target) &&
            types.product(target).kind == AggregateKind::Product &&

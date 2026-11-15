@@ -23,6 +23,13 @@ void Checker::products() {
     genericEnvironment = &productGenerics.at(&product);
     std::unordered_set<std::string> names;
     std::vector<TypeField> fields;
+    if (checked.types->product(identities[i]).kind == AggregateKind::VarArgs) {
+      auto representation = checked.types->vaListFields();
+      fieldSpans[i].assign(representation.size(), product.span);
+      checked.types->defineProduct(identities[i], std::move(representation));
+      genericEnvironment = savedEnvironment;
+      continue;
+    }
     if (product.enumeration) {
       fields.push_back({"<tag>", Type::I32});
       fieldSpans[i].push_back(product.span);

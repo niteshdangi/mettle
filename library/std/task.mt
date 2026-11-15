@@ -62,10 +62,20 @@ unsafe fn waker_release<W: Wake + Transferable + Shareable + Static>(data: ptr<m
 }
 
 // A waker owning one reference to `handle`'s payload.
-pub fn waker_from_shared<W: Wake + Transferable + Shareable + Static>(read handle: Shared<W>): Waker {
+fn raw_waker_from_shared<W: Wake + Transferable + Shareable + Static>(read handle: Shared<W>): RawWaker {
     let dup = boxed.new(handle.retain())
     let parts = dup.into_raw()
-    unsafe { core.future.waker_from_raw(RawWaker(parts.0.cast<u8>(), waker_table<W>())) }
+    RawWaker(parts.0.cast<u8>(), waker_table<W>())
+}
+
+pub fn waker_from_shared<W: Wake + Transferable + Shareable + Static>(read handle: Shared<W>): Waker {
+    unsafe { core.future.waker_from_raw(raw_waker_from_shared(handle)) }
+}
+
+extend<W: Wake + Transferable + Shareable + Static> RawWaker implements From<Shared<W>> {
+    static fn from(take handle: Shared<W>): RawWaker {
+        raw_waker_from_shared(read handle)
+    }
 }
 
 extend<W: Wake + Transferable + Shareable + Static> Waker implements From<Shared<W>> {
@@ -188,7 +198,7 @@ extend IoWait implements Future {
             present(value) => value,
             none => { return Poll.Ready(-1) }
         }
-        let raw = cx.waker().clone().into_raw()
+        let raw = Waker.(Clone).clone(cx.waker()).into_raw()
         // The sys shim stores and invokes this owned, pointer-only callback;
         // cancellation invokes release instead, never both.
         let wake = unsafe {
@@ -251,7 +261,7 @@ extend Sleep implements Future {
             present(value) => value,
             none => core.panic.panic("sleep requires the std.task executor")
         }
-        let raw = cx.waker().clone().into_raw()
+        let raw = Waker.(Clone).clone(cx.waker()).into_raw()
         let wake = unsafe {
             core.mem.transmute<extern "C" fn(ptr<mut u8>): Unit>(raw.vtable.wake)
         }

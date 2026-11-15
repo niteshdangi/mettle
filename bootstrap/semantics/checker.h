@@ -31,6 +31,7 @@ public:
     checked.targetDescription = std::move(target);
     checked.importedDeclarations = std::move(imported);
     checked.types->setPointerBits(pointerBits());
+    checked.types->setVaListAbi(targetVaListAbi(checked.targetDescription));
   }
   std::optional<CheckedModule> run();
 
@@ -57,9 +58,12 @@ private:
   // The compiler-owned evaluator for required constants that go beyond
   // literal arithmetic: casts, control flow, const fn calls, aggregates.
   Type evaluatedConstant(const Node &node, Type expected);
-  std::optional<StaticConstant> evaluatedStatic(const Node &node, Type type);
+  std::optional<StaticConstant>
+  evaluatedStatic(const Node &node, Type type,
+                  std::span<const TypeBinding> bindings = {});
   bool needsEvaluator(const Node &node) const;
   bool constFunctionCall(const Node &node);
+  const Function *resolvedCall(const NodeFacts *facts) const;
   std::optional<evaluation::Shape> constantShape(Type type);
   std::optional<evaluation::Value> constantValueOf(const StaticConstant &value,
                                                    evaluation::Host &host);
@@ -92,6 +96,7 @@ private:
   bool requireEntry = true;
   NumericEvaluator numericEvaluator = nullptr;
   unsigned unsafeDepth = 0;
+  std::set<const Node *> rawAddressDereferences;
   void requireUnsafe(Span span);
   void machineDeclarations();
   void staticNamesAndTypes();
@@ -111,6 +116,10 @@ private:
   std::unordered_map<std::string, std::size_t> staticNames;
   bool staticsDeclared = false;
   struct InherentConstant {
+    struct Instance {
+      unsigned char state = 0;
+      std::optional<StaticConstant> materialized{};
+    };
     const Module::Implementation *implementation = nullptr;
     const Module::Associated *declaration = nullptr;
     Type target = Type::Unknown;
@@ -118,8 +127,11 @@ private:
     Type value = Type::Unknown;
     unsigned char state = 0;
     std::optional<StaticConstant> materialized{};
+    std::shared_ptr<CheckedExpression> initializer{};
+    std::map<std::vector<Type>, Instance> instances;
   };
   std::vector<InherentConstant> inherentConstants;
+  unsigned constantEvaluationDepth = 0;
   std::unordered_map<std::string, std::size_t> inherentConstantNames;
   std::optional<Type> inherentConstantValue(std::size_t index, Type subject,
                                             const Node *use = nullptr);
@@ -182,7 +194,7 @@ private:
   std::unordered_set<int> formatVariables;
   std::unordered_set<const Node *> permittedRecipes;
   bool formatMessage(Type type) const;
-  void formatArguments(Node &call, const Function &callee, std::size_t offset);
+  bool formatArguments(Node &call, const Function &callee, std::size_t offset);
   Function *current = nullptr;
   std::unordered_map<int, int> loopResults;
   std::vector<std::pair<int, Span>> integerOrBoolean;
@@ -413,9 +425,10 @@ private:
                          Span span);
   bool intrinsicProperty(const TypeSyntax &bound, std::string_view property,
                          Span span) const;
-  void concurrencyDeclaration(const Module::Implementation &syntax,
-                              interfaces::Property property,
-                              interfaces::Implementation &implementation);
+  void
+  structuralPropertyDeclaration(const Module::Implementation &syntax,
+                                interfaces::Property property,
+                                interfaces::Implementation &implementation);
   std::optional<interfaces::Property> propertyBound(const TypeSyntax &bound,
                                                     Span span) const;
   std::vector<interfaces::Obligation> interfaceAssumptions(
@@ -453,10 +466,12 @@ private:
   // interface method (`ExtendItems<A>` and `ExtendItems<B>` on one type).
   std::optional<std::size_t> receiverCandidate(
       Type self, ParameterMode mode, std::string_view name, const Node &call,
-      const std::function<const std::vector<Type> *()> &arguments = {});
+      const std::function<const std::vector<Type> *()> &arguments = {},
+      bool viewExtension = false);
   bool argumentsFit(std::size_t function, Type &interfaceType, Type self,
                     std::span<const Type> arguments, Span span,
-                    RegionEnvironment &candidateRegions);
+                    RegionEnvironment &candidateRegions,
+                    std::span<const Type> inferredParameters = {});
   std::optional<ReceiverStep> dereferenceStep(Type source, bool exclusive,
                                               Span span);
   bool mutableReceiverPlan(ReceiverPlan &plan, Span span, bool report = true);

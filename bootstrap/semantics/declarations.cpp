@@ -12,7 +12,15 @@ void Checker::declarations() {
     if (typeNames.contains(name))
       error("name", product.span, "duplicate type '" + product.name + "'");
     else {
-      auto type = checked.types->declareProduct(name, product.copyRequested);
+      bool nativeCursor = name == "core::ffi::VaList";
+      if (nativeCursor &&
+          (product.copyRequested || product.enumeration ||
+           !product.fields.empty() || product.regions.size() != 1))
+        error("type", product.span,
+              "VaList must be opaque, non-Copy, and have one frame region");
+      auto type = checked.types->declareProduct(
+          name, product.copyRequested,
+          nativeCursor ? AggregateKind::VarArgs : AggregateKind::Product);
       auto package = checked.namespaces().packageOf(product.span);
       checked.types->setProductPackage(type, package.value_or(unknownPackage));
       typeNames.emplace(name, type);

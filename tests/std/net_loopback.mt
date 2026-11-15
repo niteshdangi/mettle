@@ -1,6 +1,6 @@
 // Single-process loopback TCP and UDP with partial transfers and timeouts.
 import std.io.{Error, ErrorKind, Reader, Writer}
-import std.net.{SocketAddr, TcpStream, TcpListener}
+import std.net.{Shutdown, SocketAddr, TcpStream, TcpListener}
 import std.time.from_millis
 
 fn any_port(): SocketAddr { std.net.socket_addr(std.net.localhost(), 0u16) }
@@ -50,7 +50,7 @@ fn tcp_part(): i32 throws Error {
     if writer_done != 0 { return 10 + writer_done }
 
     // After shutdown of the write side the peer reads end-of-file.
-    try client.shutdown(1)
+    try client.shutdown(Shutdown.Write)
     try server.set_read_timeout(present(from_millis(2000u64)))
     let eof = try server.read_some(buf)
     if eof != 0usize { return 20 }

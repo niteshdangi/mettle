@@ -138,8 +138,48 @@ fn run(): i32 throws Error {
         return 8
     }
 
+    var read_advance = IoSlice.new("abc".as_bytes())
+    read_advance.advance(1usize)
+    if read_advance.len() != 2usize || read_advance[0usize] != 98u8 { return 51 }
+    read_advance.advance(2usize)
+    if read_advance.len() != 0usize { return 52 }
+
+    var mutable_advance_data = [97u8, 98u8, 99u8]
+    var mutable_advance = IoSliceMut.new(mut mutable_advance_data)
+    mutable_advance.advance(1usize)
+    if mutable_advance.len() != 2usize || mutable_advance[0usize] != 98u8 { return 53 }
+
+    var read_parts = [
+        IoSlice.new("ab".as_bytes()),
+        IoSlice.new("".as_bytes()),
+        IoSlice.new("cd".as_bytes())
+    ]
+    var read_window = mut read_parts[..]
+    IoSlice.advance_slices(mut read_window, 3usize)
+    if read_window.len() != 1usize ||
+        read_window[0usize].len() != 1usize ||
+        read_window[0usize][0usize] != 100u8 {
+        return 54
+    }
+
+    var mutable_first = [97u8, 98u8]
+    var mutable_second = [99u8, 100u8]
+    var mutable_parts = [
+        IoSliceMut.new(mut mutable_first),
+        IoSliceMut.new(mut mutable_second)
+    ]
+    var mutable_window = mut mutable_parts[..]
+    IoSliceMut.advance_slices(mut mutable_window, 3usize)
+    if mutable_window.len() != 1usize ||
+        mutable_window[0usize].len() != 1usize ||
+        mutable_window[0usize][0usize] != 100u8 {
+        return 55
+    }
+
     var writer = Cursor.new([0u8; 4])
-    let write_buffers = [IoSlice.new("".as_bytes()), IoSlice.new("abc".as_bytes())]
+    let reusable_buffer = IoSlice.new("abc".as_bytes())
+    let copied_buffer = reusable_buffer
+    let write_buffers = [IoSlice.new("".as_bytes()), reusable_buffer, copied_buffer]
     if try writer.write_vectored(write_buffers) != 3usize { return 9 }
     if try writer.write_some("de".as_bytes()) != 1usize { return 10 }
     if writer.get_ref()[0usize] != 97u8 || writer.get_ref()[3usize] != 100u8 {

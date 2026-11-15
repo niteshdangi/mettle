@@ -7,6 +7,25 @@ import core.fmt
 import core.fmt.{ Debug, Display }
 import core.ops.{ Deref, DerefMut }
 
+fn unpin<T: core.marker.Unpin>() {}
+fn unwind_safe<T: core.marker.UnwindSafe>() {}
+fn ref_unwind_safe<T: core.marker.RefUnwindSafe>() {}
+
+fn lazy_lock_unwind_properties<
+    T: Unpin + core.marker.UnwindSafe + core.marker.RefUnwindSafe,
+    F: Unpin + core.marker.UnwindSafe
+>() {
+    unpin<std.sync.lazy_lock.LazyLock<T, F>>()
+    unwind_safe<std.sync.lazy_lock.LazyLock<T, F>>()
+    ref_unwind_safe<std.sync.lazy_lock.LazyLock<T, F>>()
+}
+
+fn access_error_marker_properties() {
+    unpin<std.sync.tls.AccessError>()
+    unwind_safe<std.sync.tls.AccessError>()
+    ref_unwind_safe<std.sync.tls.AccessError>()
+}
+
 fn require_debug<T: Debug>(read value: T, read prefix: core.text.Text): Unit {
     var output = alloc.string.new()
     {
@@ -42,6 +61,9 @@ fn borrowed_value<T: Borrow<i32>>(read value: T): i32 {
 }
 
 fn main(): i32 {
+    lazy_lock_unwind_properties<i32, fn(): i32>()
+    access_error_marker_properties()
+
     let lock = mutex.new(41)
     require_debug(read lock, "Mutex {")
     let locked = capture lock.lock()
@@ -123,7 +145,7 @@ fn main(): i32 {
     require_debug(read poison, "PoisonError {")
     require_display(read poison, "poisoned lock: another task failed inside")
     require_error(read poison)
-    let poisoned_try = mutex.TryLockError.Poisoned(7)
+    let poisoned_try = mutex.TryLockError.Poisoned(mutex.PoisonError.new(7))
     require_debug(read poisoned_try, "Poisoned(..)")
     require_display(read poisoned_try, "poisoned lock: another task failed inside")
     0

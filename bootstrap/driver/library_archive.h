@@ -4,6 +4,7 @@
 #include "metadata/references.h"
 #include <functional>
 #include <map>
+#include <span>
 #include <unordered_map>
 
 namespace mettle::driver {
@@ -17,6 +18,7 @@ public:
   std::optional<metadata::SourceReference> reference(Span span) const;
   std::optional<Span> resolve(const metadata::SourceReference &reference) const;
   const Source *source(std::string_view revision) const;
+  std::span<const Source> snapshots() const { return sources; }
   bool mount(Diagnostics &diagnostics,
              const std::function<std::optional<SourceId>()> &allocate,
              std::string &error);

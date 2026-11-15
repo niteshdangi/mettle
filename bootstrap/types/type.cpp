@@ -104,13 +104,32 @@ std::string_view typeName(Type type) {
 }
 namespace {
 constexpr std::uint32_t builtins = builtinTypeCount;
+bool componentCopy(AggregateKind kind) {
+  switch (kind) {
+  case AggregateKind::Optional:
+  case AggregateKind::Outcome:
+  case AggregateKind::Tuple:
+  case AggregateKind::Array:
+  case AggregateKind::Range:
+  case AggregateKind::Uninit:
+  case AggregateKind::ManualDrop:
+  case AggregateKind::Pin:
+    return true;
+  default:
+    return false;
+  }
 }
-Type TypeStore::declareProduct(std::string name, bool copyRequested) {
+} // namespace
+Type TypeStore::declareProduct(std::string name, bool copyRequested,
+                               AggregateKind kind) {
   if (entries.size() >= std::numeric_limits<std::uint32_t>::max() - builtins)
     throw std::length_error("type identity limit exceeded");
   Type id(builtins + static_cast<std::uint32_t>(entries.size()));
   entries.push_back({EntryKind::Product, products.size()});
   products.push_back({std::move(name), {}, copyRequested});
+  products.back().kind = kind;
+  if (kind == AggregateKind::VarArgs)
+    products.back().nativeCleanup = NativeCleanup::VaListEnd;
   return id;
 }
 void TypeStore::syncLookup() {
@@ -236,6 +255,21 @@ bool TypeStore::uninhabited(Type type) const {
       return true;
   return false;
 }
+std::vector<TypeField> TypeStore::vaListFields() {
+  auto pointer = pointerType(Type::Unit, ParameterMode::Mut);
+  if (variadicAbi == VaListAbi::Pointer)
+    return {{"<stack>", pointer}};
+  if (variadicAbi == VaListAbi::Aapcs64)
+    return {{"<stack>", pointer},
+            {"<gr.top>", pointer},
+            {"<vr.top>", pointer},
+            {"<gr.offset>", Type::I32},
+            {"<vr.offset>", Type::I32}};
+  return {{"<gp.offset>", Type::U32},
+          {"<fp.offset>", Type::U32},
+          {"<overflow>", pointer},
+          {"<save>", pointer}};
+}
 Type TypeStore::structural(AggregateKind kind, std::vector<Type> components,
                            std::uint32_t count) {
   if (kind == AggregateKind::Array && !components.empty() &&
@@ -262,9 +296,7 @@ Type TypeStore::structural(AggregateKind kind, std::vector<Type> components,
     copy &= isCopy(component);
   if (kind == AggregateKind::VarArgs) {
     display = "core::ffi::VarArgs";
-    fields = {{"<cursor.0>", Type::U64},
-              {"<cursor.1>", Type::U64},
-              {"<cursor.2>", Type::U64}};
+    fields = vaListFields();
     copy = false;
   } else if (kind == AggregateKind::Ordering) {
     display = "core::sync::atomic::Ordering";
@@ -347,7 +379,7 @@ Type TypeStore::structural(AggregateKind kind, std::vector<Type> components,
           std::string(name(components[0])) + "; " + std::to_string(count);
     display += kind == AggregateKind::Tuple ? ")" : "]";
   }
-  auto result = declareProduct(std::move(display), copy);
+  auto result = declareProduct(std::move(display), componentCopy(kind) || copy);
   defineProduct(result, std::move(fields));
   auto &record = products.at(entries.at(result.index() - builtins).index);
   record.kind = kind;
@@ -451,12 +483,13 @@ Type TypeStore::regionalProduct(Type origin, std::vector<TypeField> fields,
           found(lookup.regionInstances, origin), [&](std::size_t i) {
             if (entries[i].kind != EntryKind::Product)
               return false;
-            const auto &record = products[entries[i].index];
-            return record.regionOrigin == origin &&
-                   record.normalizedFields == normalizedFields &&
-                   record.regionArguments == arguments &&
-                   record.fields.size() == fields.size() &&
-                   std::equal(record.fields.begin(), record.fields.end(),
+            const auto &candidate = products[entries[i].index];
+            return candidate.regionOrigin == origin &&
+                   candidate.normalizedFields == normalizedFields &&
+                   candidate.regionArguments == arguments &&
+                   candidate.genericArguments == record.genericArguments &&
+                   candidate.fields.size() == fields.size() &&
+                   std::equal(candidate.fields.begin(), candidate.fields.end(),
                               fields.begin(),
                               [](const auto &left, const auto &right) {
                                 return left.name == right.name &&
@@ -548,6 +581,10 @@ bool TypeStore::containsViews(Type type, bool includeErasedPayloads) const {
         result |= self(self, binding.argument);
     } else if (isProduct(nested)) {
       const auto &record = product(nested);
+      if (record.kind == AggregateKind::VarArgs &&
+          (record.name == "core::ffi::VaList" ||
+           !record.regionArguments.empty()))
+        result = true;
       if (record.kind == AggregateKind::Array &&
           record.arrayCount != Type::Unknown && !record.components.empty())
         result = self(self, record.components[0]);
@@ -566,6 +603,14 @@ bool TypeStore::containsViews(Type type, bool includeErasedPayloads) const {
 }
 const ProductType &TypeStore::product(Type type) const {
   return products.at(entries.at(type.index() - builtins).index);
+}
+std::optional<Type> TypeStore::findProduct(std::string_view name) const {
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    const auto &entry = entries[i];
+    if (entry.kind == EntryKind::Product && products[entry.index].name == name)
+      return Type(builtinTypeCount + static_cast<std::uint32_t>(i));
+  }
+  return std::nullopt;
 }
 std::string_view TypeStore::name(Type type) const {
   return isErased(type)                          ? erased(type).name
@@ -825,6 +870,9 @@ bool TypeStore::copyProduct(Type type) const {
   const auto &record = product(type);
   if (!record.copyRequested)
     return false;
+  if (componentCopy(record.kind))
+    return std::all_of(record.components.begin(), record.components.end(),
+                       [&](Type component) { return isCopy(component); });
   const auto &origin = record.genericOrigin == Type::Unknown
                            ? record
                            : product(record.genericOrigin);
@@ -848,6 +896,8 @@ bool TypeStore::isCopy(Type type) const {
 bool TypeStore::isUnpin(Type type) const {
   if (isParameter(type))
     return parameter(type).unpin;
+  if (isSlice(type))
+    return isUnpin(slice(type).element);
   if (isOpaque(type))
     return product(type).layout.unpin == 1;
   if (!isProduct(type))
@@ -873,6 +923,12 @@ bool TypeStore::isUnpin(Type type) const {
         return false;
     return true;
   }
+  if (product(origin).name == "core::iter::Phantom") {
+    const auto &arguments = record.genericArguments.empty()
+                                ? record.genericParameters
+                                : record.genericArguments;
+    return arguments.size() == 1 && isUnpin(arguments.front());
+  }
   if (record.kind == AggregateKind::PhantomPinned ||
       record.kind == AggregateKind::Coroutine)
     return false;
@@ -885,5 +941,8 @@ bool TypeStore::isUnpin(Type type) const {
 }
 void TypeStore::constrainUnpin(Type type) {
   parameters.at(entries.at(type.index() - builtins).index).unpin = true;
+}
+bool TypeStore::isThin(Type type) const {
+  return contains(type) && pointerMetadata(type) == PointerMetadata::None;
 }
 } // namespace mettle

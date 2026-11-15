@@ -1,5 +1,6 @@
 import core.iter.{Iterator, BidirectionalIterator}
-import super.alloc.{Allocator, Global, AllocError, panic_precondition}
+import super.alloc.{Allocator, Global, panic_precondition}
+import super.collections.TryReserveError
 import core.clone.Clone
 import core.default.Default
 import core.fmt
@@ -81,6 +82,47 @@ pub type FromUtf16Error {
     pub surrogate: u16
 }
 
+extend<A: Allocator + Clone> FromUtf8Error<A> implements core.clone.Clone {
+    fn clone(): FromUtf8Error<A> {
+        FromUtf8Error(self.bytes.clone(), self.valid_up_to)
+    }
+}
+extend<A: Allocator> FromUtf8Error<A> implements PartialEq {
+    fn eq(read other: FromUtf8Error<A>): bool {
+        self.bytes == other.bytes && self.valid_up_to == other.valid_up_to
+    }
+}
+extend<A: Allocator> FromUtf8Error<A> implements Eq {}
+
+extend<A: Allocator> FromUtf8Error<A> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("FromUtf8Error")
+        try debug.field("bytes", self.bytes.as_slice())
+        try debug.field("valid_up_to", self.valid_up_to)
+        try debug.finish()
+    }
+}
+extend<A: Allocator> FromUtf8Error<A> implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("invalid UTF-8 data at byte index ")
+        try usize.(fmt.Display).fmt(self.valid_up_to, mut f)
+    }
+}
+extend FromUtf16Error implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("FromUtf16Error")
+        try debug.field("index", self.index)
+        try debug.field("surrogate", self.surrogate)
+        try debug.finish()
+    }
+}
+extend FromUtf16Error implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try f.write_str("invalid UTF-16 at index ")
+        try usize.(fmt.Display).fmt(self.index, mut f)
+    }
+}
+
 pub type StringDrain<region r, A: Allocator> {
     bytes: super.vec.Drain<region r, u8, A>
 }
@@ -160,13 +202,13 @@ pub const fn new_in<A: Allocator>(take a: A): String<A> {
     from_valid_bytes(super.vec.new_in<u8, A>(take a))
 }
 pub const fn new(): String { new_in(Global()) }
-pub fn try_with_capacity_in<A: Allocator>(n: usize, take a: A): String<A> throws AllocError {
+pub fn try_with_capacity_in<A: Allocator>(n: usize, take a: A): String<A> throws TryReserveError {
     from_valid_bytes(try super.vec.try_with_capacity_in<u8, A>(n, take a))
 }
 pub fn with_capacity_in<A: Allocator>(n: usize, take a: A): String<A> {
     from_valid_bytes(super.vec.with_capacity_in<u8, A>(n, take a))
 }
-pub fn try_with_capacity(n: usize): String throws AllocError {
+pub fn try_with_capacity(n: usize): String throws TryReserveError {
     try try_with_capacity_in(n, Global())
 }
 pub fn with_capacity(n: usize): String {
@@ -559,9 +601,9 @@ extend<A: Allocator> String<A> {
     // Safety: the bytes must be well-formed UTF-8 again before the string is
     // next observed as text (including on drop-free early exits such as errors).
     pub mut unsafe const fn as_mut_vec(): mut List<u8, A> from self { mut self.v }
-    pub mut fn try_reserve(extra: usize): Unit throws AllocError { try self.v.try_reserve(extra) }
+    pub mut fn try_reserve(extra: usize): Unit throws TryReserveError { try self.v.try_reserve(extra) }
     pub mut fn reserve(extra: usize): Unit { self.v.reserve(extra) }
-    pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
+    pub mut fn try_reserve_exact(extra: usize): Unit throws TryReserveError {
         try self.v.try_reserve_exact(extra)
     }
     pub mut fn reserve_exact(extra: usize): Unit { self.v.reserve_exact(extra) }
@@ -589,7 +631,7 @@ extend<A: Allocator> String<A> {
         }
     }
 
-    pub mut fn try_push_str(read t: Text): Unit throws AllocError {
+    pub mut fn try_push_str(read t: Text): Unit throws TryReserveError {
         let bytes = t.as_bytes()
         try self.v.try_reserve(bytes.len())
         var i = 0usize
@@ -760,7 +802,7 @@ extend<A: Allocator> String<A> {
 }
 
 extend<A: Allocator + Clone> String<A> implements Clone {
-    fn clone(): String<A> { from_valid_bytes(self.v.clone()) }
+    fn clone(): String<A> { from_valid_bytes(List<u8, A>.(Clone).clone(self.v)) }
 }
 extend<A: Allocator + Default> String<A> implements Default {
     static fn default(): String<A> { new_in<A>(A.(Default).default()) }
@@ -772,7 +814,7 @@ extend<A: Allocator> String<A> implements PartialEq {
 extend<A: Allocator> String<A> implements Eq {}
 
 extend<A: Allocator> String<A> implements PartialOrd {
-    fn partial_cmp(read other: String<A>): Ordering? { self.as_text().partial_cmp(other.as_text()) }
+    fn partial_cmp(read other: String<A>): Ordering? { Text.(PartialOrd).partial_cmp(self.as_text(), other.as_text()) }
 }
 extend<A: Allocator> String<A> implements Ord {
     fn cmp(read other: String<A>): Ordering { self.as_text().cmp(other.as_text()) }
@@ -949,6 +991,16 @@ extend<region r> String implements From<read Text from r> {
 extend<region r> String implements From<mut Text from r> {
     static fn from(take input: mut Text from r): String { from_text(input) }
 }
+extend Text implements PartialEq<String> {
+    fn eq(read other: String): bool {
+        Text.(PartialEq).eq(self, other.as_text())
+    }
+}
+extend<region r, region s> read Text from r implements PartialEq<String> {
+    fn eq(read other: String): bool {
+        Text.(PartialEq).eq(*self, other.as_text())
+    }
+}
 extend<region r> String implements From<BorrowedOrOwned<region r, Text>> {
     static fn from(take input: BorrowedOrOwned<region r, Text>): String {
         input.into_owned()
@@ -957,6 +1009,11 @@ extend<region r> String implements From<BorrowedOrOwned<region r, Text>> {
 extend<region r, A: Allocator> String<A> implements PartialEq<BorrowedOrOwned<region r, Text>> {
     fn eq(read other: BorrowedOrOwned<region r, Text>): bool {
         self.as_text() == other.as_ref()
+    }
+}
+extend<region r> BorrowedOrOwned<region r, Text> implements PartialEq<String> {
+    fn eq(read other: String): bool {
+        self.as_ref() == other.as_text()
     }
 }
 extend<region r, A: Allocator> String<A> implements ExtendItems<BorrowedOrOwned<region r, Text>> {
@@ -1020,6 +1077,34 @@ extend<region r> String implements Add<read Text from r> {
         concat(self.as_text(), rhs)
     }
 }
+extend<region r> BorrowedOrOwned<region r, Text>
+    implements Add<BorrowedOrOwned<region r, Text>> {
+    type Output = BorrowedOrOwned<region r, Text>
+    fn add(
+        read rhs: BorrowedOrOwned<region r, Text>
+    ): BorrowedOrOwned<region r, Text> {
+        BorrowedOrOwned<region r, Text>.Owned(concat(self.as_ref(), rhs.as_ref()))
+    }
+}
+extend<region r> BorrowedOrOwned<region r, Text>
+    implements Add<read Text from r> {
+    type Output = BorrowedOrOwned<region r, Text>
+    fn add(read rhs: read Text from r): BorrowedOrOwned<region r, Text> {
+        BorrowedOrOwned<region r, Text>.Owned(concat(self.as_ref(), rhs))
+    }
+}
+extend<region r> BorrowedOrOwned<region r, Text>
+    implements AddAssign<BorrowedOrOwned<region r, Text>> {
+    mut fn add_assign(read rhs: BorrowedOrOwned<region r, Text>): Unit {
+        self.to_mut().push_str(rhs.as_ref())
+    }
+}
+extend<region r> BorrowedOrOwned<region r, Text>
+    implements AddAssign<read Text from r> {
+    mut fn add_assign(read rhs: read Text from r): Unit {
+        self.to_mut().push_str(rhs)
+    }
+}
 extend<A: Allocator> String<A> implements AsRef<[u8]> {
     fn as_ref(): read [u8] from self { self.as_bytes() }
 }
@@ -1031,7 +1116,7 @@ extend<region r, A: Allocator> String<A> implements PartialEq<read Text from r> 
 }
 extend<A: Allocator> String<A> implements PartialOrd<Text> {
     fn partial_cmp(read other: Text): Ordering? {
-        self.as_text().partial_cmp(other)
+        Text.(PartialOrd).partial_cmp(self.as_text(), other)
     }
 }
 
@@ -1096,7 +1181,7 @@ extend Text {
             present(length) => length,
             none => panic_precondition()
         }
-        if total > 0x7fffffffffffffffusize { panic_precondition() }
+        if total > isize.MAX as usize { panic_precondition() }
         if total == 0usize { return new() }
         var result = with_capacity(total)
         var remaining = count

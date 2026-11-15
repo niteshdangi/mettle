@@ -95,7 +95,7 @@ extend<T: unsized> RwLock<T> {
         if status != 0 { panic("rwlock try_read failed") }
         let guard = ReadGuard(read self)
         if self.poisoned.load(core.sync.atomic.Ordering.Acquire) {
-            throw TryLockError.Poisoned(guard)
+            throw TryLockError.Poisoned(PoisonError(guard))
         }
         guard
     }
@@ -105,7 +105,7 @@ extend<T: unsized> RwLock<T> {
         if status != 0 { panic("rwlock try_write failed") }
         let guard = WriteGuard(read self, unsafe { mettle_rt_panicking() != 0 })
         if self.poisoned.load(core.sync.atomic.Ordering.Acquire) {
-            throw TryLockError.Poisoned(guard)
+            throw TryLockError.Poisoned(PoisonError(guard))
         }
         guard
     }
@@ -182,9 +182,9 @@ extend<T: Debug + unsized> RwLock<T> implements Debug {
             },
             failure(error) => match take error {
                 TryLockError.WouldBlock => { try debug.field("data", "<locked>"); },
-                TryLockError.Poisoned(guard) => {
+                TryLockError.Poisoned(error) => {
                     poisoned = true
-                    try debug.field("data", guard.get());
+                    try debug.field("data", error.get_ref().get());
                 }
             }
         }

@@ -1,8 +1,19 @@
-import std.ffi.{CStr, CString, FromBytesWithNulError, FromBytesUntilNulError, FromVecWithNulError, NulError}
+import std.ffi.{
+    CStr, CString, FromBytesWithNulError, FromBytesUntilNulError,
+    FromVecWithNulError, IntoStringError, NulError
+}
 import core.clone.Clone
 import core.cmp.{Ord, PartialEq, PartialOrd}
 
+fn require_error<T: core.error.Error>() {}
+
 fn main(): i32 {
+    require_error<FromBytesWithNulError>()
+    require_error<FromBytesUntilNulError>()
+    require_error<FromVecWithNulError>()
+    require_error<IntoStringError>()
+    require_error<NulError>()
+
     let payload: [u8; 3] = [255u8, 128u8, 65u8]
     let constructed = capture CString.new(std.ffi.os_string_from_bytes(payload).into_bytes())
     let value = match take constructed {

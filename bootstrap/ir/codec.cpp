@@ -22,7 +22,7 @@ template <class E> constexpr unsigned lastTag() {
   else if constexpr (std::is_same_v<E, InlineHint>)
     return static_cast<unsigned>(InlineHint::Never);
   else if constexpr (std::is_same_v<E, Op>)
-    return static_cast<unsigned>(Op::TextLiteral);
+    return static_cast<unsigned>(Op::RawAddress);
   else if constexpr (std::is_same_v<E, Exit>)
     return static_cast<unsigned>(Exit::Suspend);
   else if constexpr (std::is_same_v<E, ParameterMode>)
@@ -32,7 +32,7 @@ template <class E> constexpr unsigned lastTag() {
   else if constexpr (std::is_same_v<E, Projection::Kind>)
     return static_cast<unsigned>(Projection::Kind::Opaque);
   else if constexpr (std::is_same_v<E, StaticConstant::Kind>)
-    return static_cast<unsigned>(StaticConstant::Kind::Pointer);
+    return static_cast<unsigned>(StaticConstant::Kind::TypeIdentity);
   else if constexpr (std::is_same_v<E, AssemblyVariant>)
     return static_cast<unsigned>(AssemblyVariant::Naked);
   else if constexpr (std::is_same_v<E, AssemblyMode>)
@@ -83,7 +83,7 @@ template <class A, class T> void record(A &a, T &r) {
         !validFloatingConstant(*r.numeric, r.result.type))
       reject("invalid floating constant");
   } else if constexpr (std::is_same_v<R, Terminator>) {
-    a(r.kind, r.value, r.first, r.second, r.span);
+    a(r.kind, r.value, r.first, r.second, r.span, r.unpredictable);
   } else if constexpr (std::is_same_v<R, Block>) {
     a(r.instructions, r.exit);
   } else if constexpr (std::is_same_v<R, Function::Scope>) {
@@ -109,7 +109,8 @@ template <class A, class T> void record(A &a, T &r) {
       r.regionSignature, r.interfaceResult, r.genericEqualities,
       r.unsafeFunction, r.abi, r.foreignDeclaration, r.exportedDefinition,
       r.variadic, r.floatingPolicy, r.variadicCursor, r.targetFeatures,
-      r.nakedAssembly, r.arrayLoops, r.coroutine, r.span, r.inlineHint);
+      r.nakedAssembly, r.arrayLoops, r.coroutine, r.span, r.inlineHint,
+      r.trackCaller);
   } else if constexpr (std::is_same_v<R, StaticConstant>) {
     if (++a.constantDepth > limits::typeDepth)
       reject("static constant nesting exceeds compiler limit");
@@ -123,6 +124,10 @@ template <class A, class T> void record(A &a, T &r) {
           r.kind == StaticConstant::Kind::Function) &&
          r.symbol < 0) ||
         (r.kind == StaticConstant::Kind::Repeat && r.fields.size() != 1) ||
+        (r.kind == StaticConstant::Kind::TypeIdentity &&
+         (r.type != Type::U64 || r.text.empty() || !r.fields.empty() ||
+          r.symbol != -1 || !r.projections.empty() || r.selection != -1 ||
+          r.byteOffset != 0)) ||
         r.selection < -1)
       reject("invalid IR static constant shape");
     if (r.kind == StaticConstant::Kind::Scalar && isFloating(r.type) &&
@@ -507,7 +512,8 @@ void checkFunction(const Function &f) {
           reject("invalid IR witness method ordinal");
     }
     value(block.exit.value);
-    if (block.exit.kind == Exit::None ||
+    if ((block.exit.unpredictable && block.exit.kind != Exit::Branch) ||
+        block.exit.kind == Exit::None ||
         ((block.exit.kind == Exit::Return || block.exit.kind == Exit::Branch) &&
          !validIndex(block.exit.value.id, f.values)) ||
         !validIndex(block.exit.first, f.blocks.size(), true) ||
@@ -571,7 +577,7 @@ EncodeResult encodeProgram(const Program &program,
   try {
     Writer writer(references);
     writer.unsignedInteger(0x5249544d, 4);
-    writer.unsignedInteger(4, 4);
+    writer.unsignedInteger(7, 4);
     if ((!program.functionPackages.empty() &&
          program.functionPackages.size() != program.functions.size()) ||
         (!program.staticPackages.empty() &&
@@ -615,7 +621,7 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
   try {
     Reader reader(bytes, references);
     if (reader.unsignedInteger(4) != 0x5249544d ||
-        reader.unsignedInteger(4) != 4)
+        reader.unsignedInteger(4) != 7)
       reject("unsupported IR archive format or version");
     DecodeResult result;
     auto records = [&](auto &items, auto &packages, auto &names,

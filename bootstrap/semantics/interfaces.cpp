@@ -75,6 +75,13 @@ void Checker::interfaceHeaders() {
                                                  associated.span);
                       }))
         checked.types->constrainUnpin(item.parameter);
+      if (!associated.constant &&
+          std::any_of(associated.bounds.begin(), associated.bounds.end(),
+                      [&](const auto &bound) {
+                        return interfaceProperty(bound, "Thin",
+                                                 associated.span);
+                      }))
+        checked.types->constrainThin(item.parameter);
       definition.associated.push_back(std::move(item));
     }
   }
@@ -82,28 +89,65 @@ void Checker::interfaceHeaders() {
 
 bool Checker::intrinsicProperty(const TypeSyntax &bound,
                                 std::string_view property, Span span) const {
+  auto canonicalName = typeName(bound.name, span, {}, bound.context);
+  if (canonicalName.empty())
+    canonicalName = bound.name;
+  const bool reservedMarker =
+      (property == "Unpin" || property == "UnwindSafe" ||
+       property == "RefUnwindSafe" || property == "Freeze") &&
+      canonicalName == "core::marker::" + std::string(property);
+  const bool reservedThin =
+      property == "Thin" && canonicalName == "core::marker::Thin";
+  const bool unqualifiedProperty =
+      bound.name == property && canonicalName == property &&
+      !checked.namespaces().lookup(nameModule(span, bound.context), bound.name,
+                                   resolution::Namespace::Type, span);
   return bound.form == TypeForm::Named &&
-         (bound.name == property ||
-          ((property == "Unpin" || property == "Transferable" ||
-            property == "Shareable" || property == "Static") &&
-           bound.name == "core::marker::" + std::string(property))) &&
-         bound.arguments.empty() &&
-         !checked.namespaces().lookup(nameModule(span, bound.context),
-                                      bound.name, resolution::Namespace::Type,
-                                      span);
+         (reservedMarker || reservedThin || unqualifiedProperty) &&
+         bound.arguments.empty() && bound.regions.empty() &&
+         bound.binders.empty();
 }
 
 std::optional<interfaces::Property>
 Checker::propertyBound(const TypeSyntax &bound, Span span) const {
   using interfaces::Property;
+  if (bound.form != TypeForm::Named || !bound.arguments.empty() ||
+      !bound.regions.empty() || !bound.binders.empty())
+    return std::nullopt;
+  auto canonical = typeName(bound.name, span, {}, bound.context);
+  if (canonical == "core::clone::FunctionPointer" ||
+      canonical == "core::ops::FnPtr")
+    return std::nullopt;
   for (auto [name, property] : {std::pair{"Copy", Property::Copy},
                                 {"Sized", Property::Sized},
                                 {"Unpin", Property::Unpin},
                                 {"Transferable", Property::Transferable},
                                 {"Shareable", Property::Shareable},
-                                {"Static", Property::Static}})
+                                {"Static", Property::Static},
+                                {"UnwindSafe", Property::UnwindSafe},
+                                {"RefUnwindSafe", Property::RefUnwindSafe},
+                                {"Freeze", Property::Freeze},
+                                {"Thin", Property::Thin}}) {
     if (intrinsicProperty(bound, name, span))
       return property;
+    auto found = interfaceNames.find(canonical);
+    if (found == interfaceNames.end())
+      continue;
+    const auto &syntax = module.interfaces[found->second];
+    const bool hasMethods =
+        std::any_of(module.functions.begin(), module.functions.end(),
+                    [&](const Function &function) {
+                      return function.implementation < 0 &&
+                             !function.interfaceOwner.empty() &&
+                             typeName(function.interfaceOwner, function.span,
+                                      function.owner) == canonical;
+                    });
+    if (syntax.genericParameters.empty() && syntax.constraints.empty() &&
+        syntax.associated.empty() && syntax.methods.empty() && !hasMethods &&
+        syntax.superinterfaces.size() == 1 &&
+        intrinsicProperty(syntax.superinterfaces.front(), name, syntax.span))
+      return property;
+  }
   return std::nullopt;
 }
 
@@ -237,6 +281,8 @@ Type Checker::interfaceBound(const TypeSyntax &bound, Span span,
       }
       genericEnvironment = caller;
     }
+    if (!parameter.defaultType.empty())
+      semanticRegionAnnotations[&parameter.defaultType] = value;
     std::vector<TypeBinding> substitutions;
     if (subject != Type::Unknown)
       substitutions.push_back({definition.self, subject});
@@ -810,13 +856,23 @@ Type Checker::interfaceProjection(Type subject, Type interfaceType,
           "associated family region argument count does not match");
   auto ordinal =
       static_cast<std::size_t>(associated - definition.associated.begin());
+  std::vector<TypeBinding> bindings{{definition.self, subject}};
+  for (std::size_t p = 0;
+       p < definition.parameters.size() && p < bound.arguments.size(); ++p)
+    bindings.push_back({definition.parameters[p], bound.arguments[p]});
+  for (std::size_t p = 0;
+       p < associated->parameters.size() && p < actuals.size(); ++p)
+    bindings.push_back({associated->parameters[p], actuals[p]});
   auto projection = checked.types->projection(
       subject, interfaceType, static_cast<std::uint32_t>(ordinal), actuals,
       associated->constant
-          ? checked.types->parameter(associated->parameter).valueType
+          ? checked.types->substitute(
+                checked.types->parameter(associated->parameter).valueType,
+                bindings)
           : Type::Unknown,
       checked.types->isCopy(associated->parameter),
-      checked.types->isSized(associated->parameter), regions);
+      checked.types->isSized(associated->parameter), regions,
+      checked.types->parameter(associated->parameter).thin);
   auto &projections = checked.interfaceData->projections;
   if (std::none_of(
           projections.begin(), projections.end(),
@@ -898,19 +954,38 @@ std::optional<Type> Checker::interfaceAnnotation(const TypeSyntax &syntax,
       auto subject = genericEnvironment->names.find(
           nameKey(syntax.name.substr(0, delimiter), syntax.context));
       if (subject != genericEnvironment->names.end()) {
-        auto bounds = genericEnvironment->bounds.find(subject->second);
-        if (bounds != genericEnvironment->bounds.end()) {
-          // Associated names declared by superinterfaces are reachable
-          // through the elaborated bound set.
-          std::vector<interfaces::Obligation> elaborated;
-          for (const auto &bound : bounds->second) {
-            if (propertyBound(bound, span) || bound.name == "unsized")
-              continue;
-            auto interface =
-                interfaceBound(bound, span, owner, subject->second);
-            if (checked.types->isErased(interface))
+        std::vector<interfaces::Obligation> elaborated;
+        bool implementedSelf = false;
+        if (syntax.name.substr(0, delimiter) == "Self" && current &&
+            current->implementation >= 0 &&
+            static_cast<std::size_t>(current->implementation) <
+                module.implementations.size()) {
+          const auto &implementation =
+              module.implementations[static_cast<std::size_t>(
+                  current->implementation)];
+          if (!implementation.interface.empty()) {
+            auto interface = interfaceBound(implementation.interface, span,
+                                            owner, subject->second);
+            if (checked.types->isErased(interface)) {
               elaborated.push_back({subject->second, interface});
+              implementedSelf = true;
+            }
           }
+        }
+        if (!implementedSelf) {
+          if (auto bounds = genericEnvironment->bounds.find(subject->second);
+              bounds != genericEnvironment->bounds.end()) {
+            for (const auto &bound : bounds->second) {
+              if (propertyBound(bound, span) || bound.name == "unsized")
+                continue;
+              auto interface =
+                  interfaceBound(bound, span, owner, subject->second);
+              if (checked.types->isErased(interface))
+                elaborated.push_back({subject->second, interface});
+            }
+          }
+        }
+        if (!elaborated.empty()) {
           expandSuperinterfaces(elaborated);
           auto name = syntax.name.substr(delimiter + 2);
           Type declaring = Type::Unknown;

@@ -6,7 +6,7 @@ import core.clone.Clone
 import core.default.Default
 import core.cmp
 import core.cmp.{Ord, Ordering, PartialEq, PartialOrd, Descending}
-import core.hash.{BuildHasher, Fnv1a, Hash, Hasher, fnv1a, hash_one}
+import core.hash.{BuildHasher, BuildHasherDefault, Fnv1a, Hash, Hasher, fnv1a, hash_one}
 import std.panic.{catch_panic, CatchResult}
 
 type Factory {}
@@ -16,6 +16,23 @@ extend Factory implements BuildHasher {
 }
 
 type NotCopy { value: i32 }
+
+type SeededHasher { state: u64 }
+extend SeededHasher implements Default {
+    static fn default(): SeededHasher { SeededHasher(17u64) }
+}
+extend SeededHasher implements Hasher {
+    mut fn write(read bytes: [u8]): Unit {
+        var i = 0usize
+        while i < bytes.len() {
+            self.state += bytes[i] as u64
+            i += 1usize
+        }
+    }
+    fn finish(): u64 { self.state }
+}
+
+fn default_builder<H>(): BuildHasherDefault<H> { BuildHasherDefault<H>.(Default).default() }
 
 type Bytes { data: i32 }
 extend Bytes implements Hash {
@@ -87,6 +104,10 @@ fn checks_hash(): i32 {
     if wide.finish() != expected.finish() { return 23 }
     let factory = Factory()
     if factory.build_hasher().finish() != fnv1a().finish() { return 24 }
+    let builder = default_builder<SeededHasher>()
+    var built = builder.build_hasher()
+    built.write(read [3u8])
+    if built.finish() != 20u64 || builder.build_hasher().finish() != 17u64 { return 25 }
     0
 }
 

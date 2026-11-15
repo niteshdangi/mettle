@@ -1,3 +1,5 @@
+import super.clone.Clone
+import super.borrow.AsRef
 import super.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import super.default.Default
 import super.fmt
@@ -6,11 +8,131 @@ import super.iter.{Iterator, RangeBounds}
 import super.text.{Text, Utf8Error}
 import super.slice
 
+@cfg(any(
+    all(target_arch = "aarch64", any(target_os = "linux", target_os = "android")),
+    target_arch = "arm"
+))
+pub alias c_char = u8
+
+@cfg(any(
+    target_arch = "x86_64",
+    target_arch = "wasm32",
+    all(target_arch = "aarch64", target_os = "macos")
+))
+pub alias c_char = i8
+
+pub alias c_schar = i8
+pub alias c_uchar = u8
+pub alias c_short = i16
+pub alias c_ushort = u16
+pub alias c_int = i32
+pub alias c_uint = u32
+
+@cfg(all(target_pointer_width = "64", not(target_os = "windows")))
+pub alias c_long = i64
+@cfg(any(target_pointer_width = "32", target_os = "windows"))
+pub alias c_long = i32
+
+@cfg(all(target_pointer_width = "64", not(target_os = "windows")))
+pub alias c_ulong = u64
+@cfg(any(target_pointer_width = "32", target_os = "windows"))
+pub alias c_ulong = u32
+
+pub alias c_longlong = i64
+pub alias c_ulonglong = u64
+pub alias c_float = f32
+pub alias c_double = f64
+pub enum c_void {}
+
+pub unsafe interface VaArgSafe {}
+unsafe extend i32 implements VaArgSafe {}
+unsafe extend u32 implements VaArgSafe {}
+unsafe extend i64 implements VaArgSafe {}
+unsafe extend u64 implements VaArgSafe {}
+unsafe extend i128 implements VaArgSafe {}
+unsafe extend u128 implements VaArgSafe {}
+unsafe extend isize implements VaArgSafe {}
+unsafe extend usize implements VaArgSafe {}
+unsafe extend f64 implements VaArgSafe {}
+unsafe extend<T: Sized> ptr<read T> implements VaArgSafe {}
+unsafe extend<T: Sized> ptr<mut T> implements VaArgSafe {}
+
+pub type VaList<region frame> {}
+extend<region frame> VaList<region frame> {
+    pub unsafe mut fn next_arg<T: VaArgSafe>(): T {
+        unsafe { core.intrinsics.va_arg<T>(mut self) }
+    }
+}
+extend<region frame> VaList<region frame> implements core.clone.Clone {
+    fn clone(): VaList<region frame> {
+        core.intrinsics.va_copy(read self)
+    }
+}
+
 pub copy enum FromBytesWithNulError {
     InteriorNul { position: usize },
     NotNulTerminated
 }
 pub copy type FromBytesUntilNulError {}
+
+extend FromBytesWithNulError implements Clone {
+    fn clone(): FromBytesWithNulError { self }
+}
+extend FromBytesWithNulError implements PartialEq {
+    fn eq(read other: FromBytesWithNulError): bool {
+        match self {
+            FromBytesWithNulError.InteriorNul { position } => match other {
+                FromBytesWithNulError.InteriorNul { position: other_position } => position == other_position,
+                _ => false
+            },
+            FromBytesWithNulError.NotNulTerminated => match other {
+                FromBytesWithNulError.NotNulTerminated => true,
+                _ => false
+            }
+        }
+    }
+}
+extend FromBytesWithNulError implements Eq {}
+
+extend FromBytesUntilNulError implements Clone {
+    fn clone(): FromBytesUntilNulError { self }
+}
+extend FromBytesUntilNulError implements PartialEq {
+    fn eq(read other: FromBytesUntilNulError): bool { true }
+}
+extend FromBytesUntilNulError implements Eq {}
+extend FromBytesWithNulError implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        match self {
+            FromBytesWithNulError.InteriorNul { position } => {
+                var debug = try f.debug_struct("InteriorNul")
+                try debug.field("position", position)
+                try debug.finish()
+            },
+            FromBytesWithNulError.NotNulTerminated => { try f.write_str("NotNulTerminated") }
+        }
+    }
+}
+extend FromBytesWithNulError implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        match self {
+            FromBytesWithNulError.InteriorNul { position } => {
+                try f.write_str("data provided contains an interior nul byte at byte pos ")
+                try usize.(fmt.Display).fmt(position, mut f)
+            },
+            FromBytesWithNulError.NotNulTerminated => { try f.write_str("data provided is not nul terminated") }
+        }
+    }
+}
+extend FromBytesUntilNulError implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("FromBytesUntilNulError") }
+}
+extend FromBytesUntilNulError implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { try f.write_str("data provided does not contain a nul") }
+}
+
+extend FromBytesWithNulError implements super.error.Error {}
+extend FromBytesUntilNulError implements super.error.Error {}
 
 pub type CStr { bytes: [u8] }
 static EMPTY_C_STR_BYTES: [u8; 1] = [0u8]
@@ -109,6 +231,9 @@ extend CStr implements PartialEq {
         true
     }
 }
+extend CStr implements AsRef<CStr> {
+    fn as_ref(): read CStr from self { read self }
+}
 extend CStr implements Eq {}
 extend<region r> CStr implements PartialEq<read CStr from r> {
     fn eq(read other: read CStr from r): bool { CStr.(PartialEq).eq(read self, *other) }
@@ -173,5 +298,16 @@ extend CStr implements fmt.Debug {
         var debug = try f.debug_tuple("CStr")
         try debug.field(CStrDebug(read self))
         try debug.finish()
+    }
+}
+
+extend c_void implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error { match self {} }
+}
+
+extend VaList implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("VaList")
+        try debug.finish_non_exhaustive()
     }
 }

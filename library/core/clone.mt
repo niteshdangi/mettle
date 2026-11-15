@@ -1,10 +1,13 @@
 // Explicit duplication follows the type's contract, including shared ownership.
 import super.cmp.Ordering
+import super.ops.ControlFlow
 import super.slice.drop_values
 
 pub interface Clone: Sized {
     fn clone(): Self;
-    mut fn clone_from(read source: Self): Unit { self = source.clone() }
+    mut fn clone_from(read source: Self): Unit {
+        self = Self.(Clone).clone(source)
+    }
 }
 
 extend i8 implements Clone { fn clone(): i8 { self } }
@@ -25,17 +28,23 @@ extend bool implements Clone { fn clone(): bool { self } }
 extend char implements Clone { fn clone(): char { self } }
 extend Unit implements Clone { fn clone(): Unit { self } }
 extend Ordering implements Clone { fn clone(): Ordering { self } }
+extend Never implements Clone { fn clone(): Never { match self {} } }
 // The compiler derives this private marker only for thin function pointers.
-interface FunctionPointer: Copy {}
+pub parent interface FunctionPointer: Copy {}
 
 extend<F: FunctionPointer> F implements Clone {
     fn clone(): F { self }
+}
+extend<region r, T: unsized> read T from r implements Clone {
+    fn clone(): read T from r { self }
 }
 // Tuples clone field by field, at every arity up to twelve.
 macro tuple_clone {
     ($($name:ident => $field:literal),*) => {
         extend<$($name: Clone),*> ($($name,)*) implements Clone {
-            fn clone(): ($($name,)*) { ($(self.$field.clone(),)*) }
+            fn clone(): ($($name,)*) {
+                ($($name.(Clone).clone(self.$field),)*)
+            }
         }
     };
 }
@@ -56,16 +65,24 @@ tuple_clone!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I =
 extend<T: Clone, E: Clone> (Outcome<T, E>) implements Clone {
     fn clone(): (Outcome<T, E>) {
         match self {
-            success(value) => success(value.clone()),
-            failure(error) => failure(error.clone())
+            success(value) => success(T.(Clone).clone(value)),
+            failure(error) => failure(E.(Clone).clone(error))
         }
     }
 }
 extend<T: Clone> T? implements Clone {
     fn clone(): T? {
         match self {
-            present(value) => present(value.clone()),
+            present(value) => present(T.(Clone).clone(value)),
             none => none
+        }
+    }
+}
+extend<B: Clone, C: Clone> ControlFlow<B, C> implements Clone {
+    fn clone(): ControlFlow<B, C> {
+        match self {
+            ControlFlow.Continue(value) => ControlFlow.Continue(C.(Clone).clone(value)),
+            ControlFlow.Break(value) => ControlFlow.Break(B.(Clone).clone(value))
         }
     }
 }
@@ -104,6 +121,17 @@ extend<T, const N: usize> ArrayInit<T, N> {
         // Safety: the complete array transfers out and the guard owns no elements.
         unsafe { core.ptr.`read`(guard.storage.as_ptr()) }
     }
+    pub parent take fn finish_prefix(): (core.mem.MaybeUninit<[T; N]>, usize) {
+        var guard = self
+        let initialized = guard.initialized
+        // Transfer the storage and its live prefix without reading the uninitialized suffix.
+        let storage = core.mem.replace(
+            mut guard.storage,
+            core.mem.MaybeUninit<[T; N]>.uninit()
+        )
+        guard.initialized = 0usize
+        (storage, initialized)
+    }
 }
 
 extend<T: Clone, const N: usize> [T; N] implements Clone {
@@ -111,7 +139,7 @@ extend<T: Clone, const N: usize> [T; N] implements Clone {
         var result = ArrayInit<T, N>.new()
         var i = 0usize
         while i < N {
-            result.push(self[i].clone())
+            result.push(T.(Clone).clone(self[i]))
             i += 1usize
         }
         result.finish()

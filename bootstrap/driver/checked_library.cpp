@@ -3,6 +3,7 @@
 #include "ir/codec.h"
 #include "lowering/scalar.h"
 #include "metadata/type_graph.h"
+#include "packages/sha256.h"
 #include "resolution/resolve.h"
 #include "support/limits.h"
 #include <algorithm>
@@ -19,6 +20,39 @@ using Symbol = std::pair<metadata::SymbolKind, std::uint32_t>;
 using NamedSymbol = std::pair<metadata::SymbolKind, std::string>;
 constexpr std::string_view nativePackage = "native:standard-library";
 constexpr std::array<std::string_view, 3> nativeRoots{"core", "alloc", "std"};
+
+std::string macroRevision(const Source &source, const std::string &directory) {
+  std::error_code error;
+  auto root = std::filesystem::absolute(directory, error).lexically_normal();
+  if (error)
+    return {};
+  auto path = std::filesystem::path(source.path)
+                  .lexically_relative(root)
+                  .generic_string();
+  if (path.empty())
+    return {};
+  packages::Sha256 hash;
+  for (std::string_view part :
+       {nativePackage, std::string_view(path), std::string_view(source.text)}) {
+    std::array<char, 4> size;
+    for (unsigned i = 0; i < size.size(); ++i)
+      size[i] = static_cast<char>(part.size() >> (8 * i));
+    hash.update({size.data(), size.size()});
+    hash.update(part);
+  }
+  return hash.finish();
+}
+
+const Source *macroSnapshot(const LibrarySources &sources,
+                            const expansion::MacroSource &reference,
+                            const std::string &directory) {
+  for (const auto &source : sources.snapshots())
+    if (source.path == reference.path &&
+        source.text.size() == reference.bytes &&
+        macroRevision(source, directory) == reference.identity)
+      return &source;
+  return nullptr;
+}
 
 std::string definitionSymbol(metadata::SymbolKind kind,
                              const std::string &definition) {
@@ -83,14 +117,14 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
   library.configuration = configuration;
   library.identifyMacroSource = [&](const Source &source) {
     auto revision = candidate.sources.record(source, error);
-    return revision.value_or("");
+    return revision ? macroRevision(source, options.libraryDirectory) : "";
   };
   library.macroExports = [&](const expansion::MacroLibrary &source) {
     auto remap = [&](const expansion::MacroSource &reference)
         -> std::optional<SourceId> {
-      auto snapshot = candidate.sources.source(reference.identity);
-      if (!snapshot || snapshot->path != reference.path ||
-          snapshot->text.size() != reference.bytes)
+      auto snapshot =
+          macroSnapshot(candidate.sources, reference, options.libraryDirectory);
+      if (!snapshot)
         return std::nullopt;
       return snapshot->id;
     };
@@ -133,6 +167,8 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
     }
     bool valid = true;
     auto remap = [&](Span span) {
+      if (!span.source)
+        return span;
       auto found = sources.find(span.source);
       if (found == sources.end())
         valid = false;
@@ -416,9 +452,9 @@ CheckedLibrary::macroSource(const std::vector<std::string> &path) {
   source.compiled = macros;
   source.remapSources =
       [this](const expansion::MacroSource &source) -> std::optional<SourceId> {
-    auto snapshot = archive.sources.source(source.identity);
-    if (!snapshot || snapshot->path != source.path ||
-        snapshot->text.size() != source.bytes)
+    auto snapshot =
+        macroSnapshot(archive.sources, source, options.libraryDirectory);
+    if (!snapshot)
       return std::nullopt;
     return snapshot->id;
   };
@@ -465,9 +501,9 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
     return false;
   }
   for (const auto &source : rules->sources) {
-    auto snapshot = archive.sources.source(source.identity);
-    if (!snapshot || snapshot->path != source.path ||
-        snapshot->text.size() != source.bytes) {
+    auto snapshot =
+        macroSnapshot(archive.sources, source, options.libraryDirectory);
+    if (!snapshot) {
       error =
           "compiled macro source revision does not match the library archive";
       return false;
@@ -630,6 +666,7 @@ CheckedLibrary::import(const Module &module,
   };
   auto types = std::make_shared<TypeStore>();
   types->setPointerBits(target.pointerBits);
+  types->setVaListAbi(targetVaListAbi(target));
   metadata::TypeGraphSymbols typeSymbols;
   typeSymbols.resolve = references.symbol;
   auto graph = metadata::importTypeGraph(*types, archive.types, typeSymbols);
@@ -742,7 +779,8 @@ std::unique_ptr<CheckedLibraries> CheckedLibraries::create(
     if (root == "std" && options.freestanding)
       break;
     std::string error;
-    identity.identity = std::string(nativePackage) + ":" + std::string(root);
+    identity.identity = std::string(nativePackage) + ":" + std::string(root) +
+                        ":macro-provenance-1";
     auto inputs = collectLibraryInputs(
         std::filesystem::path(options.libraryDirectory) / root, identity,
         error);

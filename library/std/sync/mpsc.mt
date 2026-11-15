@@ -6,7 +6,9 @@ import alloc.vec.List
 import alloc.vec_deque.Deque
 import core.iter.Iterator
 import core.clone.Clone
-import core.fmt.{Debug, Error, Formatter}
+import core.cmp.{Eq, PartialEq}
+import core.convert.From
+import core.fmt.{Debug, Display, Error, Formatter}
 
 extern "C" {
     unsafe fn mettle_rt_select_epoch(): u64;
@@ -45,10 +47,10 @@ type ChannelShared<T> {
     open: core.sync.atomic.AtomicBool
 }
 
-pub type SendError<T> { pub value: T }
+pub copy type SendError<T> { pub value: T }
 pub copy type RecvError {}
 pub copy type TryRecvError { pub disconnected: bool }
-pub type TrySendError<T> { pub value: T; pub disconnected: bool }
+pub copy type TrySendError<T> { pub value: T; pub disconnected: bool }
 pub copy type RecvTimeoutError { pub timed_out: bool; pub disconnected: bool }
 pub type SendTimeoutError<T> {
     pub value: T
@@ -56,6 +58,121 @@ pub type SendTimeoutError<T> {
     pub disconnected: bool
 }
 pub copy type EmptySelect {}
+
+extend RecvError implements Clone {
+    fn clone(): RecvError { self }
+}
+extend RecvError implements PartialEq {
+    fn eq(read other: RecvError): bool { true }
+}
+extend RecvError implements Eq {}
+
+extend TryRecvError implements Clone {
+    fn clone(): TryRecvError { self }
+}
+extend TryRecvError implements PartialEq {
+    fn eq(read other: TryRecvError): bool { self.disconnected == other.disconnected }
+}
+extend TryRecvError implements Eq {}
+
+extend RecvTimeoutError implements Clone {
+    fn clone(): RecvTimeoutError { self }
+}
+extend RecvTimeoutError implements PartialEq {
+    fn eq(read other: RecvTimeoutError): bool {
+        self.timed_out == other.timed_out && self.disconnected == other.disconnected
+    }
+}
+extend RecvTimeoutError implements Eq {}
+
+extend TryRecvError implements From<RecvError> {
+    static fn from(take _error: RecvError): TryRecvError { TryRecvError(true) }
+}
+extend RecvTimeoutError implements From<RecvError> {
+    static fn from(take _error: RecvError): RecvTimeoutError {
+        RecvTimeoutError(false, true)
+    }
+}
+
+extend<T: PartialEq> SendError<T> implements PartialEq {
+    fn eq(read other: SendError<T>): bool { self.value == other.value }
+}
+extend<T: Eq> SendError<T> implements Eq {}
+extend<T> TrySendError<T> implements From<SendError<T>> {
+    static fn from(take error: SendError<T>): TrySendError<T> {
+        TrySendError(error.value, true)
+    }
+}
+extend<T: PartialEq> TrySendError<T> implements PartialEq {
+    fn eq(read other: TrySendError<T>): bool {
+        self.value == other.value && self.disconnected == other.disconnected
+    }
+}
+extend<T: Eq> TrySendError<T> implements Eq {}
+
+extend<T: core.clone.Clone> SendError<T> implements core.clone.Clone {
+    fn clone(): SendError<T> { SendError(self.value.clone()) }
+}
+extend<T: core.clone.Clone> TrySendError<T> implements core.clone.Clone {
+    fn clone(): TrySendError<T> { TrySendError(self.value.clone(), self.disconnected) }
+}
+
+extend RecvError implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("RecvError") }
+}
+extend RecvError implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("receiving on a closed channel") }
+}
+extend TryRecvError implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        if self.disconnected { try f.write_str("Disconnected") }
+        else { try f.write_str("Empty") }
+    }
+}
+extend TryRecvError implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        if self.disconnected { try f.write_str("receiving on a closed channel") }
+        else { try f.write_str("receiving on an empty channel") }
+    }
+}
+extend RecvTimeoutError implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        if self.timed_out { try f.write_str("Timeout") }
+        else { try f.write_str("Disconnected") }
+    }
+}
+extend RecvTimeoutError implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        if self.timed_out { try f.write_str("timed out waiting on channel") }
+        else { try f.write_str("receiving on a closed channel") }
+    }
+}
+extend<T> SendError<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("SendError")
+        try debug.finish_non_exhaustive()
+    }
+}
+extend<T> SendError<T> implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("sending on a closed channel") }
+}
+extend<T> TrySendError<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("TrySendError")
+        try debug.finish_non_exhaustive()
+    }
+}
+extend<T> TrySendError<T> implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        if self.disconnected { try f.write_str("sending on a closed channel") }
+        else { try f.write_str("sending on a full channel") }
+    }
+}
+
+extend RecvError implements core.error.Error {}
+extend TryRecvError implements core.error.Error {}
+extend RecvTimeoutError implements core.error.Error {}
+extend<T> SendError<T> implements core.error.Error {}
 
 // Sender for an unbounded FIFO channel.
 pub type Sender<T> {
@@ -425,6 +542,14 @@ extend<region r, T> Iter<region r, T> implements Iterator {
 pub type TryIter<region r, T> {
     channel: read Receiver<T> from r
     finished: bool
+}
+extend<region r, T> TryIter<region r, T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("TryIter")
+        try debug.field("channel", read self.channel)
+        try debug.field("finished", self.finished)
+        try debug.finish()
+    }
 }
 extend<region r, T> TryIter<region r, T> implements Iterator {
     type Item = T

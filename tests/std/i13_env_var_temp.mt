@@ -7,9 +7,12 @@ import std.io.Error
 import std.path.path_from_text
 import core.text.Text
 
+fn require_error<T: core.error.Error>() {}
+
 fn is_text(read value: Text, read want: Text): bool { value == want }
 
 fn run(): i32 throws Error {
+    require_error<VarError>()
     let name = ffi.os_str_from_text("MT_I13_VAR_TEXT")
     // This process has no concurrent environment readers or foreign callbacks.
     unsafe { try std.env.remove_var(name) }
@@ -60,7 +63,7 @@ fn run(): i32 throws Error {
     // vars lists the entry set_var created; current_dir follows set_current_dir.
     unsafe { try std.env.set_var(name, ffi.os_str_from_text("seen")) }
     var seen = false
-    let all = std.env.vars()
+    let all = std.env.vars_os()
     var i = 0usize
     while i < all.len() {
         if all[i].name.as_os_str().same(name) && all[i].value.as_os_str().same(ffi.os_str_from_text("seen")) {
@@ -70,13 +73,26 @@ fn run(): i32 throws Error {
     }
     if !seen { return 11 }
     unsafe { try std.env.remove_var(name) }
-    if std.env.args().len() == 0usize { return 12 }
+    if std.env.args_os().len() == 0usize { return 12 }
     let original = try std.env.current_dir()
     try std.env.set_current_dir(path_from_text("/tmp"))
     let moved = try std.env.current_dir()
     if !moved.as_path().same(path_from_text("/tmp")) { return 13 }
     try std.env.set_current_dir(read original)
     if !(try std.env.current_dir()).same(read original) { return 14 }
+    let executable = try std.env.current_exe()
+    if executable.as_path().is_empty() { return 15 }
+    match std.env.var_os(ffi.os_str_from_text("HOME")) {
+        present(home) => {
+            match std.env.home_dir() {
+                present(path) => {
+                    if !path.as_path().as_os_str().same(home.as_os_str()) { return 16 }
+                },
+                none => { return 17 }
+            }
+        },
+        none => {}
+    }
     0
 }
 

@@ -39,24 +39,29 @@ pub interface ToOwned: OwnedType {
     }
 }
 
-extend<T: unsized> T implements AsRef<T> {
-    fn as_ref(): read T from self { read self }
+extend<region r, T: AsRef<U> + unsized, U: unsized>
+    read T from r implements AsRef<U> {
+    fn as_ref(): read U from r {
+        T.(AsRef<U>).as_ref(read *self)
+    }
 }
 
-extend<region r, T: unsized> read T from r implements AsRef<T> {
-    fn as_ref(): read T from self { read *self }
+extend<region r, T: AsRef<U> + unsized, U: unsized>
+    mut T from r implements AsRef<U> {
+    fn as_ref(): read U from r {
+        T.(AsRef<U>).as_ref(read *self)
+    }
 }
 
-extend<region r, T: unsized> mut T from r implements AsRef<T> {
-    fn as_ref(): read T from self { read *self }
+extend<region r, T: AsMut<U> + unsized, U: unsized>
+    mut T from r implements AsMut<U> {
+    mut fn as_mut(): mut U from r {
+        T.(AsMut<U>).as_mut(mut *self)
+    }
 }
 
 extend<T: unsized> T implements Borrow<T> {
     fn borrow(): read T from self { read self }
-}
-
-extend<T: unsized> T implements AsMut<T> {
-    mut fn as_mut(): mut T from self { mut self }
 }
 
 extend<T: unsized> T implements BorrowMut<T> {
@@ -68,7 +73,7 @@ extend<T: Clone> T implements OwnedType {
 }
 
 extend<T: Clone> T implements ToOwned {
-    fn to_owned(): T { self.clone() }
+    fn to_owned(): T { T.(Clone).clone(self) }
 }
 
 pub interface KeyView<Q: unsized> {

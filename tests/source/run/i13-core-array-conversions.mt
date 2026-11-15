@@ -1,5 +1,6 @@
 // profiles: debug release
 import core.array
+import core.borrow.{AsRef, AsMut}
 import core.convert.From
 import core.convert.TryFrom
 import core.cmp.PartialEq
@@ -83,5 +84,30 @@ fn main(): i32 {
     writable[1usize].write(34i32)
     if unsafe { writable[0usize].assume_init_read() } != 21 { return 19 }
     if unsafe { writable[1usize].assume_init_read() } != 34 { return 20 }
+    let viewed = core.mem.MaybeUninit<[i32; 2]>.new([55i32, 89i32])
+    let viewed_array = viewed.(AsRef<[core.mem.MaybeUninit<i32>; 2]>).as_ref()
+    if unsafe { viewed_array[0usize].assume_init_read() } != 55 { return 21 }
+    let viewed_slice = viewed.(AsRef<[core.mem.MaybeUninit<i32>]>).as_ref()
+    if unsafe { viewed_slice[1usize].assume_init_read() } != 89 { return 22 }
+    var mutable_view = core.mem.MaybeUninit<[i32; 2]>.new([0i32, 0i32])
+    {
+        let array = mutable_view.(AsMut<[core.mem.MaybeUninit<i32>; 2]>).as_mut()
+        array[0usize].write(21i32)
+    }
+    {
+        let slice = mutable_view.(AsMut<[core.mem.MaybeUninit<i32>]>).as_mut()
+        slice[1usize].write(34i32)
+    }
+    let mutable_slice = mutable_view.(AsRef<[core.mem.MaybeUninit<i32>]>).as_ref()
+    if unsafe { mutable_slice[0usize].assume_init_read() } != 21 { return 23 }
+    if unsafe { mutable_slice[1usize].assume_init_read() } != 34 { return 24 }
+    let uninitialized_for_pack = core.mem.MaybeUninit<[i32; 2]>.uninit()
+    var slots = [core.mem.MaybeUninit<i32>; 2].(From<core.mem.MaybeUninit<[i32; 2]>>)
+        .from(uninitialized_for_pack)
+    slots[0usize].write(13i32)
+    slots[1usize].write(21i32)
+    let packed = core.mem.MaybeUninit<[i32; 2]>.(From<[core.mem.MaybeUninit<i32>; 2]>).from(slots)
+    let unpacked = unsafe { packed.assume_init() }
+    if unpacked != [13i32, 21i32] { return 25 }
     0
 }

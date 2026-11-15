@@ -1,5 +1,5 @@
 // expect-exit: -6
-unsafe extern "C" fn panicking_hook(message: ptr<read u8>, length: u64): Unit {
+unsafe extern "C" fn panicking_hook(_info: ptr<read std.panic.PanicHookInfo>): Unit {
     panic("panic from hook")
 }
 

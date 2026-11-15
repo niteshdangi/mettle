@@ -29,6 +29,10 @@ struct Source {
   std::string text;
   SourceId id = 0;
 };
+struct SourcePosition {
+  std::size_t line, column;
+};
+SourcePosition sourcePosition(const Source &source, std::size_t offset);
 
 std::optional<std::size_t> invalidUtf8(std::string_view text);
 std::string printableUtf8(std::string_view text);

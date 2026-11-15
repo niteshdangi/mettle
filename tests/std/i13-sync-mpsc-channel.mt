@@ -6,11 +6,27 @@
 import std.thread
 import std.sync.mpsc
 import core.clone.Clone
+import core.convert.From
+import core.error.Error
 import core.fmt
 import core.fmt.Debug
 import core.text.Text
 
 fn discard<T>(take value: T): Unit {}
+type OpaqueMpscPayload {}
+fn require_error<T: Error>(take value: T): Unit { discard(take value) }
+fn checks_error_trait_bounds(): Unit {
+    require_error(mpsc.RecvError())
+    require_error(mpsc.TryRecvError(false))
+    require_error(mpsc.RecvTimeoutError(false, false))
+    require_error(mpsc.SendError(OpaqueMpscPayload()))
+    require_error(mpsc.TrySendError(OpaqueMpscPayload(), false))
+    let try_error = mpsc.TryRecvError.(From<mpsc.RecvError>).from(mpsc.RecvError())
+    let timeout_error = mpsc.RecvTimeoutError.(From<mpsc.RecvError>).from(mpsc.RecvError())
+    assert(try_error.disconnected, "receive error is disconnected")
+    assert(timeout_error.disconnected && !timeout_error.timed_out, "receive error is not a timeout")
+}
+
 fn require_debug<T: Debug>(read value: T, read prefix: Text): Unit {
     var output = alloc.string.new()
     {
@@ -70,7 +86,11 @@ fn checks_channel_basics(): i32 {
     let refused = capture orphan_tx.send(77)
     match take refused {
         success(_) => { return 24 },
-        failure(e) => { if e.value != 77 { return 25 } }
+        failure(e) => {
+            let cloned = e.clone()
+            let copied = e
+            if e.value != 77 || cloned.value != 77 || copied.value != 77 { return 25 }
+        }
     }
     0
 }
@@ -178,7 +198,12 @@ fn checks_bounded_and_rendezvous(): i32 {
     let full = capture bounded_tx.try_send(2)
     match take full {
         success(_) => { return 61 },
-        failure(e) => { if e.value != 2 || e.disconnected { return 62 } }
+        failure(e) => {
+            let cloned = e.clone()
+            let copied = e
+            if e.value != 2 || cloned.value != 2 || copied.value != 2 ||
+               e.disconnected || cloned.disconnected || copied.disconnected { return 62 }
+        }
     }
     let drained = capture bounded_rx.recv()
     match take drained { success(v) => { if v != 1 { return 63 } }, failure(_) => { return 64 } }
@@ -234,6 +259,7 @@ fn checks_borrowed_receiver(): i32 {
 }
 
 fn main(): i32 {
+    checks_error_trait_bounds()
     let first = checks_channel_basics()
     if first != 0 { return first }
     let second = checks_recv_timeout()

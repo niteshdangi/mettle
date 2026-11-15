@@ -3,7 +3,7 @@ import core.borrow.ToOwned
 import core.clone.Clone
 import core.cmp.{Ord, PartialEq}
 import core.fmt.Debug
-import core.future.{Context, Future, Poll, Waker}
+import core.future.{Context, Future, Poll, RawWaker, Waker}
 import core.hash.hash_one
 import core.convert.From
 import core.outcome
@@ -39,6 +39,8 @@ extend ReadyFuture implements Future {
     }
 }
 
+type NoClone {}
+
 fn main(): i32 {
     let ready: Poll<u8> = Poll.Ready(3u8)
     let copied = ready.clone()
@@ -68,7 +70,7 @@ fn main(): i32 {
         },
         Poll.Pending => { return 14 }
     }
-    let waker = Waker.noop().clone()
+    let waker = Waker.(Clone).clone(Waker.noop())
     let duplicate = waker.clone()
     if !waker.will_wake(read duplicate) { return 7 }
     if !waker.uses_vtable(waker.vtable()) { return 8 }
@@ -93,6 +95,27 @@ fn main(): i32 {
     let owned: Waker = waker.to_owned()
     if debug(read owned).as_text() != "Waker" { return 25 }
 
+    var ready_future = core.pin.pin(core.future.ready(11u8))
+    var cloned_ready_future = core.pin.pin(core.future.ready(13u8).clone())
+    match take ready_future.as_mut().poll(mut context) {
+        Poll.Ready(value) => { if value != 11u8 { return 30 } },
+        Poll.Pending => { return 30 }
+    }
+    match take cloned_ready_future.as_mut().poll(mut context) {
+        Poll.Ready(value) => { if value != 13u8 { return 31 } },
+        Poll.Pending => { return 31 }
+    }
+    let _unconditionally_cloned_pending = core.future.pending<NoClone>().clone()
+    var pending_future = core.pin.pin(core.future.pending<u8>())
+    match take pending_future.as_mut().poll(mut context) {
+        Poll.Pending => {},
+        Poll.Ready(_) => { return 32 }
+    }
+    match take pending_future.as_mut().poll(mut context) {
+        Poll.Pending => {},
+        Poll.Ready(_) => { return 33 }
+    }
+
     var future = core.pin.pin(ReadyFuture())
     match take future.as_mut().poll(mut context) {
         Poll.Ready(value) => { if value != 7u8 { return 11 } },
@@ -113,5 +136,14 @@ fn main(): i32 {
     owned_waker.wake()
     if observer.get().wakes.load(core.sync.atomic.Ordering.Relaxed) != 3usize ||
         observer.strong_count() != 1usize { return 23 }
+
+    let raw_target = alloc.arc.new(WakeTarget(core.sync.atomic.AtomicUsize.new(0usize)))
+    let raw_observer = raw_target.retain()
+    let raw = RawWaker.(From<Shared<WakeTarget>>).from(raw_target)
+    if raw_observer.strong_count() != 2usize { return 28 }
+    let raw_waker = unsafe { Waker.from_raw(raw) }
+    raw_waker.wake()
+    if raw_observer.get().wakes.load(core.sync.atomic.Ordering.Relaxed) != 1usize ||
+        raw_observer.strong_count() != 1usize { return 29 }
     0
 }

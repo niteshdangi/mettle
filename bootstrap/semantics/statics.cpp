@@ -103,18 +103,19 @@ void Checker::inherentConstantNamesAndTypes() {
                      [](const auto &item) { return item.constant; }))
       continue;
 
-    auto environment =
-        makeGenericEnvironment(syntax.genericParameters, syntax.constraints);
-    environment.declarationSpan = syntax.span;
-    genericEnvironment = &environment;
+    auto foundEnvironment = implementationGenerics.find(&syntax);
+    if (foundEnvironment == implementationGenerics.end()) {
+      auto environment =
+          makeGenericEnvironment(syntax.genericParameters, syntax.constraints);
+      environment.declarationSpan = syntax.span;
+      foundEnvironment =
+          implementationGenerics.emplace(&syntax, std::move(environment)).first;
+    }
+    genericEnvironment = &foundEnvironment->second;
     pushRegionParameters(syntax.genericParameters, syntax.span);
     assumeRegionConstraints(syntax.constraints, syntax.span);
     auto target = annotation(syntax.target, syntax.span);
-    environment.names[nameKey("Self", syntax.span)] = target;
-    auto [registered, inserted] =
-        implementationGenerics.emplace(&syntax, std::move(environment));
-    (void)inserted;
-    genericEnvironment = &registered->second;
+    foundEnvironment->second.names[nameKey("Self", syntax.span)] = target;
 
     // Scalar builtins own their constants by spelling, e.g. `char.MAX`.
     const bool scalarBuiltin = target != Type::Unknown &&
@@ -153,10 +154,14 @@ void Checker::inherentConstantNamesAndTypes() {
                 "associated constant type is not implemented");
           continue;
         }
-        if (!registered->second.parameters.empty() ||
-            checked.types->isSymbolic(declaredType)) {
+        if (std::any_of(syntax.genericParameters.begin(),
+                        syntax.genericParameters.end(),
+                        [](const auto &parameter) {
+                          return parameter.kind == GenericParameterKind::Region;
+                        })) {
           error("feature", item.span,
-                "generic nominal associated constants are not implemented");
+                "region-generic nominal associated constants are "
+                "not implemented");
           continue;
         }
       }
@@ -166,7 +171,7 @@ void Checker::inherentConstantNamesAndTypes() {
       }
       auto index = inherentConstants.size();
       inherentConstants.push_back(
-          {&syntax, &item, target, declaredType, Type::Unknown, 0});
+          {&syntax, &item, target, declaredType, Type::Unknown, 0, {}, {}, {}});
       if (!inherentConstantNames.emplace(owner + "::" + item.name, index)
                .second)
         error("name", item.span, "duplicate associated constant");
@@ -530,6 +535,8 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
       value = facts(*root).constantValue;
       if (reportedErrors != reported)
         return std::nullopt;
+    } else if (needsEvaluator(*root)) {
+      value = evaluatedStatic(*root, facts(*root).type);
     }
     if (!value)
       return fail("constant projection requires an immutable constant value");

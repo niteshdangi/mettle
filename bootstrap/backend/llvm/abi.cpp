@@ -465,9 +465,10 @@ void CAbi::exportBody(llvm::Function &external, llvm::Function &body,
       body.arg_size() > arguments.size() + (indirectResult ? 1u : 0u)) {
     // This must remain in the physical variadic entry: the logical cleanup
     // wrapper has no access to the caller's incoming argument registers.
-    cursor = context.temporary(
-        llvm::ArrayType::get(context.builder.getInt64Ty(), 3));
-    cursor->setAlignment(llvm::Align(8));
+    auto *cursorType = variadicType();
+    cursor = context.temporary(cursorType);
+    cursor->setAlignment(
+        context.module.getDataLayout().getABITypeAlign(cursorType));
     context.builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
                                    &context.module, llvm::Intrinsic::vastart,
                                    {context.builder.getPtrTy()}),
@@ -509,6 +510,21 @@ void CAbi::exportBody(llvm::Function &external, llvm::Function &body,
   }
   context.builder.restoreIP(saved);
 }
+llvm::StructType *CAbi::variadicType() {
+  auto &builder = context.builder;
+  auto abi = context.program.types->vaListAbi();
+  if (abi == VaListAbi::Pointer)
+    return llvm::StructType::get(
+        context.context, llvm::ArrayRef<llvm::Type *>{builder.getPtrTy()});
+  if (abi == VaListAbi::Aapcs64)
+    return llvm::StructType::get(context.context,
+                                 {builder.getPtrTy(), builder.getPtrTy(),
+                                  builder.getPtrTy(), builder.getInt32Ty(),
+                                  builder.getInt32Ty()});
+  return llvm::StructType::get(context.context,
+                               {builder.getInt32Ty(), builder.getInt32Ty(),
+                                builder.getPtrTy(), builder.getPtrTy()});
+}
 llvm::Value *CAbi::variadicArgument(llvm::Value *cursor, Type type) {
   auto &builder = context.builder;
   auto classified = classify(type, false);
@@ -536,11 +552,73 @@ llvm::Value *CAbi::variadicArgument(llvm::Value *cursor, Type type) {
       address = builder.CreateLoad(builder.getPtrTy(), address);
     return context.load(type, address, llvm::Align(1));
   };
-  if (aarch64)
+  if (context.program.types->vaListAbi() == VaListAbi::Pointer)
     return stackArgument(cursor, classified.indirect);
-  auto *vaType = llvm::StructType::get(
-      context.context, {builder.getInt32Ty(), builder.getInt32Ty(),
-                        builder.getPtrTy(), builder.getPtrTy()});
+  if (context.program.types->vaListAbi() == VaListAbi::Aapcs64) {
+    auto *vaType = variadicType();
+    bool floating = !classified.indirect && !classified.pieces.empty() &&
+                    classified.pieces[0]->isFloatingPointTy();
+    auto *offsetSlot =
+        builder.CreateStructGEP(vaType, cursor, floating ? 4 : 3);
+    auto *offset = builder.CreateLoad(builder.getInt32Ty(), offsetSlot);
+    llvm::Value *aligned = offset;
+    if (!floating && !classified.indirect && context.alignment(type) > 8)
+      aligned =
+          builder.CreateAnd(builder.CreateAdd(offset, builder.getInt32(15)),
+                            builder.getInt32(-16));
+    auto size = classified.indirect ? 8 : context.layout(type).size;
+    auto occupied = floating ? classified.pieces.size() * 16
+                             : (size + 7) & ~std::uint64_t{7};
+    auto *next = builder.CreateAdd(aligned, builder.getInt32(occupied));
+    builder.CreateStore(
+        builder.CreateSelect(builder.CreateICmpSLT(offset, builder.getInt32(0)),
+                             next, offset),
+        offsetSlot);
+    auto *available =
+        builder.CreateAnd(builder.CreateICmpSLT(offset, builder.getInt32(0)),
+                          builder.CreateICmpSLE(next, builder.getInt32(0)));
+    auto *registers =
+        llvm::BasicBlock::Create(context.context, "va.registers", function);
+    auto *stack =
+        llvm::BasicBlock::Create(context.context, "va.stack", function);
+    auto *done = llvm::BasicBlock::Create(context.context, "va.done", function);
+    builder.CreateCondBr(available, registers, stack);
+    builder.SetInsertPoint(registers);
+    auto *top = builder.CreateLoad(
+        builder.getPtrTy(),
+        builder.CreateStructGEP(vaType, cursor, floating ? 2 : 1));
+    auto *address =
+        builder.CreateGEP(builder.getInt8Ty(), top,
+                          builder.CreateSExt(aligned, builder.getInt64Ty()));
+    llvm::Value *fromRegisters = nullptr;
+    if (floating) {
+      std::vector<llvm::Value *> pieces;
+      for (std::size_t i = 0; i < classified.pieces.size(); ++i) {
+        auto *part = builder.CreateGEP(builder.getInt8Ty(), address,
+                                       builder.getInt64(i * 16));
+        pieces.push_back(builder.CreateAlignedLoad(classified.pieces[i], part,
+                                                   llvm::Align(1)));
+      }
+      fromRegisters = decode(classified, pieces);
+    } else {
+      if (classified.indirect)
+        address = builder.CreateLoad(builder.getPtrTy(), address);
+      fromRegisters = context.load(type, address, llvm::Align(1));
+    }
+    builder.CreateBr(done);
+    auto *registerEnd = builder.GetInsertBlock();
+    builder.SetInsertPoint(stack);
+    auto *fromStack = stackArgument(builder.CreateStructGEP(vaType, cursor, 0),
+                                    classified.indirect);
+    builder.CreateBr(done);
+    auto *stackEnd = builder.GetInsertBlock();
+    builder.SetInsertPoint(done);
+    auto *result = builder.CreatePHI(context.type(type), 2);
+    result->addIncoming(fromRegisters, registerEnd);
+    result->addIncoming(fromStack, stackEnd);
+    return result;
+  }
+  auto *vaType = variadicType();
   auto *overflow = builder.CreateStructGEP(vaType, cursor, 2);
   if (classified.indirect || classified.pieces.empty() ||
       (classified.pieces.size() == 1 && classified.pieces[0]->isVectorTy() &&

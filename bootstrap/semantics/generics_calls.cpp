@@ -72,6 +72,30 @@ std::optional<int> Checker::genericCall(
     used[0] = true;
   }
   std::vector<std::pair<Node *, int>> actuals;
+  auto partialArgument = [&](auto &&self, Node &argument) -> Type {
+    auto variable = nodeVariables.find(&argument);
+    if (variable == nodeVariables.end())
+      return Type::Unknown;
+    auto actual = inference.value(variable->second);
+    if (actual != Type::Unknown)
+      return actual;
+    if (argument.kind == Kind::Group)
+      return self(self, *argument.children[0]);
+    if (argument.kind == Kind::Tuple) {
+      std::vector<Type> components;
+      for (auto &child : argument.children)
+        components.push_back(self(self, *child));
+      return checked.types->structural(AggregateKind::Tuple,
+                                       std::move(components));
+    }
+    for (const auto &request : fieldRequests)
+      if (!request.resolved && request.origin != Type::Unknown &&
+          inference.representative(request.result) ==
+              inference.representative(variable->second))
+        return checked.types->instantiateProduct(
+            request.origin, facts(*request.node).typeArguments);
+    return Type::Unknown;
+  };
   bool named = false, misbound = false;
   for (std::size_t i = 1; i < n.children.size(); ++i) {
     auto &argument = *n.children[i];
@@ -79,14 +103,17 @@ std::optional<int> Checker::genericCall(
     reusedNodes.erase(&argument);
     if (known == nodeVariables.end() && argument.name.empty() &&
         i - 1 + receiverOffset < signature.size()) {
-      if (argument.kind == Kind::Closure) {
-        // A closure's parameters may be fixed only through other bounds.
+      if (argument.kind == Kind::Closure || argument.kind == Kind::Tuple) {
+        // Closure and incomplete tuple contexts can depend on other bounds.
         genericEnvironment = &environment;
         propagateGenericBindings(environment, bindings, argument.span);
         genericEnvironment = caller;
       }
       std::vector<TypeBinding> solved, open;
-      for (const auto &binding : bindings)
+      auto contextBindings = bindings;
+      if (auto hint = expectedTypes.find(&n); hint != expectedTypes.end())
+        inferFromExpected(resultPattern, hint->second, contextBindings);
+      for (const auto &binding : contextBindings)
         (binding.argument == Type::Unknown ? open : solved).push_back(binding);
       auto expected =
           checked.types->substitute(signature[i - 1 + receiverOffset], solved);
@@ -143,17 +170,67 @@ std::optional<int> Checker::genericCall(
     if (modes[target] == ParameterMode::Mut)
       requireMutablePlace(argument);
     auto actual = inference.value(variable);
+    if (actual == Type::Unknown &&
+        checked.types->isParameter(signature[target])) {
+      auto partial = partialArgument(partialArgument, argument);
+      if (partial != Type::Unknown) {
+        genericEnvironment = &environment;
+        auto queries = interfaceAssumptions();
+        genericEnvironment = caller;
+        std::vector<TypeBinding> knownBindings;
+        for (const auto &binding : bindings)
+          if (binding.argument != Type::Unknown)
+            knownBindings.push_back(binding);
+        interfaces::Solver solver(*checked.types, *checked.interfaceData,
+                                  diagnostics, interfaceAssumptions(),
+                                  regionEnvironment());
+        for (const auto &query : queries) {
+          if (query.subject != signature[target])
+            continue;
+          auto required =
+              checked.types->substitute(query.interfaceType, knownBindings);
+          if (!checked.types->isErased(required) ||
+              std::any_of(
+                  checked.types->erased(required).arguments.begin(),
+                  checked.types->erased(required).arguments.end(),
+                  [&](Type type) {
+                    auto parameters = checked.types->typeParameters(type);
+                    return partialType(type) ||
+                           std::any_of(bindings.begin(), bindings.end(),
+                                       [&](const auto &binding) {
+                                         return binding.argument ==
+                                                    Type::Unknown &&
+                                                std::find(parameters.begin(),
+                                                          parameters.end(),
+                                                          binding.parameter) !=
+                                                    parameters.end();
+                                       });
+                  }))
+            continue;
+          auto hint = solver.inferredSubject(partial, required, argument.span);
+          if (hint) {
+            contextualize(argument, *hint);
+            inference.equal(variable, inference.fresh(*hint), argument.span);
+            fields(false);
+            actual = inference.value(variable);
+            break;
+          }
+        }
+      }
+    }
     std::vector<TypeBinding> solved;
     for (const auto &binding : bindings)
       if (binding.argument != Type::Unknown)
         solved.push_back(binding);
     auto expected = checked.types->eraseRegions(
         checked.types->substitute(signature[target], solved));
-    if (expected != Type::Unknown && !checked.types->isSymbolic(expected)) {
-      if (unsizeCoercion(argument, actual, expected, argument.span) ||
-          ((modes[target] == ParameterMode::Read ||
-            modes[target] == ParameterMode::Mut) &&
-           borrowCoercion(argument, variable, expected, modes[target])))
+    if (expected != Type::Unknown) {
+      if (unsizeCoercion(argument, actual, expected, argument.span))
+        actual = expected;
+      else if (!checked.types->isSymbolic(expected) &&
+               (modes[target] == ParameterMode::Read ||
+                modes[target] == ParameterMode::Mut) &&
+               borrowCoercion(argument, variable, expected, modes[target]))
         actual = expected;
     }
     auto *written = &argument;

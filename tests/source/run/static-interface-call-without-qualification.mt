@@ -21,6 +21,10 @@ extend Meters implements Default {
     static fn default(): Meters { Meters(42) }
 }
 
+fn pointer_default<T: unsized + Thin>(): ptr<mut T> {
+    ptr<mut T>.(Default).default()
+}
+
 fn main(): i32 {
     if Meters.from(Feet(2)).value != 6 { return 1 }
     if u64.from(7u32) != 7u64 || i128.from(-5i8) != -5i128 || u16.from(true) != 1u16 { return 2 }
@@ -29,5 +33,7 @@ fn main(): i32 {
     if Meters.default().value != 42 { return 6 }
     if u32.default() != 0u32 { return 7 }
     if Boxed<i32>.default().item != 9 { return 8 }
+    let ptr = ptr<read i32>.(Default).default()
+    if !pointer_default<i32>().is_null() || !ptr.is_null() { return 9 }
     0
 }

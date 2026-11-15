@@ -17,5 +17,6 @@ std::unique_ptr<llvm::Module>
 lower(const ir::VerifiedProgram &program, llvm::LLVMContext &context,
       bool checked, llvm::StringRef target = {}, bool freestanding = false,
       const DebugInfoRequest *debug = nullptr, bool sanitizeAddress = false,
-      bool sanitizeThread = false, CodegenPartition partition = {});
+      bool sanitizeThread = false, CodegenPartition partition = {},
+      const DebugInfoRequest *sourceInfo = nullptr);
 } // namespace mettle::backend

@@ -104,6 +104,12 @@ support. Profile locks and ABI/panic prerequisites remain in
 [reference-profiles](../spec/platform-contracts.md#8-reference-profiles) and
 [platform-contracts](../spec/platform-contracts.md).
 
+The std-internal `std.sys.fill_random_bytes(mut bytes: [u8])` fills the complete
+buffer using the OS CSPRNG (`getrandom` on Linux, `getentropy` on Apple/BSD,
+then `/dev/urandom`; `BCryptGenRandom` on Windows). Failure aborts the process;
+partial success and fixed-key or other weak fallbacks are forbidden. This
+hosted service is not available to `core` or `alloc`.
+
 ## 3. I/O errors, buffers and streams
 
 ### 3.1. Error values
@@ -329,8 +335,9 @@ it is display, not reversible path serialization.
 `push`, clone and boxed conversions have ordinary owned-buffer contracts:
 capacity counts encoded storage units exposed by the API, not Unicode scalars;
 growth can invalidate views only after their loans end; fallible reservation
-preserves the original contents; clear preserves capacity; shrinking never
-changes contents and need not reach an exact allocator size. `push(read input)`
+throws `alloc.collections.TryReserveError` on capacity overflow or allocation
+failure and preserves contents and capacity; clear preserves capacity;
+shrinking never changes contents and need not reach an exact allocator size. `push(read input)`
 copies native content without inserting separators. Owned conversions move
 where representationally possible; borrowed-to-owned conversion copies.
 ASCII case/query operations change or compare only ASCII letters and leave
@@ -544,14 +551,22 @@ section 12; `args_os` is the canonical native-preserving exposure of the same
 argument source. Iteration owns its snapshot, including the executable spelling
 at position zero when supplied by the host. It is not proof of `current_exe`,
 and OS parsing/startup determines how the command line became arguments.
-Unicode-only argument exposures, if separately retained by the canonical
-mapping, panic on invalid Unicode rather than losing native data.
+`Args` and `ArgsOs` each own their argument snapshots and yield OS strings.
+
+`env::consts` exposes compile-time target architecture, OS family, OS name,
+and executable/shared-library filename components. Linux and Android use
+`.so`/`lib`, macOS uses `.dylib`/`lib`, Windows uses `.dll`/`.exe`, and WASI
+uses `.wasm`; Unix executable suffixes are empty. WASI reports empty family
+and OS names.
 
 `var_os(read key): OsString?` returns an owned native value or absence.
 `var(read key): String throws VarError` distinguishes absent from present but
 non-Unicode; the latter error owns the original OsString. `vars_os` snapshots
 native key/value pairs; Unicode `vars` panics on non-Unicode data. Iterators do
 not keep a live pointer into mutable process environment storage.
+`SplitPaths` borrows the path-list string and yields owned components. On the
+POSIX runtime, `join_paths` rejects components containing NUL or `:` and returns
+`JoinPathsError`.
 Invalid lookup keys containing NUL or `=` are absent, while mutation validates
 them as below.
 

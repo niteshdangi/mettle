@@ -124,7 +124,10 @@ fn borrowed_fields(): i32 throws Error {
     command.stdin(Stdio.Piped).stdout(Stdio.Piped).stderr(Stdio.Piped)
     var child = try command.spawn()
     match mut child.stdin {
-        present(input) => { try input.write_all("borrow".as_bytes()) },
+        present(input) => {
+            var borrowed_input = read input
+            try borrowed_input.write_all("borrow".as_bytes())
+        },
         none => { return 14 }
     }
     if child.stdin.is_none() || child.stdout.is_none() || child.stderr.is_none() { return 15 }
@@ -179,7 +182,7 @@ fn run(): i32 throws Error {
     if file != 0 { return file }
     let borrowed = try borrowed_fields()
     if borrowed != 0 { return borrowed }
-    let args = std.env.args()
+    let args = std.env.args_os()
     var reentry = Command.new(args[0usize].as_os_str())
     reentry.arg_text("standard-sources")
     let standard = try reentry.output()
@@ -196,7 +199,7 @@ fn run(): i32 throws Error {
 }
 
 fn main(): i32 {
-    let args = std.env.args()
+    let args = std.env.args_os()
     let result = if args.len() > 1usize { capture standard_sources() } else { capture run() }
     match take result {
         success(code) => code,

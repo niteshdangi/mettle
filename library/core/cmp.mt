@@ -4,8 +4,30 @@
 import super.text.Text
 import super.default.Default
 import super.fmt.{ Debug, Formatter, Error }
+import super.ops.ControlFlow
+import super.clone.{Clone, FunctionPointer}
 
-pub copy enum Ordering { Less, Equal, Greater }
+extend<F: FunctionPointer> F implements PartialEq {
+    fn eq(read other: F): bool {
+        core.intrinsics.fn_addr(self) == core.intrinsics.fn_addr(other)
+    }
+}
+extend<F: FunctionPointer> F implements Eq {}
+extend<F: FunctionPointer> F implements PartialOrd {
+    fn partial_cmp(read other: F): Ordering? { present(self.cmp(other)) }
+}
+extend<F: FunctionPointer> F implements Ord {
+    fn cmp(read other: F): Ordering {
+        let left = core.intrinsics.fn_addr(self)
+        let right = core.intrinsics.fn_addr(other)
+        if left < right { Ordering.Less }
+        else if left == right { Ordering.Equal }
+        else { Ordering.Greater }
+    }
+}
+
+@layout(i8)
+pub copy enum Ordering { Less = -1; Equal = 0; Greater = 1 }
 
 extend Ordering {
     pub fn is_lt(): bool { match self { Ordering.Less => true, Ordering.Equal => false, Ordering.Greater => false } }
@@ -64,6 +86,42 @@ pub interface Ord: Eq + PartialOrd {
 
 pub fn min<T: Ord>(take a: T, take b: T): T { if b.cmp(read a).is_lt() { b } else { a } }
 pub fn max<T: Ord>(take a: T, take b: T): T { if b.cmp(read a).is_lt() { a } else { b } }
+pub fn min_by<T, F: mut fn(read T, read T): Ordering>(
+    take a: T,
+    take b: T,
+    take compare: F
+): T {
+    var comparator = compare
+    if comparator(read a, read b).is_gt() { b } else { a }
+}
+pub fn max_by<T, F: mut fn(read T, read T): Ordering>(
+    take a: T,
+    take b: T,
+    take compare: F
+): T {
+    var comparator = compare
+    if comparator(read a, read b).is_gt() { a } else { b }
+}
+pub fn min_by_key<T, K: Ord, F: mut fn(read T): K>(
+    take a: T,
+    take b: T,
+    take key: F
+): T {
+    var key_of = key
+    let a_key = key_of(read a)
+    let b_key = key_of(read b)
+    if a_key.cmp(read b_key).is_gt() { b } else { a }
+}
+pub fn max_by_key<T, K: Ord, F: mut fn(read T): K>(
+    take a: T,
+    take b: T,
+    take key: F
+): T {
+    var key_of = key
+    let a_key = key_of(read a)
+    let b_key = key_of(read b)
+    if a_key.cmp(read b_key).is_gt() { a } else { b }
+}
 // Requires low <= high.
 pub fn clamp<T: Ord>(take value: T, take low: T, take high: T): T {
     if low.cmp(read high).is_gt() { super.panic.panic("clamp requires low <= high") }
@@ -75,7 +133,7 @@ pub copy type Descending<T> { pub value: T }
 extend<T: PartialEq> Descending<T> implements PartialEq { fn eq(read other: Descending<T>): bool { other.value == self.value } }
 extend<T: Eq> Descending<T> implements Eq {}
 extend<T: super.clone.Clone> Descending<T> implements super.clone.Clone {
-    fn clone(): Descending<T> { Descending(self.value.clone()) }
+    fn clone(): Descending<T> { Descending(T.(Clone).clone(self.value)) }
 }
 extend<T: PartialOrd> Descending<T> implements PartialOrd {
     fn partial_cmp(read other: Descending<T>): Ordering? { other.value.partial_cmp(read self.value) }
@@ -102,6 +160,33 @@ extend Ordering implements PartialEq {
     }
 }
 extend Ordering implements Eq {}
+
+extend<B: PartialEq, C: PartialEq> ControlFlow<B, C> implements PartialEq {
+    fn eq(read other: ControlFlow<B, C>): bool {
+        match self {
+            ControlFlow.Continue(value) => match other {
+                ControlFlow.Continue(other_value) => value == other_value,
+                ControlFlow.Break(_) => false
+            },
+            ControlFlow.Break(value) => match other {
+                ControlFlow.Continue(_) => false,
+                ControlFlow.Break(other_value) => value == other_value
+            }
+        }
+    }
+}
+extend<B: Eq, C: Eq> ControlFlow<B, C> implements Eq {}
+
+extend Never implements PartialEq {
+    fn eq(read other: Never): bool { match self {} }
+}
+extend Never implements Eq {}
+extend Never implements PartialOrd {
+    fn partial_cmp(read other: Never): Ordering? { match self {} }
+}
+extend Never implements Ord {
+    fn cmp(read other: Never): Ordering { match self {} }
+}
 
 extend i8 implements PartialEq { fn eq(read other: i8): bool { self == other } }
 extend i8 implements Eq {}
@@ -280,9 +365,14 @@ extend bool implements Ord {
 // The comma-terminated prefix and semicolon-separated final type make the
 // possibly-unsized tail unambiguous while keeping one implementation pattern.
 macro tuple_comparison {
-    ($($prefix:ident => $prefix_field:literal,)* ; $last:ident => $last_field:literal) => {
-        extend<$($prefix: PartialEq,)* $last: PartialEq + unsized> ($($prefix,)* $last,) implements PartialEq {
-            fn eq(read other: ($($prefix,)* $last,)): bool {
+    ($($prefix:ident => $other_prefix:ident => $prefix_field:literal,)* ; $last:ident => $other_last:ident => $last_field:literal) => {
+        extend<
+            $($prefix: PartialEq<$other_prefix>, $other_prefix,)*
+            $last: PartialEq<$other_last> + unsized,
+            $other_last: unsized
+        > ($($prefix,)* $last,)
+            implements PartialEq<($($other_prefix,)* $other_last,)> {
+            fn eq(read other: ($($other_prefix,)* $other_last,)): bool {
         $(self.$prefix_field == other.$prefix_field &&)*
                 self.$last_field == other.$last_field
             }
@@ -290,8 +380,13 @@ macro tuple_comparison {
 
         extend<$($prefix: Eq,)* $last: Eq + unsized> ($($prefix,)* $last,) implements Eq {}
 
-        extend<$($prefix: PartialOrd,)* $last: PartialOrd + unsized> ($($prefix,)* $last,) implements PartialOrd {
-            fn partial_cmp(read other: ($($prefix,)* $last,)): Ordering? {
+        extend<
+            $($prefix: PartialOrd<$other_prefix>, $other_prefix,)*
+            $last: PartialOrd<$other_last> + unsized,
+            $other_last: unsized
+        > ($($prefix,)* $last,)
+            implements PartialOrd<($($other_prefix,)* $other_last,)> {
+            fn partial_cmp(read other: ($($other_prefix,)* $other_last,)): Ordering? {
                 $(
                     match self.$prefix_field.partial_cmp(read other.$prefix_field) {
                         present(order) => if !order.is_eq() { return present(order) },
@@ -316,20 +411,68 @@ macro tuple_comparison {
     };
 }
 
-tuple_comparison!(; A => 0)
-tuple_comparison!(A => 0, ; B => 1)
-tuple_comparison!(A => 0, B => 1, ; C => 2)
-tuple_comparison!(A => 0, B => 1, C => 2, ; D => 3)
-tuple_comparison!(A => 0, B => 1, C => 2, D => 3, ; E => 4)
-tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, ; F => 5)
-tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, ; G => 6)
-tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, ; H => 7)
-tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, ; I => 8)
-tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, ; J => 9)
-tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9, ; K => 10)
-tuple_comparison!(A => 0, B => 1, C => 2, D => 3, E => 4, F => 5, G => 6, H => 7, I => 8, J => 9, K => 10, ; L => 11)
-extend<T: PartialEq> [T] implements PartialEq {
-    fn eq(read other: [T]): bool {
+tuple_comparison!(; A => A2 => 0)
+tuple_comparison!(
+    A => A2 => 0,
+    ; B => B2 => 1
+)
+tuple_comparison!(
+    A => A2 => 0, B => B2 => 1,
+    ; C => C2 => 2
+)
+tuple_comparison!(
+    A => A2 => 0, B => B2 => 1, C => C2 => 2,
+    ; D => D2 => 3
+)
+tuple_comparison!(
+    A => A2 => 0, B => B2 => 1, C => C2 => 2,
+    D => D2 => 3,
+    ; E => E2 => 4
+)
+tuple_comparison!(
+    A => A2 => 0, B => B2 => 1, C => C2 => 2,
+    D => D2 => 3, E => E2 => 4,
+    ; F => F2 => 5
+)
+tuple_comparison!(
+    A => A2 => 0, B => B2 => 1, C => C2 => 2,
+    D => D2 => 3, E => E2 => 4, F => F2 => 5,
+    ; G => G2 => 6
+)
+tuple_comparison!(
+    A => A2 => 0, B => B2 => 1, C => C2 => 2,
+    D => D2 => 3, E => E2 => 4, F => F2 => 5,
+    G => G2 => 6,
+    ; H => H2 => 7
+)
+tuple_comparison!(
+    A => A2 => 0, B => B2 => 1, C => C2 => 2,
+    D => D2 => 3, E => E2 => 4, F => F2 => 5,
+    G => G2 => 6, H => H2 => 7,
+    ; I => I2 => 8
+)
+tuple_comparison!(
+    A => A2 => 0, B => B2 => 1, C => C2 => 2,
+    D => D2 => 3, E => E2 => 4, F => F2 => 5,
+    G => G2 => 6, H => H2 => 7, I => I2 => 8,
+    ; J => J2 => 9
+)
+tuple_comparison!(
+    A => A2 => 0, B => B2 => 1, C => C2 => 2,
+    D => D2 => 3, E => E2 => 4, F => F2 => 5,
+    G => G2 => 6, H => H2 => 7, I => I2 => 8,
+    J => J2 => 9,
+    ; K => K2 => 10
+)
+tuple_comparison!(
+    A => A2 => 0, B => B2 => 1, C => C2 => 2,
+    D => D2 => 3, E => E2 => 4, F => F2 => 5,
+    G => G2 => 6, H => H2 => 7, I => I2 => 8,
+    J => J2 => 9, K => K2 => 10,
+    ; L => L2 => 11
+)
+extend<T: PartialEq<U>, U> [T] implements PartialEq<[U]> {
+    fn eq(read other: [U]): bool {
         if self.len() != other.len() { return false }
         var i = 0usize
         while i < self.len() {
@@ -365,14 +508,50 @@ extend<T: Ord> [T] implements Ord {
     }
 }
 // Arrays compare element-wise in index order, like their slices.
-extend<T: PartialEq, const N: usize> [T; N] implements PartialEq {
-    fn eq(read other: [T; N]): bool {
+extend<T: PartialEq<U>, U, const N: usize> [T; N] implements PartialEq<[U; N]> {
+    fn eq(read other: [U; N]): bool {
         var i = 0usize
         while i < N {
             if self[i] != other[i] { return false }
             i += 1usize
         }
         true
+    }
+}
+extend<T: PartialEq<U>, U, const N: usize> [T; N]
+    implements PartialEq<[U]> {
+    fn eq(read other: [U]): bool {
+        if N != other.len() { return false }
+        var i = 0usize
+        while i < N {
+            if self[i] != other[i] { return false }
+            i += 1usize
+        }
+        true
+    }
+}
+extend<T: PartialEq<U>, U, const N: usize> [T]
+    implements PartialEq<[U; N]> {
+    fn eq(read other: [U; N]): bool {
+        if self.len() != N { return false }
+        var i = 0usize
+        while i < N {
+            if self[i] != other[i] { return false }
+            i += 1usize
+        }
+        true
+    }
+}
+extend<region r, T: PartialEq<U>, U, const N: usize> [T; N]
+    implements PartialEq<read [U] from r> {
+    fn eq(read other: read [U] from r): bool {
+        [T; N].(PartialEq<[U]>).eq(read self, *other)
+    }
+}
+extend<region r, T: PartialEq<U>, U, const N: usize> [T; N]
+    implements PartialEq<mut [U] from r> {
+    fn eq(read other: mut [U] from r): bool {
+        [T; N].(PartialEq<[U]>).eq(read self, *other)
     }
 }
 extend<T: Eq, const N: usize> [T; N] implements Eq {}
@@ -401,8 +580,8 @@ extend<T: Ord, const N: usize> [T; N] implements Ord {
     }
 }
 
-extend<T: PartialEq> T? implements PartialEq {
-    fn eq(read other: T?): bool {
+extend<T: PartialEq<U>, U> T? implements PartialEq<U?> {
+    fn eq(read other: U?): bool {
         match self {
             present(left) => match other { present(right) => left == right, none => false },
             none => match other { present(right) => false, none => true }
@@ -411,8 +590,8 @@ extend<T: PartialEq> T? implements PartialEq {
 }
 extend<T: Eq> T? implements Eq {}
 // `none` orders before any present value.
-extend<T: PartialOrd> T? implements PartialOrd {
-    fn partial_cmp(read other: T?): Ordering? {
+extend<T: PartialOrd<U>, U> T? implements PartialOrd<U?> {
+    fn partial_cmp(read other: U?): Ordering? {
         match self {
             present(left) => match other {
                 present(right) => left.partial_cmp(right),
@@ -438,3 +617,76 @@ extend Unit implements PartialEq { fn eq(read other: Unit): bool { true } }
 extend Unit implements Eq {}
 extend Unit implements PartialOrd { fn partial_cmp(read other: Unit): Ordering? { present(Ordering.Equal) } }
 extend Unit implements Ord { fn cmp(read other: Unit): Ordering { Ordering.Equal } }
+
+extend<region lhs, region rhs, T: PartialEq<U> + unsized, U: unsized>
+    read T from lhs implements PartialEq<read U from rhs> {
+    fn eq(read other: read U from rhs): bool {
+        T.(PartialEq<U>).eq(read *self, *other)
+    }
+}
+extend<region lhs, region rhs, T: PartialEq<U> + unsized, U: unsized>
+    read T from lhs implements PartialEq<mut U from rhs> {
+    fn eq(read other: mut U from rhs): bool {
+        T.(PartialEq<U>).eq(read *self, *other)
+    }
+}
+extend<region lhs, region rhs, T: PartialEq<U> + unsized, U: unsized>
+    mut T from lhs implements PartialEq<read U from rhs> {
+    fn eq(read other: read U from rhs): bool {
+        T.(PartialEq<U>).eq(read *self, *other)
+    }
+}
+extend<region lhs, region rhs, T: PartialEq<U> + unsized, U: unsized>
+    mut T from lhs implements PartialEq<mut U from rhs> {
+    fn eq(read other: mut U from rhs): bool {
+        T.(PartialEq<U>).eq(read *self, *other)
+    }
+}
+extend<region lhs, T: PartialEq<U>, U, const N: usize>
+    read [T] from lhs implements PartialEq<[U; N]> {
+    fn eq(read other: [U; N]): bool {
+        [T].(PartialEq<[U; N]>).eq(read *self, other)
+    }
+}
+extend<region lhs, T: PartialEq<U>, U, const N: usize>
+    mut [T] from lhs implements PartialEq<[U; N]> {
+    fn eq(read other: [U; N]): bool {
+        [T].(PartialEq<[U; N]>).eq(read *self, other)
+    }
+}
+extend<region r, T: Eq + unsized> read T from r implements Eq {}
+extend<region r, T: Eq + unsized> mut T from r implements Eq {}
+extend<region lhs, region rhs, T: PartialOrd<U> + unsized, U: unsized>
+    read T from lhs implements PartialOrd<read U from rhs> {
+    fn partial_cmp(read other: read U from rhs): Ordering? {
+        T.(PartialOrd<U>).partial_cmp(read *self, *other)
+    }
+}
+extend<region lhs, region rhs, T: PartialOrd<U> + unsized, U: unsized>
+    read T from lhs implements PartialOrd<mut U from rhs> {
+    fn partial_cmp(read other: mut U from rhs): Ordering? {
+        T.(PartialOrd<U>).partial_cmp(read *self, *other)
+    }
+}
+extend<region lhs, region rhs, T: PartialOrd<U> + unsized, U: unsized>
+    mut T from lhs implements PartialOrd<read U from rhs> {
+    fn partial_cmp(read other: read U from rhs): Ordering? {
+        T.(PartialOrd<U>).partial_cmp(read *self, *other)
+    }
+}
+extend<region lhs, region rhs, T: PartialOrd<U> + unsized, U: unsized>
+    mut T from lhs implements PartialOrd<mut U from rhs> {
+    fn partial_cmp(read other: mut U from rhs): Ordering? {
+        T.(PartialOrd<U>).partial_cmp(read *self, *other)
+    }
+}
+extend<region r, T: Ord + unsized> read T from r implements Ord {
+    fn cmp(read other: Self): Ordering {
+        T.(Ord).cmp(read *self, *other)
+    }
+}
+extend<region r, T: Ord + unsized> mut T from r implements Ord {
+    fn cmp(read other: Self): Ordering {
+        T.(Ord).cmp(read *self, *other)
+    }
+}

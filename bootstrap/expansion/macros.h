@@ -26,6 +26,10 @@ struct MacroModuleSource {
 using MacroModuleProvider = std::function<std::optional<MacroModuleSource>(
     const std::vector<std::string> &path,
     const std::vector<std::string> &from)>;
+using MacroFileProvider =
+    std::function<std::optional<Source>(const std::string &path)>;
+using MacroEnvironmentProvider =
+    std::function<std::optional<std::string>(const std::string &name)>;
 
 // Expands the declarative macros of one source before it is parsed.
 //
@@ -77,5 +81,6 @@ std::optional<Source> expandMacros(
     std::vector<Module::MacroDeclaration> *declarations = nullptr,
     const MacroModuleProvider &importModules = {},
     const Configuration *configuration = nullptr,
-    MacroLibrary *exports = nullptr, const MacroSourceIdentity &identify = {});
+    MacroLibrary *exports = nullptr, const MacroSourceIdentity &identify = {},
+    MacroFileProvider files = {}, MacroEnvironmentProvider environment = {});
 } // namespace mettle::expansion

@@ -19,7 +19,8 @@ PlaceTree::PlaceTree(const ir::Function &function, const TypeStore &types)
     add({static_cast<int>(i), {}});
   for (const auto &block : function.blocks)
     for (const auto &instruction : block.instructions)
-      if (instruction.op == ir::Op::BorrowRead ||
+      if (instruction.op == ir::Op::RawAddress ||
+          instruction.op == ir::Op::BorrowRead ||
           instruction.op == ir::Op::VariantTest ||
           instruction.op == ir::Op::BorrowMut ||
           instruction.op == ir::Op::ReserveMut ||

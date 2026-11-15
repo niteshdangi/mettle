@@ -38,8 +38,8 @@ for them.
 | `documentation` | `mettle doc` and doctests: documentation extraction from the lexer's comment tokens (`///` item docs, `//!` module docs, declaration headers as written, visibility filtering, `document.cpp`), reduced markdown blocks (`markdown.cpp`), fenced-example classification and generated `@test` functions (`doctest.cpp`) and deterministic dependency-free HTML (`html.cpp`). Resolved-reference rendering accepts canonical identities from the driver; the static search index remains deterministic. | Performing name resolution, type checking, filesystem I/O, process execution, LLVM |
 | `resolution` | Compilation-local module identities, distinct type/value/module/macro namespaces, item/import scopes, package alias mounting, `internal`/`pub parent` visibility boundaries and canonical declaration names; source-provider-driven module assembly | Inference, backend types or filesystem I/O |
 | `packages` | `.mettle` data parsing, `package.mettle`/`lock.mettle` validation, SemVer requirements, dependency solving with features over path, local-registry and Git sources, checksums, the package build plan (mounts, build scripts and macro programs handed to the driver) and the content-addressed build store (`store`) | Source parsing, semantics, network access or artifact publication |
-| `types` | Compiler-owned language type identities/operations, source-oriented diagnostic type display, target facts and target-layout results | Parsed AST, LLVM types/target machines, toolchain state |
-| `metadata` | Versioned logical type/region graph encoding, bounded validation and transactional remapping into consumer stores | Source checking, cache/filesystem policy, executable admission, LLVM |
+| `types` | Compiler-owned language type identities/operations, source-oriented diagnostic type display, target facts and target-layout results, including thin-pointee metadata | Parsed AST, LLVM types/target machines, toolchain state |
+| `metadata` | Versioned logical type/region graph encoding, bounded validation and transactional remapping into consumer stores; validation distinguishes constant declarations from scalar values and preserves type/constant associated bindings | Source checking, cache/filesystem policy, executable admission, LLVM |
 | `consteval` | Pure target-aware compile-time interpreter over syntax: scalar/aggregate values at the selected target's integer widths, `const fn` calls, control flow, step/depth budgets (`error[limit]`); names and diagnostics come from a host interface | Name resolution, checker state, LLVM, host-width arithmetic |
 | `places` | Function-local storage roots, typed field paths and structural overlap | AST traversal, CFG control flow, mutability/loan policy |
 | `semantics` | Lexical resolution, module-resolution consumption, inference, flow facts and checked syntax | LLVM, code emission, filesystem/linker side effects |
@@ -77,6 +77,71 @@ native Outcome type and IR; parameter access remains declaration metadata,
 separate from its payload type. No component target, dependency or runtime ABI
 changes are required.
 
+Raw-pointer view projections bind an optional explicit caller region during
+checking. Lowering uses ordinary view borrows and, for nullable projections,
+a null-data branch with ordinary optional variants; existing IR verification
+and view-origin analysis remain the admission boundary. Constant projections
+require valid initialized storage and writable provenance for exclusive views.
+Wrapping constant offsets preserve provenance while using target-width modular
+arithmetic; dereferencing still checks extent and alignment. Thin raw static
+addresses carry no slice-count metadata.
+Slice-to-array pointer projection binds a constant length in checking and
+compares only slice metadata at runtime or during constant evaluation. It
+preserves the data pointer and access mode, returning an ordinary optional
+thin array pointer without asserting storage validity.
+
+Owned unpredictable selection evaluates and stores both inputs before branching.
+The selected value remains cleanup-owned while the other value is destroyed;
+only then is it moved to the join. Conditional-branch hints are explicit IR
+metadata, valid only on branches and preserved by the IR archive.
+Formatted panic passes a synchronous C callback backed by `fmt.Write` to the
+runtime. Its intrinsic read-borrows the checked Message directly, without
+storing a format parameter or taking its raw address in source.
+The source renderer captures writer failures instead of propagating across C.
+The runtime renders once to owned Text before custom hooks or unwinding; default
+reporting in a non-unwinding C ABI context streams without materialization.
+Rendering allocation failure aborts with a fixed static report.
+A nested catch restores unwinding within that boundary; a C ABI boundary inside
+the catch still aborts if the panic would escape it.
+`panic_fmt` also packs a literal and positional arguments into the existing
+recipe before call checking. Only sequential `{}` and escaped `{{`/`}}` are
+accepted; unsupported placeholders, count mismatches and unbalanced braces
+diagnose the literal. Native f-strings and forwarded recipes remain unchanged,
+and release debug assertions erase their entire invocation during expansion.
+Attributed macro definitions retain a separate visibility start from their
+attribute-inclusive removal range, so cfg-gated public macros remain reexportable.
+Expansion registers input and generated sources before diagnostic publication;
+lexical and cfg failures stop expansion, and cfg predicates ignore newline tokens.
+Receiver search materializes explicit view candidates for inherent extensions
+on `read T` and `mut T`; checking, captures, regions, constant evaluation and
+lowering retain the selected borrow rather than treating it as a dereference.
+Interface method lookup infers implementation parameters carried only by the
+method arguments before proving applicability, including array-to-slice inputs.
+Potential matching can retain these parameters, but the completed obligation
+must pass ordinary constraint proof before a method is selected.
+Compiler-owned Cell has a canonical namespace binding for imports and static
+constructors. Callable admission compares erased shapes on both sides; the
+region pass still proves quantified lifetime compatibility.
+Static type-name intrinsic results retain their checked static lifetime during
+region reconstruction rather than inheriting the caller's local scope.
+Explicit pointer-cast target regions survive dereferencing. Interface conformance
+fixes owner regions carried by Self, not regions used only by its method borrow.
+Static-view machine signatures accept the region-erased read-view CFG shape;
+the static lifetime proof remains a semantic prerequisite.
+Raw-pointee layout queries consume pointer metadata without constructing a view
+or reading the pointee, under an unsafe metadata-validity contract. Generic
+transmute admission can prove equal symbolic array layouts through MaybeUninit;
+otherwise it still requires equal concrete sizes. Expected results supply
+generic operand contexts without overriding argument-inferred bindings.
+Synchronous native `track_caller` functions carry a hidden location pointer
+through cleanup frames; direct tracked calls forward it. Function-address,
+catch and pinned-witness adapters preserve their public calling convention.
+The typed caller-location intrinsic requires a Copy product containing a read
+byte slice and two u64 coordinates. The IR archive persists tracking.
+`core.intrinsics.variant_ordinal<T>` read-borrows a Sized value and returns its
+logical declaration-order ordinal as usize, independent of explicit enum tags;
+non-enum values have ordinal zero. Const evaluation is not implemented.
+
 Floating constant evaluation uses a per-compilation numeric callback, injected
 by the driver through the backend-independent pipeline and checker (including
 LSP compilations). `types` owns its scalar interface and exact binary32/binary64
@@ -100,7 +165,12 @@ Constant pointer operations use target layouts and allocation-relative offsets,
 not host addresses. Raw byte transfers retain initialization and pointer
 provenance; typed reads validate the reconstructed value. Unaligned operations
 relax only alignment, overlapping copies snapshot their input, and writes require
-exclusive writable provenance. Empty accesses still enforce alignment; a
+exclusive writable provenance. Native MaybeUninit shapes distinguish a valid
+storage wrapper from its uninitialized payload. Constant construction preserves
+uninitialized bytes; payload extraction and typed pointee reads still require
+initialization. Storage pointer projections retain receiver write authority;
+`as_ptr` cannot upgrade a shared receiver and `as_mut_ptr` requires mutable
+storage. Empty accesses still enforce alignment; a
 zero-sized operation does not manufacture allocation authority.
 
 The evaluator's host supplies checked expression shapes and inferred function
@@ -126,6 +196,9 @@ storage, offsets, extents and writable provenance independently of pointer
 mutability. Cell/UnsafeCell constants use their single offset-zero payload;
 Cell projection retypes the live address without creating replacement storage.
 Static constant-call owner probes retain explicit owner arguments.
+Native atomic, cell and storage constructors use static aggregate materialization,
+not const-function evaluator dispatch merely because they have a machine-operation
+tag. Optional payloads materialize only their selected variant.
 `types::StaticConstant` carries static-symbol interior relocations and
 address-only empty/zero-sized pointers. `ir` validates their target alignment,
 extent, metadata and mutability before `backend` lowers them. Library checked
@@ -137,15 +210,28 @@ Literal-backed static views preserve the complete backing bytes, interior offset
 and explicit extent rather than copying a substring. `types::textConstantCount`
 shares their shape/extent validation between checked archives and IR admission;
 LLVM materializes interior addresses into the complete interned literal.
-This representation uses IR format 3 and checked-library contracts 6; older
-archives must be rebuilt.
+IR and checked-library archives are versioned; incompatible archives must be
+rebuilt.
 Checked expressions retain interface dispatch identities and Outcome propagation
 so imported const bodies select concrete implementations and typed effects.
 
-Concrete nominal associated constants retain typed `StaticConstant` payloads
-through checked library contracts. Each expression constructs a fresh value
-with its own cleanup ownership, rather than moving from shared static storage.
-Required projections preserve field visibility and evaluator storage lifetime.
+Generic nominal associated constants retain their checked symbolic initializer
+through checked library contracts; body-free headers omit initializer syntax,
+so imports restore it through the checked implementation/declaration identity.
+A concrete owner type supplies the complete type/const implementation binding
+vector; bounds and equalities are checked before the initializer is evaluated
+with the selected target's integer width, endianness and numeric evaluator.
+Results are cached per declaration and binding vector inside one target-specific
+checker, with cycles diagnosed per instantiation and the established
+constant-evaluation nesting limit covering expanding cycles. Uses whose owner
+remains symbolic are not yet lowered through generic function specialization.
+Region-generic nominal constants also remain unsupported because the current
+generic binding model does not substitute region arguments.
+The resulting typed `StaticConstant` is materialized as a fresh value at each
+use, with its own cleanup ownership, rather than moved from shared storage.
+Required projections preserve field visibility and evaluator storage lifetime;
+constant expression roots are evaluated before aggregate projection, subject to
+the existing Copy and mutability checks.
 Region normalization decorates nominal arguments and associated bindings in
 source interface bounds before expanding their inherited obligations.
 Associated implementation bounds are proved after nominal region decoration,
@@ -275,6 +361,9 @@ content identity and IR before use. Source revisions and source maps remain
 available for diagnostics. Constants, default arguments, macros, associated
 families, regions, implementation selection and cleanup are dependencies, not
 exceptions to the import contract.
+Failed checked-library preparation remaps real diagnostic and generation spans
+into the consumer; source-zero optional provenance stays source-less rather
+than invalidating otherwise valid library diagnostics.
 
 The frontend imports declaration/type/region/effect/implementation information
 without parsing or checking dependency bodies. Interfaces retain separate
@@ -335,6 +424,8 @@ records with logical definition/package/symbol references. Imports stage a
 candidate store and commit only after validation; archive references never
 become cross-build IDs. Structural types remain canonical with existing and
 future consumer-created types, and region ancestry/binders remap consistently.
+Regional instance interning and metadata identities include generic arguments
+even when no field uses them.
 The host resolves logical function/interface/package identities without
 mutating the destination during import. Closure ordinals use a separate symbol
 domain from source function IDs; static identities have their own domain.
@@ -342,11 +433,17 @@ The bootstrap metadata component depends on `types`, `source` and `support`,
 not the frontend or LLVM. Declaration/expression encoding belongs to semantics;
 symbolic-body encoding belongs to IR. Their shared references use the same
 artifact-local type roots and logical symbol domains.
+The declaration inventory retains package identities from type, implementation
+and module declarations, even when no callable, static or interface symbol exists.
 
 The driver-owned library archive retains revision-qualified source snapshots,
 generation mappings, syntax-context binder groups and source-module scopes.
 Wire source references are archive-relative; mounting allocates fresh IDs and
-restores provenance before imported declarations or macros use it. The envelope
+restores provenance before imported declarations or macros use it. Native macro
+exports instead identify their original source by the logical package owner,
+package-relative path and source-text revision, independent of archive keys and
+source insertion order; import and definition equality retain that identity.
+Header and IR source references remain archive-relative. The envelope
 checks format, expected compiler/content/configuration identity and a SHA-256
 checksum; its sections still require their owning semantic decoders.
 Library discovery snapshots source bytes and the module inventory, including
@@ -363,6 +460,13 @@ The checked-library coordinator connects these sections through lazy native
 providers and a post-resolution pipeline importer. Unused native roots are not
 prepared, and user roots retain shadowing priority. Imported declarations and
 bodies still pass ordinary specialization and concrete admission.
+Mounting archives checks their registered physical source paths against loaded
+sources; later source reads also reject an already-mounted path with the same
+module-identity diagnostic. Generated-source provenance is not a physical module
+identity. A raw `module.mt` remains an ordinary source root, not a library entry.
+Consumer checks using `--no-cache` import native roots from `--library-dir` and
+check all loaded function bodies and symbolic initialization/loans before
+specialization, including unused and generic functions.
 Preparation preserves already-normalized imported bodies when adapter lowering
 has not changed them; imported IR still undergoes structural/type verification,
 initialization and loan analysis before sealing consumer preparation. No
@@ -465,8 +569,9 @@ reports a structured feature diagnostic when that library is unavailable.
 `Heap<T: unsized>` supports ownership-preserving coercion from a sized array
 owner to a slice owner and from a sized concrete owner to an erased-interface
 owner. `OwnerUnsize` transfers the original allocation and allocator while
-attaching slice-count or witness metadata; it never reallocates. Dynamic
-`size_of_val`/`align_of_val` and drop use that metadata, and erased witness
+attaching slice-count or witness metadata; it never reallocates.
+Erased payload bounds do not lengthen a borrow of the owning allocation.
+Dynamic `size_of_val`/`align_of_val` and drop use that metadata, and erased witness
 tables carry size, alignment and a specialized drop callback. Unsized `Shared`,
 `LocalShared` and `Weak` use
 a separate count header followed by a metadata-aligned payload in one allocation;
@@ -526,6 +631,12 @@ under an explicit environment. Its cache includes assumptions, substitutions and
 the binder universe. Higher-ranked callable comparison uses fresh rigid target
 regions and checked source instantiations; younger regions cannot solve outer
 variables. Cyclic or exhausted proof searches report inconclusive results.
+Generic callable shape checks use region-erased inference types; the region pass
+proves full contracts, including implementation-owned quantified bounds.
+Receiver candidate matching uses those shapes; selecting a method does not
+waive its subsequent quantified callable obligation.
+Replaying an inferred callable conversion retains the source region contract;
+only an elaborated adaptation target replaces it.
 `semantics/regions` invokes these checks on source declarations, expressions,
 calls and returns, retaining semantic signatures separately from region-erased
 runtime types. Concrete CFG origin/loan checks remain mandatory: an abstract
@@ -538,16 +649,41 @@ Each projection substitutes those identities and checks its outlives obligations
 Normalized semantic annotation facts are retained before runtime region erasure.
 Explicit borrowed erasure preserves the source view's access and region, while
 opaque values retain region-bearing hidden fields.
+Erased-owner coercions prove the hidden payload's borrow bounds before selecting
+the destination's `from` bound; generic payloads use their declared input-source
+contracts rather than assuming `static`. Erased superinterface receiver steps
+preserve the original metadata bound and reborrow chain.
 Generic associated-region calls substitute declaration-owned family binders.
+Generic argument inference traverses slice and unsized-array elements before
+substitution, retaining nominal payload regions without weakening invariance.
+Open type arguments can be completed from unambiguous positional interface
+contracts of known arguments. Explicit bindings remain fixed; ambiguous
+queries defer inference to other bounds, and normal obligations still apply.
+Inference queries reuse declaration assumptions, without proving unresolved
+callee placeholders before substitution. A partial tuple retains generic
+variant origins; a unique implementation target supplies its missing element
+types through the inference graph. Shape matching keeps known types rigid,
+and the complete target must satisfy the normal interface obligation. Owned
+and borrowed endpoint tuples remain ambiguous when neither carries a payload.
 `Within<region s>` bounds (used by scoped spawn) are enforced by the region
 pass (`withinBounds`): every region captured by the argument must outlive `s`,
 and closures checked against a callable bound receive a higher-ranked binder.
 For method bounds that name an extension-owner region, `s` comes from the
 receiver's nominal type argument before any covariant shortening of its read
 view. A call-site reborrow therefore cannot weaken the bound.
-Concurrency properties (Transferable/Shareable/Static) are structural proofs in
-`semantics/interface_solver`; immutable statics must be Shareable. Interface
-implementation candidates are indexed by interface declaration.
+Transferable/Shareable/Static and UnwindSafe/RefUnwindSafe are structural
+property proofs in `semantics/interface_solver`; immutable statics must be
+Shareable. Manual positive declarations are unsafe, while negative declarations
+are safe and are retained in checked-library contracts. Interface implementation
+candidates are indexed by interface declaration.
+UnwindSafe derives through aggregate fields, variants, arrays and coroutine
+components; shared views require RefUnwindSafe, while mutable views and Ref/RefMut
+are negative for both properties. Cell, RefCell and UnsafeCell derive UnwindSafe
+from their contents but are never RefUnwindSafe. `core.marker.PhantomData<T>`
+derives Unpin and structural properties through `T`; `core.iter.Phantom` is its
+reexport, not a separately recognized nominal type.
+Unpin parameter flags own their binding proofs, including deferred bindings;
+the remaining Unpin assumption pass owns requirements outside that path.
 Runtime normalization erases regions only after the semantic region checks;
 it never substitutes for those checks. Early callable applicability may compare
 temporary region-erased type shapes while retaining both semantic operands;
@@ -617,6 +753,8 @@ into compiler-owned nominal environment products rather than rewriting syntax.
 Owned environments use ordinary lexical storage and field cleanup, including
 closures that are never invoked. Borrowed capture fields use the same origin and
 loan analysis as other stored views.
+Copying a shared inner view retains its referent loan, not the loan on the
+slot holding that view; mutable inner views retain the slot's authority.
 
 Function addresses and indirect calls are explicit CFG operations. An indirect
 call references a signature-only contract function for verification and
@@ -633,6 +771,12 @@ an ABI adapter when the receiver passing mode differs. Such adapters preserve
 the bound's parameter access and typed result, and consuming adapters clean any
 remaining owned captures after invocation. The CFG's closure-body index map is
 compilation-local metadata, never a runtime capture registry.
+Implementation method environments validate their inherited and local bounds,
+including callable contracts and associated-type projection constraints, before
+body checking. Inherent method region environments retain owner bounds even
+when the method's callable parameter is inherited implicitly. Callable bounds
+are resolved from the active function and owner declaration, not from unrelated
+same-named generic parameters elsewhere in the module.
 
 Receiver selection retains each candidate type before considering its consuming,
 read and exclusive receiver forms. Inherent methods precede applicable visible
@@ -659,6 +803,8 @@ borrow layer, so an explicitly view-valued parameter retains its handle type.
 Interface-instance argument fitting normalizes associated types before checking
 symbolicity; unresolved fields must not make a concrete nominal argument accept
 an unrelated type. Multiple genuinely applicable instances remain ambiguous.
+Implementation method signatures resolve `Self.<Assoc>` through the implemented
+interface and its superinterfaces, using the same associated-projection solver.
 Static source extensions on explicitly instantiated native storage owners use
 implementation applicability and substitutions before native dispatch. Builtin
 factories without owner arguments retain their existing inference path.
@@ -680,18 +826,25 @@ Implementation applicability combines target/interface identity matching with
 declared type/const equalities before proving its requirements from caller
 evidence. The same constraint helper tests coherence intersections; missing
 current implementations do not prove disjointness when downstream
-implementations remain possible. Implementation parameters must be determined
-by their target, interface inputs or equalities, rather than surviving unresolved
-until specialization.
+implementations remain possible. Closed structural outer shapes are checked
+even when their generic arguments are symbolic; nominal subjects remain
+potential when downstream implementations can still apply. Implementation
+parameters must be determined by their target, interface inputs or equalities,
+rather than surviving unresolved until specialization.
 Potential interface candidates match both the target and interface arguments
 before checking their constraints; a match on the target alone cannot establish
 that a conversion to a different destination exists.
 
-Thin function pointers satisfy the private `core::clone::FunctionPointer`
-marker, whose membership the solver derives and coherence treats as closed.
-Declared implementations of that marker are rejected. The ordinary library
-Clone implementation copies the pointer without changing its complete callable
-type or implying Clone for every Copy type.
+Thin function pointers satisfy the private `core::clone::FunctionPointer` and
+public `core::ops::FnPtr` markers; neither declaration is a Copy-bound alias.
+The solver derives their membership and checks their declared parent bounds.
+Declared implementations of either marker are rejected. Coherence uses known
+outer type constructors to rule out the marker even when generic arguments are
+symbolic. The ordinary library Clone implementation copies the pointer without
+changing its complete callable type or implying Clone for every Copy type.
+Other negative interface proofs require a known orphan-rule owner and exhausted
+applicable candidates; view subjects with unknown referent owners remain open
+to downstream implementations. Genuine overlaps report both declaration spans.
 
 The pipeline verifies and analyzes every symbolic body, including unused
 declarations, before requesting concrete instances. The `instances` component
@@ -803,6 +956,10 @@ not the Cartesian expansion of all locals and all type fields.
 Fixed-array rest views use validated bounded subarray projections. Canonical
 projection composition preserves the original element offsets in loans, returned
 origins and call effects; overlap checks distinguish disjoint element intervals.
+Recognized full-range slice borrows preserve the source place rather than
+introducing an opaque index, retaining known element disjointness.
+Opaque projection normalization does not collapse across a dereference:
+pointed-to storage is distinct from its enclosing storage.
 
 Function parameters retain value/read/mut/take contracts. Transient IR borrow
 values distinguish call access from owned first-class view handles. The former
@@ -814,6 +971,12 @@ Loan analysis solves backward liveness across CFG branches/back edges, retaining
 declared result-source dependencies separately from precise referent projections.
 Block-entry loan availability intersects reaching definitions with origins held
 in incoming memory or live SSA values, including their ancestor authority.
+Conflict checks exclude ancestors live only through a loan first defined at the
+current instruction; reaching prior definitions remain live across loop epochs.
+When a precise exclusive-view slot has alternative origins at a join, access
+through that slot carries their combined authority; independent live descendants
+are still checked. Moving an exclusive view checks directly live descendant
+referents rather than intermediate ancestors retained only by stored contents.
 Phi operands are SSA uses on their recorded predecessor edges, not ordinary uses
 in the merge block. This retires unheld prior-loop outputs without introducing
 future definitions or discarding independent stored aliases.
@@ -822,6 +985,8 @@ Possible writes and every-normal-return overwrites are distinct. Only definite,
 uniquely resolved ordinary-call overwrites release an old stored loan; conditional
 writes and caught calls retain it. Effect inputs are captured before updating
 destinations so self-writeback preserves its original referent.
+Same-argument writeback does not retain access loans of the argument holder when
+the stored referent is disjoint from that holder.
 Return/writeback disjointness is exported only when tracked partition origins
 prove it on every return carrying that result. Definite replacement removes the
 old holder authority, not the backing owner's lifetime. Proven replacement
@@ -964,7 +1129,7 @@ owners and general I09 compile-time programming.
 | Remaining Unpin conditions | Interface implementations own conditional property requirements and coherence. `types` retains structural/native properties and validated property facts, not a callback into the semantic solver. Assumed generic properties remain distinct from proven concrete facts. | The interface solver proves arbitrary permitted interface conditions before native pin signatures are admitted. Substitution, region erasure and instance planning preserve only valid facts. Unknown conditions cannot become unconditional Unpin; generated projections and pinned cleanup retain the existing view/writeback contracts. |
 | Representation combinations | The existing attribute token tree expresses combined representations; `ProductLayout` records C arrangement independently of the integer tag and records a transparent enum's single logical alternative. Logical variant ordinals remain distinct from physical discriminants. ABI descriptors distinguish logical values from forwarded physical scalar/aggregate types. | Semantics rejects conflicting schemes and validates transparent payload rules. Layout, tag tests, active-field cleanup and C encode/decode share the representation. Transparent forwarding must preserve the payload's actual C ABI, not merely its byte size. Metadata and zero-size cases use the same path. |
 | Statics and linkage | Add module static declarations with type, initializer, mutability, visibility, import/export/library metadata and stable resolved identity. Checked facts and typed IR retain that identity. Static storage has an explicit analysis root/lifetime category, never an overloaded caller-parameter index. Initializers use typed, validated constant representations. | Resolution handles imports/shadowing/duplicates; checking enforces required constants, unsafe mutable-static access and no move from static storage. Ownership/region analysis admits static-lifetime references without treating them as caller-owned or scope-owned locals. LLVM emits storage, relocations and linkage with no dynamic hosted startup dependency. |
-| Variadic definitions | A checked cursor capability is tied to a variadic invocation. Source signatures and IR distinguish its hidden context from named parameters. Native start/argument/copy/end operations carry requested promoted types and ABI identity. Cursor cleanup uses the same native-action mechanism as guards. | The physical variadic C entry creates the ABI cursor before any logical-body/cleanup callback; an ordinary Mettle wrapper must not try to recover discarded register/stack arguments. Target ABI lowering decodes register/overflow areas and reuses C value classification. Analysis rejects cursor escape/use after end; copying a cursor copies state rather than aliases its advancement. |
+| Variadic definitions | The opaque, non-Copy `core.ffi.VaList<region frame>` carries its invocation region independently of physical fields. Native start/argument/copy/end operations carry requested promoted types and ABI identity. Frozen VaArgSafe reads admit scalar and thin-pointer shapes only. Cursor cleanup uses the same native-action mechanism as guards. | The physical variadic C entry starts the cursor before logical-body/cleanup callbacks. Types and metadata select SysV64 offsets/save pointers, AAPCS64 stack/register pointers and signed offsets, or the Darwin ARM64 stack pointer. LLVM decodes the matching register/overflow areas, performs `va_copy`, and ends each owned cursor exactly once. Region/ownership analysis rejects frame escape and thread transfer. |
 | Assembly | Syntax records templates, operand modes/names, register classes or explicit registers, expression/destination identities, symbols, constants, clobber ABIs and options. Checked facts resolve them. Compiler-owned IR keeps resolved constraints/effects and ordered inputs/outputs without syntax pointers. Function/module metadata distinguishes inline, global and naked assembly. | Target-aware checking validates types, features, conflicts and option combinations. Lowering evaluates operands/destination places once in source order, obtains inputs before execution and publishes outputs only on normal completion. LLVM receives validated constraints. Naked physical ABI entries bypass ordinary frame/cleanup/prologue generation; no implicit unwind permission is granted. |
 | SIMD and target features | A compiler-owned target-facts record carries the selected architecture/data model, baseline and recognized features. The driver derives it from the explicit target; front-end types/IR do not include LLVM. Stable target-vector descriptors and operation signatures record element/lane shape, alignment and required features. Function features and checked feature predicates are explicit metadata. | Semantics and IR verification check availability under the function/profile or a dominating supported dispatch guard. The LLVM adapter lowers vector/target operations and validates agreement with its target machine. Detection must respect OS register-state requirements and the core/hosted boundary. Scalar intrinsics alone do not satisfy SIMD delivery. |
 
@@ -1135,7 +1300,7 @@ tests in the same change.
 | Layout, unsafe operations and C ABI (I06) | Target facts and object layout in `types`, distinct from language type identity; physical ABI lowering in `backend`; unsafe validity checks and explicit intrinsics; target-specific probes |
 | Core/alloc/hosted libraries (I07-I08) | Native Mettle modules and minimal runtime contracts, not hardcoded collections or OS calls inside the parser/checker. `alloc` reaches memory only through the `mettle_rt_alloc/dealloc/realloc` hooks (`runtime/alloc.cpp`). `std` reaches the OS through declared libc externs and the shims in `runtime/sys.cpp` (errno, flags, `stat`, `readdir`, `spawn`, sockets, clocks); the panic hook lives in `runtime/panic.cpp` |
 | Constants, macros and packages (I09) | Const evaluator over defined IR; hygienic expansion with source ancestry; package graph/build planner outside compiler semantics |
-| Threads and async (I10-I11) | Transferable/Shareable/Static are intrinsic properties proved structurally by `semantics/interface_solver.cpp` (`proveConcurrency`), with manual `unsafe extend`/negative `extend X not P` recorded in `interfaces::Database::concurrencyDeclarations`; thread/lock/TLS operations reach pthreads only through the `mettle_rt_thread_*`/`mettle_rt_mutex_*`/`mettle_rt_cond_*`/`mettle_rt_rwlock_*`/`mettle_rt_tls_*` hooks (`runtime/thread.cpp`), while channel selection uses its process-wide generation condition there to sleep without polling. Static TLS descriptors are keyed by their static addresses; TLS values share a per-thread active-key list so thread exit and the hosted main exit destroy them in reverse first-installation order. `std.thread`/`std.sync` and `alloc.arc` are native Mettle modules. `async` bodies are coroutine closures desugared in `syntax/parser/async.cpp`; suspension is `ir::Exit::Suspend`, the state is the backend frame (`backend/llvm/cleanup.cpp`), and its Transferable/Shareable proof includes a scope-based interior recorded by `semantics/captures.cpp`; `std.task` is the separately selected executor |
+| Threads and async (I10-I11) | Transferable/Shareable/Static and UnwindSafe/RefUnwindSafe are intrinsic properties proved structurally by `semantics/interface_solver.cpp` (`proveStructuralProperty`), with manual `unsafe extend`/negative `extend X not P` recorded in `interfaces::Database::structuralDeclarations`; thread/lock/TLS operations reach pthreads only through the `mettle_rt_thread_*`/`mettle_rt_mutex_*`/`mettle_rt_cond_*`/`mettle_rt_rwlock_*`/`mettle_rt_tls_*` hooks (`runtime/thread.cpp`), while channel selection uses its process-wide generation condition there to sleep without polling. Static TLS descriptors are keyed by their static addresses; TLS values share a per-thread active-key list so thread exit and the hosted main exit destroy them in reverse first-installation order. `std.thread`/`std.sync` and `alloc.arc` are native Mettle modules. `async` bodies are coroutine closures desugared in `syntax/parser/async.cpp`; suspension is `ir::Exit::Suspend`, the state is the backend frame (`backend/llvm/cleanup.cpp`), and its Transferable/Shareable proof includes a scope-based interior recorded by `semantics/captures.cpp`; `std.task` is the separately selected executor |
 | IDE/tooling/incremental (I12) | Reusable in-memory pipeline, immutable inputs/results and revision-bound diagnostics; module/item query boundaries and dependency tracking |
 | Additional backends/self-hosting (I15-I16) | Preserve checked/runtime/ABI boundaries; replace compiler implementation/backend without importing LLVM into language representations |
 
@@ -1258,8 +1423,11 @@ Do not implement speculative plugin loading or a second backend now.
 
 ## 8. Runtime, libraries and tools
 
-`library/core` requires no allocator, OS or executor. `library/alloc` depends
-on core and an explicit allocator; `library/std` adds hosted services.
+`library/core` requires no allocator implementation, OS or executor.
+`library/core/alloc.mt` owns pure layout arithmetic and the `GlobalAlloc`
+interface; concrete allocation operations remain in `library/alloc`. The
+`alloc` library depends on core and an explicit allocator; `std` adds hosted
+services and reexports the raw global allocation surface.
 Library contracts include access/regions, allocation, failure, invalidation and
 complexity; they do not depend on compiler C++ AST/type structures.
 

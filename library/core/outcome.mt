@@ -137,7 +137,7 @@ extend<T, E> (Outcome<T, E>) {
 extend<region r, T: Clone, E> (Outcome<(read T from r), E>) {
     pub take fn cloned(): (Outcome<T, E>) {
         match take self {
-            success(value) => success(value.clone()),
+            success(value) => success(T.(Clone).clone(value)),
             failure(error) => failure(error)
         }
     }
@@ -155,7 +155,7 @@ extend<region r, T: Copy, E> (Outcome<(read T from r), E>) {
 extend<region r, T: Clone, E> (Outcome<(mut T from r), E>) {
     pub take fn cloned(): (Outcome<T, E>) {
         match take self {
-            success(value) => success(value.clone()),
+            success(value) => success(T.(Clone).clone(value)),
             failure(error) => failure(error)
         }
     }

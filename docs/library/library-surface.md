@@ -35,9 +35,16 @@ implementation context, not merely the macro definition's source line.
 owns the recovered payload; it exposes the panic code and a `Text` view of
 the copied message, valid for the lifetime of that value. Runtime payload
 storage is allocated for recovery and released when `PanicInfo` is dropped.
-Source-level panic hooks receive the original borrowed message before
-unwinding. `set_hook` replaces the custom hook; `take_hook` returns it as an
-optional callback and restores the default reporter (`none` means the default
+Source-level panic hooks receive the original borrowed message before unwinding
+through `PanicHookInfo`, distinct from the owned recovery `PanicInfo`. Mettle
+panic payloads are borrowed `Text` messages; there is no arbitrary `Any`-payload
+panic operation. The hook context exposes the message and a callback-scoped
+file-byte/line/column view when the panic has a source location. `Location.file`
+validates UTF-8 and returns an outcome; `file_bytes` preserves non-UTF-8 paths.
+Because the C callback type cannot encode that lifetime, accessing its message
+or location is unsafe and the returned views must not escape the callback.
+`set_hook` replaces the custom hook; `take_hook` returns it as an optional
+typed callback and restores the default reporter (`none` means the default
 was active).
 `reset_hook` restores that reporter without returning the previous callback.
 A hook must not panic; doing so aborts. Recovery runs only after normal unwind
@@ -98,6 +105,10 @@ cannot invalidate the pinned contract. UnwindSafe/RefUnwindSafe-like properties
 track logical recovery invariants; they do not make undefined behavior permitted
 on a panic path. An explicit assertion wrapper can bypass the recovery heuristic,
 not memory validity requirements.
+
+RefUnwindSafe for views and raw pointers follows the pointee's RefUnwindSafe
+property regardless of access mode. UnwindSafe rejects mutable views and
+requires RefUnwindSafe for read views and raw pointers.
 
 Union fields have no automatic active-tag tracking or field destruction.
 Fields must be Copy or use explicit manual-drop storage; reading a field is

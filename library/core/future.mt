@@ -29,7 +29,7 @@ extend<T> Poll<T> {
 extend<T: Clone> Poll<T> implements Clone {
     fn clone(): Poll<T> {
         match self {
-            Poll.Ready(value) => Poll.Ready(value.clone()),
+            Poll.Ready(value) => Poll.Ready(T.(Clone).clone(value)),
             Poll.Pending => Poll.Pending
         }
     }
@@ -145,6 +145,44 @@ pub interface Future {
     fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<Self.Output>;
 }
 
+pub type Ready<T> { value: T? }
+
+extend<T: Clone> Ready<T> implements Clone {
+    fn clone(): Ready<T> {
+        Ready(match self.value {
+            present(value) => present(T.(Clone).clone(value)),
+            none => none
+        })
+    }
+}
+
+extend<T> Ready<T> implements Future {
+    type Output = T
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<T> {
+        // The output field is not structurally pinned and remains initialized.
+        let me = unsafe { self.get_unchecked_mut() }
+        match take core.mem.replace(mut me.value, none) {
+            present(value) => Poll.Ready(value),
+            none => super.panic.panic("Ready polled after completion")
+        }
+    }
+}
+
+pub const fn ready<T>(take value: T): Ready<T> { Ready(present(value)) }
+
+pub type Pending<T> { marker: core.iter.Phantom<T> }
+
+extend<T> Pending<T> implements Clone {
+    fn clone(): Pending<T> { Pending(core.iter.Phantom<T>()) }
+}
+
+extend<T> Pending<T> implements Future {
+    type Output = T
+    fn poll(receiver take self: pinned mut Self, mut cx: Context): Poll<T> { Poll.Pending }
+}
+
+pub const fn pending<T>(): Pending<T> { Pending(core.iter.Phantom<T>()) }
+
 // Table of the four waker operations over an executor-owned data pointer.
 // `clone` returns an independent waker for the same task; `wake` consumes one
 // waker; `wake_by_ref` does not; `release` releases one waker.
@@ -156,9 +194,50 @@ pub copy type RawWakerVTable {
     pub release: unsafe fn(ptr<mut u8>): Unit
 }
 
+extend RawWakerVTable implements Clone {
+    fn clone(): RawWakerVTable { self }
+}
+// The executor identifies a vtable by all four callback addresses.
+extend RawWakerVTable implements PartialEq {
+    fn eq(read other: RawWakerVTable): bool {
+        unsafe {
+            core.mem.transmute<usize>(self.clone) == core.mem.transmute<usize>(other.clone) &&
+                core.mem.transmute<usize>(self.wake) == core.mem.transmute<usize>(other.wake) &&
+                core.mem.transmute<usize>(self.wake_by_ref) == core.mem.transmute<usize>(other.wake_by_ref) &&
+                core.mem.transmute<usize>(self.release) == core.mem.transmute<usize>(other.release)
+        }
+    }
+}
+
 pub copy type RawWaker {
     pub data: ptr<mut u8>
     pub vtable: RawWakerVTable
+}
+
+extend RawWaker implements PartialEq {
+    fn eq(read other: RawWaker): bool {
+        self.data == other.data && self.vtable == other.vtable
+    }
+}
+
+extend RawWakerVTable implements Debug {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
+        var debug = try f.debug_struct("RawWakerVTable")
+        try debug.field("clone", self.clone)
+        try debug.field("wake", self.wake)
+        try debug.field("wake_by_ref", self.wake_by_ref)
+        try debug.field("release", self.release)
+        try debug.finish()
+    }
+}
+
+extend RawWaker implements Debug {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
+        var debug = try f.debug_struct("RawWaker")
+        try debug.field("data", self.data)
+        try debug.field("vtable", self.vtable)
+        try debug.finish()
+    }
 }
 
 // An owned handle that wakes one task. Ownership of one reference-count-like
@@ -182,14 +261,8 @@ extend Waker {
     pub fn will_wake(read other: Waker): bool {
         self.raw.data == other.raw.data && self.uses_vtable(other.raw.vtable)
     }
-    // Identifies wakers built from one vtable by its callback addresses.
     pub fn uses_vtable(other: RawWakerVTable): bool {
-        unsafe {
-            core.mem.transmute<usize>(self.raw.vtable.clone) == core.mem.transmute<usize>(other.clone) &&
-                core.mem.transmute<usize>(self.raw.vtable.wake) == core.mem.transmute<usize>(other.wake) &&
-                core.mem.transmute<usize>(self.raw.vtable.wake_by_ref) == core.mem.transmute<usize>(other.wake_by_ref) &&
-                core.mem.transmute<usize>(self.raw.vtable.release) == core.mem.transmute<usize>(other.release)
-        }
+        self.raw.vtable == other
     }
     pub fn data(): ptr<mut u8> { self.raw.data }
     // Transfers this reference to a caller that will invoke exactly one

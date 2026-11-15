@@ -24,15 +24,22 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <pwd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifdef __linux__
+#include <sys/random.h>
+#endif
+
 #ifdef __APPLE__
 #include <crt_externs.h>
+#include <mach-o/dyld.h>
 #include <sys/event.h>
 #else
 extern char **environ;
@@ -668,14 +675,203 @@ extern "C" std::int32_t mettle_rt_errno_kind(std::int32_t code) {
   }
 }
 
+extern "C" std::int32_t mettle_rt_random_fill(std::uint8_t *buffer,
+                                              std::size_t count) {
+  if (count == 0)
+    return 0;
+  if (!buffer) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  std::size_t offset = 0;
+#ifdef __linux__
+  while (offset < count) {
+    const auto size =
+        std::min(count - offset,
+                 static_cast<std::size_t>(std::numeric_limits<ssize_t>::max()));
+    const auto received = getrandom(buffer + offset, size, 0);
+    if (received > 0) {
+      offset += static_cast<std::size_t>(received);
+      continue;
+    }
+    if (received < 0 && errno == EINTR)
+      continue;
+    offset = 0;
+    break;
+  }
+  if (offset == count)
+    return 0;
+#endif
+
+#if defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) ||      \
+    defined(__NetBSD__) || defined(__DragonFly__)
+  offset = 0;
+  while (offset < count) {
+    const auto size = std::min<std::size_t>(count - offset, 256);
+    if (getentropy(buffer + offset, size) != 0) {
+      offset = 0;
+      break;
+    }
+    offset += size;
+  }
+  if (offset == count)
+    return 0;
+#endif
+
+  int flags = O_RDONLY;
+#ifdef O_CLOEXEC
+  flags |= O_CLOEXEC;
+#endif
+  int descriptor;
+  do {
+    descriptor = open("/dev/urandom", flags);
+  } while (descriptor < 0 && errno == EINTR);
+  if (descriptor < 0)
+    return -1;
+
+  offset = 0;
+  while (offset < count) {
+    const auto size =
+        std::min(count - offset,
+                 static_cast<std::size_t>(std::numeric_limits<ssize_t>::max()));
+    const auto received = read(descriptor, buffer + offset, size);
+    if (received > 0) {
+      offset += static_cast<std::size_t>(received);
+      continue;
+    }
+    if (received < 0 && errno == EINTR)
+      continue;
+    close(descriptor);
+    return -1;
+  }
+  return close(descriptor) == 0 ? 0 : -1;
+}
+
 extern "C" void mettle_rt_set_errno(std::int32_t value) { errno = value; }
 
 extern "C" std::int32_t mettle_rt_errno_is_range(std::int32_t code) {
   return code == ERANGE;
 }
 
+extern "C" std::int32_t mettle_rt_current_exe(std::uint8_t *buffer,
+                                              std::size_t capacity,
+                                              std::size_t *length) {
+#if defined(__linux__) || defined(__ANDROID__)
+  const auto size =
+      readlink("/proc/self/exe", reinterpret_cast<char *>(buffer), capacity);
+  if (size < 0)
+    return -1;
+  if (static_cast<std::size_t>(size) == capacity) {
+    errno = ERANGE;
+    return -1;
+  }
+  *length = static_cast<std::size_t>(size);
+  return 0;
+#elif defined(__APPLE__)
+  if (capacity > std::numeric_limits<std::uint32_t>::max()) {
+    errno = ERANGE;
+    return -1;
+  }
+  auto size = static_cast<std::uint32_t>(capacity);
+  if (_NSGetExecutablePath(reinterpret_cast<char *>(buffer), &size) != 0) {
+    errno = ERANGE;
+    return -1;
+  }
+  *length = std::strlen(reinterpret_cast<char *>(buffer));
+  return 0;
+#else
+  errno = ENOTSUP;
+  return -1;
+#endif
+}
+
+extern "C" std::int32_t mettle_rt_home_dir(std::uint8_t *buffer,
+                                           std::size_t capacity,
+                                           std::size_t *length) {
+  const char *home = std::getenv("HOME");
+  if (home && *home) {
+    const auto size = std::strlen(home);
+    if (size > capacity) {
+      errno = ERANGE;
+      return -1;
+    }
+    std::memcpy(buffer, home, size);
+    *length = size;
+    return 1;
+  }
+
+  long configuredSize = sysconf(_SC_GETPW_R_SIZE_MAX);
+  std::size_t size =
+      configuredSize > 0 ? static_cast<std::size_t>(configuredSize) : 1024;
+  std::vector<char> storage;
+  while (true) {
+    if (size > storage.max_size()) {
+      errno = ERANGE;
+      return -1;
+    }
+    try {
+      storage.resize(size);
+    } catch (const std::bad_alloc &) {
+      errno = ENOMEM;
+      return -1;
+    }
+    struct passwd entry{};
+    struct passwd *result = nullptr;
+    const int status =
+        getpwuid_r(getuid(), &entry, storage.data(), storage.size(), &result);
+    if (status == ERANGE) {
+      if (size > storage.max_size() / 2) {
+        errno = ERANGE;
+        return -1;
+      }
+      size *= 2;
+      continue;
+    }
+    if (status != 0) {
+      errno = status;
+      return -1;
+    }
+    if (!result || !entry.pw_dir)
+      return 0;
+    const auto homeSize = std::strlen(entry.pw_dir);
+    if (homeSize > capacity) {
+      errno = ERANGE;
+      return -1;
+    }
+    std::memcpy(buffer, entry.pw_dir, homeSize);
+    *length = homeSize;
+    return 1;
+  }
+}
+
 extern "C" std::int32_t mettle_rt_dup(std::int32_t fd) {
   return retry([&] { return fcntl(fd, F_DUPFD_CLOEXEC, 3); });
+}
+
+extern "C" std::int32_t mettle_rt_pipe(std::int32_t *descriptors) {
+  int ends[2] = {-1, -1};
+#ifdef __linux__
+  if (pipe2(ends, O_CLOEXEC) != 0)
+    return -1;
+#else
+  if (pipe(ends) != 0)
+    return -1;
+  for (int fd : ends) {
+    const int flags = retry([&] { return fcntl(fd, F_GETFD); });
+    if (flags < 0 ||
+        retry([&] { return fcntl(fd, F_SETFD, flags | FD_CLOEXEC); }) < 0) {
+      const int failure = errno;
+      ::close(ends[0]);
+      ::close(ends[1]);
+      errno = failure;
+      return -1;
+    }
+  }
+#endif
+  descriptors[0] = ends[0];
+  descriptors[1] = ends[1];
+  return 0;
 }
 
 extern "C" std::int32_t mettle_rt_open(const char *path, std::int32_t flags,
@@ -1034,6 +1230,81 @@ extern "C" std::int32_t mettle_rt_sock_new(std::int32_t kind,
   setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
 #endif
   return fd;
+}
+
+extern "C" std::int32_t mettle_rt_unix_sock_new(std::int32_t kind) {
+  int type = kind == 0 ? SOCK_STREAM : SOCK_DGRAM;
+#ifdef __linux__
+  type |= SOCK_CLOEXEC;
+#endif
+  int fd = socket(AF_UNIX, type, 0);
+  if (fd < 0)
+    return -1;
+#ifndef __linux__
+  setCloseOnExec(fd);
+#endif
+#ifdef SO_NOSIGPIPE
+  int on = 1;
+  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
+#endif
+  return fd;
+}
+
+namespace {
+bool unixSocketAddress(const std::uint8_t *path, std::size_t pathSize,
+                       sockaddr_un &address, socklen_t &size) {
+  if (pathSize == 0 || pathSize >= sizeof(address.sun_path)) {
+    errno = pathSize == 0 ? EINVAL : ENAMETOOLONG;
+    return false;
+  }
+  if (std::memchr(path, 0, pathSize) != nullptr) {
+    errno = EINVAL;
+    return false;
+  }
+  address = {};
+  address.sun_family = AF_UNIX;
+  std::memcpy(address.sun_path, path, pathSize);
+  address.sun_path[pathSize] = '\0';
+  size = static_cast<socklen_t>(offsetof(sockaddr_un, sun_path) + pathSize + 1);
+  return true;
+}
+} // namespace
+
+extern "C" std::int32_t mettle_rt_unix_sock_bind(std::int32_t fd,
+                                                 const std::uint8_t *path,
+                                                 std::size_t pathSize) {
+  sockaddr_un address{};
+  socklen_t size = 0;
+  if (!unixSocketAddress(path, pathSize, address, size))
+    return -1;
+  return bind(fd, reinterpret_cast<sockaddr *>(&address), size);
+}
+
+extern "C" std::int32_t mettle_rt_unix_sock_connect(std::int32_t fd,
+                                                    const std::uint8_t *path,
+                                                    std::size_t pathSize) {
+  sockaddr_un address{};
+  socklen_t size = 0;
+  if (!unixSocketAddress(path, pathSize, address, size))
+    return -1;
+  return timedConnect(fd, reinterpret_cast<sockaddr *>(&address), size,
+                      std::numeric_limits<std::uint64_t>::max());
+}
+
+extern "C" std::int32_t mettle_rt_unix_sock_listen(std::int32_t fd,
+                                                   std::int32_t backlog) {
+  return listen(fd, backlog);
+}
+
+extern "C" std::int32_t mettle_rt_unix_sock_accept(std::int32_t fd) {
+#ifdef __linux__
+  return accept4(fd, nullptr, nullptr, SOCK_CLOEXEC);
+#else
+  int accepted = accept(fd, nullptr, nullptr);
+  if (accepted >= 0)
+    setCloseOnExec(accepted);
+  return accepted;
+#endif
 }
 
 extern "C" std::int32_t

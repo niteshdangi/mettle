@@ -43,6 +43,17 @@ pub type File {
     }
 }
 
+@cfg(target_os = "linux")
+extend File implements std.os.fd.AsRawFd {
+    fn as_raw_fd(): i32 { self.fd }
+}
+@cfg(target_os = "linux")
+extend File implements std.os.fd.AsFd {
+    fn as_fd<region r>(receiver read self: Self from r): std.os.fd.BorrowedFd<region r> {
+        unsafe { std.os.fd.BorrowedFd<region r>.borrow_raw(self.fd) }
+    }
+}
+
 pub enum TryLockError { Error(Error); WouldBlock }
 
 extend TryLockError implements fmt.Display {
@@ -138,6 +149,18 @@ pub copy type Metadata {
 }
 
 pub copy type FileTimes { accessed: SystemTime?; modified: SystemTime? }
+
+extend FileTimes implements Clone {
+    fn clone(): FileTimes { self }
+}
+extend FileTimes implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("FileTimes")
+        try debug.field("accessed", self.accessed)
+        try debug.field("modified", self.modified)
+        try debug.finish()
+    }
+}
 
 extend FileTimes {
     pub static fn new(): FileTimes { FileTimes(none, none) }
@@ -283,6 +306,14 @@ extend OpenOptions {
 }
 
 pub type DirBuilder { recursive: bool; mode: u32 }
+extend DirBuilder implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("DirBuilder")
+        try debug.field("recursive", self.recursive)
+        try debug.field("mode", self.mode)
+        try debug.finish()
+    }
+}
 
 pub fn dir_builder(): DirBuilder { DirBuilder(false, 511u32) }
 
@@ -446,6 +477,10 @@ fn seek_file(fd: i32, pos: SeekFrom): u64 throws Error {
 
 extend File implements io.Seek {
     mut fn seek(pos: SeekFrom): u64 throws Error { try seek_file(self.fd, pos) }
+}
+
+extend File implements io.IsTerminal {
+    fn is_terminal(): bool { sys.is_terminal(self.fd) }
 }
 
 extend File implements Reader {

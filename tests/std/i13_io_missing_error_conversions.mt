@@ -1,4 +1,5 @@
 import alloc.alloc.AllocError
+import alloc.collections.TryReserveError
 import alloc.ffi.{CString, NulError}
 import alloc.vec
 import core.convert.From
@@ -14,6 +15,16 @@ fn main(): i32 {
     assert(allocation.kind().is(ErrorKind.OutOfMemory), "allocation error kind")
     assert(allocation.raw_os_error().is_none() && allocation.get_ref().is_none(),
         "allocation failure needs no payload allocation")
+
+    var values = vec.new<u8>()
+    let reserve_error = match take capture values.try_reserve(0xffffffffffffffffusize) {
+        failure(error) => error,
+        success(_) => { return 3 }
+    }
+    let reserve = Error.(From<TryReserveError>).from(reserve_error)
+    assert(reserve.kind().is(ErrorKind.OutOfMemory), "reserve failure error kind")
+    assert(reserve.raw_os_error().is_none() && reserve.get_ref().is_none(),
+        "reserve failure needs no payload allocation")
 
     var bytes = vec.new<u8>()
     bytes.extend_from_slice("a\0b".as_bytes())

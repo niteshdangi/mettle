@@ -98,12 +98,11 @@ std::string artifactSuffix(const std::string &format,
 }
 } // namespace
 
-std::optional<PackageObject>
-nativePackageObject(const Options &options, const BuildInputs &inputs,
-                    const ir::VerifiedProgram &program,
-                    const std::string &identity,
-                    const std::vector<std::string> &sources,
-                    const std::string &checkedKey, std::string &error) {
+std::optional<PackageObject> nativePackageObject(
+    const Options &options, const BuildInputs &inputs,
+    const ir::VerifiedProgram &program, const std::string &identity,
+    const std::vector<std::string> &sources, const std::string &checkedKey,
+    std::string &error, const Diagnostics &diagnostics) {
   error.clear();
   const auto &ir = program.program();
   if (options.command != "build" || options.emit != "executable" ||
@@ -129,9 +128,14 @@ nativePackageObject(const Options &options, const BuildInputs &inputs,
                  identity) == ir.staticPackages.end()))
     return std::nullopt;
   llvm::LLVMContext context;
+  mettle::backend::DebugInfoRequest sourceInfo{
+      diagnostics.registeredSources(), {}, [&diagnostics](Span span) {
+        return diagnostics.debugSpan(span);
+      }};
   auto module = mettle::backend::lower(
       program, context, options.checks.value_or(options.profile != "release"),
-      options.target, false, nullptr, false, false, {true, identity, false});
+      options.target, false, nullptr, false, false, {true, identity, false},
+      &sourceInfo);
   module->setModuleIdentifier(identity);
   module->setSourceFileName(sources.front());
   std::string verification;
@@ -327,7 +331,7 @@ static int emitOne(const Options &options, const Source &source,
         options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr,
         options.sanitizers.contains("address"),
         options.sanitizers.contains("thread"),
-        {splitPackages, {}, !options.library});
+        {splitPackages, {}, !options.library}, &debugRequest);
     module->setSourceFileName(source.path);
     module->setTargetTriple(
         llvm::Triple(llvm::Triple::normalize(options.target)));
@@ -404,7 +408,7 @@ static int emitOne(const Options &options, const Source &source,
         if (!reused) {
           auto dependency = mettle::backend::lower(
               program, context, checked, options.target, options.freestanding,
-              nullptr, false, false, {true, package.identity});
+              nullptr, false, false, {true, package.identity}, &debugRequest);
           dependency->setSourceFileName(package.source);
           dependency->setTargetTriple(
               llvm::Triple(llvm::Triple::normalize(options.target)));

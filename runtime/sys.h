@@ -3,12 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 
-// Thin POSIX shims for the hosted `std` library. Mettle calls libc directly
-// wherever the C signature is portable; these cover only what it cannot
-// express: `errno`, variadic `open`, platform-specific constants and struct
-// layouts, process creation and the process arguments. Each function reports
-// failure like the libc call it wraps (negative result, `errno` set) unless
-// stated otherwise, and is identical on macOS and Linux.
+// Thin hosted-system shims for `std`. Most wrap POSIX calls that need platform
+// details; the random-fill hook selects the native OS CSPRNG. Functions report
+// failure like the libc call they wrap unless stated otherwise.
 extern "C" {
 std::int32_t mettle_rt_errno();
 // Portable error class of an `errno` value, numbered like `std::io::ErrorKind`
@@ -16,9 +13,14 @@ std::int32_t mettle_rt_errno();
 std::int32_t mettle_rt_errno_kind(std::int32_t code);
 std::int32_t mettle_rt_errno_is_range(std::int32_t code);
 void mettle_rt_set_errno(std::int32_t value);
+// Fills the entire buffer from the operating system CSPRNG; zero on success,
+// -1 on failure.
+std::int32_t mettle_rt_random_fill(std::uint8_t *buffer, std::size_t count);
 
 // Duplicates with close-on-exec into a descriptor above standard streams.
 std::int32_t mettle_rt_dup(std::int32_t fd);
+// Creates a close-on-exec pipe and writes its read and write descriptors.
+std::int32_t mettle_rt_pipe(std::int32_t *descriptors);
 // Portable open flags: 1 read, 2 write, 4 append, 8 truncate, 16 create,
 // 32 create-new. The descriptor is close-on-exec.
 std::int32_t mettle_rt_open(const char *path, std::int32_t flags,
@@ -27,8 +29,7 @@ std::int32_t mettle_rt_open(const char *path, std::int32_t flags,
 // permission bits, modification seconds and nanoseconds. A
 // non-negative `fd` selects fstat; otherwise `follow` selects stat or lstat.
 std::int32_t mettle_rt_stat(const char *path, std::int32_t fd,
-                            std::int32_t follow,                             // Writable outputs borrow caller storage; peek leaves the datagram queued.
-                            std::int64_t *out);
+                            std::int32_t follow, std::int64_t *out);
 // The first five slots match stat; then accessed and created seconds/nanos,
 // and availability bits (accessed=1, modified=2, created=4), in one snapshot.
 std::int32_t mettle_rt_stat_full(const char *path, std::int32_t fd,
@@ -49,6 +50,14 @@ std::int32_t mettle_rt_argc();
 const char *mettle_rt_argv(std::int32_t index);
 // The table and strings are borrowed; environment mutation invalidates them.
 const char *const *mettle_rt_environ();
+// The caller supplies `capacity` writable bytes and a writable length output.
+// Zero on success, -1 on failure. ERANGE means the caller buffer is too small.
+std::int32_t mettle_rt_current_exe(std::uint8_t *buffer, std::size_t capacity,
+                                   std::size_t *length);
+// One when found, zero when unavailable, or -1 on failure. ERANGE means the
+// caller buffer is too small.
+std::int32_t mettle_rt_home_dir(std::uint8_t *buffer, std::size_t capacity,
+                                std::size_t *length);
 
 // Stdio modes: 0 inherit, 1 pipe, 2 null device. `envp` null inherits the
 // environment; `cwd` null inherits the directory. Piped parent ends are
@@ -75,6 +84,14 @@ std::int32_t mettle_rt_poll_pair(std::int32_t first, std::int32_t second);
 // POSIX sockets: kind 0 stream, 1 datagram; family is 4 or 6. Address bytes
 // are in network order and have explicit lengths (4 for IPv4, 16 for IPv6).
 std::int32_t mettle_rt_sock_new(std::int32_t kind, std::int32_t family);
+std::int32_t mettle_rt_unix_sock_new(std::int32_t kind);
+std::int32_t mettle_rt_unix_sock_bind(std::int32_t fd, const std::uint8_t *path,
+                                      std::size_t pathSize);
+std::int32_t mettle_rt_unix_sock_connect(std::int32_t fd,
+                                         const std::uint8_t *path,
+                                         std::size_t pathSize);
+std::int32_t mettle_rt_unix_sock_listen(std::int32_t fd, std::int32_t backlog);
+std::int32_t mettle_rt_unix_sock_accept(std::int32_t fd);
 std::int32_t mettle_rt_sock_bind(std::int32_t fd, std::int32_t family,
                                  const std::uint8_t *address,
                                  std::size_t addressSize, std::uint16_t port,
@@ -111,6 +128,7 @@ std::int64_t mettle_rt_sock_sendto(std::int32_t fd, const std::uint8_t *data,
                                    std::size_t addressSize, std::uint16_t port,
                                    std::uint32_t flowinfo,
                                    std::uint32_t scopeId);
+// Writable outputs borrow caller storage; peek leaves the datagram queued.
 std::int64_t mettle_rt_sock_recvfrom(
     std::int32_t fd, std::uint8_t *data, std::size_t size, std::int32_t peek,
     std::int32_t *family, std::uint8_t *address, std::size_t addressCapacity,

@@ -77,6 +77,9 @@ fn checks_observation(): i32 {
     var observed = 0
     let total = iter.range(1, 5).inspect(fn(read x: i32): Unit { observed = observed + x }).count()
     if total != 4usize || observed != 10 { return 40 }
+    var back_observed = 0
+    var inspected = iter.range(1, 4).inspect(fn(read x: i32): Unit { back_observed = x })
+    if inspected.next_back() != present(3) || back_observed != 3 { return 45 }
     var peeked = iter.range(4, 6).peekable()
     match peeked.peek() {
         present(value) => { if *value != 4 { return 41 } },

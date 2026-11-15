@@ -14,7 +14,7 @@ fn main(): i32 {
     var count = 0i32
     var sum = 0i32
     {
-        var range = map.range(10i32, 20i32)
+        var range = map.range(core.iter.range(10i32, 20i32))
         while true {
             match range.next() {
                 present(entry) => {

@@ -27,17 +27,17 @@ fn main(): i32 {
     if *difference.next().or_panic() != 4 || difference.next().is_present() { return 5 }
     var map = alloc.btree.new<i32, i32>()
     let old = map.insert(1, 10)
-    let reversed = std.panic.catch_panic(fn(): Unit { let range = map.range(3, 1) })
+    let reversed = std.panic.catch_panic(fn(): Unit { let range = map.range(core.iter.range(3, 1)) })
     match take reversed {
         CatchResult.Panicked(_) => {},
         CatchResult.Returned(_) => { return 6 }
     }
-    let reversed_mut = std.panic.catch_panic(fn(): Unit { let range = map.range_mut(3, 1) })
+    let reversed_mut = std.panic.catch_panic(fn(): Unit { let range = map.range_mut(core.iter.range(3, 1)) })
     match take reversed_mut {
         CatchResult.Panicked(_) => {},
         CatchResult.Returned(_) => { return 7 }
     }
-    var equal = map.range(1, 1)
+    var equal = map.range(core.iter.range(1, 1))
     if equal.next().is_present() { return 8 }
     var heap_values = alloc.binary_heap.new<i32>()
     heap_values.push(3)

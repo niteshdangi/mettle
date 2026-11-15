@@ -10,10 +10,17 @@ std::optional<Type> Checker::machineAnnotation(const TypeSyntax &syntax,
   if (syntax.form != TypeForm::Named || syntax.nested || !syntax.view.empty())
     return std::nullopt;
   const auto scope = nameModule(span, syntax.context, true);
-  if (scope < checked.symbols->modules().size() &&
-      checked.symbols->lookup(scope, syntax.name, resolution::Namespace::Type,
-                              span))
-    return std::nullopt;
+  constexpr std::string_view phantomPinned = "core::marker::PhantomPinned";
+  auto name = syntax.name;
+  if (scope < checked.symbols->modules().size())
+    if (auto resolved = checked.symbols->lookup(
+            scope, syntax.name, resolution::Namespace::Type, span)) {
+      if (*resolved == phantomPinned)
+        return checked.types->structural(AggregateKind::PhantomPinned, {});
+      if (*resolved != "core::cell::Cell")
+        return std::nullopt;
+      name = *resolved;
+    }
   if (auto descriptor = targetVector(syntax.name)) {
     if (descriptor->arch != checked.targetDescription.arch ||
         !checked.targetDescription.initialProfile())
@@ -43,7 +50,7 @@ std::optional<Type> Checker::machineAnnotation(const TypeSyntax &syntax,
           "unsupported native type in the initial target inventory");
     return Type::Unknown;
   }
-  if (syntax.name == "core::marker::PhantomPinned")
+  if (syntax.name == phantomPinned)
     return checked.types->structural(AggregateKind::PhantomPinned, {});
   if (syntax.name == "core::future::CoroutineState") {
     if (syntax.arguments.size() != 2 || !syntax.arguments[0].type ||
@@ -107,7 +114,7 @@ std::optional<Type> Checker::machineAnnotation(const TypeSyntax &syntax,
       syntax.name == "core::mem::MaybeUninit"    ? AggregateKind::Uninit
       : syntax.name == "core::mem::ManuallyDrop" ? AggregateKind::ManualDrop
       : syntax.name == "core::cell::UnsafeCell"  ? AggregateKind::UnsafeCell
-      : syntax.name == "core::cell::Cell"        ? AggregateKind::Cell
+      : name == "core::cell::Cell"               ? AggregateKind::Cell
       : syntax.name == "core::cell::RefCell"     ? AggregateKind::RefCell
       : syntax.name == "core::cell::Ref"         ? AggregateKind::Ref
       : syntax.name == "core::cell::RefMut"      ? AggregateKind::RefMut
@@ -128,17 +135,27 @@ std::optional<Type> Checker::machineAnnotation(const TypeSyntax &syntax,
   return checked.types->structural(family, {payload});
 }
 std::optional<int> Checker::machineValue(const Node &node) {
+  constexpr std::string_view phantomPinned = "core::marker::PhantomPinned";
   const auto scope = nameModule(node.span, node.context, true);
-  if (scope < checked.symbols->modules().size() &&
-      checked.symbols->lookup(scope, node.text, resolution::Namespace::Value,
-                              node.span))
-    return std::nullopt;
-  if (node.text == "core::marker::PhantomPinned") {
+  const auto separator = node.text.rfind("::");
+  const auto numericType = separator == std::string::npos
+                               ? Type::Unknown
+                               : builtinType(node.text.substr(0, separator));
+  const bool numericOwner = isNumeric(numericType);
+  bool builtinValue = node.text == phantomPinned;
+  if (scope < checked.symbols->modules().size()) {
+    if (auto resolved = checked.symbols->lookup(
+            scope, node.text, resolution::Namespace::Value, node.span)) {
+      builtinValue = *resolved == phantomPinned;
+      if (!builtinValue && !numericOwner)
+        return std::nullopt;
+    }
+  }
+  if (builtinValue) {
     facts(node).machineOperation = "marker.phantom_pinned";
     return inference.fresh(
         checked.types->structural(AggregateKind::PhantomPinned, {}));
   }
-  auto separator = node.text.rfind("::");
   if (separator == std::string::npos)
     return std::nullopt;
   auto owner = node.text.substr(0, separator),

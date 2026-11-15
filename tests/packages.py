@@ -764,17 +764,25 @@ def checked_core_reuse():
                     "\nfn reuse_helper(value: i32): i32 { value + 1 }\n"
                     "pub const fn reuse_constant(value: i32): i32 { value + 1 }\n"
                     "pub fn reuse_generic<T: Copy>(value: T): T { value }\n"
-                    "pub fn reuse_value(value: i32): i32 { reuse_helper(value) }\n")
+                    "pub fn reuse_value(value: i32): i32 { reuse_helper(value) }\n"
+                    "pub interface ReusableConstant { const VALUE: Self; }\n"
+                    "pub type ReusableValue {}\n"
+                    "extend ReusableValue implements ReusableConstant { "
+                    "const VALUE = ReusableValue() }\n"
+                    "pub fn reuse_associated<T: ReusableConstant>(): T { "
+                    "T.(ReusableConstant).VALUE }\n")
     first = directory / "first.mt"
     second = directory / "second.mt"
     first.write_text("const VALUE: i32 = core.reuse_constant(20)\n"
                      "fn main(): i32 {\n"
+                     "    let _ = core.reuse_associated<core.ReusableValue>()\n"
                      "    core.reuse_generic(core.reuse_value(VALUE)) - 22\n"
                      "}\n")
     second.write_text("const VALUE: i32 = core.reuse_constant(40)\n"
                       "fn main(): i32 {\n"
                       "    let wide = core.reuse_generic(42u64)\n"
                       "    if wide != 42u64 { return 1 }\n"
+                      "    let _ = core.reuse_associated<core.ReusableValue>()\n"
                       "    core.reuse_value(VALUE) - 42\n"
                       "}\n")
     arguments = ["--library-dir", library]
@@ -882,8 +890,15 @@ def checked_native_macro_reuse():
         module = library / root / "module.mt"
         module.parent.mkdir(parents=True)
         module.write_text("pub fn value(): i32 { 0 }\n")
+    (library / "core" / "module.mt").write_text(
+        "pub macro first { () => { 1 }; }\n"
+        "@cfg(debug_assertions)\n"
+        "pub macro second { () => { 2 }; }\n"
+        "@cfg(not(debug_assertions))\n"
+        "pub macro second { () => { 2 }; }\n")
     module = library / "std" / "module.mt"
     module.write_text(module.read_text() +
+                      "pub import core.{first, second}\n"
                       "pub module tokens\n"
                       "macro hidden { () => { 41 }; }\n"
                       "pub macro reuse { () => { hidden!() + 1 }; }\n")
@@ -891,11 +906,11 @@ def checked_native_macro_reuse():
         "pub macro suffix { () => { 1 }; }\n")
     first, second = directory / "first.mt", directory / "second.mt"
     first.write_text("fn main(): i32 { std.value() + std.reuse!() + "
-                     "std.tokens.suffix!() - 43 }\n")
+                     "std.tokens.suffix!() + std.first!() + std.second!() - 46 }\n")
     second.write_text("macro hidden { () => { 7 }; }\n"
                       "fn extra(value: i32): i32 { value }\n"
                       "fn main(): i32 { extra(std.value() + std.reuse!() + "
-                      "std.tokens.suffix!()) - 43 }\n")
+                      "std.tokens.suffix!() + std.first!() + std.second!()) - 46 }\n")
     arguments = ["--library-dir", library]
     cold, program = explained(first, *arguments)
     assert exit_code(program) == 0
@@ -914,10 +929,18 @@ def checked_library_diagnostics():
     consumer = directory / "main.mt"
     consumer.write_text("fn main(): i32 { core.broken() }\n")
     arguments = ["check", consumer, "--library-dir", directory / "library"]
-    for source, line in (
-            ("pub fn broken(): i32 { true }\n", 1),
+    for source, line, phase in (
+            ("pub fn broken(): i32 { true }\n", 1, "type"),
             ("macro broken { () => { true }; }\n"
-             "pub fn broken(): i32 { broken!() }\n", 2)):
+             "pub fn broken(): i32 { broken!() }\n", 2, "type"),
+            ("macro unused { () => { 0 }; }\n"
+             "pub fn broken(): i32 {\n"
+             "    let mut value = 0\n"
+             "    value\n"
+             "}\n", 3, "parse"),
+             ("@cfg(any(true, unknown_predicate))\n"
+             "pub fn broken(): i32 { 0 }\n", 1, "attribute"),
+             ("pub fn broken(): i32 { \\ }\n", 1, "lex")):
         module.write_text(source)
         clean = invoke([*arguments, "--no-cache"], expected=1)
         cached = invoke([*arguments, "--explain"], expected=1)
@@ -925,9 +948,36 @@ def checked_library_diagnostics():
         expected = [item for item in clean.splitlines() if item.startswith(prefix)]
         actual = [item for item in cached.splitlines() if item.startswith(prefix)]
         assert expected and actual == expected, (clean, cached)
-        assert any("error[type]" in item for item in actual), cached
+        assert any(f"error[{phase}]" in item for item in actual), cached
+        if phase == "parse":
+            assert actual == [
+                prefix + "9: error[parse]: `let mut` is not valid syntax"
+            ], cached
         assert "error[metadata]" not in cached, cached
         assert "checked library interface cache stored core " not in cached, cached
+
+
+def checked_constant_only_library():
+    directory = evidence / "constant-only-library"
+    library = directory / "library"
+    module = library / "core" / "module.mt"
+    module.parent.mkdir(parents=True)
+    module.write_text("pub module char\nimport core.char as mounted_char\n")
+    (module.parent / "char.mt").write_text(
+        "extend char { pub const ROOT_MARK: usize = 1usize }\n")
+    consumer = directory / "consumer.mt"
+    consumer.write_text("import core.char as chars\n"
+                        "const VALUE: usize = char.ROOT_MARK\n")
+    arguments = ["--emit", "static", "--library-dir", library]
+    invoke(["check", consumer, *arguments, "--no-cache"])
+    cold = invoke(["check", consumer, *arguments, "--explain"])
+    assert "checked library interface cache stored core " in cold, cold
+    warm = invoke(["check", consumer, *arguments, "--explain"])
+    assert "checked library interface cache hit core " in warm, warm
+    clean = invoke(["check", module, *arguments, "--no-cache"], expected=1,
+                   contains="has more than one module identity")
+    cached = invoke(["check", module, *arguments], expected=1)
+    assert cached == clean, (clean, cached)
 
 
 def native_core_object_reuse():
@@ -3147,7 +3197,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          native_core_object_reuse, checked_alloc_std_reuse,
          checked_alloc_std_release_reuse,
          checked_native_macro_reuse,
-         checked_library_diagnostics,
+         checked_library_diagnostics, checked_constant_only_library,
          linked_archive_changes_invalidate_executable,
          object_cache_integrity,
          sanitizer_cache_key, edit_invalidation, comment_newline_invalidates_cache,

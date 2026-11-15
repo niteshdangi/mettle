@@ -1,7 +1,9 @@
 import alloc.alloc.{ Allocator, Global, Layout, AllocError }
 import alloc.binary_heap
 import alloc.linked_list
+import alloc.vec
 import alloc.vec_deque
+import core.convert.From
 import core.clone.Clone
 import core.cmp.{ Eq, PartialEq }
 import core.default.Default
@@ -91,6 +93,20 @@ extend CloneBomb implements Clone {
         }
         CloneBomb(self.value, self.drops, self.clone_calls)
     }
+}
+
+fn slice_equals_list<region r, region s>(
+    read slice: [i32] from r,
+    read list: vec.List<i32> from s
+): bool {
+    slice == list
+}
+
+fn mutable_slice_equals_list<region r, region s>(
+    mut slice: [i32] from r,
+    read list: vec.List<i32> from s
+): bool {
+    slice == list
 }
 
 fn default_value<T: Default>(): T { T.(Default).default() }
@@ -281,5 +297,18 @@ fn main(): i32 {
         counted.clear()
     }
     if clone_drops != 3usize { return 22 }
+    let values = [7i32, 8i32, 9i32]
+    let list = vec.List<i32>.(From<[i32; 3]>).from([7i32, 8i32, 9i32])
+    if list != read values || list != read values.as_slice() { return 23 }
+    var mutable_values = [7i32, 8i32, 9i32]
+    if list != mutable_values.as_mut_slice() { return 24 }
+    if !slice_equals_list(read values, read list) { return 25 }
+    if !mutable_slice_equals_list(mutable_values.as_mut_slice(), read list) { return 26 }
+    var converted = linked_list.LinkedList<i32>.(From<[i32; 3]>).from([7i32, 8i32, 9i32])
+    var converted_iter = converted.into_iter()
+    if converted_iter.next() != present(7i32) || converted_iter.next() != present(8i32) ||
+        converted_iter.next() != present(9i32) || converted_iter.next().is_present() {
+        return 27
+    }
     0
 }

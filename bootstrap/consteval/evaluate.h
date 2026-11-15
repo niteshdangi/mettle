@@ -36,7 +36,8 @@ struct Value {
     Reference,
     Pointer,
     Function,
-    Uninitialized
+    Uninitialized,
+    TypeIdentity
   };
   Kind kind = Kind::Unit;
   Type type = Type::Unit;
@@ -47,6 +48,7 @@ struct Value {
   Type storageType = Type::Unknown;
   std::uint64_t offset = 0, count = 0;
   int symbol = -1, selection = -1;
+  std::string identity{};
   bool exclusive = false, writable = false, addressOnly = false;
   bool immutableLiteral = false;
 };
@@ -69,6 +71,7 @@ struct Shape {
   std::vector<std::string> names{};
   std::vector<std::vector<std::size_t>> variants{};
   bool exclusive = false;
+  bool uninitializedStorage = false;
 };
 
 struct CheckedFunction {
@@ -118,6 +121,7 @@ public:
     std::string name;
     Type type = Type::Unknown;
     int field = -1;
+    std::vector<std::size_t> fields{};
   };
   virtual ~Host() = default;
   virtual void report(const std::string &phase, Span span,
@@ -141,6 +145,7 @@ public:
   virtual std::optional<Shape> typeShape(Type) { return std::nullopt; }
   virtual bool project(Type, std::size_t, const Node &) { return true; }
   virtual Type valueType(const Value &value) { return value.type; }
+  virtual std::string typeIdentity(Type) { return {}; }
   virtual Type referenceType(Type, bool, bool) { return Type::Unknown; }
   virtual bool pointerCastAllowed(Type, Type) { return false; }
   // Preserve callable types, result sources, safety, ABI and target features.

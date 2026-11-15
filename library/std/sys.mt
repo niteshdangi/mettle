@@ -1,6 +1,7 @@
 // Raw operating-system boundary of `std`: the libc calls and the
 // `runtime/sys.cpp` shims (see `runtime/sys.h`), plus checked helpers shared by
 // the hosted modules. Nothing here is a stable public surface.
+import core.fmt
 import alloc.vec
 import alloc.vec.List
 
@@ -8,7 +9,9 @@ extern "C" {
     pub unsafe fn mettle_rt_errno(): i32;
     pub unsafe fn mettle_rt_errno_kind(code: i32): i32;
     pub unsafe fn mettle_rt_errno_is_range(code: i32): i32;
+    pub unsafe fn mettle_rt_random_fill(buffer: ptr<mut u8>, count: usize): i32;
     pub unsafe fn mettle_rt_dup(fd: i32): i32;
+    pub unsafe fn mettle_rt_pipe(descriptors: ptr<mut i32>): i32;
     pub unsafe fn mettle_rt_remove_dir_all(path: ptr<read u8>): i32;
     pub unsafe fn mettle_rt_set_errno(code: i32): Unit;
     pub unsafe fn mettle_rt_open(path: ptr<read u8>, flags: i32, mode: u32): i32;
@@ -23,11 +26,18 @@ extern "C" {
     pub unsafe fn mettle_rt_argc(): i32;
     pub unsafe fn mettle_rt_argv(index: i32): ptr<read u8>;
     pub unsafe fn mettle_rt_environ(): ptr<read ptr<read u8>>;
+    pub unsafe fn mettle_rt_current_exe(buffer: ptr<mut u8>, capacity: usize, length: ptr<mut usize>): i32;
+    pub unsafe fn mettle_rt_home_dir(buffer: ptr<mut u8>, capacity: usize, length: ptr<mut usize>): i32;
     pub unsafe fn mettle_rt_spawn(program: ptr<read u8>, argv: ptr<read ptr<read u8>>, envp: ptr<read ptr<read u8>>, cwd: ptr<read u8>, modes: ptr<read i32>, fds: ptr<mut i32>): i32;
     pub unsafe fn mettle_rt_spawn_with_sources(program: ptr<read u8>, argv: ptr<read ptr<read u8>>, envp: ptr<read ptr<read u8>>, cwd: ptr<read u8>, modes: ptr<read i32>, sources: ptr<read i32>, fds: ptr<mut i32>): i32;
     pub unsafe fn mettle_rt_poll(fd: i32, write: i32, timeout_millis: i32): i32;
     pub unsafe fn mettle_rt_poll_pair(first: i32, second: i32): i32;
     pub unsafe fn mettle_rt_sock_new(kind: i32, family: i32): i32;
+    pub unsafe fn mettle_rt_unix_sock_new(kind: i32): i32;
+    pub unsafe fn mettle_rt_unix_sock_bind(fd: i32, path: ptr<read u8>, path_size: usize): i32;
+    pub unsafe fn mettle_rt_unix_sock_connect(fd: i32, path: ptr<read u8>, path_size: usize): i32;
+    pub unsafe fn mettle_rt_unix_sock_listen(fd: i32, backlog: i32): i32;
+    pub unsafe fn mettle_rt_unix_sock_accept(fd: i32): i32;
     pub unsafe fn mettle_rt_sock_bind(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): i32;
     pub unsafe fn mettle_rt_sock_connect(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32): i32;
     pub unsafe fn mettle_rt_sock_connect_timeout(fd: i32, family: i32, address: ptr<read u8>, address_size: usize, port: u16, flowinfo: u32, scope_id: u32, timeout_micros: u64): i32;
@@ -65,6 +75,7 @@ extern "C" {
 
     pub unsafe fn `read`(fd: i32, buffer: ptr<mut u8>, count: usize): isize;
     pub unsafe fn write(fd: i32, buffer: ptr<read u8>, count: usize): isize;
+    pub unsafe fn isatty(fd: i32): i32;
     pub unsafe fn close(fd: i32): i32;
     pub unsafe fn lseek(fd: i32, offset: i64, whence: i32): i64;
     pub unsafe fn unlink(path: ptr<read u8>): i32;
@@ -86,6 +97,12 @@ extern "C" {
     pub unsafe fn abort(): Never;
     pub unsafe fn strlen(text: ptr<read u8>): usize;
     pub unsafe fn strerror(code: i32): ptr<read u8>;
+}
+
+pub fn fill_random_bytes(mut bytes: [u8]): Unit {
+    if unsafe { mettle_rt_random_fill(data_mut(bytes), bytes.len()) } != 0 {
+        core.intrinsics.abort()
+    }
 }
 
 // An owned POSIX descriptor. Dropping closes it unless `into_raw_fd` transfers
@@ -111,6 +128,13 @@ extend OwnedFd {
         fd
     }
 }
+extend OwnedFd implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var tuple = try f.debug_tuple("OwnedFd")
+        try tuple.field(self.fd)
+        try tuple.finish()
+    }
+}
 
 // `open` flags understood by `mettle_rt_open`.
 pub fn open_read(): i32 { 1 }
@@ -121,6 +145,8 @@ pub fn open_create(): i32 { 16 }
 pub fn open_create_new(): i32 { 32 }
 
 pub fn errno(): i32 { unsafe { mettle_rt_errno() } }
+
+pub fn is_terminal(fd: i32): bool { unsafe { isatty(fd) } == 1 }
 
 // Bytes of the NUL-terminated string at `p`, without the terminator.
 // Safety: `p` points at a NUL-terminated string that outlives the copy.

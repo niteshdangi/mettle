@@ -3,12 +3,33 @@
 // caller-provided byte buffer. Format specifications are built explicitly with
 // `Spec` since text-interpolation syntax is not part of `core`.
 import super.cmp.Ordering
-import super.iter.Iterator
+import super.iter.{Iterator, OwnedIterable}
+import super.ops.ControlFlow
 import super.slice
 import super.text.Text
 import super.text.from_utf8_unchecked
 
 pub copy type Error {}
+
+extend Error implements super.clone.Clone {
+    fn clone(): Error { Error() }
+}
+extend Error implements super.cmp.PartialEq {
+    fn eq(read other: Error): bool { true }
+}
+extend Error implements super.cmp.Eq {}
+extend Error implements super.cmp.PartialOrd {
+    fn partial_cmp(read other: Error): Ordering? { present(Ordering.Equal) }
+}
+extend Error implements super.cmp.Ord {
+    fn cmp(read other: Error): Ordering { Ordering.Equal }
+}
+extend Error implements super.hash.Hash {
+    fn hash<H: super.hash.Hasher>(mut state: H): Unit {}
+}
+extend Error implements super.default.Default {
+    static fn default(): Error { Error() }
+}
 
 pub interface Write {
     mut fn write_str(read text: Text): Unit throws Error;
@@ -54,6 +75,7 @@ extend<region r, W: Write + unsized> WriteRef<region r, W> implements Write {
 }
 
 pub copy enum Align { Unknown, Left, Right, Center }
+extend Align implements super.clone.Clone { fn clone(): Align { self } }
 extend Align implements super.cmp.PartialEq {
     fn eq(read other: Align): bool {
         match (self, other) {
@@ -93,6 +115,9 @@ pub type DebugMap<region s, region b> {
     f: mut Formatter<region s> from b
     first: bool
     awaiting_value: bool
+}
+pub type FromFn<F: for<region r> fn(mut Formatter<region r>): Unit throws Error> {
+    callback: F
 }
 
 extend<region r> Formatter<region r> {
@@ -265,6 +290,19 @@ extend<region r> Formatter<region r> {
         try self.emit_str(digits)
         if width > length { try self.fill_run(width - length - before) }
     }
+
+    // Infinity and NaN pad with the fill character, never zeros; NaN carries no sign.
+    pub mut fn pad_nonfinite(negative: bool, signed: bool, read text: Text): Unit throws Error {
+        let saved = self.options
+        self.options.zero = false
+        if !signed { self.options.plus = false }
+        let result = capture self.pad_integral(!negative, "", text)
+        self.options = saved
+        match take result {
+            success(_) => {},
+            failure(error) => throw error
+        }
+    }
 }
 
 extend<region s, region b> DebugStruct<region s, region b> {
@@ -279,8 +317,18 @@ extend<region s, region b> DebugStruct<region s, region b> {
         mut self
     }
     pub take fn finish(): Unit throws Error {
-        if !self.first && !self.f.alternate() { try self.f.write_str(" ") }
-        try self.f.debug_close("}", self.first)
+        var builder = self
+        if !builder.first && !builder.f.alternate() { try builder.f.write_str(" ") }
+        try builder.f.debug_close("}", builder.first)
+    }
+    pub take fn finish_non_exhaustive(): Unit throws Error {
+        var builder = self
+        if builder.first && !builder.f.alternate() { try builder.f.write_str(" ") }
+        try builder.f.debug_item_start(builder.first)
+        try builder.f.write_str("..")
+        try builder.f.debug_item_end()
+        if !builder.f.alternate() { try builder.f.write_str(" ") }
+        try builder.f.debug_close("}", false)
     }
 }
 
@@ -294,8 +342,16 @@ extend<region s, region b> DebugTuple<region s, region b> {
         mut self
     }
     pub take fn finish(): Unit throws Error {
-        if self.unnamed && self.count == 1usize && !self.f.alternate() { try self.f.write_str(",") }
-        try self.f.debug_close(")", self.first)
+        var builder = self
+        if builder.unnamed && builder.count == 1usize && !builder.f.alternate() { try builder.f.write_str(",") }
+        try builder.f.debug_close(")", builder.first)
+    }
+    pub take fn finish_non_exhaustive(): Unit throws Error {
+        var builder = self
+        try builder.f.debug_item_start(builder.first)
+        try builder.f.write_str("..")
+        try builder.f.debug_item_end()
+        try builder.f.debug_close(")", false)
     }
 }
 
@@ -307,7 +363,27 @@ extend<region s, region b> DebugList<region s, region b> {
         self.first = false
         mut self
     }
-    pub take fn finish(): Unit throws Error { try self.f.debug_close("]", self.first) }
+    pub mut fn entries<T: Debug, I: OwnedIterable<Item = T>>(take entries: I): mut Self from self throws Error {
+        var items = take entries.into_iter()
+        while true {
+            match items.next() {
+                present(item) => { try self.entry(read item) },
+                none => { break }
+            }
+        }
+        mut self
+    }
+    pub take fn finish(): Unit throws Error {
+        var builder = self
+        try builder.f.debug_close("]", builder.first)
+    }
+    pub take fn finish_non_exhaustive(): Unit throws Error {
+        var builder = self
+        try builder.f.debug_item_start(builder.first)
+        try builder.f.write_str("..")
+        try builder.f.debug_item_end()
+        try builder.f.debug_close("]", false)
+    }
 }
 
 extend<region s, region b> DebugSet<region s, region b> {
@@ -318,7 +394,27 @@ extend<region s, region b> DebugSet<region s, region b> {
         self.first = false
         mut self
     }
-    pub take fn finish(): Unit throws Error { try self.f.debug_close("}", self.first) }
+    pub mut fn entries<T: Debug, I: OwnedIterable<Item = T>>(take entries: I): mut Self from self throws Error {
+        var items = take entries.into_iter()
+        while true {
+            match items.next() {
+                present(item) => { try self.entry(read item) },
+                none => { break }
+            }
+        }
+        mut self
+    }
+    pub take fn finish(): Unit throws Error {
+        var builder = self
+        try builder.f.debug_close("}", builder.first)
+    }
+    pub take fn finish_non_exhaustive(): Unit throws Error {
+        var builder = self
+        try builder.f.debug_item_start(builder.first)
+        try builder.f.write_str("..")
+        try builder.f.debug_item_end()
+        try builder.f.debug_close("}", false)
+    }
 }
 
 extend<region s, region b> DebugMap<region s, region b> {
@@ -343,9 +439,28 @@ extend<region s, region b> DebugMap<region s, region b> {
         try self.value(value)
         mut self
     }
+    pub mut fn entries<K: Debug, V: Debug, I: OwnedIterable<Item = (K, V)>>(take entries: I): mut Self from self throws Error {
+        var items = take entries.into_iter()
+        while true {
+            match items.next() {
+                present(entry) => { try self.entry(read entry.0, read entry.1) },
+                none => { break }
+            }
+        }
+        mut self
+    }
     pub take fn finish(): Unit throws Error {
-        if self.awaiting_value { super.panic.panic("debug map entry is missing a value") }
-        try self.f.debug_close("}", self.first)
+        var builder = self
+        if builder.awaiting_value { super.panic.panic("debug map entry is missing a value") }
+        try builder.f.debug_close("}", builder.first)
+    }
+    pub take fn finish_non_exhaustive(): Unit throws Error {
+        var builder = self
+        if builder.awaiting_value { super.panic.panic("debug map entry is missing a value") }
+        try builder.f.debug_item_start(builder.first)
+        try builder.f.write_str("..")
+        try builder.f.debug_item_end()
+        try builder.f.debug_close("}", false)
     }
 }
 
@@ -355,10 +470,83 @@ extend<region r> Formatter<region r> implements Write {
 
 pub interface Display { fn fmt(mut f: Formatter): Unit throws Error; }
 pub interface Debug { fn fmt(mut f: Formatter): Unit throws Error; }
+pub interface Pointer { fn fmt(mut f: Formatter): Unit throws Error; }
 pub interface Binary { fn fmt(mut f: Formatter): Unit throws Error; }
 pub interface Octal { fn fmt(mut f: Formatter): Unit throws Error; }
 pub interface LowerHex { fn fmt(mut f: Formatter): Unit throws Error; }
 pub interface UpperHex { fn fmt(mut f: Formatter): Unit throws Error; }
+pub interface LowerExp { fn fmt(mut f: Formatter): Unit throws Error; }
+pub interface UpperExp { fn fmt(mut f: Formatter): Unit throws Error; }
+extend Never implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error { match self {} }
+}
+extend Never implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error { match self {} }
+}
+
+macro forward_fmt_reference {
+    ($trait:ident) => {
+        extend<region r, T: $trait + unsized> read T from r implements $trait {
+            fn fmt(mut f: Formatter): Unit throws Error {
+                try T.($trait).fmt(self, mut f)
+            }
+        }
+        extend<region r, T: $trait + unsized> mut T from r implements $trait {
+            fn fmt(mut f: Formatter): Unit throws Error {
+                try T.($trait).fmt(self, mut f)
+            }
+        }
+    };
+}
+forward_fmt_reference!(Debug)
+forward_fmt_reference!(Display)
+forward_fmt_reference!(Binary)
+forward_fmt_reference!(Octal)
+forward_fmt_reference!(LowerHex)
+forward_fmt_reference!(UpperHex)
+forward_fmt_reference!(LowerExp)
+forward_fmt_reference!(UpperExp)
+
+extend<region r, W: Write + unsized> mut W from r implements Write {
+    mut fn write_str(read text: Text): Unit throws Error {
+        try W.(Write).write_str(self, text)
+    }
+}
+
+pub fn from_fn<F: for<region r> fn(mut Formatter<region r>): Unit throws Error>(
+    take callback: F
+): FromFn<F> {
+    FromFn(callback)
+}
+
+extend<F: for<region r> fn(mut Formatter<region r>): Unit throws Error> FromFn<F> implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error { try (self.callback)(mut f) }
+}
+
+extend<F: Debug + for<region r> fn(mut Formatter<region r>): Unit throws Error> FromFn<F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var tuple = try f.debug_tuple("FromFn")
+        try tuple.field(read self.callback)
+        try tuple.finish()
+    }
+}
+
+extend<B: Debug, C: Debug> ControlFlow<B, C> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        match self {
+            ControlFlow.Continue(value) => {
+                var tuple = try f.debug_tuple("Continue")
+                try tuple.field(read value)
+                try tuple.finish()
+            },
+            ControlFlow.Break(value) => {
+                var tuple = try f.debug_tuple("Break")
+                try tuple.field(read value)
+                try tuple.finish()
+            }
+        }
+    }
+}
 
 pub fn write<W: Write, T: Display>(mut sink: W, read value: T): Unit throws Error {
     var f = formatter(mut sink, spec())
@@ -404,7 +592,7 @@ unsafe fn piece_text<region r>(p: Piece): read Text from r {
 }
 fn render_sized<T: Display>(value: ptr<read u8>, meta: usize, mut sink: Sink): Unit throws Error {
     var f = formatter(mut sink, spec())
-    try (unsafe { read *value.cast<T>() }).fmt(mut f)
+    try T.(Display).fmt(unsafe { read *value.cast<T>() }, mut f)
 }
 fn render_text(value: ptr<read u8>, meta: usize, mut sink: Sink): Unit throws Error {
     try sink.write_str(unsafe { piece_text(Piece(value, meta)) })
@@ -535,6 +723,44 @@ fn digit_char(digit: u64, upper: bool): u8 {
     (if upper { 0x41u8 } else { 0x61u8 }) + ((digit - 10u64) as u8)
 }
 
+pub fn fmt_pointer(mut f: Formatter, address: usize): Unit throws Error {
+    var digits = [0u8; 32]
+    var start = 32usize
+    var rest = address as u128
+    while true {
+        start -= 1usize
+        digits[start] = digit_char((rest % 16u128) as u64, false)
+        rest /= 16u128
+        if rest == 0u128 { break }
+    }
+    let text = unsafe { from_utf8_unchecked(unsafe { slice.subslice_unchecked(read digits, start, 32usize) }) }
+    let options = f.options()
+    let length = 2usize + 32usize - start
+    let width = match options.width { present(value) => value, none => 0usize }
+    let padding = if width > length { width - length } else { 0usize }
+    if options.zero && padding > 0usize {
+        try f.write_str("0x")
+        var zeros = padding
+        while zeros > 0usize {
+            try f.write_char('0')
+            zeros -= 1usize
+        }
+        return try f.write_str(text)
+    }
+    let before = if padding == 0usize { 0usize } else {
+        match options.align {
+            Align.Left => 0usize,
+            Align.Center => padding / 2usize,
+            Align.Right => padding,
+            Align.Unknown => padding
+        }
+    }
+    try f.fill_run(before)
+    try f.write_str("0x")
+    try f.write_str(text)
+    try f.fill_run(padding - before)
+}
+
 pub fn fmt_radix(mut f: Formatter, magnitude: u64, negative: bool, radix: u64, upper: bool, read prefix: Text): Unit throws Error {
     if radix < 2u64 || radix > 36u64 { super.panic.panic("format radix must be in 2..36") }
     var digits = [0u8; 64]
@@ -562,6 +788,162 @@ fn fmt_radix128(mut f: Formatter, magnitude: u128, negative: bool, radix: u128, 
     }
     let text = unsafe { from_utf8_unchecked(unsafe { slice.subslice_unchecked(read digits, start, 128usize) }) }
     try f.pad_integral(!negative, prefix, text)
+}
+fn fmt_integer_exp(mut f: Formatter, magnitude: u128, negative: bool, upper: bool): Unit throws Error {
+    var digits = [0u8; 39]
+    var start = 39usize
+    var rest = magnitude
+    while true {
+        start -= 1usize
+        digits[start] = digit_char((rest % 10u128) as u64, false)
+        rest = rest / 10u128
+        if rest == 0u128 { break }
+    }
+
+    let digit_count = 39usize - start
+    var exponent = digit_count - 1usize
+    let options = f.options()
+    let precision = options.precision
+    var kept = digit_count
+    match precision {
+        present(p) => {
+            if p < digit_count - 1usize {
+                kept = p + 1usize
+                let first_discarded = digits[start + kept] - 0x30u8
+                var rest_nonzero = false
+                var i = start + kept + 1usize
+                while i < 39usize {
+                    if digits[i] != 0x30u8 { rest_nonzero = true }
+                    i += 1usize
+                }
+                let last_kept = digits[start + kept - 1usize] - 0x30u8
+                let round_up = first_discarded > 5u8 ||
+                    (first_discarded == 5u8 && (rest_nonzero || last_kept % 2u8 != 0u8))
+                if round_up {
+                    var i = start + kept
+                    while i > start && digits[i - 1usize] == 0x39u8 {
+                        digits[i - 1usize] = 0x30u8
+                        i -= 1usize
+                    }
+                    if i == start {
+                        digits[start] = 0x31u8
+                        var zero = start + 1usize
+                        while zero < start + kept {
+                            digits[zero] = 0x30u8
+                            zero += 1usize
+                        }
+                        exponent += 1usize
+                    } else {
+                        digits[i - 1usize] += 1u8
+                    }
+                }
+            }
+        },
+        none => {}
+    }
+    match precision {
+        present(_) => {},
+        none => {
+            while kept > 1usize && digits[start + kept - 1usize] == 0x30u8 {
+                kept -= 1usize
+            }
+        }
+    }
+
+    let exponent_length = if exponent < 10usize { 1usize } else { 2usize }
+    let has_point = match precision {
+        present(p) => p > 0usize || options.alternate,
+        none => kept > 1usize || options.alternate
+    }
+    let fraction_count = match precision {
+        present(p) => p,
+        none => kept - 1usize
+    }
+    let trailing_zeros = match precision {
+        present(p) => if p >= digit_count { p - (digit_count - 1usize) } else { 0usize },
+        none => 0usize
+    }
+    let fixed_length = 1usize + (if has_point { 1usize } else { 0usize }) +
+        1usize + exponent_length + (if negative || options.plus { 1usize } else { 0usize })
+    let padding = match options.width {
+        present(width) => {
+            if width <= fixed_length || fraction_count > width - fixed_length {
+                0usize
+            } else {
+                width - fixed_length - fraction_count
+            }
+        },
+        none => 0usize
+    }
+
+    if options.zero && padding > 0usize {
+        if negative { try f.write_char('-') }
+        else if options.plus { try f.write_char('+') }
+        var zeros = padding
+        while zeros > 0usize {
+            try f.write_char('0')
+            zeros -= 1usize
+        }
+    } else {
+        let before = if padding > 0usize {
+            match options.align {
+                Align.Left => 0usize,
+                Align.Center => padding / 2usize,
+                Align.Right => padding,
+                Align.Unknown => padding
+            }
+        } else {
+            0usize
+        }
+        var fills = before
+        while fills > 0usize {
+            try f.write_char(options.fill)
+            fills -= 1usize
+        }
+        if negative { try f.write_char('-') }
+        else if options.plus { try f.write_char('+') }
+    }
+
+    try f.write_char(digits[start] as char)
+    if has_point {
+        try f.write_char('.')
+        if kept > 1usize {
+            let fraction = unsafe {
+                from_utf8_unchecked(unsafe {
+                    slice.subslice_unchecked(read digits, start + 1usize, start + kept)
+                })
+            }
+            try f.write_str(fraction)
+        }
+        var zeros = trailing_zeros
+        while zeros > 0usize {
+            try f.write_char('0')
+            zeros -= 1usize
+        }
+    }
+    try f.write_char(if upper { 'E' } else { 'e' })
+    if exponent_length == 2usize {
+        try f.write_char((0x30u8 + (exponent / 10usize) as u8) as char)
+    }
+    try f.write_char((0x30u8 + (exponent % 10usize) as u8) as char)
+
+    if !(options.zero && padding > 0usize) {
+        let after = padding - (if padding > 0usize {
+            match options.align {
+                Align.Left => 0usize,
+                Align.Center => padding / 2usize,
+                Align.Right => padding,
+                Align.Unknown => padding
+            }
+        } else {
+            0usize
+        })
+        var fills = after
+        while fills > 0usize {
+            try f.write_char(options.fill)
+            fills -= 1usize
+        }
+    }
 }
 extend i8 implements Display {
     fn fmt(mut f: Formatter): Unit throws Error {
@@ -799,6 +1181,117 @@ extend u128 implements UpperHex {
     fn fmt(mut f: Formatter): Unit throws Error { try fmt_radix128(mut f, self, false, 16u128, true, "0x") }
 }
 
+extend i8 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, false)
+    }
+}
+extend i8 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, true)
+    }
+}
+extend i16 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, false)
+    }
+}
+extend i16 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, true)
+    }
+}
+extend i32 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, false)
+    }
+}
+extend i32 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, true)
+    }
+}
+extend i64 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, false)
+    }
+}
+extend i64 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, true)
+    }
+}
+extend isize implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, false)
+    }
+}
+extend isize implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let wide = self as i128
+        try fmt_integer_exp(mut f, (if wide < 0i128 { wide.wrapping_neg() } else { wide }) as u128, wide < 0i128, true)
+    }
+}
+extend u8 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, false) }
+}
+extend u8 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, true) }
+}
+extend u16 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, false) }
+}
+extend u16 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, true) }
+}
+extend u32 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, false) }
+}
+extend u32 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, true) }
+}
+extend u64 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, false) }
+}
+extend u64 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, true) }
+}
+extend usize implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, false) }
+}
+extend usize implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self as u128, false, true) }
+}
+extend i128 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let negative = self < 0i128
+        let magnitude = if negative { self.wrapping_neg() as u128 } else { self as u128 }
+        try fmt_integer_exp(mut f, magnitude, negative, false)
+    }
+}
+extend i128 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let negative = self < 0i128
+        let magnitude = if negative { self.wrapping_neg() as u128 } else { self as u128 }
+        try fmt_integer_exp(mut f, magnitude, negative, true)
+    }
+}
+extend u128 implements LowerExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self, false, false) }
+}
+extend u128 implements UpperExp {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_integer_exp(mut f, self, false, true) }
+}
+
 extend bool implements Display {
     fn fmt(mut f: Formatter): Unit throws Error { if self { try f.pad("true") } else { try f.pad("false") } }
 }
@@ -859,12 +1352,24 @@ extend Ordering implements Debug {
         }
     }
 }
+extend Align implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        match self {
+            Align.Unknown => { try f.write_str("Unknown") },
+            Align.Left => { try f.write_str("Left") },
+            Align.Right => { try f.write_str("Right") },
+            Align.Center => { try f.write_str("Center") }
+        }
+    }
+}
 extend Error implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("Error") }
 }
 extend Error implements Display {
     fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("an error occurred when formatting an argument") }
 }
+extend Error implements super.error.Error {}
+
 // Debug output of a slice, shared by arrays and slice-backed collections.
 pub fn debug_slice<T: Debug>(read items: [T], mut f: Formatter): Unit throws Error {
     try f.debug_open("[")

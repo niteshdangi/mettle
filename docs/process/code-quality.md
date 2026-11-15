@@ -111,7 +111,7 @@ value, `Never` for uninhabited results, and explicit intentional discards.
 Prefer explicit result annotations for public APIs; do not make them mandatory
 where the language permits inference.
 
-`core` requires no allocator, OS or executor. `alloc` depends on `core` and an
+`core` requires no allocator implementation, OS or executor. `alloc` depends on `core` and an
 explicit allocator; `std` adds hosted services. The optional async runtime is
 not imported implicitly. Library dependency enforcement must be added alongside
 the module/library implementations; it is currently a design/review obligation,

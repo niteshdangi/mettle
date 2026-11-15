@@ -1,5 +1,6 @@
 // profiles: debug release
 import core.future.Poll
+import core.clone.Clone
 import core.cmp.PartialEq
 import core.option
 import core.outcome
@@ -8,6 +9,9 @@ type Owned {
     value: i32
     drops: ptr<mut usize>
     drop { unsafe { *self.drops += 1usize } }
+}
+extend Owned implements Clone {
+    fn clone(): Owned { Owned(self.value + 1, self.drops) }
 }
 
 fn main(): i32 {
@@ -76,5 +80,15 @@ fn main(): i32 {
     let mapped = selected.map_ok(take fn(take value: Owned): i32 { value.value })
     if mapped != Poll<(Outcome<i32, i32>)?>.Ready(present(success(10))) ||
         drops != 4usize { return 14 }
+    {
+        let original: Poll<Owned> = Poll.Ready(Owned(11, counter))
+        let copied: Poll<Owned> = original.clone()
+        match take copied {
+            Poll.Ready(value) => { if value.value != 12 { return 15 } },
+            Poll.Pending => { return 16 }
+        }
+        if drops != 5usize { return 17 }
+    }
+    if drops != 6usize { return 18 }
     0
 }

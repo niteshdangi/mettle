@@ -2,6 +2,13 @@ import alloc.borrow.BorrowedOrOwned
 import alloc.vec.List
 import core.convert.From
 
+fn borrow_array<region r>(read items: [i32; 3] from r): i32 {
+    let cow = BorrowedOrOwned<region r, [i32]>.(From<read [i32; 3] from r>).from(items)
+    if !cow.is_borrowed() || cow.as_ref().len() != 3usize ||
+        cow.as_ref()[1usize] != 7 { return 8 }
+    0
+}
+
 fn copy_borrowed<region r>(read items: [i32] from r): i32 {
     let cow: BorrowedOrOwned<region r, [i32]> = BorrowedOrOwned.Borrowed(read items)
     if !cow.is_borrowed() || cow.as_ref().len() != 3usize { return 5 }
@@ -27,6 +34,8 @@ fn move_owned<region r>(read anchor: i32 from r): i32 {
 
 fn main(): i32 {
     let values: [i32; 3] = [4, 7, 9]
+    let array_result = borrow_array(read values)
+    if array_result != 0 { return array_result }
     let view: read [i32] = read values
     let borrowed = copy_borrowed(view)
     if borrowed != 0 { return borrowed }

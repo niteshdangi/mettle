@@ -4,7 +4,7 @@ import super.cmp.{Eq, PartialEq}
 import super.convert.{From, TryFrom}
 import super.error.{Error as CoreError}
 import super.fmt.{Debug, Display, Error, Formatter, fmt_radix}
-import super.iter.{Iterator, OwnedIterable}
+import super.iter.{FusedIterator, Iterator, OwnedIterable}
 import super.text.{FromStr, Text}
 
 // The failure of a `char` conversion from an integer that is not a scalar value.
@@ -158,6 +158,11 @@ pub fn from_digit(value: u32, radix: u32): char? {
 }
 
 pub type Escape { values: [char; 10]; length: usize; position: usize }
+extend Escape implements Clone {
+    fn clone(): Escape {
+        Escape([char; 10].(Clone).clone(self.values), self.length, self.position)
+    }
+}
 extend Escape implements Iterator {
     type Item = char
     mut fn next(): char? {
@@ -165,6 +170,28 @@ extend Escape implements Iterator {
         let value = self.values[self.position]
         self.position += 1usize
         present(value)
+    }
+}
+extend Escape implements FusedIterator {}
+
+extend Escape implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var index = self.position
+        while index < self.length {
+            try f.write_char(self.values[index])
+            index += 1usize
+        }
+    }
+}
+extend Escape implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var tuple = try f.debug_tuple("Escape")
+        var index = self.position
+        while index < self.length {
+            try tuple.field(self.values[index])
+            index += 1usize
+        }
+        try tuple.finish()
     }
 }
 
@@ -566,6 +593,11 @@ extend DecodeUtf16Error {
 }
 
 pub type DecodeUtf16<I> { iter: I; buffered: u16? }
+extend<I: Clone> DecodeUtf16<I> implements Clone {
+    fn clone(): DecodeUtf16<I> {
+        DecodeUtf16(I.(Clone).clone(self.iter), self.buffered)
+    }
+}
 
 pub fn decode_utf16<I: OwnedIterable<Item = u16>>(take items: I): DecodeUtf16<I.(OwnedIterable).IntoIter> {
     DecodeUtf16(I.(OwnedIterable).into_iter(items), none)
@@ -599,8 +631,21 @@ extend<I: Iterator<Item = u16>> DecodeUtf16<I> implements Iterator {
         present(success(unsafe { from_u32_unchecked(code) }))
     }
 }
+extend<I: Iterator<Item = u16> + Debug> DecodeUtf16<I> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("DecodeUtf16")
+        try debug.field("iter", read self.iter)
+        try debug.field("buffered", read self.buffered)
+        try debug.finish()
+    }
+}
 
 pub type CaseMapping { values: [char; 3]; length: usize; position: usize }
+extend CaseMapping implements Clone {
+    fn clone(): CaseMapping {
+        CaseMapping([char; 3].(Clone).clone(self.values), self.length, self.position)
+    }
+}
 extend CaseMapping implements Iterator {
     type Item = char
     mut fn next(): char? {
@@ -608,5 +653,25 @@ extend CaseMapping implements Iterator {
         let value = self.values[self.position]
         self.position += 1usize
         present(value)
+    }
+}
+extend CaseMapping implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var tuple = try f.debug_tuple("CaseMapping")
+        var index = self.position
+        while index < self.length {
+            try tuple.field(self.values[index])
+            index += 1usize
+        }
+        try tuple.finish()
+    }
+}
+extend CaseMapping implements Display {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var index = self.position
+        while index < self.length {
+            try char.(Display).fmt(self.values[index], mut f)
+            index += 1usize
+        }
     }
 }

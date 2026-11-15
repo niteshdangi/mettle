@@ -5,7 +5,9 @@
 // distinct nonzero code.
 
 import core.option
-import core.char.{from_u32, from_digit, Escape}
+import core.ascii.escape_default
+import core.char.{from_u32, from_digit, Escape, decode_utf16}
+import core.clone.Clone
 import alloc.string
 import std.panic.CatchResult
 
@@ -132,6 +134,12 @@ fn checks_case_mapping(): i32 {
     if !char_is(sharp.next(), 'S') { return 72 }
     if sharp.next().is_present() { return 74 }
 
+    var partial = '\u{df}'.to_uppercase()
+    if !char_is(partial.next(), 'S') { return 116 }
+    var partial_clone = partial.clone()
+    if !char_is(partial.next(), 'S') || !char_is(partial_clone.next(), 'S') { return 117 }
+    if partial.next().is_present() || partial_clone.next().is_present() { return 118 }
+
     var dotted = '\u{130}'.to_lowercase()
     if !char_is(dotted.next(), 'i') { return 75 }
     if !char_is(dotted.next(), '\u{307}') { return 77 }
@@ -151,6 +159,25 @@ fn checks_lengths_and_encoding(): i32 {
     if single.len() != 1usize || single[0usize] != 0xe9u16 { return 85 }
     let pair = '\u{1f600}'.encode_utf16(mut units)
     if pair.len() != 2usize || pair[0usize] != 0xd83du16 || pair[1usize] != 0xde00u16 { return 86 }
+
+    var decoded = decode_utf16(core.iter.chain(
+        core.iter.once(0xd800u16),
+        core.iter.once(0x41u16)
+    ))
+    match decoded.next() {
+        present(failure(error)) => { if error.unpaired_surrogate() != 0xd800u16 { return 125 } },
+        present(success(_)) => { return 126 },
+        none => { return 127 }
+    }
+    var decoded_clone = decoded.clone()
+    match decoded.next() {
+        present(success(c)) => { if c != 'A' { return 128 } },
+        _ => { return 129 }
+    }
+    match decoded_clone.next() {
+        present(success(c)) => { if c != 'A' { return 130 } },
+        _ => { return 131 }
+    }
     0
 }
 
@@ -176,6 +203,16 @@ fn checks_escapes(): i32 {
     if escape_text('\''.escape_debug()).as_text() != "\\'" { return 107 }
     if escape_text('"'.escape_debug()).as_text() != "\\\"" { return 108 }
     if escape_text('"'.escape_default()).as_text() != "\\\"" { return 109 }
+    var partial = '\\'.escape_default()
+    if !char_is(partial.next(), '\\') { return 119 }
+    var partial_clone = partial.clone()
+    if !char_is(partial.next(), '\\') || !char_is(partial_clone.next(), '\\') { return 120 }
+    if partial.next().is_present() || partial_clone.next().is_present() { return 121 }
+    var ascii_escape = escape_default(10u8)
+    if ascii_escape.next() != present(92u8) { return 122 }
+    var ascii_escape_clone = ascii_escape.clone()
+    if ascii_escape.next() != present(110u8) || ascii_escape_clone.next() != present(110u8) { return 123 }
+    if ascii_escape.next().is_present() || ascii_escape_clone.next().is_present() { return 124 }
     0
 }
 

@@ -412,13 +412,13 @@ private:
     return unsigned(StorageDuration::Static);
   }
   static unsigned maximum(StaticConstant::Kind *) {
-    return unsigned(StaticConstant::Kind::Pointer);
+    return unsigned(StaticConstant::Kind::TypeIdentity);
   }
   static unsigned maximum(ReceiverStep::Kind *) {
-    return unsigned(ReceiverStep::Kind::Erase);
+    return unsigned(ReceiverStep::Kind::Borrow);
   }
   static unsigned maximum(interfaces::Property *) {
-    return unsigned(interfaces::Property::Static);
+    return unsigned(interfaces::Property::Thin);
   }
   static unsigned maximum(metadata::SymbolKind *) {
     return unsigned(metadata::SymbolKind::Static);
@@ -508,10 +508,14 @@ WIRE(DeclarationEnvironment, v.names, v.bounds, v.parameters, v.defaults,
      v.equalities, v.declarationSpan)
 WIRE(DeclarationRegions, v.names, v.parameters, v.assumptions)
 WIRE(ImportedTypeDeclaration, v.span, v.name, v.type, v.generics)
+void expression(Archive &archive, std::shared_ptr<CheckedExpression> &value);
 void wire(Archive &a, ImportedInherentConstant &v) {
   a(v.implementation, v.declaration, v.name, v.target, v.declaredType, v.value,
     v.materialized);
-  if ((!v.materialized && v.value == Type::Unknown) ||
+  expression(a, v.initializer);
+  if ((!v.materialized && v.value == Type::Unknown && !v.initializer) ||
+      (v.initializer && (v.value != Type::Unknown || v.materialized ||
+                         !a.types->isProduct(v.declaredType))) ||
       (v.materialized &&
        (v.value != Type::Unknown || v.materialized->type != v.declaredType ||
         (v.materialized->kind != StaticConstant::Kind::Aggregate &&
@@ -524,7 +528,7 @@ WIRE(interfaces::Associated, v.name, v.parameter, v.parameters, v.defaultValue,
      v.asyncFuture, v.asyncFutureDefaultInferred, v.equalities, v.defaults)
 WIRE(interfaces::AssociatedValue, v.parameters, v.value, v.regions,
      v.regionRequirements, v.requirements, v.fromDefault)
-WIRE(interfaces::ConcurrencyDeclaration, v.negative, v.implementation)
+WIRE(interfaces::StructuralPropertyDeclaration, v.negative, v.implementation)
 WIRE(interfaces::Projection, v.parameter, v.subject, v.interfaceType,
      v.associated, v.arguments, v.regionArguments)
 WIRE(DeclarationSymbolIdentity, v.kind, v.index, v.span, v.definition)
@@ -556,6 +560,10 @@ void wire(Archive &a, StaticConstant &v) {
     a.symbol(metadata::SymbolKind::Static, v.symbol);
   a(v.projections, v.selection, v.text, v.byteOffset);
   if ((v.kind == StaticConstant::Kind::Repeat && v.fields.size() != 1) ||
+      (v.kind == StaticConstant::Kind::TypeIdentity &&
+       (v.type != Type::U64 || v.text.empty() || !v.fields.empty() ||
+        v.symbol != -1 || !v.projections.empty() || v.selection != -1 ||
+        v.byteOffset != 0)) ||
       v.selection < -1)
     a.fail("invalid checked static constant inventory");
   if (v.kind == StaticConstant::Kind::Text && !textConstantCount(*a.types, v))
@@ -607,7 +615,7 @@ void wire(Archive &a, interfaces::Database &v) {
     v.definitions[index] = std::move(item);
   }
   a(v.implementations, v.projections, v.unpinImplementations,
-    v.concurrencyDeclarations, v.argumentsReady);
+    v.structuralDeclarations, v.argumentsReady);
 }
 void wire(Archive &a, ReceiverStep &v) {
   a(v.kind, v.source, v.target, v.resultView, v.count, v.mode);
@@ -945,14 +953,21 @@ DeclarationInventory declarationInventory(const CheckedModule &module) {
                               module.tree.statics[i].span,
                               module.staticStorage[i].name});
   std::set<std::uint32_t> packages;
-  const auto symbolCount = result.symbols.size();
-  for (std::size_t i = 0; i < symbolCount; ++i) {
-    const auto symbol = result.symbols[i];
-    if (auto package = module.namespaces().packageOf(symbol.span);
-        package && packages.insert(*package).second)
+  auto package = [&](Span span) {
+    if (auto owner = module.namespaces().packageOf(span);
+        owner && packages.insert(*owner).second)
       result.symbols.push_back(
-          {metadata::SymbolKind::Package, *package, symbol.span, {}});
-  }
+          {metadata::SymbolKind::Package, *owner, span, {}});
+  };
+  const auto symbolCount = result.symbols.size();
+  for (std::size_t i = 0; i < symbolCount; ++i)
+    package(result.symbols[i].span);
+  for (const auto &type : result.types)
+    package(type.span);
+  for (const auto &implementation : contracts.implementations)
+    package(implementation.span);
+  for (const auto &declaration : module.tree.modules)
+    package(declaration.span);
   return result;
 }
 
@@ -1006,7 +1021,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   }
   result.header = std::move(header.output);
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.7");
+  contracts.tag("mettle.checked-contracts.9");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size();
   contracts(count);
@@ -1078,7 +1093,7 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
     return result;
   }
   Archive archive(bytes, references, types.get());
-  archive.tag("mettle.checked-contracts.7");
+  archive.tag("mettle.checked-contracts.9");
   auto value = std::make_shared<ImportedDeclarations>();
   value->types = std::move(types);
   std::uint64_t count = 0;
@@ -1212,7 +1227,7 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
       (void)type;
       implementation(item);
     }
-    for (const auto &[key, item] : database->concurrencyDeclarations) {
+    for (const auto &[key, item] : database->structuralDeclarations) {
       (void)key;
       implementation(item.implementation);
     }

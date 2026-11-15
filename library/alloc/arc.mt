@@ -316,7 +316,7 @@ unsafe extend<T: Transferable + Shareable + unsized, A: Allocator + Shareable> W
 // payload, so it aborts.
 unsafe fn increment(count: ptr<mut core.sync.atomic.AtomicUsize>) {
     let previous = (*count).fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
-    if previous > 0x7fffffffffffffffusize { core.intrinsics.abort() }
+    if previous > isize.MAX as usize { core.intrinsics.abort() }
 }
 
 unsafe fn increment_weak(h: ptr<mut SharedHeader>): Unit {
@@ -326,7 +326,7 @@ unsafe fn increment_weak(h: ptr<mut SharedHeader>): Unit {
             current = (*h).wk.load(core.sync.atomic.Ordering.Relaxed)
             continue
         }
-        if current > 0x7fffffffffffffffusize { core.intrinsics.abort() }
+        if current > isize.MAX as usize { core.intrinsics.abort() }
         match (*h).wk.compare_exchange_weak(
             current, current + 1usize,
             core.sync.atomic.Ordering.Acquire, core.sync.atomic.Ordering.Relaxed
@@ -397,12 +397,12 @@ pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): Shared<T> {
 extend<T: unsized, A: Allocator + Clone> Shared<T, A> {
     // Another strong owner of the same payload; the payload is not cloned.
     pub fn retain(): Shared<T, A> {
-        let allocator = self.a.clone()
+        let allocator = A.(Clone).clone(self.a)
         unsafe { increment(core.ptr.from_mut((*self.h).strong)) }
         Shared(self.p, self.h, allocator)
     }
     pub fn downgrade(): Weak<T, A> {
-        let allocator = self.a.clone()
+        let allocator = A.(Clone).clone(self.a)
         unsafe { increment_weak(self.h) }
         Weak(self.p, self.h, allocator)
     }
@@ -484,7 +484,7 @@ extend<T, A: Allocator> Shared<T, A> {
         let result = capture self.try_unwrap()
         match take result {
             success(value) => value,
-            failure(owner) => owner.get().clone()
+            failure(owner) => T.(Clone).clone(owner.get())
         }
     }
 }
@@ -515,7 +515,7 @@ extend<A: Allocator> Shared<any Any, A> {
 pub unsafe fn increment_strong_count<T: unsized, A: Allocator + Clone>(
     read raw: RawShared<T, A>
 ): RawShared<T, A> {
-    let allocator = raw.a.clone()
+    let allocator = A.(Clone).clone(raw.a)
     unsafe { increment(core.ptr.from_mut((*raw.h).strong)) }
     RawShared(raw.p, raw.h, allocator)
 }
@@ -532,8 +532,8 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
             let b = self.h
             var current = (*b).strong.load(core.sync.atomic.Ordering.Relaxed)
             while current != 0usize {
-                if current > 0x7fffffffffffffffusize { core.intrinsics.abort() }
-                let allocator = self.a.clone()
+                if current > isize.MAX as usize { core.intrinsics.abort() }
+                let allocator = A.(Clone).clone(self.a)
                 match (*b).strong.compare_exchange_weak(current, current + 1usize,
                         core.sync.atomic.Ordering.Acquire, core.sync.atomic.Ordering.Relaxed) {
                     success(_) => { return present(Shared(self.p, b, allocator)) },
@@ -544,7 +544,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
         }
     }
     pub fn retain(): Weak<T, A> {
-        let allocator = self.a.clone()
+        let allocator = A.(Clone).clone(self.a)
         if self.h != core.ptr.null_mut<SharedHeader>() {
             unsafe { increment_weak(self.h) }
         }
@@ -637,7 +637,7 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
 extend<T: Clone, A: Allocator + Clone> Shared<T, A> {
     pub mut fn make_mut(): mut T from self {
         if unsafe { is_unique(self.h) } { return unsafe { mut *self.p } }
-        let replacement = new_uninit_in<T, A>(self.a.clone())
+        let replacement = new_uninit_in<T, A>(A.(Clone).clone(self.a))
         let moved = unsafe {
             (*self.h).strong.compare_exchange(
                 1usize, 0usize,
@@ -652,7 +652,7 @@ extend<T: Clone, A: Allocator + Clone> Shared<T, A> {
             var allocator = raw.a
             let _implicit = WeakRelease(raw.h, core.ptr.from_mut(allocator))
         } else {
-            let value = self.get().clone()
+            let value = T.(Clone).clone(self.get())
             unsafe { core.ptr.write(replacement.p.cast<T>(), value) }
             let initialized = unsafe { replacement.assume_init() }
             let _old = unsafe { core.ptr.replace(core.ptr.from_mut(self), initialized) }
@@ -706,7 +706,7 @@ extend<T: unsized, A: Allocator> Pinned<T, A> {
 extend<T: unsized, A: Allocator + Clone> Pinned<T, A> {
     // Another pinned owner of the same payload.
     pub fn retain(): Pinned<T, A> {
-        let allocator = self.a.clone()
+        let allocator = A.(Clone).clone(self.a)
         unsafe { increment(core.ptr.from_mut((*self.h).strong)) }
         Pinned(self.p, self.h, allocator)
     }
@@ -774,6 +774,8 @@ extend<region r, T: PartialOrd<U> + unsized, U: unsized, A: Allocator> pinned mu
     fn partial_cmp(read other: Pinned<U, A>): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
 }
 unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}
+// Moving a Shared handle never pins its allocator or payload.
+unsafe extend<T: unsized, A: Allocator> Shared<T, A> implements Unpin {}
 unsafe extend<T: Transferable + Shareable + unsized, A: Allocator + Transferable> Pinned<T, A> implements Transferable {}
 unsafe extend<T: Transferable + Shareable + unsized, A: Allocator + Shareable> Pinned<T, A> implements Shareable {}
 extend<T: Default> Pinned<T> implements Default {
@@ -858,7 +860,7 @@ extend<region r, T: Clone> Shared<[T]> implements From<read [T] from r> {
         var copies = super.vec.with_capacity<T>(values.len())
         var index = 0usize
         while index < values.len() {
-            copies.push(values[index].clone())
+            copies.push(T.(Clone).clone(values[index]))
             index += 1usize
         }
         Shared<[T]>.from(copies)
@@ -869,7 +871,7 @@ extend<region r, T: Clone> Shared<[T]> implements From<mut [T] from r> {
         var copies = super.vec.with_capacity<T>(values.len())
         var index = 0usize
         while index < values.len() {
-            copies.push(values[index].clone())
+            copies.push(T.(Clone).clone(values[index]))
             index += 1usize
         }
         Shared<[T]>.from(copies)
@@ -881,11 +883,12 @@ extend<T> Shared<[T]> implements FromItems<T> {
         Shared<[T]>.from(values)
     }
 }
-extend<T> Shared<[T]> implements From<super.vec.List<T>> {
-    static fn from(take values: super.vec.List<T>): Shared<[T]> {
+extend<T, A: Allocator + Clone> Shared<[T], A> implements From<super.vec.List<T, A>> {
+    static fn from(take values: super.vec.List<T, A>): Shared<[T], A> {
         var source = values
         let length = source.len()
-        var owner = new_uninit_slice<T>(length)
+        let allocator = A.(Clone).clone(source.allocator())
+        var owner = new_uninit_slice_in<T, A>(length, allocator)
         match take owner.get_mut() {
             present(slots) => {
                 var index = length
@@ -920,5 +923,16 @@ extend<T, const N: usize, A: Allocator> Shared<[T; N], A> implements TryFrom<Sha
         let raw = value.into_raw()
         // The length check validates the array extent; payload and header allocation stay unchanged.
         success(Shared(raw.p.cast<[T; N]>(), raw.h, raw.a))
+    }
+}
+extend<T: unsized, A: Allocator> Shared<T, A> implements fmt.Pointer {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try fmt.fmt_pointer(mut f, self.as_ptr().addr())
+    }
+}
+extend<T: unsized, A: Allocator> Pinned<T, A> implements fmt.Pointer {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        let pointer = core.ptr.from_ref(self.get_ref())
+        try fmt.fmt_pointer(mut f, pointer.addr())
     }
 }

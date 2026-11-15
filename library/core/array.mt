@@ -29,6 +29,9 @@ pub copy type TryFromSliceError {}
 extend TryFromSliceError implements Clone {
     fn clone(): TryFromSliceError { self }
 }
+extend TryFromSliceError implements From<Never> {
+    static fn from(take value: Never): TryFromSliceError { match value {} }
+}
 extend TryFromSliceError implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("TryFromSliceError(())") }
 }
@@ -82,6 +85,14 @@ extend<T, const N: usize> [core.mem.MaybeUninit<T>; N]
     static fn from(take value: core.mem.MaybeUninit<[T; N]>): [core.mem.MaybeUninit<T>; N] {
         // MaybeUninit preserves element layout without requiring initialized payloads.
         unsafe { core.ptr.`read`(core.ptr.from_ref(value).cast<[core.mem.MaybeUninit<T>; N]>()) }
+    }
+}
+
+extend<T, const N: usize> core.mem.MaybeUninit<[T; N]>
+    implements From<[core.mem.MaybeUninit<T>; N]> {
+    static fn from(take value: [core.mem.MaybeUninit<T>; N]): core.mem.MaybeUninit<[T; N]> {
+        // Both forms have identical layout and neither requires initialized elements.
+        unsafe { core.mem.transmute<core.mem.MaybeUninit<[T; N]>>(value) }
     }
 }
 

@@ -319,6 +319,7 @@ struct Function {
   std::size_t implicitGenericParameters = 0;
   std::string interfaceOwner{};
   int implementation = -1;
+  bool associatedConstantInitializer = false;
   bool unsafeFunction = false;
   bool constFunction = false;
   bool asynchronous = false;

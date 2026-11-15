@@ -79,7 +79,7 @@ fn count(read input: path.Path, read report: path.Path): i32 throws Error {
 }
 
 fn main(): i32 {
-    let args = std.env.args()
+    let args = std.env.args_os()
     if args.len() != 3usize {
         std.io.eprint("usage: wordcount INPUT REPORT\n")
         return 2

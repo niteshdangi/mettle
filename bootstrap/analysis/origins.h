@@ -18,6 +18,8 @@ struct FunctionEffects {
   ViewEffects writeDependencies;
   std::set<Place> overwrites;
   std::map<ViewPath, std::set<Place>> returns;
+  // View paths absent from every returned value.
+  std::set<ViewPath> absentReturns;
   std::map<ViewPath, std::set<Place>> disjointWrites;
   // These roots are resolved static identities, not callee-local slots.
   std::map<ViewPath, std::set<Place>> staticReturns;

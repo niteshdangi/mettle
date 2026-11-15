@@ -1,7 +1,7 @@
 import core.clone.Clone
 import core.convert.From
 import core.default.Default
-import core.fmt.{Debug, Error, Formatter}
+import core.fmt.{Debug, Error, Formatter, Pointer, fmt_pointer}
 import core.hash.{Hash, Hasher}
 
 extend core.sync.atomic.Ordering implements Clone {
@@ -166,12 +166,43 @@ extend<T> core.sync.atomic.AtomicPtr<T> implements From<ptr<mut T>> {
 extend<T> core.sync.atomic.AtomicPtr<T> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         try f.write_str("AtomicPtr(")
-        try usize.(Debug).fmt(self.load(core.sync.atomic.Ordering.Relaxed).addr(), mut f)
+        let pointer = self.load(core.sync.atomic.Ordering.Relaxed)
+        try fmt_pointer(mut f, pointer.addr())
         try f.write_str(")")
+    }
+}
+extend<T> core.sync.atomic.AtomicPtr<T> implements Pointer {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let pointer = self.load(core.sync.atomic.Ordering.Relaxed)
+        try fmt_pointer(mut f, pointer.addr())
     }
 }
 
 extend core.sync.atomic.AtomicI8 {
+    pub fn update<F: mut fn(i8): i8>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): i8 {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(i8): (i8)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<i8, i8> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(i8): (i8)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<i8, i8> {
         var callback = f
         var current = self.load(fetch_order)
@@ -188,6 +219,30 @@ extend core.sync.atomic.AtomicI8 {
 }
 
 extend core.sync.atomic.AtomicI16 {
+    pub fn update<F: mut fn(i16): i16>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): i16 {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(i16): (i16)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<i16, i16> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(i16): (i16)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<i16, i16> {
         var callback = f
         var current = self.load(fetch_order)
@@ -204,6 +259,30 @@ extend core.sync.atomic.AtomicI16 {
 }
 
 extend core.sync.atomic.AtomicI32 {
+    pub fn update<F: mut fn(i32): i32>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): i32 {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(i32): (i32)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<i32, i32> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(i32): (i32)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<i32, i32> {
         var callback = f
         var current = self.load(fetch_order)
@@ -220,6 +299,30 @@ extend core.sync.atomic.AtomicI32 {
 }
 
 extend core.sync.atomic.AtomicI64 {
+    pub fn update<F: mut fn(i64): i64>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): i64 {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(i64): (i64)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<i64, i64> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(i64): (i64)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<i64, i64> {
         var callback = f
         var current = self.load(fetch_order)
@@ -236,6 +339,30 @@ extend core.sync.atomic.AtomicI64 {
 }
 
 extend core.sync.atomic.AtomicIsize {
+    pub fn update<F: mut fn(isize): isize>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): isize {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(isize): (isize)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<isize, isize> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(isize): (isize)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<isize, isize> {
         var callback = f
         var current = self.load(fetch_order)
@@ -252,6 +379,30 @@ extend core.sync.atomic.AtomicIsize {
 }
 
 extend core.sync.atomic.AtomicU8 {
+    pub fn update<F: mut fn(u8): u8>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): u8 {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(u8): (u8)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<u8, u8> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(u8): (u8)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<u8, u8> {
         var callback = f
         var current = self.load(fetch_order)
@@ -268,6 +419,30 @@ extend core.sync.atomic.AtomicU8 {
 }
 
 extend core.sync.atomic.AtomicU16 {
+    pub fn update<F: mut fn(u16): u16>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): u16 {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(u16): (u16)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<u16, u16> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(u16): (u16)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<u16, u16> {
         var callback = f
         var current = self.load(fetch_order)
@@ -284,6 +459,30 @@ extend core.sync.atomic.AtomicU16 {
 }
 
 extend core.sync.atomic.AtomicU32 {
+    pub fn update<F: mut fn(u32): u32>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): u32 {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(u32): (u32)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<u32, u32> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(u32): (u32)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<u32, u32> {
         var callback = f
         var current = self.load(fetch_order)
@@ -300,6 +499,30 @@ extend core.sync.atomic.AtomicU32 {
 }
 
 extend core.sync.atomic.AtomicU64 {
+    pub fn update<F: mut fn(u64): u64>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): u64 {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(u64): (u64)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<u64, u64> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(u64): (u64)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<u64, u64> {
         var callback = f
         var current = self.load(fetch_order)
@@ -316,6 +539,30 @@ extend core.sync.atomic.AtomicU64 {
 }
 
 extend core.sync.atomic.AtomicUsize {
+    pub fn update<F: mut fn(usize): usize>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): usize {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(usize): (usize)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<usize, usize> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(usize): (usize)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<usize, usize> {
         var callback = f
         var current = self.load(fetch_order)
@@ -332,6 +579,30 @@ extend core.sync.atomic.AtomicUsize {
 }
 
 extend core.sync.atomic.AtomicBool {
+    pub fn update<F: mut fn(bool): bool>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): bool {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(bool): (bool)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<bool, bool> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(bool): (bool)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<bool, bool> {
         var callback = f
         var current = self.load(fetch_order)
@@ -348,6 +619,30 @@ extend core.sync.atomic.AtomicBool {
 }
 
 extend<T> core.sync.atomic.AtomicPtr<T> {
+    pub fn update<F: mut fn(ptr<mut T>): ptr<mut T>>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): ptr<mut T> {
+        var callback = f
+        var current = self.load(fetch_order)
+        loop {
+            let next = callback(current)
+            match self.compare_exchange_weak(current, next, set_order, fetch_order) {
+                success(old) => { return old },
+                failure(seen) => { current = seen }
+            }
+        }
+    }
+
+    pub fn try_update<F: mut fn(ptr<mut T>): (ptr<mut T>)?>(
+        set_order: core.sync.atomic.Ordering,
+        fetch_order: core.sync.atomic.Ordering,
+        take f: F
+    ): Outcome<ptr<mut T>, ptr<mut T>> {
+        self.fetch_update(set_order, fetch_order, take f)
+    }
+
     pub fn fetch_update<F: mut fn(ptr<mut T>): (ptr<mut T>)?>(set_order: core.sync.atomic.Ordering, fetch_order: core.sync.atomic.Ordering, take f: F): Outcome<ptr<mut T>, ptr<mut T>> {
         var callback = f
         var current = self.load(fetch_order)

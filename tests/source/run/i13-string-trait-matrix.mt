@@ -50,8 +50,15 @@ fn checks_comparison(): i32 {
     if String.(PartialOrd).partial_cmp(apple, banana) != present(Ordering.Less) { return 4 }
     if String.(PartialEq<Text>).eq(apple, "apple") == false || String.(PartialEq<Text>).eq(apple, "pear") { return 5 }
     if !String.(PartialEq<read Text from static>).eq(apple, "apple") { return 9 }
+    if !Text.(PartialEq<String>).eq("apple", apple) { return 20 }
+    let text_view: read Text from static = "apple"
+    if !(text_view == apple) { return 21 }
     let view: BorrowedOrOwned<region static, Text> = BorrowedOrOwned.Owned(String("apple"))
     if !String.(PartialEq<BorrowedOrOwned<region static, Text>>).eq(apple, view) { return 6 }
+    let borrowed_view: BorrowedOrOwned<region static, Text> = BorrowedOrOwned.Borrowed("apple")
+    if !Text.(PartialEq<BorrowedOrOwned<region static, Text>>).eq("apple", borrowed_view) { return 18 }
+    if !(text_view == borrowed_view) { return 22 }
+    if !BorrowedOrOwned<region static, Text>.(PartialEq<String>).eq(borrowed_view, apple) { return 19 }
     let path = path_buf_from_text("apple")
     if !String.(PartialEq<PathBuf>).eq(apple, path) || String.(PartialEq<Path>).eq(banana, path.as_path()) { return 7 }
     if hash_one(apple) != hash_one(again) || hash_one(apple) == hash_one(banana) { return 8 }
@@ -94,6 +101,33 @@ fn checks_building(): i32 {
     text = String.(Add<read Text from static>).add(text, "b")
     String.(AddAssign<read Text from static>).add_assign(mut text, "c")
     if text.as_text() != "abc" { return 30 }
+
+    let cow_left: BorrowedOrOwned<region static, Text> = BorrowedOrOwned.Borrowed("x")
+    let cow_right: BorrowedOrOwned<region static, Text> = BorrowedOrOwned.Borrowed("y")
+    let cow_joined = BorrowedOrOwned<region static, Text>.(
+        Add<BorrowedOrOwned<region static, Text>>
+    ).add(cow_left, cow_right)
+    if !cow_joined.is_owned() || cow_joined.as_ref() != "xy" { return 35 }
+
+    let cow_prefix: BorrowedOrOwned<region static, Text> = BorrowedOrOwned.Borrowed("a")
+    let cow_with_text = BorrowedOrOwned<region static, Text>.(
+        Add<read Text from static>
+    ).add(cow_prefix, "b")
+    if !cow_with_text.is_owned() || cow_with_text.as_ref() != "ab" { return 36 }
+
+    var cow_assign: BorrowedOrOwned<region static, Text> = BorrowedOrOwned.Borrowed("c")
+    let cow_suffix: BorrowedOrOwned<region static, Text> = BorrowedOrOwned.Borrowed("d")
+    BorrowedOrOwned<region static, Text>.(
+        AddAssign<BorrowedOrOwned<region static, Text>>
+    ).add_assign(mut cow_assign, cow_suffix)
+    if !cow_assign.is_owned() || cow_assign.as_ref() != "cd" { return 37 }
+
+    var cow_assign_text: BorrowedOrOwned<region static, Text> = BorrowedOrOwned.Borrowed("e")
+    BorrowedOrOwned<region static, Text>.(
+        AddAssign<read Text from static>
+    ).add_assign(mut cow_assign_text, "f")
+    if !cow_assign_text.is_owned() || cow_assign_text.as_ref() != "ef" { return 38 }
+
     var sink = String("")
     match take capture String.(Write).write_str(mut sink, "w") {
         success(_) => {},

@@ -3,7 +3,16 @@
 // hashes exactly what its `PartialEq` compares. Integers are written as
 // little-endian bytes, so results do not depend on the host byte order.
 import super.cmp.{Ordering, Descending}
+import super.ops.ControlFlow
 import super.text.Text
+import super.default.Default
+import super.clone.{Clone, FunctionPointer}
+
+extend<F: FunctionPointer> F implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit {
+        state.write_usize(core.intrinsics.fn_addr(self))
+    }
+}
 
 pub interface Hasher {
     mut fn write(read bytes: [u8]): Unit;
@@ -53,6 +62,7 @@ pub interface Hash {
     }
 }
 
+
 pub interface BuildHasher {
     type Hasher: Hasher;
     fn build_hasher(): Self.Hasher;
@@ -62,6 +72,26 @@ pub interface BuildHasher {
         state.finish()
     }
 }
+
+pub copy type BuildHasherDefault<H> {}
+extend<H> BuildHasherDefault<H> {
+    pub static const fn new(): BuildHasherDefault<H> { BuildHasherDefault<H>() }
+}
+extend<H> BuildHasherDefault<H> implements Default {
+    static fn default(): BuildHasherDefault<H> { BuildHasherDefault<H>.new() }
+}
+extend<H: Hasher + Default> BuildHasherDefault<H> implements BuildHasher {
+    type Hasher = H
+    fn build_hasher(): H { H.(Default).default() }
+}
+
+extend<H> BuildHasherDefault<H> implements super.clone.Clone {
+    fn clone(): BuildHasherDefault<H> { self }
+}
+extend<H> BuildHasherDefault<H> implements super.cmp.PartialEq {
+    fn eq(read other: BuildHasherDefault<H>): bool { true }
+}
+extend<H> BuildHasherDefault<H> implements super.cmp.Eq {}
 
 // Hashes one value with the default keyed SipHash-1-3 (zero key).
 pub fn hash_one<T: Hash + unsized>(read value: T): u64 {
@@ -89,6 +119,15 @@ pub type SipHasher {
     v0: u64; v1: u64; v2: u64; v3: u64
     tail: u64; tail_length: usize; length: usize
     compression: u32; finalization: u32
+}
+extend SipHasher implements Clone {
+    fn clone(): SipHasher {
+        SipHasher(
+            self.v0, self.v1, self.v2, self.v3,
+            self.tail, self.tail_length, self.length,
+            self.compression, self.finalization
+        )
+    }
 }
 fn sip_round(mut hasher: SipHasher): Unit {
     hasher.v0 = hasher.v0.wrapping_add(hasher.v1)
@@ -180,6 +219,11 @@ extend i128 implements Hash {
 extend isize implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit { state.write_usize(self as usize) }
 }
+
+extend Never implements Hash {
+    fn hash<H: Hasher>(mut _state: H): Unit { match self {} }
+}
+
 extend bool implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit { state.write_u8(self as u8) }
 }
@@ -199,6 +243,20 @@ extend Text implements Hash {
 extend Ordering implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit {
         state.write_u8(match self { Ordering.Less => 0u8, Ordering.Equal => 1u8, Ordering.Greater => 2u8 })
+    }
+}
+extend<B: Hash, C: Hash> ControlFlow<B, C> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit {
+        match self {
+            ControlFlow.Continue(value) => {
+                state.write_u8(0u8)
+                value.hash(mut state)
+            },
+            ControlFlow.Break(value) => {
+                state.write_u8(1u8)
+                value.hash(mut state)
+            }
+        }
     }
 }
 extend<T: Hash> Descending<T> implements Hash {

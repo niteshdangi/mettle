@@ -52,7 +52,7 @@ std::vector<Type> hierarchy(TypeStore &types, const Database &database,
 }
 std::optional<std::vector<TypeBinding>>
 Solver::match(Type pattern, Type actual, bool symmetric,
-              RegionEnvironment *regions) {
+              RegionEnvironment *regions, bool partialActual) {
   std::vector<TypeBinding> bindings;
   if (types.isProduct(pattern) && types.isProduct(actual) &&
       !structuralAggregate(types.product(pattern).kind) &&
@@ -60,6 +60,8 @@ Solver::match(Type pattern, Type actual, bool symmetric,
     return std::nullopt;
   auto patternParameters = types.typeParameters(pattern);
   auto variables = patternParameters;
+  if (partialActual)
+    variables.clear();
   auto actualParameters = types.typeParameters(actual);
   if (symmetric)
     variables.insert(variables.end(), actualParameters.begin(),
@@ -80,6 +82,8 @@ Solver::match(Type pattern, Type actual, bool symmetric,
   std::function<bool(Type, Type)> unify = [&](Type pattern, Type actual) {
     pattern = types.substitute(pattern, bindings);
     actual = types.substitute(actual, bindings);
+    if (partialActual && actual == Type::Unknown)
+      return true;
     if (pattern == actual)
       return true;
     if (!visiting.emplace(pattern, actual).second)
@@ -496,8 +500,9 @@ Type Solver::checkedProjection(Type projection, Span span, bool report) {
   }
   return types.projection(
       subject, interfaceType, static_cast<std::size_t>(descriptor.value),
-      std::move(arguments), descriptor.valueType, descriptor.copyRequested,
-      descriptor.sized, descriptor.regionArguments);
+      std::move(arguments), types.substitute(descriptor.valueType, bindings),
+      descriptor.copyRequested, descriptor.sized, descriptor.regionArguments,
+      descriptor.thin);
 }
 
 bool Solver::prove(const Obligation &obligation, Span span, bool report) {
@@ -513,6 +518,34 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
       !wellFormedInterface(obligation.subject, obligation.interfaceType, span,
                            report))
     return false;
+  const Definition *functionPointerMarker = nullptr;
+  if (obligation.property == Property::Interface &&
+      types.isErased(obligation.interfaceType)) {
+    const auto &definition =
+        database
+            .definitions[types.erased(obligation.interfaceType).declaration];
+    if (definition.name == "core::clone::FunctionPointer" ||
+        definition.name == "core::ops::FnPtr")
+      functionPointerMarker = &definition;
+  }
+  auto deriveFunctionPointerMarker = [&] {
+    const auto &definition = *functionPointerMarker;
+    if (!definition.parameters.empty() || !definition.regions.empty() ||
+        !definition.associated.empty() || !definition.methods.empty())
+      return false;
+    const std::array bindings{TypeBinding{definition.self, obligation.subject}};
+    auto requirements = definition.superinterfaces;
+    requirements.insert(requirements.end(), definition.requirements.begin(),
+                        definition.requirements.end());
+    for (auto required : requirements) {
+      required.subject = types.substitute(required.subject, bindings);
+      required.interfaceType =
+          types.substitute(required.interfaceType, bindings);
+      if (!prove(required, span, report))
+        return false;
+    }
+    return true;
+  };
   auto available = assumptions;
   if (types.isProjection(obligation.subject)) {
     auto bounds = projectionBounds(obligation.subject, span);
@@ -549,6 +582,15 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
       }
       if (assumption.interfaceType == obligation.interfaceType)
         return true;
+      if (functionPointerMarker && types.isErased(assumption.interfaceType)) {
+        const auto &provided =
+            database
+                .definitions[types.erased(assumption.interfaceType).declaration]
+                .name;
+        if (provided == "core::clone::FunctionPointer" ||
+            provided == "core::ops::FnPtr")
+          return deriveFunctionPointerMarker();
+      }
       if (obligation.property == Property::Interface &&
           types.isErased(assumption.interfaceType) &&
           types.isErased(obligation.interfaceType)) {
@@ -595,10 +637,16 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
     return types.isCopy(obligation.subject);
   if (obligation.property == Property::Sized)
     return types.isSized(obligation.subject);
+  if (obligation.property == Property::Thin)
+    return types.isThin(obligation.subject);
   if (obligation.property == Property::Transferable ||
       obligation.property == Property::Shareable ||
-      obligation.property == Property::Static)
-    return proveConcurrency(obligation.property, obligation.subject, span);
+      obligation.property == Property::Static ||
+      obligation.property == Property::UnwindSafe ||
+      obligation.property == Property::RefUnwindSafe ||
+      obligation.property == Property::Freeze)
+    return proveStructuralProperty(obligation.property, obligation.subject,
+                                   span);
   if (obligation.property == Property::Unpin) {
     auto subject = obligation.subject;
     if (types.isUnpin(subject))
@@ -619,8 +667,16 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
       if (manual != database.unpinImplementations.end())
         valid = applicable(manual->second, subject, span, nullptr, true)
                     .has_value();
-      else if (types.product(origin).layout.unpin != 0 &&
-               types.product(subject).kind != AggregateKind::PhantomPinned) {
+      else if (types.product(origin).name == "core::marker::PhantomData") {
+        const auto &record = types.product(subject);
+        const auto &arguments = record.genericArguments.empty()
+                                    ? record.genericParameters
+                                    : record.genericArguments;
+        valid = arguments.size() == 1 &&
+                prove({arguments.front(), Type::Unknown, Property::Unpin}, span,
+                      false);
+      } else if (types.product(origin).layout.unpin != 0 &&
+                 types.product(subject).kind != AggregateKind::PhantomPinned) {
         valid = true;
         const auto record = types.product(subject);
         if (record.kind == AggregateKind::Array && !record.components.empty())
@@ -635,11 +691,9 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
     provingUnpin.erase(subject);
     return valid;
   }
-  if (types.isErased(obligation.interfaceType) &&
-      database.definitions[types.erased(obligation.interfaceType).declaration]
-              .name == "core::clone::FunctionPointer" &&
+  if (functionPointerMarker &&
       types.isFunctionPointer(normalize(obligation.subject, {}, span)))
-    return true;
+    return deriveFunctionPointerMarker();
   auto selected = implementation(obligation.subject, obligation.interfaceType,
                                  span, report);
   if (selected)
@@ -669,14 +723,14 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
   return false;
 }
 
-// Structural derivation of Transferable/Shareable/Static. Raw pointers and
-// foreign-affine types opt out unless an `unsafe extend` opts them back in.
-bool Solver::proveConcurrency(Property property, Type subject, Span span) {
+// Structural derivation of thread, lifetime, and panic-safety properties.
+bool Solver::proveStructuralProperty(Property property, Type subject,
+                                     Span span) {
   const auto key = std::make_pair(property, subject);
-  if (!provingConcurrency.insert(key).second)
+  if (!provingStructuralProperties.insert(key).second)
     return true;
   auto finish = [&](bool result) {
-    provingConcurrency.erase(key);
+    provingStructuralProperties.erase(key);
     return result;
   };
   auto sub = [&](Property nested, Type type) {
@@ -689,6 +743,9 @@ bool Solver::proveConcurrency(Property property, Type subject, Span span) {
     return true;
   };
   const bool isStatic = property == Property::Static;
+  const bool isUnwindSafe = property == Property::UnwindSafe;
+  const bool isRefUnwindSafe = property == Property::RefUnwindSafe;
+  const bool isFreeze = property == Property::Freeze;
   auto normalized = normalize(subject, {}, span);
   if (normalized != subject)
     return finish(sub(property, normalized));
@@ -696,10 +753,16 @@ bool Solver::proveConcurrency(Property property, Type subject, Span span) {
     return finish(false);
   if (types.isConstant(subject))
     return finish(true);
-  if (types.isPointer(subject))
+  if (types.isPointer(subject)) {
+    if (isUnwindSafe || isRefUnwindSafe)
+      return finish(
+          sub(Property::RefUnwindSafe, types.pointer(subject).payload));
     return finish(isStatic);
+  }
   if (types.isFunctionPointer(subject))
     return finish(true);
+  if (isFreeze && types.isCallable(subject))
+    return finish(false);
   if (types.isSlice(subject))
     return finish(sub(property, types.slice(subject).element));
   if (types.isView(subject)) {
@@ -711,6 +774,12 @@ bool Solver::proveConcurrency(Property property, Type subject, Span span) {
         staticRegions->push_back(view.region);
       }
       return finish(sub(property, view.payload));
+    }
+    if (isUnwindSafe || isRefUnwindSafe || isFreeze) {
+      if (view.mode == ParameterMode::Mut && (isUnwindSafe || isFreeze))
+        return finish(false);
+      return finish(sub(isFreeze ? Property::Freeze : Property::RefUnwindSafe,
+                        view.payload));
     }
     // A read view crosses threads only when its payload may be shared; an
     // exclusive view carries the payload's own transfer property.
@@ -739,7 +808,22 @@ bool Solver::proveConcurrency(Property property, Type subject, Span span) {
   if (!types.isProduct(subject))
     return finish(true);
   const auto &record = types.product(subject);
+  auto origin = subject;
+  while (types.product(origin).regionOrigin != Type::Unknown)
+    origin = types.product(origin).regionOrigin;
+  if (types.product(origin).genericOrigin != Type::Unknown)
+    origin = types.product(origin).genericOrigin;
+  const bool phantom =
+      types.product(origin).name == "core::marker::PhantomData";
+  const auto &arguments = record.genericArguments.empty()
+                              ? record.genericParameters
+                              : record.genericArguments;
+  auto phantomProperty = [&] {
+    return arguments.size() == 1 && sub(property, arguments.front());
+  };
   if (isStatic) {
+    if (phantom && !phantomProperty())
+      return finish(false);
     for (auto region : record.regionArguments)
       if (region != RegionId::Static) {
         if (!staticRegions)
@@ -755,20 +839,23 @@ bool Solver::proveConcurrency(Property property, Type subject, Span span) {
     }
     return finish(all(types.product(subject).fields));
   }
-  auto origin = subject;
-  while (types.product(origin).regionOrigin != Type::Unknown)
-    origin = types.product(origin).regionOrigin;
-  if (types.product(origin).genericOrigin != Type::Unknown)
-    origin = types.product(origin).genericOrigin;
-  auto manual = database.concurrencyDeclarations.find({property, origin});
-  if (manual != database.concurrencyDeclarations.end())
+  if (record.kind == AggregateKind::Pin &&
+      (isUnwindSafe || isRefUnwindSafe || isFreeze)) {
+    if (record.components.size() != 1)
+      return finish(false);
+    return finish(sub(property, record.components.front()));
+  }
+  auto manual = database.structuralDeclarations.find({property, origin});
+  if (manual != database.structuralDeclarations.end())
     return finish(
         !manual->second.negative &&
         applicable(manual->second.implementation, subject, span, nullptr, true)
             .has_value());
+  if (phantom)
+    return finish(phantomProperty());
   switch (record.kind) {
   case AggregateKind::Atomic:
-    return finish(true);
+    return finish(!isFreeze);
   case AggregateKind::Ref:
   case AggregateKind::RefMut:
   case AggregateKind::VarArgs:
@@ -776,7 +863,8 @@ bool Solver::proveConcurrency(Property property, Type subject, Span span) {
   case AggregateKind::Cell:
   case AggregateKind::RefCell:
   case AggregateKind::UnsafeCell:
-    return finish(property == Property::Transferable && all(record.fields));
+    return finish((property == Property::Transferable || isUnwindSafe) &&
+                  all(record.fields));
   case AggregateKind::Array:
     if (!record.components.empty() && !sub(property, record.components[0]))
       return finish(false);
@@ -811,9 +899,13 @@ bool Solver::projectedBinding(Type subject, const ErasedType &wanted,
     return false;
   auto bare = wanted;
   bare.associated.clear();
+  const auto &associatedType = types.parameter(item->parameter);
   auto projection = types.projection(
       subject, types.erasedType(std::move(bare)),
-      static_cast<std::size_t>(item - definition.associated.begin()));
+      static_cast<std::size_t>(item - definition.associated.begin()), {},
+      associatedType.valueType, associatedType.copyRequested,
+      associatedType.sized, associatedType.regionArguments,
+      associatedType.thin);
   auto actual = normalize(projection, {}, span);
   return actual == normalize(required.argument, {}, span);
 }
@@ -835,8 +927,64 @@ Solver::candidatesFor(std::uint32_t declaration) {
   return declaration < index.size() ? index[declaration] : none;
 }
 
+std::optional<Type> Solver::inferredSubject(Type partial, Type interfaceType,
+                                            Span span) {
+  if (!types.isErased(interfaceType))
+    return std::nullopt;
+  const auto wanted = types.erased(interfaceType);
+  std::optional<Type> result;
+  for (auto index : candidatesFor(wanted.declaration)) {
+    const auto &candidate = database.implementations[index];
+    if (!types.isErased(candidate.interfaceType))
+      continue;
+    const auto provided = types.erased(candidate.interfaceType);
+    if (provided.arguments.size() != wanted.arguments.size())
+      continue;
+    std::vector<TypeBinding> bindings;
+    bool valid = true;
+    for (std::size_t i = 0; valid && i < wanted.arguments.size(); ++i) {
+      auto matched = match(types.substitute(provided.arguments[i], bindings),
+                           wanted.arguments[i]);
+      valid = matched.has_value();
+      if (matched)
+        for (const auto &binding : *matched) {
+          if (std::find(candidate.parameters.begin(),
+                        candidate.parameters.end(),
+                        binding.parameter) == candidate.parameters.end()) {
+            valid = false;
+            break;
+          }
+          bindings.push_back(binding);
+        }
+    }
+    if (!valid)
+      continue;
+    auto target = types.substitute(candidate.target, bindings);
+    auto parameters = types.typeParameters(target);
+    if (std::any_of(parameters.begin(), parameters.end(), [&](Type parameter) {
+          return std::find(candidate.parameters.begin(),
+                           candidate.parameters.end(),
+                           parameter) != candidate.parameters.end();
+        }))
+      continue;
+    std::vector<RegionBinding> regions;
+    auto scope = types.regions().binder(regionEnvironment.universe);
+    for (auto region : candidate.regions)
+      regions.push_back({region, types.regions().inference(scope)});
+    target = types.substituteRegions(target, regions);
+    if (!match(types.eraseRegions(target), types.eraseRegions(partial), false,
+               nullptr, true) ||
+        !prove({target, interfaceType}, span, false))
+      continue;
+    if (result && types.eraseRegions(*result) != types.eraseRegions(target))
+      return std::nullopt;
+    result = target;
+  }
+  return result;
+}
 std::optional<Type>
-Solver::implementedInterface(Type subject, Type interfaceType, Span span) {
+Solver::implementedInterface(Type subject, Type interfaceType, Span span,
+                             std::span<const Type> inferenceParameters) {
   if (!types.isErased(interfaceType))
     return std::nullopt;
   const auto wanted = types.erased(interfaceType);
@@ -857,9 +1005,30 @@ Solver::implementedInterface(Type subject, Type interfaceType, Span span) {
         provided.arguments.size() == expected.arguments.size() &&
         provided.regionArguments.size() == expected.regionArguments.size() &&
         provided.regionParameters.size() == expected.regionParameters.size();
-    for (std::size_t p = 0; shape && p < provided.arguments.size(); ++p)
-      shape = types.eraseRegions(provided.arguments[p]) ==
-              types.eraseRegions(expected.arguments[p]);
+    std::vector<TypeBinding> inferred;
+    for (std::size_t p = 0; shape && p < provided.arguments.size(); ++p) {
+      auto pattern =
+          types.eraseRegions(types.substitute(expected.arguments[p], inferred));
+      auto argument = types.eraseRegions(provided.arguments[p]);
+      if (pattern == argument)
+        continue;
+      if (inferenceParameters.empty()) {
+        shape = false;
+        break;
+      }
+      auto matched = match(pattern, argument);
+      shape = matched &&
+              std::all_of(matched->begin(), matched->end(),
+                          [&](const auto &binding) {
+                            return binding.parameter == binding.argument ||
+                                   std::find(inferenceParameters.begin(),
+                                             inferenceParameters.end(),
+                                             binding.parameter) !=
+                                       inferenceParameters.end();
+                          });
+      if (shape)
+        inferred.insert(inferred.end(), matched->begin(), matched->end());
+    }
     if (!shape)
       continue;
     auto result = wanted;
@@ -889,8 +1058,9 @@ Solver::implementedInterface(Type subject, Type interfaceType, Span span) {
       continue;
     auto bound = types.erasedType(std::move(result));
     if (found && *found != bound) {
-      diagnostics.error("type", span,
-                        "ambiguous erased interface region contract");
+      if (inferenceParameters.empty())
+        diagnostics.error("type", span,
+                          "ambiguous erased interface region contract");
       return std::nullopt;
     }
     found = bound;
@@ -1303,7 +1473,7 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
         auto represented = types.projection(
             hidden, interface, projection->associated, std::move(arguments),
             source.valueType, source.copyRequested, source.sized,
-            source.regionArguments);
+            source.regionArguments, source.thin);
         auto result = normalize(represented, bindings, span);
         normalizing.erase(type);
         return result;

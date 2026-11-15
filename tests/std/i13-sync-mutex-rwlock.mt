@@ -95,7 +95,7 @@ fn checks_mutex_poison(): i32 {
     match take try_poisoned {
         success(_) => { return 34 },
         failure(e) => match e {
-            mutex.TryLockError.Poisoned(g) => { if *g.get() != 2 { return 35 } },
+            mutex.TryLockError.Poisoned(error) => { if *error.get_ref().get() != 2 { return 35 } },
             mutex.TryLockError.WouldBlock => { return 36 }
         }
     }

@@ -49,6 +49,75 @@ void put32(std::vector<std::uint8_t> &bytes, std::size_t offset,
 }
 } // namespace
 int main() {
+  {
+    TypeStore producer;
+    auto parameter = producer.declareParameter("T", false);
+    auto nominal = producer.declareProduct("Phantom", true);
+    producer.setGenericParameters(nominal, {parameter});
+    producer.defineProduct(nominal, {});
+    auto plain = producer.viewType(Type::U8, ParameterMode::Read);
+    auto instance = producer.instantiateProduct(nominal, {plain});
+    auto scope = producer.regions().binder();
+    auto a = producer.regions().bound(scope, "a");
+    auto b = producer.regions().bound(scope, "b");
+    auto first = producer.regionalShell(
+        instance, {}, {producer.viewType(Type::U8, ParameterMode::Read, a)},
+        Type::Unknown);
+    auto second = producer.regionalShell(
+        instance, {}, {producer.viewType(Type::U8, ParameterMode::Read, b)},
+        Type::Unknown);
+    auto equivalent = producer.regionalShell(
+        instance, {}, {producer.viewType(Type::U8, ParameterMode::Read, a)},
+        Type::Unknown);
+    auto firstProduct = producer.regionalProduct(first, {}, {});
+    auto secondProduct = producer.regionalProduct(second, {}, {});
+    expect(firstProduct != secondProduct &&
+               producer.regionalProduct(equivalent, {}, {}) == firstProduct,
+           "regional products intern by generic arguments");
+    TypeGraphSymbols symbols;
+    symbols.definition = [&](Type type) -> std::optional<DefinitionIdentity> {
+      if (type == nominal)
+        return DefinitionIdentity{"package", "Phantom", {}};
+      if (type == parameter)
+        return DefinitionIdentity{"package", "Phantom", 0};
+      return {};
+    };
+    std::array roots{first, second, equivalent};
+    auto encoded = exportTypeGraph(producer, roots, symbols);
+    expect(static_cast<bool>(encoded), encoded.error);
+    TypeStore consumer;
+    auto decoded = importTypeGraph(consumer, encoded.bytes, symbols);
+    expect(static_cast<bool>(decoded), decoded.error);
+    expect(decoded.roots[0] != decoded.roots[1] &&
+               decoded.roots[0] == decoded.roots[2],
+           "regional generic arguments retain distinct canonical identities");
+    const auto &left = consumer.product(decoded.roots[0]).genericArguments;
+    const auto &right = consumer.product(decoded.roots[1]).genericArguments;
+    expect(left.size() == 1 && right.size() == 1 &&
+               consumer.view(left[0]).region != consumer.view(right[0]).region,
+           "regional generic argument regions survive import");
+  }
+  {
+    TypeStore types;
+    auto payload = types.declareProduct("Conditional", true);
+    auto parameter = types.declareParameter("T", false);
+    types.setGenericParameters(payload, {parameter});
+    types.defineProduct(payload, {{"value", parameter}});
+    auto instance = types.instantiateProduct(payload, {parameter});
+    auto tuple = types.structural(AggregateKind::Tuple, {instance, instance});
+    auto optional = types.structural(AggregateKind::Optional, {instance});
+    auto array = types.arrayType(instance,
+                                 types.declareConstParameter("N", Type::Usize));
+    types.setConditionalCopy(payload);
+    expect(!types.isCopy(tuple) && !types.isCopy(optional) &&
+               !types.isCopy(array),
+           "structural Copy follows finalized nominal payload constraints");
+    auto later = types.structural(AggregateKind::Tuple, {instance});
+    types.constrainParameter(parameter, true, true);
+    expect(types.isCopy(tuple) && types.isCopy(optional) &&
+               types.isCopy(array) && types.isCopy(later),
+           "structural Copy follows strengthened payload bounds");
+  }
   std::vector<std::uint8_t> bytes;
   std::map<DefinitionIdentity, Type> importedNames;
   {
@@ -69,6 +138,10 @@ int main() {
     auto f = definition(producer.declareParameter("F", false), "core::Node", 2);
     auto associated =
         definition(producer.declareParameter("Item", true), "core::Trait", 0);
+    auto associatedCount = definition(
+        producer.declareConstParameter("Count", Type::I32), "core::Trait", 1);
+    auto associatedValue = definition(
+        producer.declareConstParameter("Value", node), "core::Trait", 2);
     producer.setGenericParameters(node, {t, n, f});
     auto outer = producer.regions().binder();
     auto inner = producer.regions().binder(outer.universe, true);
@@ -92,11 +165,19 @@ int main() {
     auto higherType = producer.callableType(higher);
     expect(producer.constrainCallableParameter(f, higherType, {0}),
            "producer callable constraint");
+    ErasedType simple;
+    simple.name = "any core::Simple";
+    simple.declaration = 7;
+    auto simpleErased = producer.erasedType(simple);
+    auto associatedValueProjection =
+        producer.projection(t, simpleErased, 2, {}, node);
     ErasedType trait;
     trait.name = "any core::Trait<T>";
     trait.declaration = 7;
     trait.arguments = {t};
-    trait.associated = {{associated, t}};
+    trait.associated = {{associated, t},
+                        {associatedCount, producer.constant(Type::I32, 7)},
+                        {associatedValue, associatedValueProjection}};
     trait.regionArguments = {local};
     trait.regionParameters = {bound};
     trait.regionUniverse = inner.universe;
@@ -152,9 +233,6 @@ int main() {
     CallableType plain;
     plain.parameters = {{Type::I32, ParameterMode::Value, "x"}};
     plain.result = plain.abiResult = Type::I32;
-    ErasedType simple;
-    simple.name = "any core::Simple";
-    simple.declaration = 7;
     std::vector<Type> roots{
         node,
         t,
@@ -173,7 +251,7 @@ int main() {
         producer.viewType(Type::I32, ParameterMode::Read, RegionId::Static),
         producer.sliceType(Type::I32),
         producer.callableType(plain),
-        producer.erasedType(simple),
+        simpleErased,
         enumeration,
         vector,
         compact};
@@ -244,6 +322,27 @@ int main() {
   expect(static_cast<bool>(imported), imported.error);
   for (const auto &definition : imported.definitions)
     importedNames.emplace(definition.identity, definition.type);
+  const auto &associatedBindings =
+      consumer.erased(imported.roots[7]).associated;
+  auto importedCount =
+      importedNames.at(DefinitionIdentity{"core@revision", "core::Trait", 1});
+  auto importedValue =
+      importedNames.at(DefinitionIdentity{"core@revision", "core::Trait", 2});
+  auto countBinding = std::find_if(
+      associatedBindings.begin(), associatedBindings.end(),
+      [&](const auto &binding) { return binding.parameter == importedCount; });
+  auto valueBinding = std::find_if(
+      associatedBindings.begin(), associatedBindings.end(),
+      [&](const auto &binding) { return binding.parameter == importedValue; });
+  expect(countBinding != associatedBindings.end() &&
+             consumer.scalarConstantValue(countBinding->argument) ==
+                 integerLiteral(7) &&
+             valueBinding != associatedBindings.end() &&
+             consumer.isConstant(valueBinding->argument) &&
+             consumer.parameter(valueBinding->argument).valueType ==
+                 imported.roots[0],
+         "associated constant declarations and non-scalar projections must "
+         "round-trip");
   auto repeated = importTypeGraph(consumer, bytes, symbols);
   expect(static_cast<bool>(repeated), repeated.error);
   expect(repeated.roots == imported.roots,
@@ -596,6 +695,76 @@ int main() {
     auto encoded = exportTypeGraph(producer, std::array{invalid}, symbolMaps());
     expect(static_cast<bool>(encoded), encoded.error);
     failedUnchanged(encoded.bytes, symbols);
+  }
+  {
+    TypeStore producer;
+    auto origin = producer.declareProduct("Generic", false);
+    auto parameter = producer.declareParameter("T", false);
+    producer.setGenericParameters(origin, {parameter});
+    auto invalid =
+        producer.instantiateProduct(origin, {producer.constant(Type::I32, 1)});
+    auto maps = symbolMaps();
+    maps.definition = [&](Type type) -> std::optional<DefinitionIdentity> {
+      if (type == origin)
+        return DefinitionIdentity{"pkg", "Generic", {}};
+      if (type == parameter)
+        return DefinitionIdentity{"pkg", "Generic", 0};
+      return {};
+    };
+    auto encoded = exportTypeGraph(producer, std::array{invalid}, maps);
+    expect(static_cast<bool>(encoded), encoded.error);
+    TypeStore target;
+    auto rejected = importTypeGraph(target, encoded.bytes, maps);
+    expect(!rejected &&
+               rejected.error == "invalid generic product type argument",
+           "generic product metadata must preserve argument kind");
+  }
+  {
+    TypeStore producer;
+    auto payload = producer.declareProduct("Payload", false);
+    auto origin = producer.declareProduct("Generic", false);
+    auto parameter = producer.declareConstParameter("N", payload);
+    producer.setGenericParameters(origin, {parameter});
+    auto maps = symbolMaps();
+    maps.definition = [&](Type type) -> std::optional<DefinitionIdentity> {
+      if (type == payload)
+        return DefinitionIdentity{"pkg", "Payload", {}};
+      if (type == origin)
+        return DefinitionIdentity{"pkg", "Generic", {}};
+      if (type == parameter)
+        return DefinitionIdentity{"pkg", "Generic", 0};
+      return {};
+    };
+    auto encoded = exportTypeGraph(producer, std::array{origin}, maps);
+    expect(static_cast<bool>(encoded), encoded.error);
+    TypeStore target;
+    auto rejected = importTypeGraph(target, encoded.bytes, maps);
+    expect(!rejected &&
+               rejected.error ==
+                   "generic const parameter requires a supported scalar type",
+           "generic const metadata must retain its scalar type restriction");
+  }
+  {
+    TypeStore producer;
+    auto count = producer.declareConstParameter("COUNT", Type::I32);
+    ErasedType erased;
+    erased.name = "any core::Trait";
+    erased.declaration = 7;
+    erased.associated = {{count, producer.constant(Type::Bool, true)}};
+    auto root = producer.erasedType(erased);
+    auto maps = symbolMaps();
+    maps.definition = [&](Type type) -> std::optional<DefinitionIdentity> {
+      if (type == count)
+        return DefinitionIdentity{"pkg", "Trait", 0};
+      return {};
+    };
+    auto encoded = exportTypeGraph(producer, std::array{root}, maps);
+    expect(static_cast<bool>(encoded), encoded.error);
+    TypeStore target;
+    auto rejected = importTypeGraph(target, encoded.bytes, maps);
+    expect(!rejected && rejected.error ==
+                            "erased associated constant value type mismatch",
+           "erased associated constants must match concrete scalar types");
   }
   {
     TypeStore producer;

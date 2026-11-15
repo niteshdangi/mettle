@@ -1,6 +1,7 @@
 #include "places/place.h"
 #include "types/layout.h"
 #include <algorithm>
+#include <iterator>
 
 namespace mettle {
 bool alignedPlace(const TypeStore &types, Type root,
@@ -153,11 +154,13 @@ bool overlaps(const TypeStore &types, Type root, const Place &first,
 }
 void project(Place &place, Projection projection) {
   if (projection.kind == Projection::Kind::Opaque) {
-    auto prior = std::find_if(place.fields.begin(), place.fields.end(),
-                              [](const auto &field) {
-                                return field.kind == Projection::Kind::Opaque;
-                              });
-    place.fields.erase(prior, place.fields.end());
+    auto prior = std::find_if(
+        place.fields.rbegin(), place.fields.rend(), [](const auto &field) {
+          return field.kind == Projection::Kind::Opaque ||
+                 field.kind == Projection::Kind::Dereference;
+        });
+    if (prior != place.fields.rend() && prior->kind == Projection::Kind::Opaque)
+      place.fields.erase(std::prev(prior.base()), place.fields.end());
   }
   if (!place.fields.empty() &&
       place.fields.back().kind == Projection::Kind::Slice &&

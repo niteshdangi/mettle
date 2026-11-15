@@ -463,6 +463,10 @@ void Checker::machineDeclarations() {
         if (!valid)
           error("attribute", attribute.span,
                 "inline accepts no argument, 'always' or 'never'");
+      } else if (attribute.name == "track_caller") {
+        if (!attribute.arguments.empty())
+          error("attribute", attribute.span,
+                "track_caller accepts no arguments");
       } else if (attribute.name == "target_feature" ||
                  attribute.name == "naked") {
         // Checked before bodies, so call-site feature checks are

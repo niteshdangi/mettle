@@ -25,6 +25,24 @@ std::size_t width(std::string_view text, std::size_t offset) {
   return count;
 }
 } // namespace
+SourcePosition sourcePosition(const Source &source, std::size_t offset) {
+  SourcePosition position{1, 1};
+  for (std::size_t i = 0; i < offset && i < source.text.size(); ++i) {
+    auto byte = static_cast<unsigned char>(source.text[i]);
+    if (byte == '\r') {
+      ++position.line;
+      position.column = 1;
+      if (i + 1 < source.text.size() && source.text[i + 1] == '\n')
+        ++i;
+    } else if (byte == '\n') {
+      ++position.line;
+      position.column = 1;
+    } else if ((byte & 0xc0) != 0x80) {
+      ++position.column;
+    }
+  }
+  return position;
+}
 std::optional<std::size_t> invalidUtf8(std::string_view text) {
   for (std::size_t offset = 0; offset < text.size();) {
     auto count = width(text, offset);

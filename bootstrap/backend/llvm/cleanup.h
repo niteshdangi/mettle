@@ -103,6 +103,7 @@ public:
   void returnValue(ir::Value value, llvm::Value *result);
   void finishWrapper(llvm::Value *frame);
   llvm::Value *variadicContext();
+  llvm::Value *callerLocation();
   // Storage of a source local in the body callback; a borrowed local's
   // storage holds the pointer to its value.
   llvm::Value *localStorage(std::size_t local) {
@@ -147,6 +148,7 @@ private:
   llvm::StructType *frameType;
   llvm::Value *frame = nullptr;
   unsigned resultField;
+  unsigned callerField = 0;
   std::string name;
   bool callbacksEmitted = false;
   unsigned stateField = 0, contextField = 0;

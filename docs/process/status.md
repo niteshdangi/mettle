@@ -79,7 +79,8 @@ not by the number of external references:
 | --- | --- |
 | Contradictory or incomplete contracts for the selected V1 subset, its supporting protocols and Linux target branches | Resolve before the affected I13 acceptance or I14 qualification. A recorded reference fallback may supply an unassigned contract; conflicting native rules still require reconciliation. |
 | D30 Map builders and D31 BorrowedOrOwned bounds | Preserve the accepted policies. Reconcile declarations and fixtures before qualifying affected V1 operations; retain non-Clone borrowed/read BorrowedOrOwned usage and explicit randomized-builder selection. These are open implementation/type-checking obligations, not completed by the native chapters. |
-| Contracts and applicability belonging only to the retained post-V1 subset and other profiles | Track with I17; implement earlier only when an existing V1 or I15/I16 dependency requires them. |
+| Library and trait-implementation contracts of worklist groups D-J | Close in I13B, before I14 qualification. |
+| Architecture, OS-extension and other-profile contracts | Track with I17; implement earlier only when an existing V1 or I15/I16 dependency requires them. |
 | Exhaustive standalone replacement of otherwise specified reference-owned contracts | Defer until needed for the owning operation; retain the explicit authority fallback in the meantime. |
 | Cosmetic reference removal | Defer. Preserve frozen provenance, benchmark comparisons and actual interoperability requirements. |
 

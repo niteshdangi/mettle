@@ -6,6 +6,8 @@
 #include "syntax/token.h"
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <set>
@@ -882,8 +884,6 @@ public:
     IndexedModules moduleRoots(library.indexedModules.begin(),
                                library.indexedModules.end());
     std::map<std::string, ModuleCandidate> modules;
-    for (const auto &root : moduleRoots)
-      modules.emplace(root, ModuleCandidate{});
     std::set<SourceId> identities;
     auto origins = std::make_shared<MacroSources>();
     for (const auto &source : library.sources) {
@@ -907,14 +907,14 @@ public:
       for (const auto &part : definition.scope)
         key += part + "::";
       key += definition.name;
-      auto owner = owningModule(definition.scope, moduleRoots);
-      if (!owner)
+      if (!owningModule(definition.scope, moduleRoots))
         return fail("compiled macro definition has no owning module");
+      auto owner = scopeKey(definition.scope);
       Macro macro{definition.name,       location(definition.location),
                   definition.scope,      definition.visibilityBoundary,
                   definition.publicItem, {}};
       macro.importedSources = origins;
-      macro.importedOwner = *owner;
+      macro.importedOwner = owner;
       for (const auto &rule : definition.rules) {
         Rule converted{nodes(rule.matcher), nodes(rule.expansion)};
         if (!good)
@@ -927,18 +927,17 @@ public:
           return false;
         macro.rules.push_back(std::move(converted));
       }
-      modules[*owner].definitions.push_back(key);
+      modules[owner].definitions.push_back(key);
       incoming.emplace(std::move(key), std::move(macro));
     }
     for (const auto &import : library.imports) {
-      auto owner = owningModule(import.scope, moduleRoots);
-      if (!owner)
+      if (!owningModule(import.scope, moduleRoots))
         return fail("compiled macro import has no owning module");
       VisibilitySyntax visibility;
       visibility.publicItem = import.publicItem;
       visibility.restriction = import.restriction;
       visibility.span = location(import.location);
-      modules[*owner].imports.push_back(
+      modules[scopeKey(import.scope)].imports.push_back(
           {import.scope, import.path, import.alias, import.name,
            std::move(visibility), false, origins});
     }
@@ -947,38 +946,40 @@ public:
         return fail("compiled macro module declaration has no name");
       auto parent = module;
       parent.pop_back();
-      auto owner = owningModule(parent, moduleRoots);
-      if (!owner)
+      if (!owningModule(parent, moduleRoots))
         return fail("compiled macro module declaration has no owner");
-      modules[*owner].declared.push_back(module);
+      modules[scopeKey(parent)].declared.push_back(module);
     }
     for (auto &[owner, candidate] : modules) {
       std::sort(candidate.definitions.begin(), candidate.definitions.end());
       std::sort(candidate.declared.begin(), candidate.declared.end());
+      std::set<ImportKey> newImports;
+      for (const auto &import : candidate.imports) {
+        auto key = importKey(import);
+        if (!key)
+          return fail("compiled macro import provenance is invalid");
+        newImports.insert(*key);
+      }
       auto known = importedModules.find(owner);
       if (known == importedModules.end())
         continue;
       if (candidate.definitions != known->second.definitions ||
           candidate.declared != known->second.declared)
         return fail("compiled macro module conflicts with an existing module");
-      std::map<ImportKey, std::size_t> oldImports, newImports;
+      std::set<ImportKey> oldImports;
       for (auto index : known->second.imports) {
         if (index >= imports.size())
           return fail("compiled macro import index is invalid");
         auto key = importKey(imports[index]);
         if (!key)
           return fail("compiled macro import provenance is invalid");
-        ++oldImports[*key];
+        oldImports.insert(*key);
       }
-      for (const auto &import : candidate.imports) {
-        auto key = importKey(import);
-        if (!key)
-          return fail("compiled macro import provenance is invalid");
-        ++newImports[*key];
+      if (oldImports != newImports) {
+        fail("compiled macro reexports conflict with an existing module '" +
+             owner + "'");
+        return false;
       }
-      if (oldImports != newImports)
-        return fail(
-            "compiled macro reexports conflict with an existing module");
     }
     MacroEquality equality;
     for (const auto &[key, macro] : incoming) {
@@ -1004,7 +1005,10 @@ public:
       ImportedModule admitted;
       admitted.definitions = std::move(candidate.definitions);
       admitted.declared = std::move(candidate.declared);
+      std::set<ImportKey> uniqueImports;
       for (auto &import : candidate.imports) {
+        if (!uniqueImports.insert(importKey(import).value()).second)
+          continue;
         admitted.imports.push_back(imports.size());
         imports.push_back(std::move(import));
       }
@@ -1167,15 +1171,13 @@ private:
   bool token(const Piece &wanted, std::size_t &position,
              std::size_t end) const {
     if (symbol(wanted, ";")) {
+      bool lineBreak = position < end && newline(in[position]);
+      skip(position, end);
       if (position < end && symbol(in[position], ";")) {
         ++position;
         return true;
       }
-      if (position < end && newline(in[position])) {
-        skip(position, end);
-        return true;
-      }
-      return false;
+      return lineBreak;
     }
     skip(position, end);
     if (position < end && in[position].kind == wanted.kind &&
@@ -1327,11 +1329,13 @@ public:
       std::shared_ptr<MacroDiscovery> discoveryIndex = {},
       const Configuration *configuration = nullptr,
       std::shared_ptr<ImportedModules> compiledIndex = {},
-      std::shared_ptr<std::set<std::vector<std::string>>> inlineIndex = {})
+      std::shared_ptr<std::set<std::vector<std::string>>> inlineIndex = {},
+      MacroFileProvider files = {}, MacroEnvironmentProvider environment = {})
       : source(source), diagnostics(diagnostics), allocate(allocate),
         procedures(procedures), modulePath(std::move(modulePath)),
         modules(modules), importModules(importModules),
-        configuration(configuration),
+        configuration(configuration), files(std::move(files)),
+        environment(std::move(environment)),
         macros(macroIndex ? std::move(macroIndex)
                           : std::make_shared<MacroIndex>()),
         importedMacros(importIndex ? std::move(importIndex)
@@ -1355,25 +1359,26 @@ public:
                 : std::make_shared<std::set<std::vector<std::string>>>()) {}
 
   std::optional<Source> run(bool definitionsOnly = false) {
+    Diagnostics::SourceContext context(diagnostics, source);
     std::string moduleKey;
     for (const auto &part : modulePath)
       moduleKey += (moduleKey.empty() ? "" : "::") + part;
     // Recursive import indexing must not redefine this source's macros.
     indexedModules->insert(std::move(moduleKey));
-    Diagnostics scratch;
-    auto tokens = tokenize(source, scratch);
-    if (!scratch.empty())
+    auto tokens = tokenize(source, diagnostics);
+    if (!diagnostics.empty())
       return std::nullopt;
     pieces = lower(source, tokens, diagnostics);
     if (!pairing(pieces, close))
       return std::nullopt;
-    Diagnostics::SourceContext context(diagnostics, source);
     if (configuration)
       if (auto active =
               configure(pieces, *configuration, diagnostics, &excluded)) {
         pieces = std::move(*active);
         pairing(pieces, close);
       }
+    if (!diagnostics.empty())
+      return std::nullopt;
     collectModuleScopes(0, pieces.size(), modulePath);
     if (failed)
       return std::nullopt;
@@ -1416,6 +1421,7 @@ public:
         else if (prefix > 0 &&
                  (word(prefix - 1, "pub") || word(prefix - 1, "internal")))
           begin = prefix - 1;
+        auto visibility = begin;
         auto attribute = begin;
         while (attribute > 0) {
           while (attribute > 0 && newline(pieces[attribute - 1]))
@@ -1436,11 +1442,11 @@ public:
             break;
           begin = attribute -= 2;
         }
-        definitions.push_back({begin, i, close[i + 2]});
+        definitions.push_back({begin, visibility, i, close[i + 2]});
         i = close[i + 2];
       }
     for (const auto &definition : definitions)
-      define(definition.begin, definition.macro, definition.end);
+      define(definition.visibility, definition.macro, definition.end);
     collectImports(0, pieces.size(), modulePath);
     ready = !failed;
     if (definitionsOnly)
@@ -1467,7 +1473,7 @@ public:
 
 private:
   struct Definition {
-    std::size_t begin, macro, end;
+    std::size_t begin, visibility, macro, end;
   };
 
   struct ScopeRange {
@@ -1483,6 +1489,8 @@ private:
   const MacroModuleProvider &modules;
   const MacroModuleProvider &importModules;
   const Configuration *configuration;
+  MacroFileProvider files;
+  MacroEnvironmentProvider environment;
   std::vector<Span> excluded;
   std::size_t nextExcluded = 0;
   Pieces pieces;
@@ -1747,6 +1755,10 @@ private:
     bool publicItem = false;
     bool privateAccess = false;
     bool ambiguous = false;
+  };
+  struct BuiltinInvocation {
+    std::size_t begin = 0;
+    std::string name;
   };
 
   std::optional<MacroBinding>
@@ -2099,7 +2111,7 @@ private:
           modules, macros, importedMacros, indexedModules, pendingImports,
           nullptr, importModules, declaredModules, discovery,
           module->configuration ? &*module->configuration : configuration,
-          compiledModules, inlineModules);
+          compiledModules, inlineModules, files);
       indexer.run(true);
     }
     return module->path;
@@ -2160,11 +2172,589 @@ private:
     return procedures->names.contains(in[i].text) && !invoked(in, i).macro;
   }
 
+  std::optional<BuiltinInvocation> builtin(const Pieces &in,
+                                           std::size_t i) const {
+    if (!invocationAt(in, i))
+      return std::nullopt;
+    static const std::set<std::string> names{
+        "line",        "column",   "file",        "module_path",   "concat",
+        "stringify",   "env",      "option_env",  "compile_error", "cfg",
+        "cfg_select",  "include",  "include_str", "include_bytes", "addr_of",
+        "addr_of_mut", "offset_of"};
+    if (!names.contains(in[i].text))
+      return std::nullopt;
+    auto first = qualifierStart(in, i);
+    if (first != i) {
+      if (i - first == 4 && in[first].text == "core" &&
+          ((in[i].text == "offset_of" && in[first + 2].text == "mem") ||
+           ((in[i].text == "addr_of" || in[i].text == "addr_of_mut") &&
+            in[first + 2].text == "ptr")))
+        return BuiltinInvocation{first, in[i].text};
+      if (i - first != 2 || in[first].text != "core")
+        return std::nullopt;
+      return BuiltinInvocation{first, in[i].text};
+    }
+    return BuiltinInvocation{i, in[i].text};
+  }
+
   std::string path() const {
     std::string result;
     for (const auto &name : chain)
       result += (result.empty() ? "" : " -> ") + name + "!";
     return result;
+  }
+
+  static Piece generated(TokenKind kind, std::string text, Span origin,
+                         SyntaxContextPtr context = {}) {
+    Piece piece{kind, std::move(text), origin, false};
+    piece.context = std::move(context);
+    return piece;
+  }
+
+  const Source *sourceAt(Span span) const {
+    const auto &sources = diagnostics.registeredSources();
+    auto found =
+        std::find_if(sources.begin(), sources.end(), [&](const Source &entry) {
+          return entry.id == span.source;
+        });
+    return found == sources.end() ? nullptr : &*found;
+  }
+
+  static std::string quoteBytes(std::string_view value) {
+    static constexpr char hex[] = "0123456789abcdef";
+    std::string result = "b\"";
+    for (unsigned char c : value) {
+      if (c == '"' || c == '\\') {
+        result += '\\';
+        result += static_cast<char>(c);
+      } else if (c >= 0x20 && c < 0x7f) {
+        result += static_cast<char>(c);
+      } else {
+        result += "\\x";
+        result += hex[c >> 4];
+        result += hex[c & 0xf];
+      }
+    }
+    result += '"';
+    return result;
+  }
+
+  static void appendScalar(std::string &text, std::uint32_t scalar) {
+    if (scalar < 0x80) {
+      text += static_cast<char>(scalar);
+    } else if (scalar < 0x800) {
+      text += static_cast<char>(0xc0 | (scalar >> 6));
+      text += static_cast<char>(0x80 | (scalar & 0x3f));
+    } else if (scalar < 0x10000) {
+      text += static_cast<char>(0xe0 | (scalar >> 12));
+      text += static_cast<char>(0x80 | ((scalar >> 6) & 0x3f));
+      text += static_cast<char>(0x80 | (scalar & 0x3f));
+    } else {
+      text += static_cast<char>(0xf0 | (scalar >> 18));
+      text += static_cast<char>(0x80 | ((scalar >> 12) & 0x3f));
+      text += static_cast<char>(0x80 | ((scalar >> 6) & 0x3f));
+      text += static_cast<char>(0x80 | (scalar & 0x3f));
+    }
+  }
+
+  static void trimPieceNewlines(Pieces &tokens) {
+    while (!tokens.empty() && newline(tokens.front()))
+      tokens.erase(tokens.begin());
+    while (!tokens.empty() && newline(tokens.back()))
+      tokens.pop_back();
+  }
+
+  std::vector<Pieces> splitArguments(const Pieces &in,
+                                     const std::vector<std::size_t> &inner,
+                                     std::size_t begin, std::size_t end,
+                                     Span use) {
+    std::vector<Pieces> result;
+    while (begin < end) {
+      while (begin < end && newline(in[begin]))
+        ++begin;
+      if (begin == end)
+        break;
+      auto first = begin;
+      while (begin < end) {
+        if (opener(in[begin])) {
+          if (inner[begin] == none) {
+            error(use, "unbalanced built-in macro arguments");
+            return {};
+          }
+          begin = inner[begin] + 1;
+        } else if (symbol(in[begin], ",")) {
+          break;
+        } else {
+          ++begin;
+        }
+      }
+      Pieces argument(in.begin() + first, in.begin() + begin);
+      trimPieceNewlines(argument);
+      if (argument.empty()) {
+        error(use, "built-in macro arguments cannot be empty");
+        return {};
+      }
+      result.push_back(std::move(argument));
+      if (begin < end)
+        ++begin;
+    }
+    return result;
+  }
+
+  std::optional<std::string> textArgument(Pieces argument, Span use) {
+    trimPieceNewlines(argument);
+    while (argument.size() >= 2 && symbol(argument.front(), "(") &&
+           symbol(argument.back(), ")")) {
+      std::vector<std::size_t> close;
+      if (!pairing(argument, close) || close.front() != argument.size() - 1)
+        break;
+      argument = Pieces(argument.begin() + 1, argument.end() - 1);
+      trimPieceNewlines(argument);
+    }
+    if (argument.size() != 1 || argument.front().kind != TokenKind::Text) {
+      error(use, "expected a compile-time text literal");
+      return std::nullopt;
+    }
+    auto before = diagnostics.count();
+    auto value = textLiteral(argument.front().text, diagnostics,
+                             argument.front().origin);
+    if (diagnostics.count() != before) {
+      failed = true;
+      return std::nullopt;
+    }
+    return value;
+  }
+
+  bool predicate(const Pieces &tokens, Span use, bool &value) {
+    Attribute attribute;
+    attribute.name = "cfg";
+    attribute.parenthesized = true;
+    attribute.span = use;
+    for (const auto &piece : tokens)
+      attribute.arguments.push_back(
+          {piece.kind, piece.origin, piece.text, piece.context});
+    Configuration defaults;
+    auto before = diagnostics.count();
+    value = evaluateCfg(attribute, configuration ? *configuration : defaults,
+                        diagnostics);
+    if (diagnostics.count() != before) {
+      failed = true;
+      return false;
+    }
+    return true;
+  }
+
+  bool appendExpression(std::string spelling, Span site,
+                        const SyntaxContextPtr &context, Pieces &out) {
+    Source generatedSource{source.path, std::move(spelling), allocate()};
+    Diagnostics::SourceContext generatedContext(diagnostics, generatedSource);
+    auto before = diagnostics.count();
+    auto tokens = tokenize(generatedSource, diagnostics);
+    if (diagnostics.count() != before) {
+      failed = true;
+      return false;
+    }
+    auto expression = lower(generatedSource, tokens, diagnostics);
+    for (auto &piece : expression) {
+      piece.origin = site;
+      piece.context = context;
+    }
+    out.insert(out.end(), expression.begin(), expression.end());
+    return true;
+  }
+
+  std::optional<Source> readMacroFile(const Source &from, std::string_view name,
+                                      Span use) {
+    namespace fs = std::filesystem;
+    fs::path path(name);
+    if (!path.is_absolute())
+      path = fs::path(from.path).parent_path() / path;
+    path = path.lexically_normal();
+    auto identity = path.generic_string();
+    if (!files) {
+      error(use, "source inclusion is unavailable during macro expansion");
+      return std::nullopt;
+    }
+    auto result = files(identity);
+    if (!result) {
+      error(use, "cannot read included file '" + identity + "'");
+      return std::nullopt;
+    }
+    if (result->text.size() > limits::sourceBytes) {
+      diagnostics.error("limit", use, "included file exceeds the source limit");
+      failed = true;
+      return std::nullopt;
+    }
+    if (!result->id)
+      result->id = allocate();
+    return result;
+  }
+
+  Span invocationSpan(const Pieces &in, std::size_t at, std::size_t last,
+                      Span use) const {
+    if (in[at].authored)
+      return use;
+    return {in[at].origin.begin, in[last].origin.end, in[at].origin.source};
+  }
+
+  bool invokeBuiltin(const std::string &name, const Pieces &in,
+                     const std::vector<std::size_t> &inner, std::size_t at,
+                     std::size_t last, Pieces &out, unsigned depth, Span use) {
+    auto site = invocationSpan(in, at, last, use);
+    auto context = diagnostics.syntaxContext(site);
+    if (!context)
+      context = in[at].context;
+    std::vector<Pieces> args;
+    bool argsParsed = false;
+    auto parseArguments = [&] {
+      if (!argsParsed) {
+        args = splitArguments(in, inner, at + 3, last, site);
+        argsParsed = true;
+      }
+      return !failed;
+    };
+    auto text = [&](std::size_t index) -> std::optional<std::string> {
+      if (!parseArguments())
+        return std::nullopt;
+      if (index >= args.size()) {
+        error(site, "missing built-in macro argument");
+        return std::nullopt;
+      }
+      Pieces expanded;
+      if (!expandPieces(args[index], expanded, depth + 1, site))
+        return std::nullopt;
+      return textArgument(std::move(expanded), site);
+    };
+    auto append = [&](TokenKind kind, std::string spelling) {
+      out.push_back(generated(kind, std::move(spelling), site, context));
+    };
+    if (name == "addr_of" || name == "addr_of_mut" || name == "offset_of") {
+      if (!parseArguments())
+        return false;
+      auto count = name == "offset_of" ? 2u : 1u;
+      if (args.size() != count ||
+          std::any_of(args.begin(), args.end(), [](const Pieces &argument) {
+            return argument.empty();
+          })) {
+        error(site, "invalid address or offset macro arguments");
+        return false;
+      }
+      append(TokenKind::Word, "core");
+      append(TokenKind::Symbol, ".");
+      append(TokenKind::Word, "intrinsics");
+      append(TokenKind::Symbol, ".");
+      append(TokenKind::Word, name);
+      if (name == "offset_of") {
+        append(TokenKind::Symbol, "<");
+        out.insert(out.end(), args[0].begin(), args[0].end());
+        append(TokenKind::Symbol, ">");
+      }
+      append(TokenKind::Symbol, "(");
+      out.insert(out.end(), args.back().begin(), args.back().end());
+      append(TokenKind::Symbol, ")");
+      return true;
+    }
+    if (name == "line" || name == "column" || name == "file") {
+      if (!parseArguments())
+        return false;
+      if (!args.empty()) {
+        error(site, name + "! takes no arguments");
+        return false;
+      }
+      const auto *located = sourceAt(site);
+      if (!located)
+        located = &source;
+      if (name == "file") {
+        if (invalidUtf8(located->path)) {
+          error(site, "source path is not valid UTF-8");
+          return false;
+        }
+        append(TokenKind::Text, quoteText(located->path));
+        return true;
+      }
+      auto position = sourcePosition(*located, site.begin);
+      append(TokenKind::Integer,
+             std::to_string(name == "line" ? position.line : position.column) +
+                 "u32");
+      return true;
+    }
+    if (name == "module_path") {
+      if (!parseArguments())
+        return false;
+      if (!args.empty()) {
+        error(site, "module_path! takes no arguments");
+        return false;
+      }
+      auto scope = site.source == source.id ? scopeAt(site.begin)
+                   : context                ? context->scope
+                                            : modulePath;
+      if (scope.empty() && configuration && !configuration->packageName.empty())
+        scope.push_back(configuration->packageName);
+      std::string module;
+      for (const auto &part : scope)
+        module += (module.empty() ? "" : ".") + part;
+      append(TokenKind::Text, quoteText(module));
+      return true;
+    }
+    if (name == "concat") {
+      if (!parseArguments())
+        return false;
+      std::string value;
+      for (const auto &argument : args) {
+        Pieces literal;
+        if (!expandPieces(argument, literal, depth + 1, site))
+          return false;
+        trimPieceNewlines(literal);
+        if (literal.size() != 1) {
+          error(site, "concat! operands must be supported literals");
+          return false;
+        }
+        const auto &piece = literal.front();
+        if (piece.kind == TokenKind::Text) {
+          auto decoded = textLiteral(piece.text, diagnostics, piece.origin);
+          if (!decoded) {
+            failed = true;
+            return false;
+          }
+          value += *decoded;
+        } else if (piece.kind == TokenKind::Character) {
+          auto scalar =
+              characterLiteral(piece.text, false, diagnostics, piece.origin);
+          if (!scalar) {
+            failed = true;
+            return false;
+          }
+          appendScalar(value, *scalar);
+        } else if (piece.kind == TokenKind::Integer ||
+                   piece.kind == TokenKind::Floating ||
+                   (piece.kind == TokenKind::Word &&
+                    (piece.text == "true" || piece.text == "false"))) {
+          value += piece.text;
+        } else {
+          error(site, "concat! operands must be supported literals");
+          return false;
+        }
+      }
+      append(TokenKind::Text, quoteText(value));
+      return true;
+    }
+    if (name == "stringify") {
+      std::string value;
+      const Piece *previous = nullptr;
+      for (auto i = at + 3; i < last; ++i) {
+        if (newline(in[i])) {
+          if (!value.empty() && value.back() != ' ')
+            value += ' ';
+          previous = nullptr;
+          continue;
+        }
+        if (separated(previous, in[i]) && !value.empty() && value.back() != ' ')
+          value += ' ';
+        value += in[i].text;
+        previous = &in[i];
+      }
+      while (!value.empty() && value.back() == ' ')
+        value.pop_back();
+      append(TokenKind::Text, quoteText(value));
+      return true;
+    }
+    if (name == "env" || name == "option_env") {
+      if (!parseArguments())
+        return false;
+      if (args.empty() || args.size() > (name == "env" ? 2u : 1u)) {
+        error(site, name + "! expects one or two text arguments");
+        return false;
+      }
+      auto variable = text(0);
+      if (!variable)
+        return false;
+      auto message = args.size() == 2 ? text(1) : std::optional<std::string>{};
+      if (args.size() == 2 && !message)
+        return false;
+      if (!environment) {
+        error(site, "environment lookup is unavailable during macro expansion");
+        return false;
+      }
+      if (auto value = environment(*variable)) {
+        if (invalidUtf8(*value)) {
+          error(site,
+                "environment variable '" + *variable + "' is not valid UTF-8");
+          return false;
+        }
+        if (name == "env")
+          append(TokenKind::Text, quoteText(*value));
+        else if (!appendExpression("present(" + quoteText(*value) + ")", site,
+                                   context, out))
+          return false;
+      } else if (name == "option_env") {
+        if (!appendExpression("none", site, context, out))
+          return false;
+      } else {
+        error(site, message ? *message
+                            : "environment variable '" + *variable +
+                                  "' is not defined");
+        return false;
+      }
+      return true;
+    }
+    if (name == "compile_error") {
+      if (!parseArguments())
+        return false;
+      auto message = args.size() == 1 ? text(0) : std::nullopt;
+      if (args.size() != 1 || !message) {
+        if (args.size() != 1)
+          error(site, "compile_error! expects one text argument");
+        return false;
+      }
+      error(site, *message);
+      return false;
+    }
+    if (name == "cfg") {
+      bool enabled = false;
+      if (!predicate(Pieces(in.begin() + at + 3, in.begin() + last), site,
+                     enabled))
+        return false;
+      append(TokenKind::Word, enabled ? "true" : "false");
+      return true;
+    }
+    if (name == "cfg_select") {
+      Pieces arguments(in.begin() + at + 3, in.begin() + last);
+      std::vector<std::size_t> close;
+      if (!pairing(arguments, close)) {
+        error(site, "unbalanced cfg_select! arms");
+        return false;
+      }
+      auto arms = splitArguments(arguments, close, 0, arguments.size(), site);
+      if (failed)
+        return false;
+      std::optional<Pieces> selected, fallback;
+      bool matched = false;
+      bool sawFallback = false;
+      for (std::size_t armIndex = 0; armIndex < arms.size(); ++armIndex) {
+        auto &arm = arms[armIndex];
+        trimPieceNewlines(arm);
+        std::size_t arrow = 0;
+        while (arrow < arm.size() && !symbol(arm[arrow], "=>"))
+          ++arrow;
+        if (arrow == arm.size() || arrow + 1 == arm.size()) {
+          error(site, "cfg_select! arms use `cfg(predicate) => expression`");
+          return false;
+        }
+        Pieces branch(arm.begin() + arrow + 1, arm.end());
+        trimPieceNewlines(branch);
+        if (branch.size() >= 2 && symbol(branch.front(), "{") &&
+            symbol(branch.back(), "}")) {
+          std::vector<std::size_t> branchClose;
+          if (pairing(branch, branchClose) &&
+              branchClose.front() == branch.size() - 1)
+            branch = Pieces(branch.begin() + 1, branch.end() - 1);
+        }
+        if (arrow == 1 && arm.front().kind == TokenKind::Word &&
+            arm.front().text == "_") {
+          if (sawFallback || armIndex + 1 != arms.size()) {
+            error(site, "cfg_select! fallback must be unique and last");
+            return false;
+          }
+          sawFallback = true;
+          fallback = std::move(branch);
+          continue;
+        }
+        if (arrow < 4 || arm.front().kind != TokenKind::Word ||
+            arm.front().text != "cfg" || !symbol(arm[1], "(") ||
+            !symbol(arm[arrow - 1], ")")) {
+          error(site, "cfg_select! arms use `cfg(predicate) => expression`");
+          return false;
+        }
+        Pieces condition(arm.begin() + 2, arm.begin() + arrow - 1);
+        bool enabled = false;
+        if (!predicate(condition, site, enabled))
+          return false;
+        if (enabled && !matched) {
+          selected = std::move(branch);
+          matched = true;
+        }
+      }
+      if (!selected)
+        selected = std::move(fallback);
+      if (!selected) {
+        error(site, "cfg_select! has no matching arm and no fallback");
+        return false;
+      }
+      Pieces expanded;
+      if (!expandPieces(*selected, expanded, depth + 1, site))
+        return false;
+      if (parsesExpression(expanded)) {
+        out.push_back(generated(TokenKind::Symbol, "(", site, context));
+        out.insert(out.end(), expanded.begin(), expanded.end());
+        out.push_back(generated(TokenKind::Symbol, ")", site, context));
+      } else {
+        out.insert(out.end(), expanded.begin(), expanded.end());
+      }
+      return true;
+    }
+    if (name == "include" || name == "include_str" || name == "include_bytes") {
+      if (!parseArguments())
+        return false;
+      if (args.size() != 1) {
+        error(site, name + "! expects one text argument");
+        return false;
+      }
+      auto filename = text(0);
+      if (!filename)
+        return false;
+      const auto *from = sourceAt(site);
+      if (!from)
+        from = &source;
+      auto included = readMacroFile(*from, *filename, site);
+      if (!included)
+        return false;
+      if (name == "include_str") {
+        if (invalidUtf8(included->text)) {
+          error(site, "include_str! file is not valid UTF-8");
+          return false;
+        }
+        append(TokenKind::Text, quoteText(included->text));
+        return true;
+      }
+      if (name == "include_bytes") {
+        append(TokenKind::PrefixedText, quoteBytes(included->text));
+        return true;
+      }
+      Diagnostics::SourceContext includedContext(diagnostics, *included);
+      auto before = diagnostics.count();
+      tokenize(*included, diagnostics);
+      if (diagnostics.count() != before) {
+        failed = true;
+        return false;
+      }
+      Expander indexer(*included, diagnostics, allocate, procedures,
+                       context ? context->scope : scopeAt(site.begin), modules,
+                       macros, importedMacros, indexedModules, pendingImports,
+                       nullptr, importModules, declaredModules, discovery,
+                       configuration, compiledModules, inlineModules, files,
+                       environment);
+      indexer.run(true);
+      if (indexer.failed) {
+        failed = true;
+        return false;
+      }
+      Pieces contents;
+      std::size_t cursor = 0;
+      for (const auto &definition : indexer.definitions) {
+        contents.insert(contents.end(), indexer.pieces.begin() + cursor,
+                        indexer.pieces.begin() + definition.begin);
+        cursor = definition.end + 1;
+      }
+      contents.insert(contents.end(), indexer.pieces.begin() + cursor,
+                      indexer.pieces.end());
+      Pieces expanded;
+      if (!expandPieces(contents, expanded, depth + 1, site))
+        return false;
+      out.insert(out.end(), expanded.begin(), expanded.end());
+      return true;
+    }
+    error(site, "unknown built-in macro '" + name + "'");
+    return false;
   }
 
   bool expandPieces(const Pieces &in, Pieces &out, unsigned depth, Span use) {
@@ -2181,8 +2771,9 @@ private:
     for (std::size_t i = 0; i < in.size();) {
       auto invocation = invoked(in, i);
       const auto *macro = invocation.macro;
-      auto host = !macro && procedure(in, i);
-      if (!macro && !host) {
+      auto intrinsic = !macro ? builtin(in, i) : std::nullopt;
+      auto host = !macro && !intrinsic && procedure(in, i);
+      if (!macro && !intrinsic && !host) {
         out.push_back(in[i++]);
         continue;
       }
@@ -2191,6 +2782,9 @@ private:
         // The qualifier was already copied token by token; it names the
         // macro, not a value the expansion is applied to.
         auto prefix = i - qualifierStart(in, i);
+        out.resize(out.size() - std::min(prefix, out.size()));
+      } else if (intrinsic) {
+        auto prefix = i - intrinsic->begin;
         out.resize(out.size() - std::min(prefix, out.size()));
       }
       if (invocation.privateAccess) {
@@ -2211,6 +2805,9 @@ private:
       }
       if (host)
         ok &= invokeProcedure(in, i, last, out, depth, use);
+      else if (intrinsic)
+        ok &=
+            invokeBuiltin(intrinsic->name, in, inner, i, last, out, depth, use);
       else if (!broken.contains(macroKey(macro->definitionScope, macro->name)))
         ok &= invoke(*macro, in, i, last, out, depth, use);
       i = last + 1;
@@ -2536,14 +3133,18 @@ private:
       }
       auto invocation = invoked(pieces, i);
       const auto *macro = invocation.macro;
-      auto host = !macro && procedure(pieces, i);
-      if (!macro && !host) {
+      auto intrinsic = !macro ? builtin(pieces, i) : std::nullopt;
+      auto host = !macro && !intrinsic && procedure(pieces, i);
+      if (!macro && !intrinsic && !host) {
         ++i;
         continue;
       }
       changed = true;
-      auto name = host ? pieces[i].text : macro->name;
-      auto first = macro ? qualifierStart(pieces, i) : i, last = close[i + 2];
+      auto name = macro ? macro->name : host ? pieces[i].text : intrinsic->name;
+      auto first = macro       ? qualifierStart(pieces, i)
+                   : intrinsic ? intrinsic->begin
+                               : i;
+      auto last = close[i + 2];
       Span use{pieces[first].origin.begin, pieces[last].origin.end, source.id};
       copy(use.begin);
       cursor = use.end;
@@ -2568,6 +3169,7 @@ private:
       return std::nullopt;
     copy(source.text.size());
     Source generated{source.path, std::move(text), allocate()};
+    Diagnostics::SourceContext generatedContext(diagnostics, generated);
     diagnostics.generated({generated.id,
                            {0, 0, source.id},
                            "macro expansion",
@@ -2606,10 +3208,12 @@ expandMacros(const Source &source, Diagnostics &diagnostics,
              std::vector<Module::MacroDeclaration> *declarations,
              const MacroModuleProvider &importModules,
              const Configuration *configuration, MacroLibrary *exports,
-             const MacroSourceIdentity &identify) {
+             const MacroSourceIdentity &identify, MacroFileProvider files,
+             MacroEnvironmentProvider environment) {
   Expander expander(source, diagnostics, allocate, procedural,
                     std::move(modulePath), modules, {}, {}, {}, {},
-                    declarations, importModules, {}, {}, configuration);
+                    declarations, importModules, {}, {}, configuration, {}, {},
+                    std::move(files), std::move(environment));
   auto result = expander.run();
   if (exports && diagnostics.empty()) {
     auto library = expander.exportLibrary(identify);

@@ -39,6 +39,25 @@ pub enum Stdio {
     Inherit, Piped, Null, Descriptor(sys.OwnedFd), StandardOutput, StandardError
 }
 
+pub copy type ExitCode { code: u8 }
+
+extend ExitCode implements Clone {
+    fn clone(): ExitCode { self }
+}
+extend ExitCode implements PartialEq {
+    fn eq(read other: ExitCode): bool { self.code == other.code }
+}
+extend ExitCode implements Eq {}
+
+extend ExitCode {
+    pub const SUCCESS: ExitCode = ExitCode(0u8)
+    pub const FAILURE: ExitCode = ExitCode(1u8)
+}
+
+extend ExitCode implements From<u8> {
+    static fn from(take code: u8): ExitCode { ExitCode(code) }
+}
+
 fn stdio_config(read config: Stdio): (i32, i32) {
     match config {
         Stdio.Inherit => (0i32, -1i32),
@@ -123,7 +142,20 @@ pub type ChildStdin {
     descriptor: sys.OwnedFd
 }
 
+extend ChildStdin implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
+        var debug = try f.debug_struct("ChildStdin")
+        try debug.field("fd", self.descriptor.as_raw_fd())
+        try debug.finish()
+    }
+}
+
 extend ChildStdin implements Writer {
+    mut fn write_some(read buf: [u8]): usize throws Error { try io.write_fd(self.descriptor.as_raw_fd(), buf) }
+    mut fn flush(): Unit throws Error {}
+}
+
+extend<region r> read ChildStdin from r implements Writer {
     mut fn write_some(read buf: [u8]): usize throws Error { try io.write_fd(self.descriptor.as_raw_fd(), buf) }
     mut fn flush(): Unit throws Error {}
 }
@@ -132,12 +164,58 @@ pub type ChildStdout {
     descriptor: sys.OwnedFd
 }
 
+extend ChildStdout implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
+        var debug = try f.debug_struct("ChildStdout")
+        try debug.field("fd", self.descriptor.as_raw_fd())
+        try debug.finish()
+    }
+}
+
 extend ChildStdout implements Reader {
     mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.descriptor.as_raw_fd(), buf) }
 }
 
 pub type ChildStderr {
     descriptor: sys.OwnedFd
+}
+
+@cfg(target_os = "linux")
+extend ChildStdin implements std.os.fd.AsRawFd {
+    fn as_raw_fd(): i32 { self.descriptor.as_raw_fd() }
+}
+@cfg(target_os = "linux")
+extend ChildStdout implements std.os.fd.AsRawFd {
+    fn as_raw_fd(): i32 { self.descriptor.as_raw_fd() }
+}
+@cfg(target_os = "linux")
+extend ChildStderr implements std.os.fd.AsRawFd {
+    fn as_raw_fd(): i32 { self.descriptor.as_raw_fd() }
+}
+@cfg(target_os = "linux")
+extend ChildStdin implements std.os.fd.AsFd {
+    fn as_fd<region r>(receiver read self: Self from r): std.os.fd.BorrowedFd<region r> {
+        sys.OwnedFd.(std.os.fd.AsFd).as_fd(self.descriptor)
+    }
+}
+@cfg(target_os = "linux")
+extend ChildStdout implements std.os.fd.AsFd {
+    fn as_fd<region r>(receiver read self: Self from r): std.os.fd.BorrowedFd<region r> {
+        sys.OwnedFd.(std.os.fd.AsFd).as_fd(self.descriptor)
+    }
+}
+@cfg(target_os = "linux")
+extend ChildStderr implements std.os.fd.AsFd {
+    fn as_fd<region r>(receiver read self: Self from r): std.os.fd.BorrowedFd<region r> {
+        sys.OwnedFd.(std.os.fd.AsFd).as_fd(self.descriptor)
+    }
+}
+extend ChildStderr implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
+        var debug = try f.debug_struct("ChildStderr")
+        try debug.field("fd", self.descriptor.as_raw_fd())
+        try debug.finish()
+    }
 }
 
 extend ChildStderr implements Reader {
@@ -303,6 +381,8 @@ pub type Command {
     stderr: Stdio
     stdio_set: u8
 }
+extend Command not core.marker.UnwindSafe;
+extend Command not core.marker.RefUnwindSafe;
 
 pub fn command(read program: OsStr): Command {
     Command(program.to_os_string(), vec.new<OsString>(), vec.new<EnvChange>(), false,
@@ -414,7 +494,16 @@ extend Command {
 
     // The child's environment as NUL-terminated `name=value` strings.
     fn environment(): List<List<u8>> throws Error {
-        var entries = if self.clear_env { vec.new<env.EnvVar>() } else { env.vars() }
+        var entries = vec.new<env.EnvVar>()
+        if !self.clear_env {
+            var variables = env.vars_os()
+            while true {
+                match take variables.next() {
+                    present((name, value)) => entries.push(env.EnvVar(name, value)),
+                    none => { break }
+                }
+            }
+        }
         var k = 0usize
         while k < self.changes.len() {
             let name = self.changes[k].name.as_bytes()
@@ -690,5 +779,11 @@ extend ExitStatus implements Clone {
     fn clone(): ExitStatus { self }
 }
 extend Output implements Clone {
-    fn clone(): Output { Output(self.status, self.stdout.clone(), self.stderr.clone()) }
+    fn clone(): Output {
+        Output(
+            self.status,
+            List<u8>.(Clone).clone(self.stdout),
+            List<u8>.(Clone).clone(self.stderr)
+        )
+    }
 }

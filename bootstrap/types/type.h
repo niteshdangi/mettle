@@ -52,6 +52,7 @@ inline constexpr TypeId TypeId::Usize{16};
 inline constexpr TypeId TypeId::F32{17};
 inline constexpr TypeId TypeId::F64{18};
 using Type = TypeId;
+enum class VaListAbi { SysV64, Aapcs64, Pointer };
 inline constexpr std::uint32_t builtinTypeCount = 19;
 bool isInteger(Type type);
 bool isSignedInteger(Type type);
@@ -88,7 +89,8 @@ struct StaticConstant {
     Function,
     Text,
     Repeat,
-    Pointer
+    Pointer,
+    TypeIdentity
   };
   Kind kind = Kind::Scalar;
   Type type = Type::Unknown;
@@ -259,6 +261,7 @@ struct TypeParameter {
   std::vector<std::size_t> callableLocalParameters{};
   std::vector<RegionId> regionArguments{};
   bool unpin = false;
+  bool thin = false;
   NumericLiteral numeric{};
   Type erasedCallableConstraint = Type::Unknown;
 };
@@ -325,7 +328,8 @@ public:
   ImportedTypeDefinition importedDefinition(Type type) const;
   ImportedTypeKind importedKind(Type type) const;
   std::vector<Type> storedTypes() const;
-  Type declareProduct(std::string name, bool copyRequested);
+  Type declareProduct(std::string name, bool copyRequested,
+                      AggregateKind kind = AggregateKind::Product);
   Type vectorType(std::string name, Type element, unsigned lanes,
                   unsigned alignment);
   void defineProduct(Type type, std::vector<TypeField> fields);
@@ -392,11 +396,13 @@ public:
   // Runtime provenance also includes borrows hidden by an erased payload.
   bool containsViews(Type type, bool includeErasedPayloads = false) const;
   const ProductType &product(Type type) const;
+  std::optional<Type> findProduct(std::string_view name) const;
   std::string_view name(Type type) const;
   bool isCopy(Type type) const;
   bool copyProduct(Type type) const;
   bool isUnpin(Type type) const;
   void constrainUnpin(Type type);
+  void constrainThin(Type type);
   Type callableType(CallableType descriptor);
   Type closureType(std::string name, std::vector<TypeField> captures,
                    CallableType descriptor);
@@ -419,16 +425,21 @@ public:
   // usize/isize wraps and overflows at this width, never the host's.
   void setPointerBits(unsigned bits) { pointerBits = bits; }
   unsigned targetPointerBits() const { return pointerBits; }
+  void setVaListAbi(VaListAbi abi) { variadicAbi = abi; }
+  VaListAbi vaListAbi() const { return variadicAbi; }
+  std::vector<TypeField> vaListFields();
   Type projection(Type subject, Type interfaceType, std::size_t associated,
                   std::vector<Type> arguments = {},
                   Type valueType = Type::Unknown, bool copyRequested = false,
-                  bool sized = true, std::vector<RegionId> regions = {});
+                  bool sized = true, std::vector<RegionId> regions = {},
+                  bool thin = false);
   bool isProjection(Type type) const;
   std::optional<std::int64_t> constantValue(Type type) const;
   std::optional<NumericLiteral> scalarConstantValue(Type type) const;
   bool isParameter(Type type) const;
   bool isConstant(Type type) const;
   bool isSized(Type type, std::span<const Type> assumptions = {}) const;
+  bool isThin(Type type) const;
   PointerMetadata pointerMetadata(Type type) const;
   std::optional<Type> unsizedArray(Type source, Type target) const;
   std::optional<std::pair<Type, Type>> erasedTail(Type source,
@@ -467,6 +478,7 @@ private:
   std::map<RegionalSubstitution, Type> regionalSubstitutions;
   unsigned regionalSubstitutionDepth = 0;
   unsigned pointerBits = 64;
+  VaListAbi variadicAbi = VaListAbi::SysV64;
   enum class EntryKind {
     Product,
     View,

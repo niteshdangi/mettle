@@ -10,8 +10,13 @@ PointerMetadata TypeStore::pointerMetadata(Type type) const {
       return PointerMetadata::Witness;
     if (isSlice(type))
       return PointerMetadata::ElementCount;
-    if (isParameter(type) && !isSized(type))
-      return PointerMetadata::Dependent;
+    if (isParameter(type)) {
+      const auto &parameter = this->parameter(type);
+      if (parameter.thin)
+        return PointerMetadata::None;
+      if (!isSized(type))
+        return PointerMetadata::Dependent;
+    }
     if (!isProduct(type) || product(type).fields.empty())
       return PointerMetadata::None;
     type = product(type).fields.back().type;

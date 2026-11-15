@@ -16,6 +16,12 @@ struct TargetFacts {
   bool initialProfile() const;
 };
 TargetFacts targetFacts(std::string_view triple);
+inline VaListAbi targetVaListAbi(const TargetFacts &target) {
+  if (target.arch != TargetArch::Aarch64)
+    return VaListAbi::SysV64;
+  return target.system == TargetSystem::Darwin ? VaListAbi::Pointer
+                                               : VaListAbi::Aapcs64;
+}
 bool recognizedFeature(TargetArch arch, std::string_view feature);
 std::set<std::string> featureClosure(TargetArch arch,
                                      std::set<std::string> features);

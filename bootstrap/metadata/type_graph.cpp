@@ -80,8 +80,8 @@ template <class A> void record(A &a, ProductType &r) {
     r.nativeCleanup, r.vector, r.normalizedFields);
 }
 template <class A> void record(A &a, TypeParameter &r) {
-  a(r.name, r.copyRequested, r.sized, r.kind, r.valueType, r.value, r.operation,
-    r.operands, r.callableConstraint, r.callableLocalParameters,
+  a(r.name, r.copyRequested, r.sized, r.thin, r.kind, r.valueType, r.value,
+    r.operation, r.operands, r.callableConstraint, r.callableLocalParameters,
     r.regionArguments, r.unpin, r.numeric, r.erasedCallableConstraint);
 }
 template <class A> void record(A &a, TypeBinding &r) {
@@ -551,7 +551,7 @@ template <class A> void record(A &a, WireRegion &r) {
 }
 constexpr std::array<std::uint8_t, 8> magic{'M', 'T', 'T', 'Y',
                                             'R', 'E', 'G', 0};
-constexpr std::uint32_t version = 2;
+constexpr std::uint32_t version = 3;
 void readHeader(Reader &reader, Header &header, unsigned pointerBits) {
   if (reader.bytes.size() > limits::sourceBytes)
     reject("type graph exceeds source byte limit");
@@ -771,6 +771,9 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
   auto validType = [&](Type type) {
     return type != Type::Unknown && !store.isConstant(type);
   };
+  auto scalar = [](Type type) {
+    return isInteger(type) || type == Type::Bool || type == Type::Char;
+  };
   for (std::size_t i = 0; i < definitions.size(); ++i) {
     auto &definition = definitions[i];
     if (auto imported = std::get_if<ImportedProduct>(&definition)) {
@@ -794,6 +797,28 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
            store.product(r.genericOrigin).genericParameters.size() !=
                r.genericArguments.size()))
         reject("invalid generic product origin or arity");
+      if (r.genericOrigin != Type::Unknown) {
+        const auto &parameters =
+            store.product(r.genericOrigin).genericParameters;
+        for (std::size_t p = 0; p < parameters.size(); ++p) {
+          auto parameter = parameters[p];
+          if ((!store.isParameter(parameter) && !store.isConstant(parameter)) ||
+              (store.parameter(parameter).kind != TypeParameterKind::Type &&
+               store.parameter(parameter).kind != TypeParameterKind::Constant))
+            reject("invalid generic product origin parameter");
+          auto argument = r.genericArguments[p];
+          if (store.parameter(parameter).kind == TypeParameterKind::Type) {
+            if (!validType(argument))
+              reject("invalid generic product type argument");
+          } else {
+            if (!store.isConstant(argument))
+              reject("generic product constant argument is not constant");
+            if (store.parameter(argument).valueType !=
+                store.parameter(parameter).valueType)
+              reject("generic product constant argument type mismatch");
+          }
+        }
+      }
       if ((r.regionOrigin != Type::Unknown &&
            !store.isProduct(r.regionOrigin)) ||
           (r.regionPattern != Type::Unknown &&
@@ -815,6 +840,9 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
         if (kind != TypeParameterKind::Type &&
             kind != TypeParameterKind::Constant)
           reject("generic list contains a non-definition parameter");
+        if (kind == TypeParameterKind::Constant &&
+            !scalar(store.parameter(parameter).valueType))
+          reject("generic const parameter requires a supported scalar type");
       }
       for (const auto &field : r.fields) {
         if (!validType(field.type))
@@ -969,9 +997,30 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
           }
           break;
         }
-        case AggregateKind::VarArgs:
-          fields(std::array{Type::U64, Type::U64, Type::U64});
+        case AggregateKind::VarArgs: {
+          std::vector<Type> representation;
+          if (store.vaListAbi() == VaListAbi::Pointer)
+            representation = {Type::Unknown};
+          else if (store.vaListAbi() == VaListAbi::Aapcs64)
+            representation = {Type::Unknown, Type::Unknown, Type::Unknown,
+                              Type::I32, Type::I32};
+          else
+            representation = {Type::U32, Type::U32, Type::Unknown,
+                              Type::Unknown};
+          if (r.fields.size() != representation.size())
+            reject("variadic cursor field arity mismatch");
+          for (std::size_t field = 0; field < representation.size(); ++field) {
+            auto actual = r.fields[field].type;
+            if (representation[field] == Type::Unknown) {
+              if (!store.isPointer(actual) ||
+                  store.pointer(actual).payload != Type::Unit ||
+                  store.pointer(actual).mode != ParameterMode::Mut)
+                reject("invalid variadic cursor pointer field");
+            } else if (actual != representation[field])
+              reject("invalid variadic cursor offset field");
+          }
           break;
+        }
         case AggregateKind::Ordering:
           fields(std::array{Type::I32});
           break;
@@ -988,24 +1037,29 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
       }
     } else if (auto parameter = std::get_if<TypeParameter>(&definition)) {
       const auto &r = *parameter;
-      auto scalar = isInteger(r.valueType) || r.valueType == Type::Bool ||
-                    r.valueType == Type::Char;
       if ((r.kind == TypeParameterKind::Type &&
            (r.valueType != Type::Unknown || !r.operands.empty())) ||
           (r.kind == TypeParameterKind::Constant &&
-           (!scalar || !r.operands.empty())) ||
+           (!validType(r.valueType) || !r.operands.empty())) ||
           (r.kind == TypeParameterKind::Value &&
-           (!scalar || !r.operands.empty() ||
+           (!scalar(r.valueType) || !r.operands.empty() ||
             (r.numeric.negative &&
              r.numeric.magnitude == std::array<std::uint64_t, 2>{}) ||
             !integerLiteralFits(r.numeric, r.valueType,
                                 store.targetPointerBits()))))
-        reject("invalid typed parameter or scalar constant");
+        reject("invalid type or constant parameter '" + r.name + "' (kind " +
+               std::to_string(static_cast<unsigned>(r.kind)) + ", value type " +
+               std::string(store.name(r.valueType)) + ", operands " +
+               std::to_string(r.operands.size()) + ")");
+      if (r.thin && (r.kind != TypeParameterKind::Type &&
+                     (r.kind != TypeParameterKind::Projection ||
+                      r.valueType != Type::Unknown)))
+        reject("invalid Thin type parameter constraint");
       if (r.kind == TypeParameterKind::Expression) {
         static const std::set<std::string> operations{
             "+",  "-",  "*",  "/", "%",  "&", "|",  "^",  "<<",
             ">>", "==", "!=", "<", "<=", ">", ">=", "&&", "||"};
-        if (!scalar || r.operands.size() != 2 ||
+        if (!scalar(r.valueType) || r.operands.size() != 2 ||
             !operations.contains(r.operation) ||
             !store.isConstant(r.operands[0]) ||
             !store.isConstant(r.operands[1]))
@@ -1037,11 +1091,13 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
             store.scalarConstantValue(r.operands[1]))
           reject("noncanonical evaluated constant expression");
       }
-      if (r.kind == TypeParameterKind::Projection &&
-          (r.operands.size() < 2 || !validType(r.operands[0]) ||
-           !store.isErased(r.operands[1]) || r.value < 0 ||
-           (r.valueType != Type::Unknown && !scalar)))
-        reject("invalid interface projection");
+      if (r.kind == TypeParameterKind::Projection) {
+        if (r.operands.size() < 2 || !validType(r.operands[0]) ||
+            !store.isErased(r.operands[1]) || r.value < 0)
+          reject("invalid interface projection subject, owner, or ordinal");
+        if (r.valueType != Type::Unknown && !validType(r.valueType))
+          reject("invalid interface projection result type");
+      }
       for (auto constraint : {r.callableConstraint, r.erasedCallableConstraint})
         if (constraint != Type::Unknown && !store.isFunctionPointer(constraint))
           reject("invalid callable parameter constraint");
@@ -1059,11 +1115,26 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
           erased->methodOwners.size() != erased->methodSlots.size())
         reject("erased interface dispatch arity mismatch");
       std::set<Type> associated;
-      for (const auto &binding : erased->associated)
-        if (!store.isParameter(binding.parameter) ||
-            !validType(binding.argument) ||
+      for (const auto &binding : erased->associated) {
+        if ((!store.isParameter(binding.parameter) &&
+             !store.isConstant(binding.parameter)) ||
             !associated.insert(binding.parameter).second)
-          reject("invalid erased associated binding");
+          reject("invalid or duplicate erased associated binding");
+        const auto &parameter = store.parameter(binding.parameter);
+        if (parameter.kind == TypeParameterKind::Type) {
+          if (!validType(binding.argument))
+            reject("invalid erased associated type binding");
+        } else if (parameter.kind == TypeParameterKind::Constant) {
+          if (!store.isConstant(binding.argument) ||
+              !validType(store.parameter(binding.argument).valueType))
+            reject("erased associated constant requires a typed value");
+          if (parameter.valueType.index() < builtinTypeCount &&
+              parameter.valueType !=
+                  store.parameter(binding.argument).valueType)
+            reject("erased associated constant value type mismatch");
+        } else
+          reject("erased associated binding key is not a declaration");
+      }
       for (auto method : erased->methodTypes)
         if (method != Type::Unknown && !store.isFunctionPointer(method))
           reject("invalid erased method type");
@@ -1591,7 +1662,7 @@ std::string canonicalKey(const TypeStore &store,
           if (p.regionOrigin != Type::Unknown) {
             key.byte(0);
             key(p.regionOrigin, p.normalizedFields, p.regionArguments,
-                p.fields);
+                p.genericArguments, p.fields);
           } else if (p.genericOrigin != Type::Unknown) {
             key.byte(1);
             key(p.genericOrigin, p.genericArguments);
@@ -1621,7 +1692,7 @@ std::string canonicalKey(const TypeStore &store,
             break;
           case TypeParameterKind::Projection:
             key(r.operands, r.value, r.valueType, r.copyRequested, r.sized,
-                r.regionArguments);
+                r.thin, r.regionArguments);
             break;
           default:
             reject("generic definition has no structural identity");

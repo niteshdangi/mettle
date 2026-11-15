@@ -1,9 +1,21 @@
 #include "lowering/builder.h"
 #include "types/target.h"
+#include <array>
 
 namespace mettle::lowering {
 Builder::Value Builder::machineExpression(const Node &node) {
   const auto &facts = module.facts(node);
+  if (facts.machineOperation == "intrinsics.offset_of") {
+    ir::Instruction instruction{ir::Op::Machine, {}, {}, {},       "",
+                                {-1, {}},        -1, 0,  node.span};
+    instruction.text = facts.machineOperation;
+    instruction.typeArguments = {facts.machineType};
+    instruction.span = node.span;
+    for (auto field : facts.argumentOrder)
+      instruction.place.fields.push_back(
+          Projection::field(static_cast<std::uint32_t>(field)));
+    return emit(std::move(instruction), Type::Usize);
+  }
   if (facts.machineOperation == "coroutine.suspend") {
     auto resume = block();
     terminate({ir::Exit::Suspend, {}, resume, -1, node.span});
@@ -170,7 +182,18 @@ Builder::Value Builder::machineExpression(const Node &node) {
          node.span},
         sourceType(node));
   }
+  if (facts.machineOperation == "intrinsics.addr_of" ||
+      facts.machineOperation == "intrinsics.addr_of_mut") {
+    auto location = place(*node.children[1], false,
+                          facts.machineOperation == "intrinsics.addr_of_mut");
+    return emit(
+        {ir::Op::RawAddress, {}, {}, {}, "", location, -1, 0, node.span},
+        sourceType(node));
+  }
   std::vector<Value> operands;
+  bool ownedSelection = facts.machineOperation == "hint.select_unpredictable" &&
+                        !module.typeStore()->isCopy(sourceType(node));
+  std::array<Place, 2> selectionPlaces{Place{-1, {}}, Place{-1, {}}};
   std::vector<const Node *> syntax;
   if (facts.method)
     syntax.push_back(node.children[0]->children[0].get());
@@ -215,12 +238,114 @@ Builder::Value Builder::machineExpression(const Node &node) {
              0,
              argument.span},
             facts.callParameterTypes[i]));
-    } else
-      operands.push_back(use(expression(
+    } else {
+      auto value = expression(
           argument, mode == ParameterMode::Take ||
-                        !module.typeStore()->isCopy(sourceType(argument)))));
+                        !module.typeStore()->isCopy(sourceType(argument)));
+      if (!live())
+        return {};
+      if (ownedSelection && i > 0)
+        selectionPlaces[i - 1] =
+            materialize(value, argument.span, temporaryScope);
+      else
+        value = use(value);
+      operands.push_back(value);
+    }
     if (!live())
       return {};
+  }
+  if (ownedSelection) {
+    auto type = sourceType(node);
+    auto whenTrue = block(), whenFalse = block(), join = block();
+    terminate(
+        {ir::Exit::Branch, operands[0], whenTrue, whenFalse, node.span, true});
+    auto select = [&](std::size_t selected) {
+      auto chosen = emit({ir::Op::Move,
+                          {},
+                          {},
+                          {},
+                          "",
+                          selectionPlaces[selected],
+                          -1,
+                          0,
+                          node.span},
+                         type);
+      auto pending = materialize(chosen, node.span, temporaryScope);
+      emit({ir::Op::DropPlace,
+            {},
+            {},
+            {},
+            "",
+            selectionPlaces[1 - selected],
+            -1,
+            0,
+            node.span},
+           Type::Unit);
+      return emit({ir::Op::Move, {}, {}, {}, "", pending, -1, 0, node.span},
+                  type);
+    };
+    current = whenTrue;
+    auto first = select(0);
+    auto firstBlock = current;
+    terminate({ir::Exit::Jump, {}, join, -1, node.span});
+    current = whenFalse;
+    auto second = select(1);
+    auto secondBlock = current;
+    terminate({ir::Exit::Jump, {}, join, -1, node.span});
+    current = join;
+    return track(merge(type, {first, second}, {firstBlock, secondBlock}),
+                 node.span);
+  }
+  if (facts.machineOperation == "ptr.as_ref" ||
+      facts.machineOperation == "ptr.as_mut" ||
+      facts.machineOperation == "ptr.as_ref_unchecked" ||
+      facts.machineOperation == "ptr.as_mut_unchecked") {
+    bool optional = !facts.machineOperation.ends_with("_unchecked");
+    auto type = sourceType(node);
+    auto view =
+        optional ? module.typeStore()->product(type).components[0] : type;
+    auto location = materialize(operands[0], node.span, temporaryScope);
+    location.fields.push_back(Projection::dereference());
+    auto borrow = [&]() {
+      Instruction instruction{module.typeStore()->view(view).mode ==
+                                      ParameterMode::Mut
+                                  ? ir::Op::ViewMut
+                                  : ir::Op::ViewRead,
+                              {},
+                              {},
+                              {},
+                              "",
+                              location,
+                              -1,
+                              0,
+                              node.span};
+      instruction.unsafeAllowed = unsafeDepth != 0;
+      return emit(std::move(instruction), view);
+    };
+    if (!optional)
+      return borrow();
+    auto absent = block(), present = block(), join = block();
+    auto null = emit({ir::Op::Machine,
+                      {},
+                      {operands[0]},
+                      {},
+                      "ptr.is_null",
+                      {-1, {}},
+                      -1,
+                      0,
+                      node.span},
+                     Type::Bool);
+    terminate({ir::Exit::Branch, null, absent, present, node.span});
+    current = absent;
+    auto none = variant(type, 0, {}, node.span);
+    auto noneBlock = current;
+    terminate({ir::Exit::Jump, {}, join, -1, node.span});
+    current = present;
+    auto some = variant(type, 1, {borrow()}, node.span);
+    auto someBlock = current;
+    terminate({ir::Exit::Jump, {}, join, -1, node.span});
+    current = join;
+    return merge(type, {none, some}, {noneBlock, someBlock});
   }
   if (facts.machineOperation == "cell.set") {
     auto payload = module.typeStore()->product(facts.machineType).components[0];

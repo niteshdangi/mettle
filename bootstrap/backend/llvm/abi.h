@@ -35,6 +35,7 @@ public:
 private:
   LoweringContext &context;
   bool aarch64;
+  llvm::StructType *variadicType();
   std::optional<unsigned> transparentField(Type type);
   CAbiValue classify(Type type, bool result);
   std::vector<llvm::Value *> encode(const CAbiValue &value,

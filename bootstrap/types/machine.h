@@ -14,6 +14,7 @@ struct MachineSignature {
     PointerRead,
     PointerMut,
     ViewRead,
+    ViewReadStatic,
     ViewMut,
     PinRead,
     PinMut,

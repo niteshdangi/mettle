@@ -7,28 +7,40 @@ namespace mettle {
 namespace {
 bool specializesBounds(const GenericParameter &parameter) {
   return std::any_of(parameter.bounds.begin(), parameter.bounds.end(),
-                     [](const auto &bound) {
-                       return bound.name != "unsized";
-                     });
+                     [](const auto &bound) { return bound.name != "unsized"; });
 }
 } // namespace
-// Manual declarations of the structural cross-thread properties: a negative
-// `extend T not Transferable;` or an `unsafe extend ... implements
-// Transferable {}` whose bounds state the conditions the implementer has
-// verified.
-void Checker::concurrencyDeclaration(
+// Manual declarations of structural properties use a negative declaration or
+// an unsafe positive declaration whose bounds state its verified conditions.
+void Checker::structuralPropertyDeclaration(
     const Module::Implementation &syntax, interfaces::Property property,
     interfaces::Implementation &implementation) {
   auto &database = *checked.interfaceData;
   const std::string name =
-      property == interfaces::Property::Transferable ? "Transferable"
-      : property == interfaces::Property::Shareable  ? "Shareable"
-                                                     : "Static";
+      property == interfaces::Property::Transferable    ? "Transferable"
+      : property == interfaces::Property::Shareable     ? "Shareable"
+      : property == interfaces::Property::Static        ? "Static"
+      : property == interfaces::Property::UnwindSafe    ? "UnwindSafe"
+      : property == interfaces::Property::RefUnwindSafe ? "RefUnwindSafe"
+      : property == interfaces::Property::Freeze        ? "Freeze"
+                                                        : "Thin";
   if (property == interfaces::Property::Static) {
     error("type", syntax.span, "Static is derived and cannot be declared");
     return;
   }
+  if (property == interfaces::Property::Thin) {
+    error("type", syntax.span, "Thin is derived and cannot be declared");
+    return;
+  }
   auto target = implementation.target;
+  if (property == interfaces::Property::Freeze &&
+      checked.types->isFunctionPointer(target)) {
+    if (syntax.negative || !syntax.constraints.empty() ||
+        !syntax.associated.empty() || !syntax.methodFunctions.empty())
+      error("type", syntax.span,
+            "function-pointer Freeze implementations are compiler-derived");
+    return;
+  }
   if (!checked.types->isProduct(target) || checked.types->isOpaque(target) ||
       (checked.types->product(target).kind != AggregateKind::Product &&
        checked.types->product(target).kind != AggregateKind::Enumeration) ||
@@ -74,9 +86,10 @@ void Checker::concurrencyDeclaration(
     error("type", syntax.span,
           "negative " + name + " declarations cannot specialize bounds");
   implementation.requirements = interfaceAssumptions();
-  auto [position, inserted] = database.concurrencyDeclarations.emplace(
+  auto [position, inserted] = database.structuralDeclarations.emplace(
       std::make_pair(property, origin),
-      interfaces::ConcurrencyDeclaration{syntax.negative, implementation});
+      interfaces::StructuralPropertyDeclaration{syntax.negative,
+                                                implementation});
   if (!inserted)
     error("type", syntax.span, "overlapping " + name + " declarations");
 }
@@ -215,8 +228,12 @@ void Checker::interfaceImplementations() {
     if (auto property = propertyBound(syntax.interface, syntax.span);
         property && (*property == interfaces::Property::Transferable ||
                      *property == interfaces::Property::Shareable ||
-                     *property == interfaces::Property::Static)) {
-      concurrencyDeclaration(syntax, *property, implementation);
+                     *property == interfaces::Property::Static ||
+                     *property == interfaces::Property::UnwindSafe ||
+                     *property == interfaces::Property::RefUnwindSafe ||
+                     *property == interfaces::Property::Freeze ||
+                     *property == interfaces::Property::Thin)) {
+      structuralPropertyDeclaration(syntax, *property, implementation);
       popRegionParameters();
       continue;
     }
@@ -232,7 +249,8 @@ void Checker::interfaceImplementations() {
       auto interfaceDeclaration =
           checked.types->erased(implementation.interfaceType).declaration;
       const auto &definition = database.definitions[interfaceDeclaration];
-      if (definition.name == "core::clone::FunctionPointer")
+      if (definition.name == "core::clone::FunctionPointer" ||
+          definition.name == "core::ops::FnPtr")
         error("type", syntax.span,
               "function pointer membership is derived and cannot be declared");
       if (definition.unsafeInterface && !syntax.unsafeImplementation)
@@ -301,17 +319,36 @@ void Checker::interfaceImplementations() {
                                     implementation.parameters.size(),
                                 family.parameters.end());
         value.requirements = interfaceAssumptions();
-        value.value =
-            required.constant
-                ? provided->constantValue
-                      ? constantType(
-                            *provided->constantValue,
-                            checked.types->parameter(required.parameter)
-                                .valueType)
-                      : Type::Unknown
-            : !provided->value.empty()
-                ? annotation(provided->value, provided->span)
-                : Type::Unknown;
+        Type declaredConstantType = Type::Unknown;
+        if (required.constant) {
+          if (!provided->annotation.empty())
+            declaredConstantType =
+                annotation(provided->annotation, provided->span);
+          else {
+            std::vector<TypeBinding> bindings{
+                {definition.self, implementation.target}};
+            const auto arguments =
+                checked.types->erased(implementation.interfaceType).arguments;
+            for (std::size_t p = 0;
+                 p < definition.parameters.size() && p < arguments.size(); ++p)
+              bindings.push_back({definition.parameters[p], arguments[p]});
+            for (std::size_t p = 0;
+                 p < required.parameters.size() && p < value.parameters.size();
+                 ++p)
+              bindings.push_back({required.parameters[p], value.parameters[p]});
+            declaredConstantType = checked.types->substitute(
+                checked.types->parameter(required.parameter).valueType,
+                bindings);
+          }
+        }
+        value.value = required.constant
+                          ? provided->constantValue
+                                ? constantType(*provided->constantValue,
+                                               declaredConstantType)
+                                : Type::Unknown
+                      : !provided->value.empty()
+                          ? annotation(provided->value, provided->span)
+                          : Type::Unknown;
         if (value.value == Type::Unknown)
           error("type", provided->span,
                 "associated item requires a definition");
@@ -486,6 +523,12 @@ void Checker::interfaceImplementations() {
         const auto &method = module.functions[function];
         if (method.implementation != static_cast<int>(i) || method.constructor)
           continue;
+        if (std::any_of(syntax.associated.begin(), syntax.associated.end(),
+                        [&](const auto &item) {
+                          return item.constantValue &&
+                                 item.constantValue.get() == method.body.get();
+                        }))
+          continue;
         auto name = method.name.substr(method.name.rfind('.') + 1);
         if (!implementation.inherent
                  .emplace(name,
@@ -623,12 +666,6 @@ void Checker::checkAssociatedContracts() {
         checked.interfaceData->definitions[descriptor.declaration];
     for (const auto &[ordinal, provided] : implementation.associated) {
       const auto &required = definition.associated[ordinal];
-      if (required.constant &&
-          (!checked.types->isConstant(provided.value) ||
-           checked.types->parameter(provided.value).valueType !=
-               checked.types->parameter(required.parameter).valueType))
-        error("type", implementation.span,
-              "associated constant type does not match its declaration");
       std::vector<TypeBinding> bindings{
           {definition.self, implementation.target}};
       for (std::size_t p = 0;
@@ -676,6 +713,16 @@ void Checker::checkAssociatedContracts() {
                   "associated family strengthens its interface bounds");
         }
       auto value = checked.types->substitute(provided.value, publicParameters);
+      if (required.constant &&
+          (!checked.types->isConstant(provided.value) ||
+           associated.normalize(
+               checked.types->parameter(provided.value).valueType,
+               publicParameters, implementation.span) !=
+               associated.normalize(
+                   checked.types->parameter(required.parameter).valueType,
+                   bindings, implementation.span)))
+        error("type", implementation.span,
+              "associated constant type does not match its declaration");
       if (!required.constant && checked.types->isSized(required.parameter) &&
           !checked.types->isSized(value))
         error("type", implementation.span,
@@ -959,11 +1006,15 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
                                 resolution::Namespace::Value, node.span);
     auto resolved = canonical ? inherentConstantNames.find(*canonical)
                               : inherentConstantNames.end();
-    return resolved == inherentConstantNames.end()
-               ? std::nullopt
-               : inherentConstantValue(
-                     resolved->second,
-                     inherentConstants[resolved->second].target, &node);
+    if (resolved == inherentConstantNames.end())
+      return std::nullopt;
+    auto subject = inherentConstants[resolved->second].target;
+    if (genericEnvironment)
+      if (auto self =
+              genericEnvironment->names.find(nameKey("Self", node.span));
+          self != genericEnvironment->names.end())
+        subject = self->second;
+    return inherentConstantValue(resolved->second, subject, &node);
   }
 
   auto delimiter = node.text.rfind("::");
@@ -1003,6 +1054,13 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
     if (auto found = inherentConstantNames.find(prefix + "::" + member);
         found != inherentConstantNames.end())
       return inherentConstantValue(found->second, builtin, &node);
+  if ((isInteger(subject) || isFloating(subject) || subject == Type::Char ||
+       subject == Type::Bool) &&
+      builtinType(prefix) == Type::Unknown)
+    if (auto found = inherentConstantNames.find(
+            displayType(*checked.types, subject) + "::" + member);
+        found != inherentConstantNames.end())
+      return inherentConstantValue(found->second, subject, &node);
   if (checked.types->isProduct(subject)) {
     auto ownerType = subject;
     if (checked.types->product(ownerType).genericOrigin != Type::Unknown)

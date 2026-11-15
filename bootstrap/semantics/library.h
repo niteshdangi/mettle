@@ -49,6 +49,7 @@ struct ImportedInherentConstant {
   Type target = Type::Unknown, declaredType = Type::Unknown,
        value = Type::Unknown;
   std::optional<StaticConstant> materialized{};
+  std::shared_ptr<CheckedExpression> initializer{};
 };
 struct ImportedClosure {
   Span span;

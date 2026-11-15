@@ -19,6 +19,9 @@ type Counted {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
     }
 }
+extend Counted implements Clone {
+    fn clone(): Counted { Counted(self.drops.retain(), self.value) }
+}
 
 fn default_value<T: Default>(): T { T.(Default).default() }
 fn from_value<T: From<i32>>(value: i32): T { T.(From<i32>).from(value) }
@@ -212,6 +215,16 @@ fn checks_oncelock_threads_and_drop(): i32 {
         let _empty = once_lock.new<Counted>()
     }
     if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 78 }
+    {
+        let owned = once_lock.new<Counted>()
+        match capture owned.set(Counted(drops.retain(), 7)) {
+            success(_) => {},
+            failure(_) => { return 79 }
+        }
+        let copied = owned.clone()
+        if copied.get().or_panic().value != 7 { return 80 }
+    }
+    if drops.get().load(core.sync.atomic.Ordering.SeqCst) != 3usize { return 81 }
     0
 }
 

@@ -58,7 +58,7 @@ fn source_read_chunk_limit(): Unit throws io.Error {
 }
 
 fn run(): i32 throws io.Error {
-    let args = env.args()
+    let args = env.args_os()
     let syntax = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("syntax"))
     if args.len() != 2 && !syntax { io.eprint("usage: mettle-selfhost [syntax] SOURCE\n"); return 2 }
     var input = try fs.open(args[if syntax { 2usize } else { 1usize }])

@@ -33,8 +33,12 @@ fn main(): i32 {
             owner.get().value != 13 {
             return 2
         }
+        let cloned = sibling.retain().unwrap_or_clone()
+        if local_clones != 2 || cloned.value != 11 || sibling.get().value != 11 {
+            return 7
+        }
     }
-    if local_drops != 2 { return 3 }
+    if local_drops != 3 { return 3 }
 
     var atomic_clones = 0
     var atomic_drops = 0
@@ -54,7 +58,11 @@ fn main(): i32 {
             owner.get().value != 23 {
             return 5
         }
+        let cloned = sibling.retain().unwrap_or_clone()
+        if atomic_clones != 2 || cloned.value != 19 || sibling.get().value != 19 {
+            return 8
+        }
     }
-    if atomic_drops != 2 { return 6 }
+    if atomic_drops != 3 { return 6 }
     0
 }

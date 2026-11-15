@@ -1,15 +1,22 @@
 // expect-exit: 101
 // expect-stdout: hook: boom\n
-// A registered hook receives the message instead of the default report;
-// the process still exits with 101.
-import std.io.Writer
-
-unsafe extern "C" fn hook(message: ptr<read u8>, length: u64): Unit {
+// A registered hook receives the borrowed context before the process exits.
+unsafe extern "C" fn hook(raw: ptr<read std.panic.PanicHookInfo>): Unit {
+    let info = unsafe { *raw }
     std.io.print("hook: ")
-    // Buffered stdout and a raw descriptor write are unordered unless flushed.
-    var out = std.io.stdout()
-    let flushed = capture out.flush()
-    let b = unsafe { std.sys.write(1, message, length as usize) }
+    match info.payload_as_str() {
+        present(text) => std.io.print(text),
+        none => std.io.print(" missing-payload")
+    }
+    match unsafe { info.location() } {
+        present(location) => {
+            if location.file_bytes().len() == 0usize || location.line() == 0u64 ||
+                location.column() == 0u64 {
+                std.io.print(" missing-location")
+            }
+        },
+        none => std.io.print(" missing-location")
+    }
     std.io.print("\n")
 }
 

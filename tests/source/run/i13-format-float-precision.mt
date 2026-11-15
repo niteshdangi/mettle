@@ -1,7 +1,7 @@
 // expect-exit: 0
 import core.float
 import core.fmt
-import core.fmt.{Debug, Display, Spec}
+import core.fmt.{Debug, Display, LowerExp, Spec, UpperExp}
 import core.text.Text
 
 fn display_is<T: Display>(
@@ -33,6 +33,31 @@ fn debug_is<T: Debug>(
     match capture T.(Debug).fmt(value, mut formatter) {
         success(unit) => {},
         failure(error) => { return false }
+    }
+    let written = writer.len()
+    match fmt.written_text(read storage, written) {
+        present(actual) => actual == expected,
+        none => false
+    }
+}
+
+fn exponent_is<T: LowerExp + UpperExp>(
+    read value: T,
+    options: Spec,
+    uppercase: bool,
+    read expected: Text
+): bool {
+    var storage = [0u8; 40]
+    var writer = fmt.buffer_writer(mut storage)
+    var formatter = fmt.formatter(mut writer, options)
+    let rendered = if uppercase {
+        capture T.(UpperExp).fmt(value, mut formatter)
+    } else {
+        capture T.(LowerExp).fmt(value, mut formatter)
+    }
+    match rendered {
+        success(_) => {},
+        failure(_) => { return false }
     }
     let written = writer.len()
     match fmt.written_text(read storage, written) {
@@ -177,6 +202,25 @@ fn main(): i32 {
     if !display_is(not_a_number, special, "+NaN") ||
        !display_is(1.0f64 / 0.0f64, two_digits, "inf") {
         return 20
+    }
+    if !exponent_is(1.25f64, one_digit, false, "1.2e0") ||
+       !exponent_is(1.75f32, one_digit, true, "1.8E0") ||
+       !exponent_is(9.5f64, no_fraction, false, "1e1") ||
+       !exponent_is(2.5f64, no_fraction, false, "2e0") {
+        return 21
+    }
+    if !exponent_is(tiny, fmt.spec(), false, "5e-324") ||
+       !exponent_is(tiny, two_digits, false, "4.94e-324") ||
+       !exponent_is(tiny_f32, fmt.spec(), true, "1E-45") ||
+       !exponent_is(-0.0f64, fmt.spec(), true, "-0E0") {
+        return 22
+    }
+    var padded_exponent = two_digits
+    padded_exponent.plus = true
+    padded_exponent.zero = true
+    padded_exponent.width = present(10usize)
+    if !exponent_is(1.25f64, padded_exponent, false, "+0001.25e0") {
+        return 23
     }
     0
 }

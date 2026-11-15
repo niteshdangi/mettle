@@ -9,7 +9,7 @@ fn check(): i32 throws AllocError {
     let pointer = try global.allocate(layout)
     unsafe { core.ptr.write(pointer, 0x5Au8) }
 
-    let oversized = 0x8000000000000000usize
+    let oversized = (isize.MAX as usize) + 1usize
     let oversized_result = unsafe { capture global.grow(pointer, layout, oversized) }
     match take oversized_result {
         success(_) => { return 1 },

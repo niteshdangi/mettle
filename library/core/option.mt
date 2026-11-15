@@ -17,8 +17,8 @@ extend bool {
 }
 
 extend<T> T? {
-    pub fn is_present(): bool { match self { present(value) => true, none => false } }
-    pub fn is_none(): bool { match self { present(value) => false, none => true } }
+    pub const fn is_present(): bool { match self { present(value) => true, none => false } }
+    pub const fn is_none(): bool { match self { present(value) => false, none => true } }
 
     pub fn as_view(): (read T from self)? {
         match self { present(value) => present(read value), none => none }
@@ -220,7 +220,10 @@ extend<T: DerefMut> T? {
 
 extend<region r, T: Clone> (read T from r)? {
     pub take fn cloned(): T? {
-        match take self { present(value) => present(value.clone()), none => none }
+        match take self {
+            present(value) => present(T.(Clone).clone(value)),
+            none => none
+        }
     }
 }
 

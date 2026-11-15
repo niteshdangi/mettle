@@ -61,7 +61,7 @@ extend<T: Clone> OnceLock<T> implements Clone {
         let copied = new<T>()
         match self.get() {
             present(value) => {
-                let result = capture copied.set(value.clone())
+                let result = capture copied.set(T.(Clone).clone(value))
                 match take result {
                     success(_) => copied,
                     failure(error) => { core.intrinsics.abort() }

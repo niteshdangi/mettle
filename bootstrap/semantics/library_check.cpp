@@ -35,6 +35,15 @@ void Checker::importDeclarations() {
       genericNames.emplace(type, name);
     return result;
   };
+  auto expressions = [&](const std::shared_ptr<CheckedExpression> &expression) {
+    if (!expression)
+      return;
+    for (const auto &[node, facts] : expression->facts) {
+      importedExpressions.emplace(node, expression.get());
+      if (node->kind == Kind::Cast)
+        importedAnnotations.emplace(&node->annotation, facts.type);
+    }
+  };
   for (const auto &[index, contract] : imports->functions) {
     if (index >= module.functions.size() ||
         module.functions[index].span.source != contract.span.source ||
@@ -92,16 +101,6 @@ void Checker::importDeclarations() {
               "checked default does not match its mounted declaration");
       else if (contract.defaults[p])
         checked.importedDefaults.emplace(index, p);
-    auto expressions =
-        [&](const std::shared_ptr<CheckedExpression> &expression) {
-          if (!expression)
-            return;
-          for (const auto &[node, facts] : expression->facts) {
-            importedExpressions.emplace(node, expression.get());
-            if (node->kind == Kind::Cast)
-              importedAnnotations.emplace(&node->annotation, facts.type);
-          }
-        };
     expressions(contract.body);
     for (const auto &value : contract.defaults)
       expressions(value);
@@ -135,19 +134,48 @@ void Checker::importDeclarations() {
     if (const auto *contract = importedType(alias.span, imports->aliases))
       importedAnnotations.emplace(&alias.target, contract->type);
   for (const auto &constant : imports->inherentConstants)
-    for (const auto &owner : module.implementations)
+    expressions(constant.initializer);
+  for (const auto &constant : imports->inherentConstants)
+    for (auto &owner : module.implementations)
       if (owner.span.source == constant.implementation.source &&
           owner.span.begin == constant.implementation.begin &&
           owner.span.end == constant.implementation.end)
-        for (const auto &declaration : owner.associated)
+        for (auto &declaration : owner.associated)
           if (declaration.span.source == constant.declaration.source &&
               declaration.span.begin == constant.declaration.begin &&
               declaration.span.end == constant.declaration.end) {
+            const auto *initializer = constant.initializer
+                                          ? constant.initializer->syntax.get()
+                                          : nullptr;
+            if (constant.initializer &&
+                (!declaration.constant || !initializer ||
+                 (declaration.constantValue &&
+                  (declaration.constantValue->span.source !=
+                       initializer->span.source ||
+                   declaration.constantValue->span.begin !=
+                       initializer->span.begin ||
+                   declaration.constantValue->span.end !=
+                       initializer->span.end)))) {
+              error("metadata", declaration.span,
+                    "checked associated constant does not match "
+                    "its initializer");
+              continue;
+            }
+            if (initializer)
+              declaration.constantValue = std::shared_ptr<const Node>(
+                  constant.initializer, initializer);
             inherentConstantNames.emplace(constant.name,
                                           inherentConstants.size());
-            inherentConstants.push_back({&owner, &declaration, constant.target,
-                                         constant.declaredType, constant.value,
-                                         2, constant.materialized});
+            inherentConstants.push_back(
+                {&owner,
+                 &declaration,
+                 constant.target,
+                 constant.declaredType,
+                 constant.value,
+                 static_cast<unsigned char>(constant.initializer ? 0 : 2),
+                 constant.materialized,
+                 constant.initializer,
+                 {}});
           }
   for (const auto &[index, facts] : imports->statics) {
     if (index >= module.statics.size()) {
@@ -306,10 +334,20 @@ void Checker::retainDeclarations() {
         {syntax->span, syntax->name, Type::Unknown, environment(generic)});
   for (const auto &[name, index] : inherentConstantNames) {
     const auto &constant = inherentConstants[index];
+    const auto &implementation =
+        implementationGenerics.at(constant.implementation);
+    const bool genericNominal =
+        checked.types->isProduct(constant.declaredType) &&
+        (!implementation.parameters.empty() ||
+         checked.types->isSymbolic(constant.target) ||
+         checked.types->isSymbolic(constant.declaredType));
+    auto initializer = constant.initializer;
+    if (genericNominal && !initializer)
+      initializer = expression(constant.declaration->constantValue.get());
     result->inherentConstants.push_back(
         {constant.implementation->span, constant.declaration->span, name,
          constant.target, constant.declaredType, constant.value,
-         constant.materialized});
+         constant.materialized, std::move(initializer)});
   }
   std::map<const Function *, std::string> owners;
   for (std::size_t i = 0; i < module.functions.size(); ++i)

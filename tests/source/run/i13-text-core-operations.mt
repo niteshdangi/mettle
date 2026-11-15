@@ -7,6 +7,7 @@
 import core.option
 import core.text.{Text, Utf8Error, from_utf8, from_utf8_mut, from_utf8_unchecked}
 import core.cmp.Ordering
+import core.clone.Clone
 import alloc.string
 
 fn checks_size_and_boundaries(): i32 {
@@ -94,6 +95,13 @@ fn checks_iterators(): i32 {
     var empty_line = "a\n\nb".lines()
     if !text_is(empty_line.next(), "a") || !text_is(empty_line.next(), "") { return 48 }
     if !text_is(empty_line.next(), "b") { return 49 }
+
+    var escaped = "a\n".escape_debug()
+    if escaped.next() != present('a') { return 50 }
+    var escaped_clone = escaped.clone()
+    if escaped.next() != present('\\') || escaped_clone.next() != present('\\') { return 51 }
+    if escaped.next() != present('n') || escaped_clone.next() != present('n') { return 52 }
+    if escaped.next().is_present() || escaped_clone.next().is_present() { return 53 }
     0
 }
 

@@ -1,8 +1,10 @@
 // A raw mutable pointer that is guaranteed not to be null.
 import super.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import super.clone.Clone
 import super.convert.From
-import super.fmt.{Debug, Error, Formatter, fmt_radix}
+import super.fmt.{Debug, Error, Formatter, Pointer, fmt_pointer, fmt_radix}
 import super.hash.{Hash, Hasher}
+import super.ops.FnPtr
 
 pub copy type NonNull<T: unsized> {
     pointer: ptr<mut T>
@@ -23,8 +25,206 @@ pub unsafe const fn copy_nonoverlapping<T>(
     unsafe { core.ptr.`copy`(source, destination, count) }
 }
 
+fn align_offset_for<T>(address: usize, align: usize): usize {
+    if align == 0usize || (align & (align - 1usize)) != 0usize {
+        core.panic.panic("align must be a nonzero power of two")
+    }
+    if align == 1usize { return 0usize }
+
+    let size = core.mem.size_of<T>()
+    if size == 0usize {
+        if address % align == 0usize { return 0usize }
+        return usize.MAX
+    }
+
+    var reduced_size = size
+    var modulus = align
+    var divisor = 1usize
+    while reduced_size % 2usize == 0usize && modulus % 2usize == 0usize {
+        reduced_size /= 2usize
+        modulus /= 2usize
+        divisor *= 2usize
+    }
+    if address % divisor != 0usize { return usize.MAX }
+    if modulus == 1usize { return 0usize }
+
+    let target = (
+        modulus - (address / divisor) % modulus
+    ) % modulus
+    let coefficient = reduced_size % modulus
+    var inverse = 1usize
+    while coefficient.wrapping_mul(inverse) % modulus != 1usize {
+        inverse = inverse.wrapping_mul(
+            2usize.wrapping_sub(coefficient.wrapping_mul(inverse))
+        )
+    }
+    target.wrapping_mul(inverse) % modulus
+}
+
+fn raw_slice_len<T>(pointer: ptr<mut [T]>): usize {
+    // Slice pointer metadata is the trailing element count.
+    let raw = unsafe { core.mem.transmute<RawSlice<T>>(pointer) }
+    raw.length
+}
+
+pub const fn dangling<T>(): ptr<read T> {
+    core.ptr.without_provenance<T>(core.mem.align_of<T>())
+}
+
+pub const fn dangling_mut<T>(): ptr<mut T> {
+    core.ptr.without_provenance<T>(core.mem.align_of<T>()).cast_mut()
+}
+
+pub const fn with_exposed_provenance_mut<T>(address: usize): ptr<mut T> {
+    core.ptr.with_exposed_provenance<T>(address).cast_mut()
+}
+
+pub const fn without_provenance_mut<T>(address: usize): ptr<mut T> {
+    core.ptr.without_provenance<T>(address).cast_mut()
+}
+
+pub const fn addr_eq<T, U>(p: ptr<read T>, q: ptr<read U>): bool {
+    p.addr() == q.addr()
+}
+
+pub fn hash<T, S: Hasher>(hashee: ptr<read T>, mut into: S): Unit {
+    hashee.addr().hash(mut into)
+}
+
+extend<T> ptr<read T> {
+    pub fn is_aligned(): bool {
+        self.addr() % core.mem.align_of<T>() == 0usize
+    }
+
+    pub fn align_offset(align: usize): usize {
+        align_offset_for<T>(self.addr(), align)
+    }
+
+    pub fn map_addr<F: take fn(usize): usize>(take f: F): ptr<read T> {
+        self.with_addr(f(self.addr()))
+    }
+
+    // Safety: aligned non-null pointers and valid count-element ranges; caller
+    // preserves initialization and drop ownership. Overlap is permitted.
+    pub unsafe const fn copy_to(destination: ptr<mut T>, count: usize): Unit {
+        unsafe { core.ptr.`copy`(self, destination, count) }
+    }
+
+    // Safety: same requirements as copy_to, with disjoint byte ranges.
+    pub unsafe const fn copy_to_nonoverlapping(
+        destination: ptr<mut T>,
+        count: usize
+    ): Unit {
+        unsafe { copy_nonoverlapping(self, destination, count) }
+    }
+}
+
+extend<T> ptr<mut T> {
+    pub fn is_aligned(): bool {
+        self.addr() % core.mem.align_of<T>() == 0usize
+    }
+
+    pub fn align_offset(align: usize): usize {
+        align_offset_for<T>(self.addr(), align)
+    }
+
+    pub fn map_addr<F: take fn(usize): usize>(take f: F): ptr<mut T> {
+        self.with_addr(f(self.addr()))
+    }
+
+    // Safety: aligned non-null pointers and valid count-element ranges; caller
+    // preserves initialization and drop ownership. Overlap is permitted.
+    pub unsafe const fn copy_to(destination: ptr<mut T>, count: usize): Unit {
+        unsafe { core.ptr.`copy`(self.cast_const(), destination, count) }
+    }
+
+    // Safety: same requirements as copy_to, with disjoint byte ranges.
+    pub unsafe const fn copy_to_nonoverlapping(
+        destination: ptr<mut T>,
+        count: usize
+    ): Unit {
+        unsafe { copy_nonoverlapping(self.cast_const(), destination, count) }
+    }
+
+    // Safety: aligned non-null pointers and valid count-element ranges; caller
+    // preserves initialization and drop ownership. Overlap is permitted.
+    pub unsafe const fn copy_from(source: ptr<read T>, count: usize): Unit {
+        unsafe { core.ptr.`copy`(source, self, count) }
+    }
+
+    // Safety: same requirements as copy_from, with disjoint byte ranges.
+    pub unsafe const fn copy_from_nonoverlapping(
+        source: ptr<read T>,
+        count: usize
+    ): Unit {
+        unsafe { copy_nonoverlapping(source, self, count) }
+    }
+}
+
+extend<T> ptr<read [T]> {
+    pub const fn len(): usize { raw_slice_len(self.cast_mut()) }
+    pub const fn is_empty(): bool { self.len() == 0usize }
+}
+
+extend<T> ptr<mut [T]> {
+    pub const fn len(): usize { raw_slice_len(self) }
+    pub const fn is_empty(): bool { self.len() == 0usize }
+}
+
 pub fn eq<T: unsized>(left: ptr<read T>, right: ptr<read T>): bool {
     left == right
+}
+
+extend<F: FnPtr> F implements Pointer {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try fmt_pointer(mut f, core.intrinsics.fn_addr(self))
+    }
+}
+
+extend<F: FnPtr> F implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try F.(Pointer).fmt(self, mut f)
+    }
+}
+
+extend<T: unsized + Thin> ptr<mut T> implements super.default.Default {
+    static fn default(): ptr<mut T> { core.ptr.null_mut<T>() }
+}
+
+extend<T: unsized + Thin> ptr<read T> implements super.default.Default {
+    static fn default(): ptr<read T> { core.ptr.null<T>() }
+}
+
+extend<T: unsized> ptr<read T> implements Pointer {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_pointer(mut f, self.addr()) }
+}
+
+extend<T: unsized> ptr<mut T> implements Pointer {
+    fn fmt(mut f: Formatter): Unit throws Error { try fmt_pointer(mut f, self.addr()) }
+}
+
+extend<region r, T: unsized> read T from r implements Pointer {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try fmt_pointer(mut f, core.ptr.from_ref(self).addr())
+    }
+}
+
+extend<region r, T: unsized> mut T from r implements Pointer {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try fmt_pointer(mut f, core.ptr.from_ref(self).cast_mut().addr())
+    }
+}
+
+extend<T: unsized> ptr<read T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try fmt_pointer(mut f, self.addr())
+    }
+}
+
+extend<T: unsized> ptr<mut T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try fmt_pointer(mut f, self.addr())
+    }
 }
 
 extend<T: unsized> NonNull<T> {
@@ -160,8 +360,13 @@ extend<T: unsized> NonNull<T> implements Hash {
 
 extend<T: unsized> NonNull<T> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
-        try f.write_str("0x")
-        try fmt_radix(mut f, self.pointer.addr() as u64, false, 16u64, false, "")
+        try fmt_pointer(mut f, self.pointer.addr())
+    }
+}
+
+extend<T: unsized> NonNull<T> implements Pointer {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try fmt_pointer(mut f, self.pointer.addr())
     }
 }
 
@@ -186,44 +391,11 @@ extend<T> NonNull<T> {
     }
 
     pub fn is_aligned(): bool {
-        self.pointer.addr() % core.mem.align_of<T>() == 0usize
+        self.pointer.is_aligned()
     }
 
     pub fn align_offset(align: usize): usize {
-        if align == 0usize || (align & (align - 1usize)) != 0usize {
-            core.panic.panic("align must be a nonzero power of two")
-        }
-        let alignment = align
-        let address = self.pointer.addr()
-        let size = core.mem.size_of<T>()
-        if alignment == 1usize { return 0usize }
-        if size == 0usize {
-            if address % alignment == 0usize { return 0usize }
-            return usize.MAX
-        }
-
-        var reduced_size = size
-        var modulus = alignment
-        var divisor = 1usize
-        while reduced_size % 2usize == 0usize && modulus % 2usize == 0usize {
-            reduced_size /= 2usize
-            modulus /= 2usize
-            divisor *= 2usize
-        }
-        if address % divisor != 0usize { return usize.MAX }
-        if modulus == 1usize { return 0usize }
-
-        let target = (
-            modulus - (address / divisor) % modulus
-        ) % modulus
-        let coefficient = reduced_size % modulus
-        var inverse = 1usize
-        while coefficient.wrapping_mul(inverse) % modulus != 1usize {
-            inverse = inverse.wrapping_mul(
-                2usize.wrapping_sub(coefficient.wrapping_mul(inverse))
-            )
-        }
-        target.wrapping_mul(inverse) % modulus
+        self.pointer.align_offset(align)
     }
 
     pub static const fn slice_from_raw_parts(data: NonNull<T>, length: usize): NonNull<[T]> {
@@ -336,4 +508,55 @@ extend<T> NonNull<[T]> {
     }
 
     pub const fn is_empty(): bool { self.len() == 0usize }
+}
+
+extend<T: unsized> ptr<read T> implements Clone {
+    fn clone(): ptr<read T> { self }
+}
+extend<T: unsized> ptr<mut T> implements Clone {
+    fn clone(): ptr<mut T> { self }
+}
+
+extend<T: unsized> ptr<read T> implements PartialEq {
+    fn eq(read other: ptr<read T>): bool { self == other }
+}
+extend<T: unsized> ptr<read T> implements Eq {}
+extend<T: unsized> ptr<read T> implements PartialOrd {
+    fn partial_cmp(read other: ptr<read T>): Ordering? {
+        present(self.cmp(other))
+    }
+}
+extend<T: unsized> ptr<read T> implements Ord {
+    fn cmp(read other: ptr<read T>): Ordering {
+        if self < other { Ordering.Less }
+        else if self == other { Ordering.Equal }
+        else { Ordering.Greater }
+    }
+}
+extend<T: unsized> ptr<read T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit {
+        state.write_usize(self.addr())
+    }
+}
+
+extend<T: unsized> ptr<mut T> implements PartialEq {
+    fn eq(read other: ptr<mut T>): bool { self == other }
+}
+extend<T: unsized> ptr<mut T> implements Eq {}
+extend<T: unsized> ptr<mut T> implements PartialOrd {
+    fn partial_cmp(read other: ptr<mut T>): Ordering? {
+        present(self.cmp(other))
+    }
+}
+extend<T: unsized> ptr<mut T> implements Ord {
+    fn cmp(read other: ptr<mut T>): Ordering {
+        if self < other { Ordering.Less }
+        else if self == other { Ordering.Equal }
+        else { Ordering.Greater }
+    }
+}
+extend<T: unsized> ptr<mut T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit {
+        state.write_usize(self.addr())
+    }
 }

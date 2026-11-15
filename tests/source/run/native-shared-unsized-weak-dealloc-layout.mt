@@ -1,6 +1,8 @@
 import alloc.alloc.{Allocator, Global, Layout, AllocError}
 import alloc.arc.Shared
+import alloc.vec.List
 import core.clone.Clone
+import core.convert.From
 
 type Tracker {
     size: ptr<mut usize>
@@ -65,9 +67,21 @@ fn main(): i32 {
         let last = observer
         if last.strong_count() != 0usize { return 2 }
     }
-    if frees == 1 && mismatches == 0 && size != 0usize && align != 0usize {
-        0
-    } else {
-        3
+    if frees != 1 || mismatches != 0 || size == 0usize || align == 0usize {
+        return 3
     }
+    {
+        var values = alloc.vec.with_capacity_in<i32, Tracker>(3usize, tracker.clone())
+        values.push(1)
+        values.push(2)
+        values.push(3)
+        let converted: Shared<[i32], Tracker> =
+            Shared<[i32], Tracker>.(From<List<i32, Tracker>>).from(values)
+        if converted.get().len() != 3usize || converted.get()[0usize] != 1 ||
+            converted.get()[2usize] != 3 {
+            return 4
+        }
+    }
+    if frees != 3 { return 5 }
+    0
 }

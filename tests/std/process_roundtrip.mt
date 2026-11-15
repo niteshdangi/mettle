@@ -100,7 +100,7 @@ fn run(): i32 throws Error {
     }
 
     // Re-run this program as the child.
-    let args = std.env.args()
+    let args = std.env.args_os()
     var me = std.process.command(args[0usize].as_os_str())
     me.arg_text("child")
     me.env(ffi.os_str_from_text("MT_GREETING"), ffi.os_str_from_text("hello"))
@@ -111,7 +111,7 @@ fn run(): i32 throws Error {
 }
 
 fn main(): i32 {
-    let args = std.env.args()
+    let args = std.env.args_os()
     if args.len() > 1usize { return child_mode() }
     let r = capture run()
     match take r { success(code) => code, failure(e) => { match e.raw_os_error() { present(c) => 100 + c, none => 99 } } }

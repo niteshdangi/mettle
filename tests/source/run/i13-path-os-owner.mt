@@ -1,5 +1,6 @@
 // profiles: debug release
 import alloc.boxed.Heap
+import alloc.collections.TryReserveError
 import core.convert.From
 import std.ffi.{OsString, bytes_equal, os_str_from_text}
 import std.path.{Path, PathBuf, path_buf_from_bytes, path_from_text}
@@ -48,6 +49,12 @@ fn main(): i32 {
     empty.as_mut_os_string().push(os_str_from_text("base"))
     empty.push(path_from_text("tail"))
     if empty.to_str() != present("base/tail") { return 10 }
+    let capacity = empty.capacity()
+    let failed: Outcome<Unit, TryReserveError> = capture empty.try_reserve(usize.MAX)
+    match failed { success(_) => { return 13 }, failure(_) => {} }
+    let exact_failed: Outcome<Unit, TryReserveError> = capture empty.try_reserve_exact(usize.MAX)
+    match exact_failed { success(_) => { return 14 }, failure(_) => {} }
+    if empty.capacity() != capacity || empty.to_str() != present("base/tail") { return 15 }
     match take capture path_buf_from_bytes(read input).into_string() {
         success(_) => { return 11 },
         failure(error) => {

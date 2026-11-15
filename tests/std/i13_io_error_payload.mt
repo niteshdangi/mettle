@@ -101,7 +101,7 @@ fn run(): i32 throws Error {
     let into_inner = capture writer.into_inner()
     let converted = match take into_inner {
         success(_) => { return 12 },
-        failure(error) => Error.(From<std.io.IntoInnerError<FailingWriter>>).from(error)
+        failure(error) => Error.(From<std.io.IntoInnerError<std.io.BufferedWriter<FailingWriter>>>).from(error)
     }
     if converted.kind() != ErrorKind.BrokenPipe { return 13 }
     0

@@ -106,6 +106,19 @@ machineSignature(const TypeStore &types, std::string_view operation,
       return std::nullopt;
     if (operation == "va.copy")
       return signature(types.view(operands[0]).payload);
+    if (operation == "va.next_arg") {
+      bool eligible = argument == Type::I32 || argument == Type::U32 ||
+                      argument == Type::I64 || argument == Type::U64 ||
+                      argument == Type::I128 || argument == Type::U128 ||
+                      argument == Type::Isize || argument == Type::Usize ||
+                      argument == Type::F64 || types.isParameter(argument) ||
+                      (types.isPointer(argument) &&
+                       types.pointerMetadata(types.pointer(argument).payload) ==
+                           PointerMetadata::None);
+      return eligible && types.view(operands[0]).mode == ParameterMode::Mut
+                 ? signature(argument, Shape::Value, true)
+                 : std::nullopt;
+    }
     if (operation != "va.arg" ||
         types.view(operands[0]).mode != ParameterMode::Mut)
       return std::nullopt;
@@ -300,12 +313,35 @@ machineSignature(const TypeStore &types, std::string_view operation,
     return operands.size() == 1 && types.isSized(operands[0])
                ? signature(Type::Unit)
                : std::nullopt;
+  if (operation == "intrinsics.offset_of")
+    return operands.empty() && types.isProduct(argument)
+               ? signature(Type::Usize)
+               : std::nullopt;
   if (operation == "hint.black_box")
     return operands.size() == 1 && operands[0] == argument ? signature(argument)
                                                            : std::nullopt;
+  if (operation == "hint.spin_loop" || operation == "hint.cold_path")
+    return operands.empty() ? signature(Type::Unit) : std::nullopt;
+  if (operation == "hint.assert_unchecked")
+    return operands.size() == 1 && operands[0] == Type::Bool
+               ? signature(Type::Unit, Shape::Value, true)
+               : std::nullopt;
+  if (operation == "hint.select_unpredictable")
+    return operands.size() == 3 && operands[0] == Type::Bool &&
+                   operands[1] == argument && operands[2] == argument &&
+                   types.isSized(argument)
+               ? signature(argument)
+               : std::nullopt;
+  if (operation == "hint.unreachable_unchecked")
+    return operands.empty() ? signature(Type::Never, Shape::Value, true)
+                            : std::nullopt;
   for (auto operand : operands)
     if (containsVarArgs(types, operand))
       return std::nullopt;
+  if ((operation == "mem.zeroed" || operation == "mem.transmute" ||
+       operation == "mem.transmute_copy") &&
+      containsVarArgs(types, argument))
+    return std::nullopt;
   if (operation == "intrinsics.abort")
     return operands.empty() ? signature(Type::Never) : std::nullopt;
   if (operation.starts_with("coroutine.")) {
@@ -331,6 +367,44 @@ machineSignature(const TypeStore &types, std::string_view operation,
                              Shape::Optional, true)
                  : std::nullopt;
     return std::nullopt;
+  }
+  if (operation == "intrinsics.panic_fmt") {
+    auto bytePointer = [&](Type type, ParameterMode mode) {
+      return types.isPointer(type) && types.pointer(type).payload == Type::U8 &&
+             types.pointer(type).mode == mode;
+    };
+    auto callback = [&](Type type) {
+      return types.isFunctionPointer(type) && types.callable(type).abi == "C" &&
+             types.callable(type).result == Type::Unit &&
+             types.callable(type).error == Type::Unknown &&
+             !types.callable(type).variadic &&
+             types.callable(type).targetFeatures.empty() &&
+             std::all_of(types.callable(type).parameters.begin(),
+                         types.callable(type).parameters.end(),
+                         [](const auto &parameter) {
+                           return parameter.mode == ParameterMode::Value;
+                         });
+    };
+    if (operands.size() != 2 || !types.isView(operands[0]) ||
+        types.view(operands[0]).mode != ParameterMode::Read ||
+        !types.isProduct(types.view(operands[0]).payload) ||
+        types.product(types.view(operands[0]).payload).name !=
+            "core::fmt::Message" ||
+        !callback(operands[1]))
+      return std::nullopt;
+    const auto &render = types.callable(operands[1]);
+    if (render.parameters.size() != 3 ||
+        !bytePointer(render.parameters[0].type, ParameterMode::Mut) ||
+        !bytePointer(render.parameters[2].type, ParameterMode::Mut) ||
+        !callback(render.parameters[1].type))
+      return std::nullopt;
+    const auto &write = types.callable(render.parameters[1].type);
+    if (write.parameters.size() != 3 ||
+        !bytePointer(write.parameters[0].type, ParameterMode::Mut) ||
+        !bytePointer(write.parameters[1].type, ParameterMode::Read) ||
+        write.parameters[2].type != Type::U64)
+      return std::nullopt;
+    return signature(Type::Never, Shape::Value, true);
   }
   if (operation == "intrinsics.panic_message")
     return operands.size() == 1 && types.isView(operands[0]) &&
@@ -364,6 +438,14 @@ machineSignature(const TypeStore &types, std::string_view operation,
                     types.pointerMetadata(argument) != PointerMetadata::None)
                ? signature(Type::Usize)
                : std::nullopt;
+  if (operation == "mem.size_of_val_raw" || operation == "mem.align_of_val_raw")
+    return operands.size() == 1 && types.isPointer(operands[0]) &&
+                   types.pointer(operands[0]).payload == argument &&
+                   types.contains(argument) &&
+                   (types.isSized(argument) ||
+                    types.pointerMetadata(argument) != PointerMetadata::None)
+               ? signature(Type::Usize, Shape::Value, true)
+               : std::nullopt;
   if (operation == "mem.zeroed")
     return operands.empty() && types.contains(argument) &&
                    types.isSized(argument)
@@ -375,7 +457,28 @@ machineSignature(const TypeStore &types, std::string_view operation,
       return std::nullopt;
     auto source = objectLayout(types, operands[0]);
     auto target = objectLayout(types, argument);
-    return argument == operands[0] ||
+    auto payload = [&](Type type) {
+      while (types.isProduct(type) &&
+             types.product(type).kind == AggregateKind::Uninit)
+        type = types.product(type).components[0];
+      return type;
+    };
+    std::function<bool(Type, Type)> sameRepresentation = [&](Type left,
+                                                             Type right) {
+      left = payload(left);
+      right = payload(right);
+      if (left == right)
+        return true;
+      return types.isProduct(left) && types.isProduct(right) &&
+             types.product(left).kind == AggregateKind::Array &&
+             types.product(right).kind == AggregateKind::Array &&
+             types.product(left).arrayCount != Type::Unknown &&
+             types.product(left).arrayCount ==
+                 types.product(right).arrayCount &&
+             sameRepresentation(types.product(left).components[0],
+                                types.product(right).components[0]);
+    };
+    return sameRepresentation(argument, operands[0]) ||
                    (source && target && source->size == target->size)
                ? signature(argument, Shape::Value, true)
                : std::nullopt;
@@ -554,6 +657,19 @@ machineSignature(const TypeStore &types, std::string_view operation,
         storage.kind != AggregateKind::UnsafeCell)
       return std::nullopt;
     auto payload = storage.components[0];
+    if (method == "raw_get")
+      return storage.kind == AggregateKind::UnsafeCell &&
+                     operands.size() == 1 && types.isPointer(operands[0]) &&
+                     types.pointer(operands[0]).payload == argument
+                 ? signature(payload, Shape::PointerMut)
+                 : std::nullopt;
+    if (method == "from_mut")
+      return storage.kind == AggregateKind::UnsafeCell &&
+                     operands.size() == 1 && types.isView(operands[0]) &&
+                     types.view(operands[0]).mode == ParameterMode::Mut &&
+                     types.view(operands[0]).payload == payload
+                 ? signature(argument, Shape::ViewMut)
+                 : std::nullopt;
     if (method == "new")
       return operands.size() == 1 && operands[0] == payload &&
                      types.isSized(payload)
@@ -631,11 +747,85 @@ machineSignature(const TypeStore &types, std::string_view operation,
                      : operation == "type_id"  ? Type::U64
                                                : Type::Usize);
   }
+  if (operation == "intrinsics.type_name") {
+    auto text = types.findProduct("core::text::Text");
+    return operands.empty() && types.contains(argument) && text
+               ? signature(*text, Shape::ViewReadStatic)
+               : std::nullopt;
+  }
+  if (operation == "intrinsics.caller_location") {
+    if (!operands.empty() || !types.isProduct(argument))
+      return std::nullopt;
+    const auto &record = types.product(argument);
+    if (record.kind != AggregateKind::Product || record.fields.size() != 3 ||
+        record.layout.kind != LayoutKind::Native || record.layout.alignment ||
+        record.layout.packing || record.layout.unionType ||
+        !types.isCopy(argument))
+      return std::nullopt;
+    auto file = record.fields[0].type;
+    return types.isView(file) && types.view(file).mode == ParameterMode::Read &&
+                   types.isSlice(types.view(file).payload) &&
+                   types.slice(types.view(file).payload).element == Type::U8 &&
+                   record.fields[1].type == Type::U64 &&
+                   record.fields[2].type == Type::U64
+               ? signature(argument)
+               : std::nullopt;
+  }
+  if (operation == "intrinsics.variant_ordinal")
+    return operands.size() == 1 && types.isView(operands[0]) &&
+                   types.view(operands[0]).mode == ParameterMode::Read &&
+                   types.view(operands[0]).payload == argument &&
+                   types.isSized(argument)
+               ? signature(Type::Usize)
+               : std::nullopt;
+  if (operation == "intrinsics.fn_addr")
+    return operands.size() == 1 && (types.isFunctionPointer(operands[0]) ||
+                                    (types.isParameter(operands[0]) &&
+                                     types.parameter(operands[0]).kind ==
+                                         TypeParameterKind::Type))
+               ? signature(Type::Usize)
+               : std::nullopt;
+  if (operation == "ptr.fn_addr_eq") {
+    auto callable = [&](Type type) {
+      return types.isFunctionPointer(type) ||
+             (types.isParameter(type) &&
+              types.parameter(type).kind == TypeParameterKind::Type);
+    };
+    return operands.size() == 2 && callable(operands[0]) &&
+                   callable(operands[1])
+               ? signature(Type::Bool)
+               : std::nullopt;
+  }
+  if (operation == "mem.transmute_copy")
+    return operands.size() == 1 && types.isView(operands[0]) &&
+                   types.view(operands[0]).mode == ParameterMode::Read &&
+                   types.isSized(types.view(operands[0]).payload) &&
+                   types.isSized(argument)
+               ? signature(argument, Shape::Value, true)
+               : std::nullopt;
+  if (operation == "ptr.slice_from_raw_parts" ||
+      operation == "ptr.slice_from_raw_parts_mut") {
+    bool exclusive = operation.ends_with("_mut");
+    return operands.size() == 2 && types.isPointer(operands[0]) &&
+                   (!exclusive ||
+                    types.pointer(operands[0]).mode == ParameterMode::Mut) &&
+                   types.isSized(types.pointer(operands[0]).payload) &&
+                   operands[1] == Type::Usize && types.isSlice(argument) &&
+                   types.slice(argument).element ==
+                       types.pointer(operands[0]).payload
+               ? signature(argument,
+                           exclusive ? Shape::PointerMut : Shape::PointerRead)
+               : std::nullopt;
+  }
   if (operation == "ptr.null" || operation == "ptr.null_mut" ||
       operation == "ptr.without_provenance" ||
       operation == "ptr.with_exposed_provenance") {
     bool address = operation != "ptr.null" && operation != "ptr.null_mut";
-    if (!types.contains(argument) || !types.isSized(argument) ||
+    if (!types.contains(argument) ||
+        (!(operation == "ptr.null" || operation == "ptr.null_mut") &&
+         !types.isSized(argument)) ||
+        ((operation == "ptr.null" || operation == "ptr.null_mut") &&
+         !types.isThin(argument)) ||
         operands.size() != (address ? 1u : 0u) ||
         (address && operands[0] != Type::Usize))
       return std::nullopt;
@@ -1009,6 +1199,35 @@ machineSignature(const TypeStore &types, std::string_view operation,
   auto pointer = operands[0];
   auto descriptor = types.pointer(pointer);
   auto method = operation.substr(4);
+  if (method == "as_array" || method == "as_mut_array") {
+    if (operands.size() != 1 || !types.isSlice(descriptor.payload) ||
+        !types.isPointer(argument))
+      return std::nullopt;
+    auto target = types.pointer(argument);
+    bool exclusive = method == "as_mut_array";
+    if (target.mode != (exclusive ? ParameterMode::Mut : ParameterMode::Read) ||
+        (exclusive && descriptor.mode != ParameterMode::Mut) ||
+        !types.isProduct(target.payload))
+      return std::nullopt;
+    const auto &array = types.product(target.payload);
+    if (array.kind != AggregateKind::Array || array.components.size() != 1 ||
+        array.components[0] != types.slice(descriptor.payload).element)
+      return std::nullopt;
+    return signature(argument, Shape::Optional);
+  }
+  if (method == "as_ref" || method == "as_mut" ||
+      method == "as_ref_unchecked" || method == "as_mut_unchecked") {
+    bool exclusive = method == "as_mut" || method == "as_mut_unchecked";
+    if (operands.size() != 1 || !types.isView(argument) ||
+        types.view(argument).payload != descriptor.payload ||
+        types.view(argument).mode !=
+            (exclusive ? ParameterMode::Mut : ParameterMode::Read) ||
+        (exclusive && descriptor.mode != ParameterMode::Mut))
+      return std::nullopt;
+    return signature(
+        argument,
+        method.ends_with("_unchecked") ? Shape::Value : Shape::Optional, true);
+  }
   if (method == "copy" || method == "copy_nonoverlapping" || method == "swap" ||
       method == "swap_nonoverlapping") {
     bool swap = method.starts_with("swap");
@@ -1180,6 +1399,12 @@ bool machineResultMatches(const TypeStore &types,
            types.pointer(result).mode == (signature.shape == Shape::PointerMut
                                               ? ParameterMode::Mut
                                               : ParameterMode::Read);
+  if (signature.shape == Shape::ViewReadStatic)
+    return types.isView(result) &&
+           types.view(result).mode == ParameterMode::Read &&
+           (types.view(result).region == RegionId::Static ||
+            types.view(result).region == RegionId::Unspecified) &&
+           types.view(result).payload == signature.value;
   if (signature.shape == Shape::ViewRead || signature.shape == Shape::ViewMut)
     return types.isView(result) &&
            types.view(result).payload == signature.value &&

@@ -1,14 +1,13 @@
 // Paths over operating-system strings: `Path` is the unsized view and
-// `PathBuf` the owner. Bytes are never reinterpreted, so non-Unicode names
-// round-trip losslessly. Separator is `/`; repeated separators and interior
-// `.` components are ignored, while a leading `.` in a relative path remains.
+// `PathBuf` the owner. Native bytes round-trip losslessly; Windows components
+// also recognize drive, UNC, device and verbatim prefixes.
 import alloc.vec
 import alloc.vec.List
 import alloc.boxed.Heap
 import alloc.arc.Shared
 import alloc.rc.LocalShared
 import alloc.borrow.BorrowedOrOwned
-import alloc.alloc.AllocError
+import alloc.collections.TryReserveError
 import alloc.string.String
 import alloc.string.FromUtf8Error
 import core.iter.{BidirectionalIterator, Iterator}
@@ -32,6 +31,12 @@ pub copy type StripPrefixError {}
 extend StripPrefixError implements Clone {
     fn clone(): StripPrefixError { self }
 }
+
+extend StripPrefixError implements core.cmp.PartialEq {
+    fn eq(read other: StripPrefixError): bool { true }
+}
+extend StripPrefixError implements core.cmp.Eq {}
+
 extend StripPrefixError implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("StripPrefixError") }
 }
@@ -40,6 +45,16 @@ extend StripPrefixError implements core.fmt.Display {
 }
 extend StripPrefixError implements core.error.Error {}
 
+@cfg(target_os = "windows")
+pub copy enum Component<region r> {
+    Prefix(PrefixComponent<region r>),
+    RootDir,
+    CurDir,
+    ParentDir,
+    Normal(read OsStr from r)
+}
+
+@cfg(not(target_os = "windows"))
 pub copy enum Component<region r> {
     RootDir,
     CurDir,
@@ -47,27 +62,160 @@ pub copy enum Component<region r> {
     Normal(read OsStr from r)
 }
 
+@cfg(target_os = "windows")
+pub copy enum Prefix<region r> {
+    Verbatim(read OsStr from r),
+    VerbatimUNC(read OsStr from r, read OsStr from r),
+    VerbatimDisk(u8),
+    DeviceNS(read OsStr from r),
+    UNC(read OsStr from r, read OsStr from r),
+    Disk(u8)
+}
+
+@cfg(target_os = "windows")
+pub copy type PrefixComponent<region r> {
+    raw: read OsStr from r
+    parsed: Prefix<r>
+}
+
 pub type Components<region r> {
     path: read Path from r
     front: usize
     back: usize
+    prefix_end: usize
+    prefix_pending: bool
     root_pending: bool
     leading_cur_dir: bool
+    verbatim_body: bool
 }
 
 pub type Iter<region r> { components: Components<region r> }
 
-pub type Ancestors<region r> { current: read Path from r; finished: bool }
+pub copy type Ancestors<region r> { current: read Path from r; finished: bool }
+extend<region r> Ancestors<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("Ancestors")
+        try debug.field("current", self.current)
+        try debug.field("finished", self.finished)
+        try debug.finish()
+    }
+}
+@cfg(not(target_os = "windows"))
+extend<region r> Component<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        match self {
+            Component.RootDir => { try f.write_str("RootDir") },
+            Component.CurDir => { try f.write_str("CurDir") },
+            Component.ParentDir => { try f.write_str("ParentDir") },
+            Component.Normal(name) => {
+                var tuple = try f.debug_tuple("Normal")
+                try tuple.field(name)
+                try tuple.finish()
+            }
+        }
+    }
+}
 
-pub fn path(read bytes: [u8]): read Path from bytes {
+@cfg(target_os = "windows")
+extend<region r> Component<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        match self {
+            Component.Prefix(prefix) => {
+                var tuple = try f.debug_tuple("Prefix")
+                try tuple.field(prefix)
+                try tuple.finish()
+            },
+            Component.RootDir => { try f.write_str("RootDir") },
+            Component.CurDir => { try f.write_str("CurDir") },
+            Component.ParentDir => { try f.write_str("ParentDir") },
+            Component.Normal(name) => {
+                var tuple = try f.debug_tuple("Normal")
+                try tuple.field(name)
+                try tuple.finish()
+            }
+        }
+    }
+}
+
+@cfg(target_os = "windows")
+extend<region r> Prefix<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        match self {
+            Prefix.Verbatim(prefix) => {
+                var tuple = try f.debug_tuple("Verbatim")
+                try tuple.field(prefix)
+                try tuple.finish()
+            },
+            Prefix.VerbatimUNC(server, share) => {
+                var tuple = try f.debug_tuple("VerbatimUNC")
+                try tuple.field(server)
+                try tuple.field(share)
+                try tuple.finish()
+            },
+            Prefix.VerbatimDisk(drive) => {
+                var tuple = try f.debug_tuple("VerbatimDisk")
+                try tuple.field(drive)
+                try tuple.finish()
+            },
+            Prefix.DeviceNS(name) => {
+                var tuple = try f.debug_tuple("DeviceNS")
+                try tuple.field(name)
+                try tuple.finish()
+            },
+            Prefix.UNC(server, share) => {
+                var tuple = try f.debug_tuple("UNC")
+                try tuple.field(server)
+                try tuple.field(share)
+                try tuple.finish()
+            },
+            Prefix.Disk(drive) => {
+                var tuple = try f.debug_tuple("Disk")
+                try tuple.field(drive)
+                try tuple.finish()
+            }
+        }
+    }
+}
+
+@cfg(target_os = "windows")
+extend<region r> PrefixComponent<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("PrefixComponent")
+        try debug.field("raw", self.as_os_str())
+        try debug.field("kind", self.kind())
+        try debug.finish()
+    }
+}
+
+extend<region r> Components<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("Components")
+        try debug.field("path", self.as_path())
+        try debug.finish()
+    }
+}
+extend<region r> Iter<region r> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("Iter")
+        try debug.field("components", read self.components)
+        try debug.finish()
+    }
+}
+
+fn path_unchecked(read bytes: [u8]): read Path from bytes {
     let fat = core.ptr.from_ref(bytes)
     let view = unsafe { core.mem.transmute<ptr<read Path>>(fat) }
     unsafe { read *view }
 }
 
-pub fn path_from_text(read text: Text): read Path from text { path(text.as_bytes()) }
+pub fn path(read bytes: [u8]): read Path from bytes {
+    ffi.validate_os_bytes(bytes)
+    path_unchecked(bytes)
+}
 
-pub fn path_from_os_str(read s: OsStr): read Path from s { path(s.as_bytes()) }
+pub fn path_from_text(read text: Text): read Path from text { path_unchecked(text.as_bytes()) }
+
+pub fn path_from_os_str(read s: OsStr): read Path from s { path_unchecked(s.as_bytes()) }
 
 // Anything that views as a native path without allocation or conversion.
 // Hosted path-taking functions accept `read PathInput`, so callers pass a
@@ -77,7 +225,21 @@ pub interface PathInput {
     fn as_path(): read Path from self;
 }
 
+@cfg(target_os = "windows")
+fn is_sep(b: u8): bool { b == 47u8 || b == 92u8 }
+
+@cfg(not(target_os = "windows"))
 fn is_sep(b: u8): bool { b == 47u8 }
+
+fn is_component_sep(b: u8, verbatim: bool): bool {
+    if verbatim { b == 92u8 } else { is_sep(b) }
+}
+
+@cfg(target_os = "windows")
+fn main_separator(): u8 { 92u8 }
+
+@cfg(not(target_os = "windows"))
+fn main_separator(): u8 { 47u8 }
 
 // End (exclusive) of `bytes` once trailing separators are removed; a root
 // path keeps its single separator.
@@ -102,9 +264,9 @@ fn is_dot_dot(read bytes: [u8], start: usize, end: usize): bool {
     end - start == 2usize && bytes[start] == 46u8 && bytes[start + 1usize] == 46u8
 }
 
-fn has_leading_cur_dir(read bytes: [u8]): bool {
-    bytes.len() > 0usize && bytes[0usize] == 46u8 &&
-        (bytes.len() == 1usize || is_sep(bytes[1usize]))
+fn has_leading_cur_dir(read bytes: [u8], start: usize): bool {
+    bytes.len() > start && bytes[start] == 46u8 &&
+        (bytes.len() == start + 1usize || is_sep(bytes[start + 1usize]))
 }
 
 fn checked_part(read bytes: [u8], start: usize, end: usize): read [u8] {
@@ -114,7 +276,19 @@ fn checked_part(read bytes: [u8], start: usize, end: usize): read [u8] {
     }
 }
 
-fn component_tag(component: Component): u8 {
+@cfg(target_os = "windows")
+fn component_tag<region r>(component: Component<region r>): u8 {
+    match component {
+        Component.Prefix(_) => 0u8,
+        Component.RootDir => 1u8,
+        Component.CurDir => 2u8,
+        Component.ParentDir => 3u8,
+        Component.Normal(_) => 4u8
+    }
+}
+
+@cfg(not(target_os = "windows"))
+fn component_tag<region r>(component: Component<region r>): u8 {
     match component {
         Component.RootDir => 0u8,
         Component.CurDir => 1u8,
@@ -123,15 +297,17 @@ fn component_tag(component: Component): u8 {
     }
 }
 
-fn same_component(left: Component, right: Component): bool {
-    if component_tag(left) != component_tag(right) { return false }
-    match left {
-        Component.Normal(a) => match right {
-            Component.Normal(b) => a.same(b),
-            _ => false
-        },
-        _ => true
+fn compare_component(left: Component, right: Component): Ordering {
+    let left_tag = component_tag(left)
+    let right_tag = component_tag(right)
+    if left_tag != right_tag {
+        return if left_tag < right_tag { Ordering.Less } else { Ordering.Greater }
     }
+    compare_component_values(left, right)
+}
+
+fn same_component(left: Component, right: Component): bool {
+    compare_component(left, right) == Ordering.Equal
 }
 
 fn final_name_end(read bytes: [u8]): usize? {
@@ -176,6 +352,408 @@ fn compare_bytes(read left: [u8], read right: [u8]): Ordering {
     }
 }
 
+@cfg(target_os = "windows")
+fn ascii_letter(b: u8): bool {
+    (b >= 65u8 && b <= 90u8) || (b >= 97u8 && b <= 122u8)
+}
+
+@cfg(target_os = "windows")
+fn uppercase_ascii(b: u8): u8 {
+    if b >= 97u8 && b <= 122u8 { b - 32u8 } else { b }
+}
+
+@cfg(target_os = "windows")
+fn starts_with(read bytes: [u8], read prefix: [u8]): bool {
+    if bytes.len() < prefix.len() { return false }
+    var index = 0usize
+    while index < prefix.len() {
+        if bytes[index] != prefix[index] { return false }
+        index += 1usize
+    }
+    true
+}
+
+@cfg(target_os = "windows")
+fn prefix_component<region r>(
+    read bytes: [u8] from r,
+    start: usize,
+    end: usize,
+    parsed: Prefix<r>
+): PrefixComponent<region r> {
+    PrefixComponent(ffi.os_str(checked_part(bytes, start, end)), parsed)
+}
+
+@cfg(target_os = "windows")
+fn parse_prefix<region r>(read bytes: [u8] from r): PrefixComponent<region r>? {
+    let len = bytes.len()
+    let verbatim_start: [u8; 4] = [92u8, 92u8, 63u8, 92u8]
+    let verbatim_unc_start: [u8; 8] = [92u8, 92u8, 63u8, 92u8, 85u8, 78u8, 67u8, 92u8]
+
+    if starts_with(bytes, verbatim_unc_start.as_slice()) {
+        let server_start = 8usize
+        var server_end = server_start
+        while server_end < len && bytes[server_end] != 92u8 { server_end += 1usize }
+        let share_start = if server_end < len { server_end + 1usize } else { len }
+        var share_end = share_start
+        while share_end < len && bytes[share_end] != 92u8 { share_end += 1usize }
+        let server = ffi.os_str(checked_part(bytes, server_start, server_end))
+        let share = ffi.os_str(checked_part(bytes, share_start, share_end))
+        let raw_end = share_end
+        return present(prefix_component(
+            bytes,
+            0usize,
+            raw_end,
+            Prefix.VerbatimUNC(server, share)
+        ))
+    }
+
+    if starts_with(bytes, verbatim_start.as_slice()) {
+        if len >= 6usize && ascii_letter(bytes[4usize]) &&
+            bytes[5usize] == 58u8 &&
+            (len == 6usize || is_sep(bytes[6usize])) {
+            return present(prefix_component(
+                bytes,
+                0usize,
+                6usize,
+                Prefix.VerbatimDisk(uppercase_ascii(bytes[4usize]))
+            ))
+        }
+
+        var end = 4usize
+        while end < len && bytes[end] != 92u8 { end += 1usize }
+        let name = ffi.os_str(checked_part(bytes, 4usize, end))
+        return present(prefix_component(bytes, 0usize, end, Prefix.Verbatim(name)))
+    }
+
+    if len >= 4usize && is_sep(bytes[0usize]) && is_sep(bytes[1usize]) &&
+        bytes[2usize] == 46u8 && is_sep(bytes[3usize]) && len > 4usize &&
+        !is_sep(bytes[4usize]) {
+        var end = 4usize
+        while end < len && !is_sep(bytes[end]) { end += 1usize }
+        let device = ffi.os_str(checked_part(bytes, 4usize, end))
+        return present(prefix_component(bytes, 0usize, end, Prefix.DeviceNS(device)))
+    }
+
+    if len >= 2usize && is_sep(bytes[0usize]) && is_sep(bytes[1usize]) {
+        let server_start = 2usize
+        var server_end = server_start
+        while server_end < len && !is_sep(bytes[server_end]) { server_end += 1usize }
+        if server_end > server_start && server_end < len {
+            let share_start = server_end + 1usize
+            if share_start < len && !is_sep(bytes[share_start]) {
+                var share_end = share_start
+                while share_end < len && !is_sep(bytes[share_end]) {
+                    share_end += 1usize
+                }
+                let server = ffi.os_str(checked_part(bytes, server_start, server_end))
+                let share = ffi.os_str(checked_part(bytes, share_start, share_end))
+                return present(prefix_component(
+                    bytes,
+                    0usize,
+                    share_end,
+                    Prefix.UNC(server, share)
+                ))
+            }
+        }
+    }
+
+    if len >= 2usize && ascii_letter(bytes[0usize]) && bytes[1usize] == 58u8 {
+        return present(prefix_component(
+            bytes,
+            0usize,
+            2usize,
+            Prefix.Disk(uppercase_ascii(bytes[0usize]))
+        ))
+    }
+    none
+}
+
+type ComponentPathInfo {
+    prefix_end: usize
+    prefix_pending: bool
+    root_pending: bool
+    leading_cur_dir: bool
+    verbatim_body: bool
+    has_prefix: bool
+    has_root: bool
+}
+
+@cfg(target_os = "windows")
+fn component_path_info(read bytes: [u8]): ComponentPathInfo {
+    let parsed = parse_prefix(bytes)
+    let prefix_end = match parsed {
+        present(prefix) => prefix.raw.as_bytes().len(),
+        none => 0usize
+    }
+    let has_prefix = parsed.is_present()
+    let verbatim_body = match parsed {
+        present(prefix) => prefix.parsed.is_verbatim(),
+        none => false
+    }
+    let physical_root = prefix_end < bytes.len() && is_sep(bytes[prefix_end])
+    let implied_root = match parsed {
+        present(prefix) => match prefix.parsed {
+            Prefix.Disk(_) => false,
+            _ => true
+        },
+        none => false
+    }
+    let has_root = physical_root || implied_root
+    ComponentPathInfo(
+        prefix_end,
+        has_prefix,
+        physical_root || (implied_root && !verbatim_body),
+        !has_root && has_leading_cur_dir(bytes, prefix_end),
+        verbatim_body,
+        has_prefix,
+        has_root
+    )
+}
+
+@cfg(not(target_os = "windows"))
+fn component_path_info(read bytes: [u8]): ComponentPathInfo {
+    let root = bytes.len() > 0usize && is_sep(bytes[0usize])
+    ComponentPathInfo(0usize, false, root, !root && has_leading_cur_dir(bytes, 0usize),
+        false, false, root)
+}
+
+@cfg(target_os = "windows")
+fn path_prefix_component<region r>(read bytes: [u8] from r): Component<region r>? {
+    match parse_prefix(bytes) {
+        present(prefix) => present(Component.Prefix(prefix)),
+        none => none
+    }
+}
+
+@cfg(not(target_os = "windows"))
+fn path_prefix_component<region r>(read bytes: [u8] from r): Component<region r>? { none }
+
+@cfg(target_os = "windows")
+fn path_is_absolute(read bytes: [u8]): bool {
+    let info = component_path_info(bytes)
+    info.has_prefix && info.has_root
+}
+
+@cfg(not(target_os = "windows"))
+fn path_is_absolute(read bytes: [u8]): bool { component_path_info(bytes).has_root }
+
+fn path_has_root(read bytes: [u8]): bool { component_path_info(bytes).has_root }
+
+@cfg(target_os = "windows")
+fn component_is_root_or_prefix(component: Component): bool {
+    match component {
+        Component.RootDir | Component.Prefix(_) => true,
+        _ => false
+    }
+}
+
+@cfg(not(target_os = "windows"))
+fn component_is_root_or_prefix(component: Component): bool {
+    match component {
+        Component.RootDir => true,
+        _ => false
+    }
+}
+
+@cfg(target_os = "windows")
+fn prefix_tag<region r>(prefix: Prefix<r>): u8 {
+    match prefix {
+        Prefix.Verbatim(_) => 0u8,
+        Prefix.VerbatimUNC(_, _) => 1u8,
+        Prefix.VerbatimDisk(_) => 2u8,
+        Prefix.DeviceNS(_) => 3u8,
+        Prefix.UNC(_, _) => 4u8,
+        Prefix.Disk(_) => 5u8
+    }
+}
+
+@cfg(target_os = "windows")
+fn compare_prefix<region r>(left: Prefix<r>, right: Prefix<r>): Ordering {
+    let left_tag = prefix_tag(left)
+    let right_tag = prefix_tag(right)
+    if left_tag != right_tag {
+        return if left_tag < right_tag { Ordering.Less } else { Ordering.Greater }
+    }
+    match left {
+        Prefix.Verbatim(a) => match right {
+            Prefix.Verbatim(b) => compare_bytes(a.as_bytes(), b.as_bytes()),
+            _ => Ordering.Equal
+        },
+        Prefix.VerbatimUNC(a_server, a_share) => match right {
+            Prefix.VerbatimUNC(b_server, b_share) => {
+                let server_order = compare_bytes(a_server.as_bytes(), b_server.as_bytes())
+                if server_order != Ordering.Equal {
+                    server_order
+                } else {
+                    compare_bytes(a_share.as_bytes(), b_share.as_bytes())
+                }
+            },
+            _ => Ordering.Equal
+        },
+        Prefix.VerbatimDisk(a) => match right {
+            Prefix.VerbatimDisk(b) => {
+                if a < b { Ordering.Less } else if a > b { Ordering.Greater } else { Ordering.Equal }
+            },
+            _ => Ordering.Equal
+        },
+        Prefix.DeviceNS(a) => match right {
+            Prefix.DeviceNS(b) => compare_bytes(a.as_bytes(), b.as_bytes()),
+            _ => Ordering.Equal
+        },
+        Prefix.UNC(a_server, a_share) => match right {
+            Prefix.UNC(b_server, b_share) => {
+                let server_order = compare_bytes(a_server.as_bytes(), b_server.as_bytes())
+                if server_order != Ordering.Equal {
+                    server_order
+                } else {
+                    compare_bytes(a_share.as_bytes(), b_share.as_bytes())
+                }
+            },
+            _ => Ordering.Equal
+        },
+        Prefix.Disk(a) => match right {
+            Prefix.Disk(b) => {
+                if a < b { Ordering.Less } else if a > b { Ordering.Greater } else { Ordering.Equal }
+            },
+            _ => Ordering.Equal
+        }
+    }
+}
+
+@cfg(target_os = "windows")
+fn hash_prefix<H: Hasher, region r>(prefix: Prefix<r>, mut state: H): Unit {
+    state.write_u8(prefix_tag(prefix))
+    match prefix {
+        Prefix.Verbatim(name) | Prefix.DeviceNS(name) => {
+            state.write_usize(name.len())
+            state.write(name.as_bytes())
+        },
+        Prefix.VerbatimUNC(server, share) | Prefix.UNC(server, share) => {
+            state.write_usize(server.len())
+            state.write(server.as_bytes())
+            state.write_usize(share.len())
+            state.write(share.as_bytes())
+        },
+        Prefix.VerbatimDisk(letter) | Prefix.Disk(letter) => state.write_u8(letter)
+    }
+}
+
+@cfg(target_os = "windows")
+fn compare_component_values(left: Component, right: Component): Ordering {
+    match left {
+        Component.Prefix(a) => match right {
+            Component.Prefix(b) => compare_prefix(a.parsed, b.parsed),
+            _ => Ordering.Equal
+        },
+        Component.Normal(a) => match right {
+            Component.Normal(b) => compare_bytes(a.as_bytes(), b.as_bytes()),
+            _ => Ordering.Equal
+        },
+        _ => Ordering.Equal
+    }
+}
+
+@cfg(not(target_os = "windows"))
+fn compare_component_values(left: Component, right: Component): Ordering {
+    match left {
+        Component.Normal(a) => match right {
+            Component.Normal(b) => compare_bytes(a.as_bytes(), b.as_bytes()),
+            _ => Ordering.Equal
+        },
+        _ => Ordering.Equal
+    }
+}
+
+@cfg(target_os = "windows")
+fn hash_component<H: Hasher>(component: Component, mut state: H): Unit {
+    state.write_u8(component_tag(component))
+    match component {
+        Component.Prefix(prefix) => hash_prefix(prefix.parsed, mut state),
+        Component.Normal(name) => {
+            state.write_usize(name.len())
+            state.write(name.as_bytes())
+        },
+        _ => {}
+    }
+}
+
+@cfg(not(target_os = "windows"))
+fn hash_component<H: Hasher>(component: Component, mut state: H): Unit {
+    state.write_u8(component_tag(component))
+    match component {
+        Component.Normal(name) => {
+            state.write_usize(name.len())
+            state.write(name.as_bytes())
+        },
+        _ => {}
+    }
+}
+
+@cfg(target_os = "windows")
+extend<region r> Prefix<region r> {
+    pub fn is_verbatim(): bool {
+        match self {
+            Prefix.Verbatim(_) | Prefix.VerbatimUNC(_, _) | Prefix.VerbatimDisk(_) => true,
+            _ => false
+        }
+    }
+}
+
+@cfg(target_os = "windows")
+extend<region r> Prefix<region r> implements Clone {
+    fn clone(): Prefix<region r> { self }
+}
+
+@cfg(target_os = "windows")
+extend<region r> Prefix<region r> implements PartialEq {
+    fn eq(read other: Prefix<region r>): bool {
+        compare_prefix(self, other) == Ordering.Equal
+    }
+}
+
+@cfg(target_os = "windows")
+extend<region r> Prefix<region r> implements Eq {}
+
+@cfg(target_os = "windows")
+extend<region r> Prefix<region r> implements PartialOrd {
+    fn partial_cmp(read other: Prefix<region r>): Ordering? {
+        present(compare_prefix(self, other))
+    }
+}
+
+@cfg(target_os = "windows")
+extend<region r> Prefix<region r> implements Ord {
+    fn cmp(read other: Prefix<region r>): Ordering { compare_prefix(self, other) }
+}
+
+@cfg(target_os = "windows")
+extend<region r> PrefixComponent<region r> {
+    pub fn as_os_str(): read OsStr from r { self.raw }
+    pub fn kind(): Prefix<region r> { self.parsed }
+}
+
+@cfg(target_os = "windows")
+extend<region r> PrefixComponent<region r> implements Clone {
+    fn clone(): PrefixComponent<region r> { self }
+}
+
+@cfg(target_os = "windows")
+extend<region r> PrefixComponent<region r> implements PartialEq {
+    fn eq(read other: PrefixComponent<region r>): bool {
+        self.parsed == other.parsed
+    }
+}
+
+@cfg(target_os = "windows")
+extend<region r> PrefixComponent<region r> implements Eq {}
+
+@cfg(target_os = "windows")
+extend<region r> PrefixComponent<region r> implements PartialOrd {
+    fn partial_cmp(read other: PrefixComponent<region r>): Ordering? {
+        present(self.parsed.cmp(other.parsed))
+    }
+}
+
 fn compare_components(read left: Path, read right: Path): Ordering {
     var a = left.components()
     var b = right.components()
@@ -183,28 +761,8 @@ fn compare_components(read left: Path, read right: Path): Ordering {
         match a.next() {
             present(left_component) => match b.next() {
                 present(right_component) => {
-                    let left_tag = component_tag(left_component)
-                    let right_tag = component_tag(right_component)
-                    if left_tag != right_tag {
-                        return if left_tag < right_tag {
-                            Ordering.Less
-                        } else {
-                            Ordering.Greater
-                        }
-                    }
-                    match left_component {
-                        Component.Normal(left_name) => match right_component {
-                            Component.Normal(right_name) => {
-                                let order = compare_bytes(
-                                    left_name.as_bytes(),
-                                    right_name.as_bytes()
-                                )
-                                if order != Ordering.Equal { return order }
-                            },
-                            _ => {}
-                        },
-                        _ => {}
-                    }
+                    let order = compare_component(left_component, right_component)
+                    if order != Ordering.Equal { return order }
                 },
                 none => { return Ordering.Greater }
             },
@@ -225,15 +783,7 @@ fn hash_path<H: Hasher>(read value: Path, mut state: H): Unit {
     while true {
         match components.next() {
             present(component) => {
-                state.write_u8(component_tag(component))
-                match component {
-                    Component.Normal(name) => {
-                        let bytes = name.as_bytes()
-                        state.write_usize(bytes.len())
-                        state.write(bytes)
-                    },
-                    _ => {}
-                }
+                hash_component(component, mut state)
             },
             none => { break }
         }
@@ -241,46 +791,102 @@ fn hash_path<H: Hasher>(read value: Path, mut state: H): Unit {
     state.write_u8(255u8)
 }
 
-extend<region r> Component<region r> {
-    pub fn as_os_str(receiver self: Component<region r>): read OsStr from r {
-        match self {
-            Component.RootDir => ffi.os_str("/".as_bytes()),
-            Component.CurDir => ffi.os_str(".".as_bytes()),
-            Component.ParentDir => ffi.os_str("..".as_bytes()),
-            Component.Normal(name) => name
-        }
+@cfg(target_os = "windows")
+fn component_as_os_str<region r>(component: Component<region r>): read OsStr from r {
+    match component {
+        Component.Prefix(prefix) => prefix.as_os_str(),
+        Component.RootDir => ffi.os_str("\\".as_bytes()),
+        Component.CurDir => ffi.os_str(".".as_bytes()),
+        Component.ParentDir => ffi.os_str("..".as_bytes()),
+        Component.Normal(name) => name
     }
 }
 
+@cfg(not(target_os = "windows"))
+fn component_as_os_str<region r>(component: Component<region r>): read OsStr from r {
+    match component {
+        Component.RootDir => ffi.os_str("/".as_bytes()),
+        Component.CurDir => ffi.os_str(".".as_bytes()),
+        Component.ParentDir => ffi.os_str("..".as_bytes()),
+        Component.Normal(name) => name
+    }
+}
+
+extend<region r> Component<region r> {
+    pub fn as_os_str(receiver self: Component<region r>): read OsStr from r {
+        component_as_os_str(self)
+    }
+}
+
+@cfg(target_os = "windows")
+fn clone_component<region r>(component: Component<region r>): Component<region r> {
+    match component {
+        Component.Prefix(prefix) => Component.Prefix(prefix.clone()),
+        Component.RootDir => Component<region r>.RootDir,
+        Component.CurDir => Component<region r>.CurDir,
+        Component.ParentDir => Component<region r>.ParentDir,
+        Component.Normal(name) => Component.Normal(name)
+    }
+}
+
+@cfg(not(target_os = "windows"))
+fn clone_component<region r>(component: Component<region r>): Component<region r> {
+    match component {
+        Component.RootDir => Component<region r>.RootDir,
+        Component.CurDir => Component<region r>.CurDir,
+        Component.ParentDir => Component<region r>.ParentDir,
+        Component.Normal(name) => Component.Normal(name)
+    }
+}
+extend<region r> Component<region r> implements AsRef<OsStr> {
+    fn as_ref(): read OsStr from self { self.as_os_str() }
+}
+extend<region r> Component<region r> implements AsRef<Path> {
+    fn as_ref(): read Path from self { path_from_os_str(self.as_os_str()) }
+}
+
 extend<region r> Component<region r> implements core.clone.Clone {
-    fn clone(): Component<region r> {
-        match self {
-            Component.RootDir => Component<region r>.RootDir,
-            Component.CurDir => Component<region r>.CurDir,
-            Component.ParentDir => Component<region r>.ParentDir,
-            Component.Normal(name) => Component.Normal(name)
-        }
+    fn clone(): Component<region r> { clone_component(self) }
+}
+
+extend<region r> Component<region r> implements PartialEq {
+    fn eq(read other: Component<region r>): bool {
+        same_component(self, other)
+    }
+}
+extend<region r> Component<region r> implements Eq {}
+extend<region r> Component<region r> implements PartialOrd {
+    fn partial_cmp(read other: Component<region r>): Ordering? {
+        present(compare_component(self, other))
+    }
+}
+extend<region r> Component<region r> implements Ord {
+    fn cmp(read other: Component<region r>): Ordering {
+        compare_component(self, other)
     }
 }
 
 extend<region r> Components<region r> {
     pub fn as_path(): read Path from r {
         let bytes = self.path.as_bytes()
-        var start = self.front
+        var start = if self.prefix_pending { 0usize } else { self.front }
         var end = self.back
+        let body_start = if start > self.prefix_end { start } else { self.prefix_end }
 
-        if self.front > 0usize {
-            while start < end && is_sep(bytes[start]) { start += 1usize }
-            var trimming = true
+        if self.front > self.prefix_end && !self.root_pending {
+            while start < end && is_component_sep(bytes[start], self.verbatim_body) {
+                start += 1usize
+            }
+            var trimming = !self.verbatim_body
             while trimming && start < end {
                 var part_end = start
-                while part_end < end && !is_sep(bytes[part_end]) {
+                while part_end < end && !is_component_sep(bytes[part_end], false) {
                     part_end += 1usize
                 }
                 if is_dot(bytes, start, part_end) &&
-                    !(self.leading_cur_dir && start == 0usize) {
+                    !(self.leading_cur_dir && start == self.prefix_end) {
                     start = part_end
-                    while start < end && is_sep(bytes[start]) {
+                    while start < end && is_component_sep(bytes[start], false) {
                         start += 1usize
                     }
                 } else {
@@ -290,17 +896,19 @@ extend<region r> Components<region r> {
         }
 
         if self.back < bytes.len() {
-            while end > start && is_sep(bytes[end - 1usize]) { end -= 1usize }
-            var trimming = true
-            while trimming && end > start {
+            while end > body_start && is_component_sep(bytes[end - 1usize], self.verbatim_body) {
+                end -= 1usize
+            }
+            var trimming = !self.verbatim_body
+            while trimming && end > body_start {
                 var part_start = end
-                while part_start > start && !is_sep(bytes[part_start - 1usize]) {
+                while part_start > body_start && !is_component_sep(bytes[part_start - 1usize], false) {
                     part_start -= 1usize
                 }
                 if is_dot(bytes, part_start, end) &&
-                    !(self.leading_cur_dir && part_start == 0usize) {
+                    !(self.leading_cur_dir && part_start == self.prefix_end) {
                     end = part_start
-                    while end > start && is_sep(bytes[end - 1usize]) {
+                    while end > body_start && is_component_sep(bytes[end - 1usize], false) {
                         end -= 1usize
                     }
                 } else {
@@ -309,8 +917,11 @@ extend<region r> Components<region r> {
             }
         }
 
-        if self.root_pending && end == 0usize { end = 1usize }
-        path(checked_part(bytes, start, end))
+        if self.root_pending && end <= self.prefix_end &&
+            self.prefix_end < bytes.len() && is_sep(bytes[self.prefix_end]) {
+            end = self.prefix_end + 1usize
+        }
+        path_unchecked(checked_part(bytes, start, end))
     }
 }
 
@@ -320,14 +931,47 @@ extend<region r> Components<region r> implements core.clone.Clone {
             self.path,
             self.front,
             self.back,
+            self.prefix_end,
+            self.prefix_pending,
             self.root_pending,
-            self.leading_cur_dir
+            self.leading_cur_dir,
+            self.verbatim_body
         )
     }
 }
 
+extend<region r> Components<region r> implements PartialEq {
+    fn eq(read other: Components<region r>): bool {
+        self.as_path() == other.as_path()
+    }
+}
+extend<region r> Components<region r> implements Eq {}
+extend<region r> Components<region r> implements PartialOrd {
+    fn partial_cmp(read other: Components<region r>): Ordering? {
+        present(self.as_path().cmp(other.as_path()))
+    }
+}
+extend<region r> Components<region r> implements Ord {
+    fn cmp(read other: Components<region r>): Ordering {
+        self.as_path().cmp(other.as_path())
+    }
+}
+extend<region r> Components<region r> implements AsRef<OsStr> {
+    fn as_ref(): read OsStr from self { self.as_path().as_os_str() }
+}
+extend<region r> Components<region r> implements AsRef<Path> {
+    fn as_ref(): read Path from self { self.as_path() }
+}
+
 extend<region r> Iter<region r> {
     pub fn as_path(): read Path from r { self.components.as_path() }
+}
+
+extend<region r> Iter<region r> implements AsRef<OsStr> {
+    fn as_ref(): read OsStr from self { self.as_path().as_os_str() }
+}
+extend<region r> Iter<region r> implements AsRef<Path> {
+    fn as_ref(): read Path from self { self.as_path() }
 }
 
 extend<region r> Iter<region r> implements core.clone.Clone {
@@ -336,8 +980,11 @@ extend<region r> Iter<region r> implements core.clone.Clone {
             self.components.path,
             self.components.front,
             self.components.back,
+            self.components.prefix_end,
+            self.components.prefix_pending,
             self.components.root_pending,
-            self.components.leading_cur_dir
+            self.components.leading_cur_dir,
+            self.components.verbatim_body
         ))
     }
 }
@@ -361,8 +1008,8 @@ extend Path {
         }
     }
     pub fn to_string_lossy(): String { ffi.lossy(read self.bytes) }
-    pub fn is_absolute(): bool { self.bytes.len() > 0usize && is_sep(self.bytes[0usize]) }
-    pub fn has_root(): bool { self.is_absolute() }
+    pub fn is_absolute(): bool { path_is_absolute(self.bytes) }
+    pub fn has_root(): bool { path_has_root(self.bytes) }
     pub fn is_relative(): bool { !self.is_absolute() }
     pub fn same(read other: Path): bool { ffi.bytes_equal(read self.bytes, other.as_bytes()) }
     pub fn to_path_buf(): PathBuf { path_buf_from_bytes(read self.bytes) }
@@ -374,12 +1021,16 @@ extend Path {
         receiver read self: Path from r
     ): Components<region r> {
         let bytes = self.as_bytes()
+        let info = component_path_info(bytes)
         Components(
             read self,
-            0usize,
+            info.prefix_end,
             bytes.len(),
-            self.is_absolute(),
-            has_leading_cur_dir(bytes)
+            info.prefix_end,
+            info.prefix_pending,
+            info.root_pending,
+            info.leading_cur_dir,
+            info.verbatim_body
         )
     }
 
@@ -405,8 +1056,13 @@ extend Path {
     pub fn parent(): (read Path from self)? {
         var components = self.components()
         match components.next_back() {
-            present(Component.RootDir) => none,
-            present(_) => present(components.as_path()),
+            present(component) => {
+                if component_is_root_or_prefix(component) {
+                    none
+                } else {
+                    present(components.as_path())
+                }
+            },
             none => none
         }
     }
@@ -583,6 +1239,26 @@ extend Path implements PartialOrd<Text> {
         present(self.cmp(path_from_text(other)))
     }
 }
+extend Text implements PartialEq<Path> {
+    fn eq(read other: Path): bool {
+        Path.(PartialEq<Text>).eq(other, self)
+    }
+}
+extend Text implements PartialEq<PathBuf> {
+    fn eq(read other: PathBuf): bool {
+        Path.(PartialEq<Text>).eq(other.as_path(), self)
+    }
+}
+extend<region r> read Text from r implements PartialEq<Path> {
+    fn eq(read other: Path): bool {
+        Path.(PartialEq<Text>).eq(other, *self)
+    }
+}
+extend<region r> read Text from r implements PartialEq<PathBuf> {
+    fn eq(read other: PathBuf): bool {
+        Path.(PartialEq<Text>).eq(other.as_path(), *self)
+    }
+}
 extend Path implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit { hash_path(self, mut state) }
 }
@@ -594,6 +1270,9 @@ extend Path implements ToOwned {
 }
 extend Path implements AsRef<OsStr> {
     fn as_ref(): read OsStr from self { self.as_os_str() }
+}
+extend Path implements AsRef<Path> {
+    fn as_ref(): read Path from self { read self }
 }
 extend Path implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
@@ -608,6 +1287,13 @@ extend<region r> Components<region r> implements core.iter.Iterator {
     type Item = Component<region r>
     mut fn next(): Component<region r>? {
         let bytes = self.path.as_bytes()
+        if self.prefix_pending {
+            self.prefix_pending = false
+            return match path_prefix_component(bytes) {
+                present(prefix) => present(prefix),
+                none => { core.panic.panic("path prefix state invariant failed") }
+            }
+        }
         if self.root_pending {
             self.root_pending = false
             while self.front < self.back && is_sep(bytes[self.front]) {
@@ -617,17 +1303,22 @@ extend<region r> Components<region r> implements core.iter.Iterator {
         }
 
         while self.front < self.back {
-            while self.front < self.back && is_sep(bytes[self.front]) {
+            while self.front < self.back &&
+                is_component_sep(bytes[self.front], self.verbatim_body) {
                 self.front += 1usize
             }
             if self.front >= self.back { return none }
             let start = self.front
-            while self.front < self.back && !is_sep(bytes[self.front]) {
+            while self.front < self.back &&
+                !is_component_sep(bytes[self.front], self.verbatim_body) {
                 self.front += 1usize
             }
             let end = self.front
             if is_dot(bytes, start, end) {
-                if self.leading_cur_dir && start == 0usize {
+                if self.verbatim_body {
+                    return present(Component<region r>.CurDir)
+                }
+                if self.leading_cur_dir && start == self.prefix_end {
                     self.leading_cur_dir = false
                     return present(Component<region r>.CurDir)
                 }
@@ -646,7 +1337,20 @@ extend<region r> Components<region r> implements core.iter.BidirectionalIterator
     mut fn next_back(): Component<region r>? {
         let bytes = self.path.as_bytes()
         while true {
-            while self.back > self.front && is_sep(bytes[self.back - 1usize]) {
+            if self.root_pending && self.front == self.prefix_end {
+                var root_end = self.prefix_end
+                while root_end < self.back && is_sep(bytes[root_end]) {
+                    root_end += 1usize
+                }
+                if root_end == self.back {
+                    self.back = self.prefix_end
+                    self.front = self.back
+                    self.root_pending = false
+                    return present(Component<region r>.RootDir)
+                }
+            }
+            while self.back > self.front &&
+                is_component_sep(bytes[self.back - 1usize], self.verbatim_body) {
                 self.back -= 1usize
             }
             if self.back <= self.front {
@@ -660,17 +1364,28 @@ extend<region r> Components<region r> implements core.iter.BidirectionalIterator
                     self.front = self.back
                     return present(Component<region r>.CurDir)
                 }
+                if self.prefix_pending {
+                    self.prefix_pending = false
+                    return match path_prefix_component(bytes) {
+                        present(prefix) => present(prefix),
+                        none => { core.panic.panic("path prefix state invariant failed") }
+                    }
+                }
                 return none
             }
 
             let end = self.back
             var start = end
-            while start > self.front && !is_sep(bytes[start - 1usize]) {
+            while start > self.front &&
+                !is_component_sep(bytes[start - 1usize], self.verbatim_body) {
                 start -= 1usize
             }
             self.back = start
             if is_dot(bytes, start, end) {
-                if self.leading_cur_dir && start == 0usize {
+                if self.verbatim_body {
+                    return present(Component<region r>.CurDir)
+                }
+                if self.leading_cur_dir && start == self.prefix_end {
                     self.leading_cur_dir = false
                     self.front = self.back
                     return present(Component<region r>.CurDir)
@@ -735,9 +1450,7 @@ pub fn path_buf_with_capacity(capacity: usize): PathBuf {
 }
 
 pub fn path_buf_from_bytes(read bytes: [u8]): PathBuf {
-    var v = vec.with_capacity<u8>(bytes.len())
-    v.extend_from_slice(bytes)
-    PathBuf(OsString(v))
+    PathBuf(ffi.os_string_from_bytes(bytes))
 }
 
 pub fn path_buf_from_text(read text: Text): PathBuf { path_buf_from_bytes(text.as_bytes()) }
@@ -747,7 +1460,7 @@ extend PathBuf {
     pub static fn with_capacity(capacity: usize): PathBuf {
         path_buf_with_capacity(capacity)
     }
-    pub fn as_path(): read Path from self { path(self.v.as_bytes()) }
+    pub fn as_path(): read Path from self { path_unchecked(self.v.as_bytes()) }
     pub mut fn as_mut_path(): mut Path from self {
         let fat = core.ptr.from_mut(self.v.v.as_mut_slice())
         let view = unsafe { core.mem.transmute<ptr<mut Path>>(fat) }
@@ -804,10 +1517,10 @@ extend PathBuf {
     pub mut fn clear(): Unit { self.v.clear() }
     pub mut fn reserve(additional: usize): Unit { self.v.reserve(additional) }
     pub mut fn reserve_exact(additional: usize): Unit { self.v.reserve_exact(additional) }
-    pub mut fn try_reserve(additional: usize): Unit throws AllocError {
+    pub mut fn try_reserve(additional: usize): Unit throws TryReserveError {
         try self.v.try_reserve(additional)
     }
-    pub mut fn try_reserve_exact(additional: usize): Unit throws AllocError {
+    pub mut fn try_reserve_exact(additional: usize): Unit throws TryReserveError {
         try self.v.try_reserve_exact(additional)
     }
     pub mut fn shrink_to_fit(): Unit { self.v.shrink_to_fit() }
@@ -819,10 +1532,18 @@ extend PathBuf {
     // replaces the whole path.
     pub mut fn push(read input: PathInput): Unit {
         let p = input.as_path()
-        if p.is_absolute() {
+        let info = component_path_info(p.as_bytes())
+        if p.is_absolute() || info.has_prefix {
             self.v.clear()
+        } else if info.has_root {
+            let base_info = component_path_info(self.v.as_bytes())
+            if base_info.has_prefix {
+                self.v.v.truncate(base_info.prefix_end)
+            } else {
+                self.v.clear()
+            }
         } else if self.v.len() > 0usize && !is_sep(self.v.v[self.v.len() - 1usize]) {
-            self.v.v.push(47u8)
+            self.v.v.push(main_separator())
         }
         self.v.v.extend_from_slice(p.as_bytes())
     }
@@ -898,7 +1619,7 @@ extend PathBuf {
 }
 
 extend Path implements PathInput {
-    fn as_path(): read Path from self { path(self.as_bytes()) }
+    fn as_path(): read Path from self { path_unchecked(self.as_bytes()) }
 }
 extend<region r> read [u8] from r implements PathInput {
     fn as_path(): read Path from r { path(*self) }
@@ -930,7 +1651,7 @@ extend String implements PathInput {
 
 // Value types duplicate by copy; owners clone their buffers.
 extend PathBuf implements Clone {
-    fn clone(): PathBuf { PathBuf(self.v.clone()) }
+    fn clone(): PathBuf { PathBuf(OsString.(Clone).clone(self.v)) }
 }
 
 extend PathBuf implements Borrow<Path> {
@@ -985,7 +1706,7 @@ extend PathBuf implements PartialOrd {
 }
 extend PathBuf implements PartialOrd<Path> {
     fn partial_cmp(read other: Path): Ordering? {
-        present(self.as_path().cmp(other))
+        present(Path.(Ord).cmp(self.as_path(), other))
     }
 }
 extend<region r> PathBuf implements PartialOrd<read Path from r> {
@@ -1030,7 +1751,7 @@ extend OsStr implements PartialEq<Path> {
 }
 extend OsStr implements PartialOrd<Path> {
     fn partial_cmp(read other: Path): Ordering? {
-        present(path_from_os_str(self).cmp(other))
+        present(Path.(Ord).cmp(path_from_os_str(self), other))
     }
 }
 extend OsStr implements PartialEq<PathBuf> {
@@ -1050,7 +1771,7 @@ extend OsString implements PartialEq<Path> {
 }
 extend OsString implements PartialOrd<Path> {
     fn partial_cmp(read other: Path): Ordering? {
-        present(path_from_os_str(self.as_os_str()).cmp(other))
+        present(Path.(Ord).cmp(path_from_os_str(self.as_os_str()), other))
     }
 }
 extend OsString implements PartialEq<PathBuf> {
@@ -1275,7 +1996,7 @@ extend alloc.string.String implements PartialEq<PathBuf> {
 }
 extend alloc.string.String implements PartialOrd<Path> {
     fn partial_cmp(read other: Path): Ordering? {
-        present(path_from_text(self.as_text()).cmp(other))
+        present(Path.(Ord).cmp(path_from_text(self.as_text()), other))
     }
 }
 extend alloc.string.String implements PartialOrd<PathBuf> {
@@ -1392,5 +2113,88 @@ extend<region r, region s> read OsStr from r implements PartialEq<BorrowedOrOwne
 extend<region r, region s> read OsStr from r implements PartialOrd<BorrowedOrOwned<region s, Path>> {
     fn partial_cmp(read other: BorrowedOrOwned<region s, Path>): Ordering? {
         Path.(PartialOrd).partial_cmp(path_from_os_str(*self), other.as_ref())
+    }
+}
+extend<region r> BorrowedOrOwned<region r, Path> implements PartialEq<OsStr> {
+    fn eq(read other: OsStr): bool {
+        Path.(PartialEq).eq(self.as_ref(), path_from_os_str(other))
+    }
+}
+extend<region r, region s> BorrowedOrOwned<region r, Path>
+    implements PartialEq<read OsStr from s> {
+    fn eq(read other: read OsStr from s): bool {
+        Path.(PartialEq).eq(self.as_ref(), path_from_os_str(*other))
+    }
+}
+extend<region r> BorrowedOrOwned<region r, Path> implements PartialEq<OsString> {
+    fn eq(read other: OsString): bool {
+        Path.(PartialEq).eq(self.as_ref(), path_from_os_str(other.as_os_str()))
+    }
+}
+extend<region r> BorrowedOrOwned<region r, Path> implements PartialOrd<OsStr> {
+    fn partial_cmp(read other: OsStr): Ordering? {
+        Path.(PartialOrd).partial_cmp(self.as_ref(), path_from_os_str(other))
+    }
+}
+extend<region r, region s> BorrowedOrOwned<region r, Path>
+    implements PartialOrd<read OsStr from s> {
+    fn partial_cmp(read other: read OsStr from s): Ordering? {
+        Path.(PartialOrd).partial_cmp(self.as_ref(), path_from_os_str(*other))
+    }
+}
+extend<region r> BorrowedOrOwned<region r, Path> implements PartialOrd<OsString> {
+    fn partial_cmp(read other: OsString): Ordering? {
+        Path.(PartialOrd).partial_cmp(self.as_ref(), path_from_os_str(other.as_os_str()))
+    }
+}
+extend<region r> BorrowedOrOwned<region r, Path> implements PartialEq<Path> {
+    fn eq(read other: Path): bool { self.as_ref() == other }
+}
+extend<region r> BorrowedOrOwned<region r, Path> implements PartialOrd<Path> {
+    fn partial_cmp(read other: Path): Ordering? {
+        Path.(PartialOrd).partial_cmp(self.as_ref(), other)
+    }
+}
+extend<region r, region s> BorrowedOrOwned<region r, Path> implements PartialEq<read Path from s> {
+    fn eq(read other: read Path from s): bool { self.as_ref() == *other }
+}
+extend<region r, region s> BorrowedOrOwned<region r, Path> implements PartialOrd<read Path from s> {
+    fn partial_cmp(read other: read Path from s): Ordering? {
+        Path.(PartialOrd).partial_cmp(self.as_ref(), *other)
+    }
+}
+extend<region r> BorrowedOrOwned<region r, Path> implements PartialEq<PathBuf> {
+    fn eq(read other: PathBuf): bool { self.as_ref() == other }
+}
+extend<region r> BorrowedOrOwned<region r, Path> implements PartialOrd<PathBuf> {
+    fn partial_cmp(read other: PathBuf): Ordering? {
+        Path.(PartialOrd).partial_cmp(self.as_ref(), other.as_path())
+    }
+}
+extend<region r> BorrowedOrOwned<region r, OsStr> implements PartialEq<Path> {
+    fn eq(read other: Path): bool { path_from_os_str(self.as_ref()) == other }
+}
+extend<region r> BorrowedOrOwned<region r, OsStr> implements PartialOrd<Path> {
+    fn partial_cmp(read other: Path): Ordering? {
+        Path.(PartialOrd).partial_cmp(path_from_os_str(self.as_ref()), other)
+    }
+}
+extend<region r, region s> BorrowedOrOwned<region r, OsStr> implements PartialEq<read Path from s> {
+    fn eq(read other: read Path from s): bool { path_from_os_str(self.as_ref()) == *other }
+}
+extend<region r, region s> BorrowedOrOwned<region r, OsStr> implements PartialOrd<read Path from s> {
+    fn partial_cmp(read other: read Path from s): Ordering? {
+        Path.(PartialOrd).partial_cmp(path_from_os_str(self.as_ref()), *other)
+    }
+}
+extend<region r> BorrowedOrOwned<region r, OsStr> implements PartialEq<PathBuf> {
+    fn eq(read other: PathBuf): bool { path_from_os_str(self.as_ref()) == other }
+}
+extend<region r> BorrowedOrOwned<region r, OsStr> implements PartialOrd<PathBuf> {
+    fn partial_cmp(read other: PathBuf): Ordering? {
+        Path.(PartialOrd).partial_cmp(
+            path_from_os_str(self.as_ref()),
+            other.as_path()
+        )
     }
 }

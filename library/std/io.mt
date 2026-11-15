@@ -6,7 +6,7 @@ import alloc.vec.List
 import alloc.alloc.{AllocError, Allocator}
 import alloc.boxed.Heap
 import alloc.arc.Shared
-import alloc.collections.Deque
+import alloc.collections.{Deque, TryReserveError}
 import core.text.Text
 import core.cmp.{Eq, PartialEq}
 import core.cmp.{Ord, Ordering, PartialOrd}
@@ -95,21 +95,205 @@ pub type Error {
     payload: Heap<any CoreError>?
     payload_type: TypeId?
 }
+extend Error not core.marker.UnwindSafe;
+extend Error not core.marker.RefUnwindSafe;
 
 pub copy enum SeekFrom { Start(u64), End(i64), Current(i64) }
 
-pub type IoSlice<region r> { data: read [u8] from r }
+extend SeekFrom implements Clone {
+    fn clone(): SeekFrom { self }
+}
+extend SeekFrom implements PartialEq {
+    fn eq(read other: SeekFrom): bool {
+        match self {
+            SeekFrom.Start(value) => match other {
+                SeekFrom.Start(other_value) => value == other_value,
+                _ => false
+            },
+            SeekFrom.End(value) => match other {
+                SeekFrom.End(other_value) => value == other_value,
+                _ => false
+            },
+            SeekFrom.Current(value) => match other {
+                SeekFrom.Current(other_value) => value == other_value,
+                _ => false
+            }
+        }
+    }
+}
+extend SeekFrom implements Eq {}
+
+pub copy type IoSlice<region r> { data: read [u8] from r }
 pub type IoSliceMut<region r> { data: mut [u8] from r }
+unsafe extend<region r> IoSliceMut<region r> implements core.marker.RefUnwindSafe {}
+pub copy type Empty {}
+pub copy type Sink {}
+pub type Repeat { byte: u8 }
+
+pub fn empty(): Empty { Empty() }
+pub fn sink(): Sink { Sink() }
+pub fn repeat(byte: u8): Repeat { Repeat(byte) }
+
+extend Empty implements Clone {
+    fn clone(): Empty { self }
+}
+
+extend Empty implements Default {
+    static fn default(): Empty { Empty() }
+}
+
+extend Sink implements Default {
+    static fn default(): Sink { Sink() }
+}
+
+extend Sink implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
+        try f.write_str("Sink")
+    }
+}
+
+extend<region r> IoSlice<region r> implements core.clone.Clone {
+    fn clone(): IoSlice<region r> { self }
+}
+extend<region r> IoSlice<region r> implements core.ops.Deref {
+    type Target = [u8]
+    fn deref(): read [u8] from self { self.data }
+}
+extend<region r> IoSliceMut<region r> implements core.ops.Deref {
+    type Target = [u8]
+    fn deref(): read [u8] from self { read self.data }
+}
+extend<region r> IoSliceMut<region r> implements core.ops.DerefMut {
+    mut fn deref_mut(): mut [u8] from self { mut self.data }
+}
+extend Sink implements core.clone.Clone {
+    fn clone(): Sink { self }
+}
+
+extend<region r> IoSlice<region r> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("IoSlice")
+        try debug.field("data", read self.data)
+        try debug.finish()
+    }
+}
+
+extend<region r> IoSliceMut<region r> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("IoSliceMut")
+        try debug.field("data", read self.data)
+        try debug.finish()
+    }
+}
 
 extend<region r> IoSlice<region r> {
     pub static fn new(read data: [u8] from r): IoSlice<region r> {
         IoSlice(read data)
+    }
+
+    pub mut fn advance(n: usize): Unit {
+        if n > self.data.len() { core.panic.panic("advancing IoSlice beyond its length") }
+        self.data = self.data.split_at(n).1
+    }
+
+    pub static fn advance_slices<region s>(
+        mut bufs: mut [IoSlice<region r>] from s, n: usize
+    ): Unit {
+        var remaining = n
+        while bufs.len() != 0usize {
+            let first_len = {
+                let first = read (*bufs)[0usize]
+                let len = first.data.len()
+                core.mem.drop(take first)
+                len
+            }
+            if remaining < first_len {
+                var first = mut (*bufs)[0usize]
+                first.advance(remaining)
+                core.mem.drop(take first)
+                return
+            }
+            remaining -= first_len
+            let first = core.slice.split_off_first_mut(mut bufs).or_panic()
+            core.mem.drop(take first)
+        }
+        if remaining != 0usize {
+            core.panic.panic("advancing IoSlice buffers beyond their total length")
+        }
     }
 }
 
 extend<region r> IoSliceMut<region r> {
     pub static fn new(mut data: [u8] from r): IoSliceMut<region r> {
         IoSliceMut(mut data)
+    }
+
+    pub mut fn advance(n: usize): Unit {
+        if n > self.data.len() { core.panic.panic("advancing IoSliceMut beyond its length") }
+        self.data = self.data.split_at_mut(n).1
+    }
+
+    pub mut fn split_off_first(): (read u8 from r)? {
+        match take core.slice.split_off_first_mut(mut self.data) {
+            present(value) => present(read *value),
+            none => none
+        }
+    }
+
+    pub mut fn split_off_last(): (read u8 from r)? {
+        match take core.slice.split_off_last_mut(mut self.data) {
+            present(value) => present(read *value),
+            none => none
+        }
+    }
+
+    pub mut fn split_off<R: core.slice.SplitOffRange>(
+        take range: R
+    ): (read [u8] from r)? {
+        match take core.slice.split_off_mut(mut self.data, take range) {
+            present(value) => present(read *value),
+            none => none
+        }
+    }
+
+    pub mut fn split_off_first_mut(): (mut u8 from r)? {
+        core.slice.split_off_first_mut(mut self.data)
+    }
+
+    pub mut fn split_off_last_mut(): (mut u8 from r)? {
+        core.slice.split_off_last_mut(mut self.data)
+    }
+
+    pub mut fn split_off_mut<R: core.slice.SplitOffRange>(
+        take range: R
+    ): (mut [u8] from r)? {
+        core.slice.split_off_mut(mut self.data, take range)
+    }
+
+    pub static fn advance_slices<region s>(
+        mut bufs: mut [IoSliceMut<region r>] from s, n: usize
+    ): Unit {
+        var remaining = n
+        while bufs.len() != 0usize {
+            let first_len = {
+                let first = read (*bufs)[0usize]
+                let len = first.data.len()
+                core.mem.drop(take first)
+                len
+            }
+            if remaining < first_len {
+                var first = mut (*bufs)[0usize]
+                first.advance(remaining)
+                core.mem.drop(take first)
+                return
+            }
+            remaining -= first_len
+            let first = core.slice.split_off_first_mut(mut bufs).or_panic()
+            core.mem.drop(take first)
+        }
+        if remaining != 0usize {
+            core.panic.panic("advancing IoSliceMut buffers beyond their total length")
+        }
     }
 }
 
@@ -381,6 +565,10 @@ extend Error implements From<AllocError> {
     static fn from(take error: AllocError): Error { from_kind(ErrorKind.OutOfMemory) }
 }
 
+extend Error implements From<TryReserveError> {
+    static fn from(take error: TryReserveError): Error { from_kind(ErrorKind.OutOfMemory) }
+}
+
 extend Error implements From<alloc.ffi.NulError> {
     static fn from(take error: alloc.ffi.NulError): Error {
         Error.new(ErrorKind.InvalidInput, error)
@@ -475,9 +663,29 @@ pub interface Reader {
         Chain(self, second, false)
     }
     take fn `take`(limit: u64): Take<Self> where Self: Sized {
-        Take(self, limit)
+        Take(self, limit, limit)
     }
     take fn bytes(): Bytes<Self> where Self: Sized { Bytes(self, false) }
+}
+
+pub fn read_to_string<R: Reader>(mut reader: R): String throws Error {
+    var out = alloc.string.new()
+    let _ = try reader.read_to_string(mut out)
+    out
+}
+
+fn io_slice_total_len<region r>(read bufs: [IoSlice<region r>]): usize {
+    var total = 0usize
+    var index = 0usize
+    while index < bufs.len() {
+        total += bufs[index].data.len()
+        index += 1usize
+    }
+    total
+}
+
+pub interface IsTerminal {
+    fn is_terminal(): bool;
 }
 
 // Writes bytes. `write_some` accepts a prefix of `buf` and returns its length,
@@ -535,9 +743,208 @@ pub interface Writer {
     }
 }
 
+extend<region r> mut [u8] from r implements Writer {
+    mut fn write_some(read buf: [u8]): usize throws Error {
+        let count = if self.len() < buf.len() { self.len() } else { buf.len() }
+        let destination = core.slice.split_off_mut(
+            mut self, core.iter.range_to(count)
+        ).or_panic()
+        let written = destination.len()
+        destination.copy_from_slice(buf.split_at(written).0)
+        written
+    }
+
+    mut fn flush(): Unit throws Error {}
+}
+
+extend Sink implements Writer {
+    mut fn write_some(read buf: [u8]): usize throws Error { buf.len() }
+    mut fn write_vectored<region r>(read bufs: [IoSlice<region r>]): usize throws Error {
+        io_slice_total_len(bufs)
+    }
+    mut fn write(_message: format fmt.Message): Unit throws Error {}
+    mut fn write_line(_message: format fmt.Message): Unit throws Error {}
+    mut fn flush(): Unit throws Error {}
+}
+
+extend<region r> read Sink from r implements Writer {
+    mut fn write_some(read buf: [u8]): usize throws Error { buf.len() }
+    mut fn write_vectored<region s>(read bufs: [IoSlice<region s>]): usize throws Error {
+        io_slice_total_len(bufs)
+    }
+    mut fn write(_message: format fmt.Message): Unit throws Error {}
+    mut fn write_line(_message: format fmt.Message): Unit throws Error {}
+    mut fn flush(): Unit throws Error {}
+}
+
+pub type LineWriter<W: Writer + unsized> {
+    inner: Heap<W>
+    buffer: List<u8>
+    pending: usize
+    panicked: bool
+    drop { if !self.panicked { let ignored = capture self.flush() } }
+}
+
+fn line_writer_inner<W: Writer>(take writer: LineWriter<W>): W {
+    var owner = core.mem.ManuallyDrop.new(writer)
+    // Safety: after reading Heap and buffer, only Copy fields remain in the suppressed value.
+    let inner = unsafe {
+        core.ptr.`read`(core.ptr.from_mut(mut owner.deref_mut().inner))
+    }
+    let buffer = unsafe {
+        core.ptr.`read`(core.ptr.from_mut(mut owner.deref_mut().buffer))
+    }
+    core.mem.drop(buffer)
+    inner.into_inner()
+}
+
+extend<W: Writer> LineWriter<W> {
+    pub static fn new(take inner: W): LineWriter<W> {
+        LineWriter(heap inner, vec.new<u8>(), 0usize, false)
+    }
+
+    pub static fn with_capacity(capacity: usize, take inner: W): LineWriter<W> {
+        LineWriter(heap inner, vec.with_capacity<u8>(capacity), 0usize, false)
+    }
+
+    pub take fn into_inner(): W throws IntoInnerError<LineWriter<W>> {
+        var this = self
+        match take capture this.flush() {
+            success(_) => line_writer_inner(this),
+            failure(error) => throw IntoInnerError(this, error)
+        }
+    }
+}
+
+extend<W: Writer + unsized> LineWriter<W> {
+    pub static fn from_heap(take inner: Heap<W>): LineWriter<W> {
+        LineWriter(inner, vec.new<u8>(), 0usize, false)
+    }
+
+    pub fn get_ref(): read W from self { self.inner.get() }
+    pub mut fn get_mut(): mut W from self { self.inner.get_mut() }
+
+    mut fn write_until(end: usize): Unit throws Error {
+        while self.pending < end {
+            let bytes = self.buffer.as_slice().split_at(self.pending).1
+            let bytes = bytes.split_at(end - self.pending).0
+            self.panicked = true
+            let result = capture self.inner.get_mut().write_some(bytes)
+            self.panicked = false
+            let count = match take result {
+                success(count) => count,
+                failure(error) => throw error
+            }
+            if count == 0usize { throw from_kind(ErrorKind.WriteZero) }
+            if count > bytes.len() { throw from_kind(ErrorKind.InvalidData) }
+            self.pending += count
+        }
+    }
+
+    mut fn flush_inner(): Unit throws Error {
+        self.panicked = true
+        let result = capture self.inner.get_mut().flush()
+        self.panicked = false
+        match take result {
+            success(_) => {},
+            failure(error) => throw error
+        }
+    }
+
+    mut fn discard_written(): Unit {
+        if self.pending == 0usize { return }
+        if self.pending == self.buffer.len() {
+            self.buffer.clear()
+        } else {
+            self.buffer = self.buffer.split_off(self.pending)
+        }
+        self.pending = 0usize
+    }
+}
+
+extend<W: Writer + unsized> LineWriter<W> implements Writer {
+    mut fn write_some(read input: [u8]): usize throws Error {
+        if self.pending != 0usize { self.discard_written() }
+        let before = self.buffer.len()
+        self.buffer.extend_from_slice(input)
+        let line_end = {
+            let bytes = self.buffer.as_slice()
+            var end = 0usize
+            var index = 0usize
+            while index < bytes.len() {
+                if bytes[index] == 10u8 { end = index + 1usize }
+                index += 1usize
+            }
+            end
+        }
+        if line_end != 0usize {
+            match take capture self.write_until(line_end) {
+                success(_) => self.discard_written(),
+                failure(error) => {
+                    if self.pending > before {
+                        let accepted = self.pending - before
+                        self.buffer.truncate(self.pending)
+                        self.discard_written()
+                        return accepted
+                    }
+                    self.buffer.truncate(before)
+                    throw error
+                }
+            }
+        }
+        input.len()
+    }
+
+    mut fn flush(): Unit throws Error {
+        try self.write_until(self.buffer.len())
+        self.discard_written()
+        try self.flush_inner()
+    }
+}
+
 pub type Chain<A: Reader, B: Reader> { first: A; second: B; first_done: bool }
-pub type Take<R: Reader> { inner: R; remaining: u64 }
-pub type Bytes<R: Reader> { inner: R; finished: bool }
+pub type Take<R: Reader> { inner: R; limit: u64; len: u64 }
+pub type Bytes<R: Reader> { pub parent inner: R; finished: bool }
+
+extend<A: Reader + fmt.Debug, B: Reader + fmt.Debug> Chain<A, B> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("Chain")
+        try debug.field("first", self.first)
+        try debug.field("second", self.second)
+        try debug.field("done_first", self.first_done)
+        try debug.finish()
+    }
+}
+
+extend<R: Reader + fmt.Debug> Take<R> implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("Take")
+        try debug.field("inner", self.inner)
+        try debug.field("limit", self.limit)
+        try debug.finish()
+    }
+}
+
+extend<R: Reader> Take<R> {
+    pub fn get_ref(): read R from self { read self.inner }
+    pub mut fn get_mut(): mut R from self { mut self.inner }
+    pub fn limit(): u64 { self.limit }
+    pub mut fn set_limit(limit: u64): Unit {
+        self.len = limit
+        self.limit = limit
+    }
+    pub take fn into_inner(): R { self.inner }
+}
+
+extend<A: Reader, B: Reader> Chain<A, B> {
+    pub fn get_ref(): (read A from self, read B from self) {
+        (read self.first, read self.second)
+    }
+    pub mut fn get_mut(): (mut A from self, mut B from self) {
+        (mut self.first, mut self.second)
+    }
+    pub take fn into_inner(): (A, B) { (take self.first, take self.second) }
+}
 
 extend<A: Reader, B: Reader> Chain<A, B> implements Reader {
     mut fn read_some(mut buf: [u8]): usize throws Error {
@@ -554,12 +961,12 @@ extend<A: Reader, B: Reader> Chain<A, B> implements Reader {
 
 extend<R: Reader> Take<R> implements Reader {
     mut fn read_some(mut buf: [u8]): usize throws Error {
-        if self.remaining == 0u64 || buf.len() == 0usize { return 0usize }
+        if self.limit == 0u64 || buf.len() == 0usize { return 0usize }
         var count = buf.len()
-        if (count as u64) > self.remaining { count = self.remaining as usize }
+        if (count as u64) > self.limit { count = self.limit as usize }
         let count_read = try self.inner.read_some(buf.split_at_mut(count).0)
         if count_read > count { throw from_kind(ErrorKind.InvalidData) }
-        self.remaining -= count_read as u64
+        self.limit -= count_read as u64
         count_read
     }
 }
@@ -649,8 +1056,214 @@ pub interface BufRead: Reader {
     }
 }
 
+extend<region r, R: Reader + unsized> mut R from r implements Reader {
+    mut fn read_some(mut buf: [u8]): usize throws Error {
+        try R.(Reader).read_some(mut *self, mut buf)
+    }
+    mut fn read_vectored<region s>(mut bufs: [IoSliceMut<region s>]): usize throws Error {
+        try R.(Reader).read_vectored(mut *self, mut bufs)
+    }
+    mut fn read_exact(mut buf: [u8]): Unit throws Error {
+        try R.(Reader).read_exact(mut *self, mut buf)
+    }
+    mut fn read_to_end(mut out: List<u8>): usize throws Error {
+        try R.(Reader).read_to_end(mut *self, mut out)
+    }
+    mut fn read_to_string(mut out: String): usize throws Error {
+        try R.(Reader).read_to_string(mut *self, mut out)
+    }
+}
+
+extend<region r, W: Writer + unsized> mut W from r implements Writer {
+    mut fn write_some(read buf: [u8]): usize throws Error {
+        try W.(Writer).write_some(mut *self, buf)
+    }
+    mut fn write_vectored<region s>(read bufs: [IoSlice<region s>]): usize throws Error {
+        try W.(Writer).write_vectored(mut *self, bufs)
+    }
+    mut fn flush(): Unit throws Error {
+        try W.(Writer).flush(mut *self)
+    }
+    mut fn write_all(read buf: [u8]): Unit throws Error {
+        try W.(Writer).write_all(mut *self, buf)
+    }
+    mut fn write_path(read input: PathInput): Unit throws Error {
+        try W.(Writer).write_path(mut *self, input)
+    }
+    mut fn write(message: format fmt.Message): Unit throws Error {
+        try W.(Writer).write(mut *self, message)
+    }
+    mut fn write_line(message: format fmt.Message): Unit throws Error {
+        try W.(Writer).write_line(mut *self, message)
+    }
+}
+
+extend<region r, S: Seek + unsized> mut S from r implements Seek {
+    mut fn seek(pos: SeekFrom): u64 throws Error {
+        try S.(Seek).seek(mut *self, pos)
+    }
+    mut fn stream_position(): u64 throws Error {
+        try S.(Seek).stream_position(mut *self)
+    }
+    mut fn rewind(): Unit throws Error {
+        try S.(Seek).rewind(mut *self)
+    }
+    mut fn seek_relative(offset: i64): Unit throws Error {
+        try S.(Seek).seek_relative(mut *self, offset)
+    }
+}
+
+extend<region r, B: BufRead + unsized> mut B from r implements BufRead {
+    mut fn fill_buf(): read [u8] from self throws Error {
+        try B.(BufRead).fill_buf(mut *self)
+    }
+    mut fn consume(n: usize): Unit {
+        B.(BufRead).consume(mut *self, n)
+    }
+    mut fn read_until(delimiter: u8, mut out: List<u8>): usize throws Error {
+        try B.(BufRead).read_until(mut *self, delimiter, mut out)
+    }
+    mut fn skip_until(delimiter: u8): usize throws Error {
+        try B.(BufRead).skip_until(mut *self, delimiter)
+    }
+    mut fn read_line(mut out: String): usize throws Error {
+        try B.(BufRead).read_line(mut *self, mut out)
+    }
+}
+
+extend Empty implements Reader {
+    mut fn read_some(mut _buf: [u8]): usize throws Error { 0usize }
+}
+
+extend<A: BufRead, B: BufRead> Chain<A, B> implements BufRead {
+    mut fn fill_buf(): read [u8] from self throws Error {
+        if self.first_done { return try self.second.fill_buf() }
+        let available = try self.first.fill_buf()
+        if available.len() != 0usize { return available }
+        self.first_done = true
+        try self.second.fill_buf()
+    }
+    mut fn consume(n: usize): Unit {
+        if self.first_done {
+            self.second.consume(n)
+        } else {
+            self.first.consume(n)
+        }
+    }
+}
+
+extend<R: BufRead> Take<R> implements BufRead {
+    mut fn fill_buf(): read [u8] from self throws Error {
+        if self.limit == 0u64 { return "".as_bytes() }
+        let available = try self.inner.fill_buf()
+        if self.limit < available.len() as u64 {
+            return available.split_at(self.limit as usize).0
+        }
+        available
+    }
+    mut fn consume(n: usize): Unit {
+        let consumed = if n as u64 > self.limit {
+            self.limit as usize
+        } else {
+            n
+        }
+        self.inner.consume(consumed)
+        self.limit -= consumed as u64
+    }
+}
+
+extend Empty implements BufRead {
+    mut fn fill_buf(): read [u8] from self throws Error { "".as_bytes() }
+    mut fn consume(_n: usize): Unit {}
+}
+
+extend Empty implements Seek {
+    mut fn seek(_pos: SeekFrom): u64 throws Error { 0u64 }
+}
+
+extend Empty implements Writer {
+    mut fn write_some(read buf: [u8]): usize throws Error { buf.len() }
+    mut fn write_vectored<region r>(read bufs: [IoSlice<region r>]): usize throws Error {
+        io_slice_total_len(bufs)
+    }
+    mut fn write(_message: format fmt.Message): Unit throws Error {}
+    mut fn write_line(_message: format fmt.Message): Unit throws Error {}
+    mut fn flush(): Unit throws Error {}
+}
+
+extend<region r> read Empty from r implements Writer {
+    mut fn write_some(read buf: [u8]): usize throws Error { buf.len() }
+    mut fn write_vectored<region s>(read bufs: [IoSlice<region s>]): usize throws Error {
+        io_slice_total_len(bufs)
+    }
+    mut fn write(_message: format fmt.Message): Unit throws Error {}
+    mut fn write_line(_message: format fmt.Message): Unit throws Error {}
+    mut fn flush(): Unit throws Error {}
+}
+
+extend Repeat implements Reader {
+    mut fn read_some(mut buf: [u8]): usize throws Error {
+        var index = 0usize
+        while index < buf.len() {
+            buf[index] = self.byte
+            index += 1usize
+        }
+        buf.len()
+    }
+
+    mut fn read_vectored<region r>(mut bufs: [IoSliceMut<region r>]): usize throws Error {
+        var total = 0usize
+        var index = 0usize
+        while index < bufs.len() {
+            let count = try self.read_some(bufs[index].data)
+            total += count
+            index += 1usize
+        }
+        total
+    }
+
+    mut fn read_to_end(mut _out: List<u8>): usize throws Error {
+        throw from_kind(ErrorKind.OutOfMemory)
+    }
+
+    mut fn read_to_string(mut _out: String): usize throws Error {
+        throw from_kind(ErrorKind.OutOfMemory)
+    }
+}
+
+fn take_seek_delta(position: u64, target: u64): i64 throws Error {
+    if target >= position {
+        let forward = target - position
+        if forward > 9223372036854775807u64 { throw from_kind(ErrorKind.InvalidInput) }
+        forward as i64
+    } else {
+        let backward = position - target
+        if backward > 9223372036854775807u64 { throw from_kind(ErrorKind.InvalidInput) }
+        -(backward as i64)
+    }
+}
+
+extend<R: Reader + Seek> Take<R> implements Seek {
+    mut fn seek(pos: SeekFrom): u64 throws Error {
+        let position = self.len - self.limit
+        let target = match pos {
+            SeekFrom.Start(offset) => offset,
+            SeekFrom.Current(offset) => try cursor_seek_offset(position, offset),
+            SeekFrom.End(offset) => try cursor_seek_offset(self.len, offset)
+        }
+        let delta = try take_seek_delta(position, target)
+        let _ = try self.inner.seek(SeekFrom.Current(delta))
+        self.limit = self.len.saturating_sub(target)
+        target
+    }
+}
+
 pub type Lines<B: BufRead> { reader: B; finished: bool }
-pub type Split<B: BufRead> { reader: B; delimiter: u8; finished: bool }
+pub type Split<B: BufRead> {
+    pub parent reader: B
+    pub parent delimiter: u8
+    finished: bool
+}
 
 extend<B: BufRead> Lines<B> implements core.iter.Iterator {
     type Item = (Outcome<String, Error>);
@@ -774,13 +1387,134 @@ pub fn write_fd(fd: i32, read buf: [u8]): usize throws Error {
 pub type PipeReader { descriptor: sys.OwnedFd }
 pub type PipeWriter { descriptor: sys.OwnedFd }
 
+@cfg(target_os = "linux")
+extend PipeReader implements std.os.fd.AsRawFd {
+    fn as_raw_fd(): i32 { self.descriptor.as_raw_fd() }
+}
+@cfg(target_os = "linux")
+extend PipeWriter implements std.os.fd.AsRawFd {
+    fn as_raw_fd(): i32 { self.descriptor.as_raw_fd() }
+}
+@cfg(target_os = "linux")
+extend PipeReader implements std.os.fd.AsFd {
+    fn as_fd<region r>(
+        receiver read self: Self from r
+    ): std.os.fd.BorrowedFd<region r> {
+        std.os.fd.OwnedFd.(std.os.fd.AsFd).as_fd(self.descriptor)
+    }
+}
+@cfg(target_os = "linux")
+extend PipeWriter implements std.os.fd.AsFd {
+    fn as_fd<region r>(
+        receiver read self: Self from r
+    ): std.os.fd.BorrowedFd<region r> {
+        std.os.fd.OwnedFd.(std.os.fd.AsFd).as_fd(self.descriptor)
+    }
+}
+@cfg(target_os = "linux")
+extend PipeReader implements std.os.fd.FromRawFd {
+    unsafe static fn from_raw_fd(raw: i32): PipeReader {
+        PipeReader(unsafe { sys.OwnedFd.from_raw_fd(raw) })
+    }
+}
+@cfg(target_os = "linux")
+extend PipeWriter implements std.os.fd.FromRawFd {
+    unsafe static fn from_raw_fd(raw: i32): PipeWriter {
+        PipeWriter(unsafe { sys.OwnedFd.from_raw_fd(raw) })
+    }
+}
+@cfg(target_os = "linux")
+extend PipeReader implements std.os.fd.IntoRawFd {
+    take fn into_raw_fd(): i32 { self.descriptor.into_raw_fd() }
+}
+@cfg(target_os = "linux")
+extend PipeWriter implements std.os.fd.IntoRawFd {
+    take fn into_raw_fd(): i32 { self.descriptor.into_raw_fd() }
+}
+
+fn clone_pipe_descriptor(fd: i32): sys.OwnedFd throws Error {
+    let cloned = unsafe { sys.mettle_rt_dup(fd) }
+    if cloned < 0i32 { throw last_os_error() }
+    unsafe { sys.OwnedFd.from_raw_fd(cloned) }
+}
+
+pub fn pipe(): (PipeReader, PipeWriter) throws Error {
+    var descriptors = [-1i32, -1i32]
+    if unsafe { sys.mettle_rt_pipe(core.ptr.from_mut(mut descriptors).cast<i32>()) } != 0i32 {
+        throw last_os_error()
+    }
+    let reader = PipeReader(unsafe { sys.OwnedFd.from_raw_fd(descriptors[0usize]) })
+    let writer = PipeWriter(unsafe { sys.OwnedFd.from_raw_fd(descriptors[1usize]) })
+    (reader, writer)
+}
+
+extend PipeReader {
+    pub fn try_clone(): PipeReader throws Error {
+        PipeReader(try clone_pipe_descriptor(self.descriptor.as_raw_fd()))
+    }
+}
+
+extend PipeWriter {
+    pub fn try_clone(): PipeWriter throws Error {
+        PipeWriter(try clone_pipe_descriptor(self.descriptor.as_raw_fd()))
+    }
+}
+extend PipeReader implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("PipeReader")
+        try debug.field("fd", self.descriptor.as_raw_fd())
+        try debug.finish()
+    }
+}
+extend PipeWriter implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        var debug = try f.debug_struct("PipeWriter")
+        try debug.field("fd", self.descriptor.as_raw_fd())
+        try debug.finish()
+    }
+}
+extend SeekFrom implements fmt.Debug {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        match self {
+            SeekFrom.Start(offset) => {
+                var tuple = try f.debug_tuple("Start")
+                try tuple.field(offset)
+                try tuple.finish()
+            },
+            SeekFrom.End(offset) => {
+                var tuple = try f.debug_tuple("End")
+                try tuple.field(offset)
+                try tuple.finish()
+            },
+            SeekFrom.Current(offset) => {
+                var tuple = try f.debug_tuple("Current")
+                try tuple.field(offset)
+                try tuple.finish()
+            }
+        }
+    }
+}
+
 extend PipeReader implements Reader {
     mut fn read_some(mut bytes: [u8]): usize throws Error {
         try read_fd(self.descriptor.as_raw_fd(), bytes)
     }
 }
 
+extend<region r> read PipeReader from r implements Reader {
+    mut fn read_some(mut bytes: [u8]): usize throws Error {
+        try read_fd(self.descriptor.as_raw_fd(), bytes)
+    }
+}
+
 extend PipeWriter implements Writer {
+    mut fn write_some(read bytes: [u8]): usize throws Error {
+        try write_fd(self.descriptor.as_raw_fd(), bytes)
+    }
+    mut fn flush(): Unit throws Error {}
+}
+
+extend<region r> read PipeWriter from r implements Writer {
     mut fn write_some(read bytes: [u8]): usize throws Error {
         try write_fd(self.descriptor.as_raw_fd(), bytes)
     }
@@ -930,6 +1664,70 @@ pub type StdinLock {
 }
 pub type StdoutLock { token: StdioLock }
 pub type StderrLock { token: StdioLock }
+
+@cfg(target_os = "linux")
+extern "C" {
+    unsafe fn fcntl(fd: i32, command: i32): i32;
+}
+
+@cfg(target_os = "linux")
+// Safety: the descriptor must not be closed for the chosen borrow region.
+unsafe fn borrow_standard_fd<region r>(raw: i32): std.os.fd.BorrowedFd<region r> {
+    if unsafe { fcntl(raw, 1i32) } < 0i32 {
+        core.panic.panic("standard descriptor is not open")
+    }
+    unsafe { std.os.fd.BorrowedFd<region r>.borrow_raw(raw) }
+}
+
+@cfg(target_os = "linux")
+extend Stdin implements std.os.fd.AsRawFd { fn as_raw_fd(): i32 { 0i32 } }
+@cfg(target_os = "linux")
+extend Stdout implements std.os.fd.AsRawFd { fn as_raw_fd(): i32 { 1i32 } }
+@cfg(target_os = "linux")
+extend Stderr implements std.os.fd.AsRawFd { fn as_raw_fd(): i32 { 2i32 } }
+@cfg(target_os = "linux")
+extend StdinLock implements std.os.fd.AsRawFd { fn as_raw_fd(): i32 { 0i32 } }
+@cfg(target_os = "linux")
+extend StdoutLock implements std.os.fd.AsRawFd { fn as_raw_fd(): i32 { 1i32 } }
+@cfg(target_os = "linux")
+extend StderrLock implements std.os.fd.AsRawFd { fn as_raw_fd(): i32 { 2i32 } }
+
+@cfg(target_os = "linux")
+extend Stdin implements std.os.fd.AsFd {
+    fn as_fd<region r>(receiver read self: Self from r): std.os.fd.BorrowedFd<region r> {
+        unsafe { borrow_standard_fd(0i32) }
+    }
+}
+@cfg(target_os = "linux")
+extend Stdout implements std.os.fd.AsFd {
+    fn as_fd<region r>(receiver read self: Self from r): std.os.fd.BorrowedFd<region r> {
+        unsafe { borrow_standard_fd(1i32) }
+    }
+}
+@cfg(target_os = "linux")
+extend Stderr implements std.os.fd.AsFd {
+    fn as_fd<region r>(receiver read self: Self from r): std.os.fd.BorrowedFd<region r> {
+        unsafe { borrow_standard_fd(2i32) }
+    }
+}
+@cfg(target_os = "linux")
+extend StdinLock implements std.os.fd.AsFd {
+    fn as_fd<region r>(receiver read self: Self from r): std.os.fd.BorrowedFd<region r> {
+        unsafe { borrow_standard_fd(0i32) }
+    }
+}
+@cfg(target_os = "linux")
+extend StdoutLock implements std.os.fd.AsFd {
+    fn as_fd<region r>(receiver read self: Self from r): std.os.fd.BorrowedFd<region r> {
+        unsafe { borrow_standard_fd(1i32) }
+    }
+}
+@cfg(target_os = "linux")
+extend StderrLock implements std.os.fd.AsFd {
+    fn as_fd<region r>(receiver read self: Self from r): std.os.fd.BorrowedFd<region r> {
+        unsafe { borrow_standard_fd(2i32) }
+    }
+}
 extend StdinLock not Transferable
 extend StdoutLock not Transferable
 extend StderrLock not Transferable
@@ -972,7 +1770,9 @@ extend StdinLock implements BufRead {
         core.mem.drop(self.loan.`take`())
         let available = {
             var borrowed = input_state().borrow_mut()
-            try borrowed.get_mut().fill_buf().len()
+            try BufferedReader<RawStdin>.(BufRead).fill_buf(
+                mut *borrowed.get_mut()
+            ).len()
         }
         if available == 0usize { return "".as_bytes() }
         self.loan = present(input_state().borrow())
@@ -991,7 +1791,7 @@ extend StdinLock implements BufRead {
 extend StdoutLock implements Writer {
     mut fn write_some(read bytes: [u8]): usize throws Error {
         var borrowed = output_state().borrow_mut()
-        let writer = borrowed.get_mut()
+        var writer = borrowed.get_mut()
         var line_end = 0usize
         var index = 0usize
         while index < bytes.len() {
@@ -1040,6 +1840,28 @@ extend Stderr implements fmt.Debug {
 pub fn stdin(): Stdin { Stdin() }
 pub fn stdout(): Stdout { Stdout() }
 pub fn stderr(): Stderr { Stderr() }
+
+extend Stdin implements IsTerminal {
+    fn is_terminal(): bool { sys.is_terminal(0i32) }
+}
+extend StdinLock implements IsTerminal {
+    fn is_terminal(): bool { sys.is_terminal(0i32) }
+}
+extend Stdout implements IsTerminal {
+    fn is_terminal(): bool { sys.is_terminal(1i32) }
+}
+extend StdoutLock implements IsTerminal {
+    fn is_terminal(): bool { sys.is_terminal(1i32) }
+}
+extend Stderr implements IsTerminal {
+    fn is_terminal(): bool { sys.is_terminal(2i32) }
+}
+extend StderrLock implements IsTerminal {
+    fn is_terminal(): bool { sys.is_terminal(2i32) }
+}
+extend sys.OwnedFd implements IsTerminal {
+    fn is_terminal(): bool { sys.is_terminal(self.as_raw_fd()) }
+}
 
 extend Stdin implements Reader {
     mut fn read_some(mut buf: [u8]): usize throws Error {
@@ -1188,7 +2010,7 @@ extend<T: unsized, A: Allocator> Shared<T, A> implements Seek where read T: Seek
 
 extend<T: BufRead + unsized, A: Allocator> Heap<T, A> implements BufRead {
     mut fn fill_buf(): read [u8] from self throws Error {
-        try self.get_mut().fill_buf()
+        try T.(BufRead).fill_buf(mut *self.get_mut())
     }
     mut fn consume(n: usize): Unit { self.get_mut().consume(n) }
 }
@@ -1233,8 +2055,10 @@ extend<A: Allocator> Deque<u8, A> implements Writer {
             let pushed = capture self.try_push_back(byte)
             match take pushed {
                 success(_) => { count += 1usize },
-                failure(_) => {
-                    if count == 0usize { throw from_kind(ErrorKind.OutOfMemory) }
+                failure(push_error) => {
+                    if count == 0usize {
+                        throw Error.(From<alloc.collections.TryReserveError>).from(push_error.error)
+                    }
                     return count
                 }
             }
@@ -1690,26 +2514,29 @@ extend<W: Writer> BufferedWriter<W> implements Writer {
     }
 }
 
-pub type IntoInnerError<W: Writer> { writer: BufferedWriter<W>; error: Error }
+pub type IntoInnerError<W> { writer: W; error: Error }
+extend<W> IntoInnerError<W> not core.marker.RefUnwindSafe;
 
-extend<W: Writer> IntoInnerError<W> {
+extend<W> IntoInnerError<W> {
     pub fn error(): read Error from self { read self.error }
-    pub take fn into_inner(): BufferedWriter<W> { self.writer }
+    pub take fn into_error(): Error { self.error }
+    pub take fn into_inner(): W { self.writer }
+    pub take fn into_parts(): (Error, W) { (self.error, self.writer) }
 }
 
-extend<W: Writer> IntoInnerError<W> implements fmt.Display {
+extend<W> IntoInnerError<W> implements fmt.Display {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try Error.(fmt.Display).fmt(self.error, mut f)
     }
 }
-extend<W: Writer> IntoInnerError<W> implements fmt.Debug {
+extend<W> IntoInnerError<W> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         try Error.(fmt.Debug).fmt(self.error, mut f)
     }
 }
-extend<W: Writer> IntoInnerError<W> implements core.error.Error {}
+extend<W> IntoInnerError<W> implements core.error.Error {}
 
-extend<W: Writer> Error implements From<IntoInnerError<W>> {
+extend<W> Error implements From<IntoInnerError<W>> {
     static fn from(take value: IntoInnerError<W>): Error { value.error }
 }
 
@@ -1747,7 +2574,7 @@ extend<W: Writer> BufferedWriter<W> {
         buffered_writer_parts(self)
     }
 
-    pub take fn into_inner(): W throws IntoInnerError<W> {
+    pub take fn into_inner(): W throws IntoInnerError<BufferedWriter<W>> {
         var this = self
         let flushed = capture this.flush_buf()
         match take flushed {

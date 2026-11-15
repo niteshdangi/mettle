@@ -12,5 +12,6 @@ std::optional<std::uint32_t> characterLiteral(std::string_view text, bool byte,
 // Decodes a text literal token (with quotes) to UTF-8 bytes.
 std::optional<std::string> textLiteral(std::string_view text,
                                        Diagnostics &diagnostics, Span span);
+std::string quoteText(std::string_view value);
 std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics);
 } // namespace mettle

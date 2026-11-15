@@ -3,7 +3,7 @@ import core.fmt.{Debug, buffer_writer, formatter, spec}
 import core.iter.Iterator
 import core.outcome
 import std.io.{Error, ErrorKind, Reader, Writer}
-import std.net.{TcpListener, TcpStream, UdpSocket}
+import std.net.{Shutdown, TcpListener, TcpStream, UdpSocket}
 import std.sys
 import std.time.from_millis
 
@@ -90,7 +90,7 @@ fn run(): i32 throws Error {
        bytes[2usize] != 116u8 {
         return 1
     }
-    try client.shutdown(1)
+    try client.shutdown(Shutdown.Write)
     try server.set_read_timeout(present(from_millis(1000u64)))
     if try server.read_some(mut idle) != 0usize { return 29 }
     var server_writer = read server

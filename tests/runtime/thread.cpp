@@ -1028,6 +1028,30 @@ void set_slot(void *raw) {
   static int token;
   require(mettle_rt_tls_set(key, &token) == 0, "set slot");
 }
+struct TlsDestroyingProbe {
+  std::uintptr_t firstKey;
+  std::uintptr_t secondKey;
+  std::int32_t firstObserved = 0;
+  std::int32_t laterObserved = 0;
+  std::int32_t reinstallStatus = 0;
+};
+void observeFirstTlsDestructor(void *raw) {
+  auto &probe = *static_cast<TlsDestroyingProbe *>(raw);
+  probe.firstObserved = mettle_rt_tls_is_destroying(probe.firstKey);
+  probe.reinstallStatus = mettle_rt_tls_set(probe.firstKey, &probe);
+}
+void observeLaterTlsDestructor(void *raw) {
+  auto &probe = *static_cast<TlsDestroyingProbe *>(raw);
+  probe.laterObserved = mettle_rt_tls_is_destroying(probe.firstKey);
+}
+void setTlsDestroyingProbe(void *raw) {
+  auto &probe = *static_cast<TlsDestroyingProbe *>(raw);
+  require(mettle_rt_tls_is_destroying(probe.firstKey) == 0,
+          "TLS key began destroying before thread exit");
+  require(mettle_rt_tls_set(probe.secondKey, &probe) == 0 &&
+              mettle_rt_tls_set(probe.firstKey, &probe) == 0,
+          "set TLS destructor probes");
+}
 void identify(void *raw) {
   *static_cast<std::uintptr_t *>(raw) = mettle_rt_thread_current();
 }
@@ -1405,6 +1429,20 @@ int main(int argc, char **argv) {
   require(destroyed.load() == 1, "thread exit must run the slot destructor");
   require(mettle_rt_tls_get(key) == nullptr, "main slot is independent");
   mettle_rt_tls_key_free(key);
+
+  const auto firstKey = mettle_rt_tls_key_new(observeFirstTlsDestructor);
+  const auto secondKey = mettle_rt_tls_key_new(observeLaterTlsDestructor);
+  require(firstKey != 0 && secondKey != 0, "TLS destructor-state keys");
+  TlsDestroyingProbe probe{firstKey, secondKey};
+  require(mettle_rt_thread_spawn(setTlsDestroyingProbe, &probe, &other) == 0,
+          "spawn TLS destructor-state probe");
+  require(mettle_rt_thread_join(other) == 0, "join TLS destructor-state probe");
+  require(probe.firstObserved == 1 && probe.laterObserved == 1 &&
+              probe.reinstallStatus == EBUSY &&
+              mettle_rt_tls_is_destroying(firstKey) == 0,
+          "TLS destructor state did not reject reinstalling a destroyed key");
+  mettle_rt_tls_key_free(firstKey);
+  mettle_rt_tls_key_free(secondKey);
 
   require(mettle_rt_thread_parallelism() >= 1, "parallelism");
   // Signals may interrupt poll, but must not restart its finite deadline.

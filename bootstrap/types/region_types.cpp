@@ -160,12 +160,12 @@ Type TypeStore::substituteRegions(Type type,
         arguments.push_back(visit(descriptor.operands[i], substitutions));
       for (auto &region : descriptor.regionArguments)
         region = regionStore.substitute(region, substitutions);
-      result = projection(visit(descriptor.operands[0], substitutions),
-                          visit(descriptor.operands[1], substitutions),
-                          static_cast<std::uint32_t>(descriptor.value),
-                          std::move(arguments), descriptor.valueType,
-                          descriptor.copyRequested, descriptor.sized,
-                          std::move(descriptor.regionArguments));
+      result = projection(
+          visit(descriptor.operands[0], substitutions),
+          visit(descriptor.operands[1], substitutions),
+          static_cast<std::uint32_t>(descriptor.value), std::move(arguments),
+          descriptor.valueType, descriptor.copyRequested, descriptor.sized,
+          std::move(descriptor.regionArguments), descriptor.thin);
     } else if (isPointer(nested)) {
       auto record = pointer(nested);
       result = pointerType(visit(record.payload, substitutions), record.mode);

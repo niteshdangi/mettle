@@ -9,6 +9,7 @@ import super.cmp.Eq
 import super.option
 import super.cmp.Ordering
 import super.clone.Clone
+import super.clone.ArrayInit
 import super.default.Default
 import super.fmt.{Debug, Formatter, Error}
 import super.hash.{Hash, Hasher}
@@ -745,6 +746,7 @@ pub interface ExactSizeIterator: Iterator {
             none => { super.panic.panic("exact iterator has no upper length bound") }
         }
     }
+    fn is_empty(): bool { self.len() == 0usize }
 }
 
 pub interface FusedIterator: Iterator {}
@@ -784,6 +786,20 @@ pub type ArrayIntoIter<T, const N: usize> {
         }
     }
 }
+extend<T: Clone, const N: usize> ArrayIntoIter<T, N> implements Clone {
+    fn clone(): ArrayIntoIter<T, N> {
+        var result = ArrayInit<T, N>.new()
+        var index = self.front
+        while index < self.back {
+            // SAFETY: [front, back) is the initialized region owned by this iterator.
+            let item = unsafe { read *self.storage.as_ptr().cast<T>().add(index) }
+            result.push(T.(Clone).clone(item))
+            index += 1usize
+        }
+        let (storage, back) = result.finish_prefix()
+        ArrayIntoIter(storage, 0usize, back)
+    }
+}
 extend<T, const N: usize> ArrayIntoIter<T, N> implements Iterator {
     type Item = T
     fn size_hint(): (usize, usize?) {
@@ -806,6 +822,13 @@ extend<T, const N: usize> ArrayIntoIter<T, N> implements BidirectionalIterator {
 }
 extend<T, const N: usize> ArrayIntoIter<T, N> implements ExactSizeIterator {}
 extend<T, const N: usize> ArrayIntoIter<T, N> implements FusedIterator {}
+extend<T, const N: usize> ArrayIntoIter<T, N> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("ArrayIntoIter")
+        try debug.field("remaining", self.back - self.front)
+        try debug.finish_non_exhaustive()
+    }
+}
 extend<T, const N: usize> [T; N] implements OwnedIterable {
     type Item = T
     type IntoIter = ArrayIntoIter<T, N>
@@ -858,7 +881,7 @@ extend<I: Iterator> I implements OwnedIterable {
     fn into_iter(receiver take self: Self): I { self }
 }
 
-pub type Phantom<T> {}
+pub import super.marker.{PhantomData as Phantom}
 
 pub type Mapped<B, I, F> { iter: I; f: F; result: Phantom<B> }
 extend<B, I: Iterator, F: mut fn(take I.Item): B> Mapped<B, I, F> implements Iterator {
@@ -1041,7 +1064,7 @@ pub type Flatten<U: OwnedIterable, O: Iterator<Item = U>> {
 extend<region r, T: Clone, I: BidirectionalIterator + Iterator<Item = read T from r>> Cloned<region r, T, I> implements BidirectionalIterator {
     mut fn next_back(): T? {
         match take self.iter.next_back() {
-            present(item) => present(item.clone()),
+            present(item) => present(T.(Clone).clone(item)),
             none => none
         }
     }
@@ -1052,7 +1075,7 @@ extend<region r, T: Clone, I: Iterator<Item = read T from r>> Cloned<region r, T
     fn size_hint(): (usize, usize?) { self.iter.size_hint() }
     mut fn next(): T? {
         match take self.iter.next() {
-            present(item) => present(item.clone()),
+            present(item) => present(T.(Clone).clone(item)),
             none => none
         }
     }
@@ -1444,6 +1467,14 @@ extend<I: Iterator, F: mut fn(read I.Item): Unit> Inspected<I, F> implements Ite
         }
     }
 }
+extend<I: Iterator + BidirectionalIterator, F: mut fn(read I.Item): Unit> Inspected<I, F> implements BidirectionalIterator {
+    mut fn next_back(): I.Item? {
+        match take self.iter.next_back() {
+            present(item) => { self.f(read item); present(item) },
+            none => none
+        }
+    }
+}
 
 // Once `next` returned none it keeps returning none without polling again.
 pub type Fused<I> { iter: I; done: bool }
@@ -1670,7 +1701,36 @@ extend<T, E> (Outcome<T, E>) implements OwnedIterable {
 }
 pub fn once<T>(take value: T): Once<T> { Once(present(value)) }
 
-pub type Empty<T> { marker: Phantom<T> }
+pub type OnceWith<T, F> { f: F?; item: Phantom<T> }
+extend<T, F: mut fn(): T> OnceWith<T, F> implements Iterator {
+    type Item = T
+    fn size_hint(): (usize, usize?) {
+        let count = if self.f.is_present() { 1usize } else { 0usize }
+        (count, present(count))
+    }
+    mut fn next(): T? {
+        match take self.f.take_value() {
+            present(make) => {
+                var callable = make
+                present(callable())
+            },
+            none => none
+        }
+    }
+}
+extend<T, F: mut fn(): T> OnceWith<T, F> implements BidirectionalIterator {
+    mut fn next_back(): T? { self.next() }
+}
+extend<T, F: mut fn(): T> OnceWith<T, F> implements ExactSizeIterator {}
+extend<T, F: mut fn(): T> OnceWith<T, F> implements FusedIterator {}
+pub fn once_with<T, F: mut fn(): T>(take make: F): OnceWith<T, F> {
+    OnceWith(present(make), Phantom<T>())
+}
+
+pub copy type Empty<T> { marker: Phantom<T> }
+extend<T> Empty<T> implements Clone {
+    fn clone(): Empty<T> { Empty(Phantom<T>()) }
+}
 extend<T> Empty<T> implements Iterator {
     type Item = T
     mut fn next(): T? { none }
@@ -1695,7 +1755,7 @@ extend<T, F: mut fn(): T?> FromFn<T, F> implements Iterator {
 pub fn from_fn<T, F: mut fn(): T?>(take f: F): FromFn<T, F> { FromFn(f, Phantom<T>()) }
 
 // Endless iterator calling `f` for every item.
-pub type RepeatWith<T, F> { f: F; item: Phantom<T> }
+pub copy type RepeatWith<T, F> { f: F; item: Phantom<T> }
 extend<T, F: mut fn(): T> RepeatWith<T, F> implements Iterator {
     type Item = T
     fn size_hint(): (usize, usize?) { (usize.MAX, none) }
@@ -1709,7 +1769,47 @@ extend<T: Clone> Repeated<T> implements Iterator {
     fn size_hint(): (usize, usize?) { (usize.MAX, none) }
     mut fn next(): T? { present(self.value.clone()) }
 }
+extend<T: Clone> Repeated<T> implements BidirectionalIterator {
+    mut fn next_back(): T? { present(self.value.clone()) }
+}
 pub fn repeat<T: Clone>(take value: T): Repeated<T> { Repeated(value) }
+
+pub type RepeatN<T> { value: T?; remaining: usize }
+extend<T> RepeatN<T> implements Default {
+    static fn default(): RepeatN<T> { RepeatN(none, 0usize) }
+}
+extend<T: Clone> RepeatN<T> implements Iterator {
+    type Item = T
+    fn size_hint(): (usize, usize?) {
+        (self.remaining, present(self.remaining))
+    }
+    mut fn next(): T? {
+        if self.remaining == 0usize { return none }
+        let item = if self.remaining == 1usize {
+            self.value.take_value()
+        } else {
+            match read self.value {
+                present(value) => present(value.clone()),
+                none => super.panic.panic("repeat_n iterator value invariant failed")
+            }
+        }
+        self.remaining -= 1usize
+        item
+    }
+}
+extend<T: Clone> RepeatN<T> implements BidirectionalIterator {
+    mut fn next_back(): T? { self.next() }
+}
+extend<T: Clone> RepeatN<T> implements ExactSizeIterator {}
+extend<T: Clone> RepeatN<T> implements FusedIterator {}
+pub fn repeat_n<T: Clone>(take value: T, count: usize): RepeatN<T> {
+    if count == 0usize {
+        let _ = value
+        RepeatN(none, 0usize)
+    } else {
+        RepeatN(present(value), count)
+    }
+}
 
 pub type Successors<T, F> { current: T?; step: F }
 extend<T, F: mut fn(read T): T?> Successors<T, F> implements Iterator {
@@ -1733,7 +1833,7 @@ pub fn successors<T, F: mut fn(read T): T?>(take first: T?, take step: F): Succe
 
 // Stepping between neighbouring scalar values used by the range iterators.
 // Absence marks a scalar type's endpoint.
-pub enum Bound<T> { Included(T), Excluded(T), Unbounded }
+pub copy enum Bound<T> { Included(T), Excluded(T), Unbounded }
 extend<T> Bound<T> {
     pub fn as_ref(): Bound<read T from self> {
         match self {
@@ -1750,6 +1850,15 @@ extend<T> Bound<T> {
         }
     }
 }
+extend<region r, T: Clone> Bound<read T from r> {
+    pub take fn cloned(): Bound<T> {
+        match take self {
+            Bound.Included(value) => Bound.Included(T.(Clone).clone(value)),
+            Bound.Excluded(value) => Bound.Excluded(T.(Clone).clone(value)),
+            Bound.Unbounded => Bound.Unbounded
+        }
+    }
+}
 extend<T: Clone> Bound<T> implements Clone {
     fn clone(): Bound<T> {
         match self {
@@ -1759,6 +1868,25 @@ extend<T: Clone> Bound<T> implements Clone {
         }
     }
 }
+extend<T: PartialEq> Bound<T> implements PartialEq {
+    fn eq(read other: Bound<T>): bool {
+        match self {
+            Bound.Included(value) => match other {
+                Bound.Included(other_value) => value == other_value,
+                _ => false
+            },
+            Bound.Excluded(value) => match other {
+                Bound.Excluded(other_value) => value == other_value,
+                _ => false
+            },
+            Bound.Unbounded => match other {
+                Bound.Unbounded => true,
+                _ => false
+            }
+        }
+    }
+}
+extend<T: Eq> Bound<T> implements Eq {}
 
 pub interface RangeBounds<T: unsized> {
     fn start_bound(): Bound<read T from self>;
@@ -1843,6 +1971,74 @@ extend<region r, T: unsized> RangeToInclusive<read T from r> implements RangeBou
     fn start_bound(): Bound<read T from self> { Bound.Unbounded }
     fn end_bound(): Bound<read T from self> { Bound.Included(self.end) }
 }
+
+extend<T> core.range.Range<T> implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Included(read self.start) }
+    fn end_bound(): Bound<read T from self> { Bound.Excluded(read self.end) }
+}
+extend<T> core.range.RangeFrom<T> implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Included(read self.start) }
+    fn end_bound(): Bound<read T from self> { Bound.Unbounded }
+}
+extend<T> core.range.RangeInclusive<T> implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Included(read self.start) }
+    fn end_bound(): Bound<read T from self> { Bound.Included(read self.last) }
+}
+extend<T> core.range.RangeTo<T> implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Unbounded }
+    fn end_bound(): Bound<read T from self> { Bound.Excluded(read self.end) }
+}
+extend<T> core.range.RangeToInclusive<T> implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Unbounded }
+    fn end_bound(): Bound<read T from self> { Bound.Included(read self.last) }
+}
+extend<T: unsized> core.range.RangeFull implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Unbounded }
+    fn end_bound(): Bound<read T from self> { Bound.Unbounded }
+}
+
+extend<region r, T: unsized> core.range.Range<read T from r> implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Included(self.start) }
+    fn end_bound(): Bound<read T from self> { Bound.Excluded(self.end) }
+}
+extend<region r, T: unsized> core.range.RangeFrom<read T from r> implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Included(self.start) }
+    fn end_bound(): Bound<read T from self> { Bound.Unbounded }
+}
+extend<region r, T: unsized> core.range.RangeInclusive<read T from r> implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Included(self.start) }
+    fn end_bound(): Bound<read T from self> { Bound.Included(self.last) }
+}
+extend<region r, T: unsized> core.range.RangeTo<read T from r> implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Unbounded }
+    fn end_bound(): Bound<read T from self> { Bound.Excluded(self.end) }
+}
+extend<region r, T: unsized> core.range.RangeToInclusive<read T from r> implements RangeBounds<T> {
+    fn start_bound(): Bound<read T from self> { Bound.Unbounded }
+    fn end_bound(): Bound<read T from self> { Bound.Included(self.last) }
+}
+
+extend<T> core.range.Range<T> implements super.convert.From<Range<T>> {
+    static fn from(take value: Range<T>): core.range.Range<T> {
+        core.range.Range(value.start, value.end)
+    }
+}
+extend<T> core.range.RangeFrom<T> implements super.convert.From<RangeFrom<T>> {
+    static fn from(take value: RangeFrom<T>): core.range.RangeFrom<T> {
+        core.range.RangeFrom(value.start)
+    }
+}
+extend<T> core.range.RangeInclusive<T> implements super.convert.From<RangeInclusive<T>> {
+    static fn from(take value: RangeInclusive<T>): core.range.RangeInclusive<T> {
+        core.range.RangeInclusive(value.start, value.end)
+    }
+}
+extend<T> core.range.RangeToInclusive<T> implements super.convert.From<RangeToInclusive<T>> {
+    static fn from(take value: RangeToInclusive<T>): core.range.RangeToInclusive<T> {
+        core.range.RangeToInclusive(value.end)
+    }
+}
+
 extend<region r, T: unsized> (Bound<read T from r>, Bound<read T from r>) implements RangeBounds<T> {
     fn start_bound(): Bound<read T from self> {
         match self.0 {
@@ -1860,7 +2056,7 @@ extend<region r, T: unsized> (Bound<read T from r>, Bound<read T from r>) implem
     }
 }
 
-pub interface Step: Sized + Copy + Ord {
+interface Step: Sized + Copy + Ord {
     fn successor(): Self?;
     fn predecessor(): Self?;
     fn steps_between(read other: Self): (usize, usize?) { (0usize, none) }
@@ -1877,6 +2073,10 @@ pub type RangeFrom<T> { start: T; done: bool }
 extend<T: Clone> RangeFrom<T> implements Clone {
     fn clone(): RangeFrom<T> { RangeFrom(self.start.clone(), self.done) }
 }
+extend<T: PartialEq> RangeFrom<T> implements PartialEq {
+    fn eq(read other: RangeFrom<T>): bool { self.start == other.start }
+}
+extend<T: Eq> RangeFrom<T> implements Eq {}
 extend<T: Step> RangeFrom<T> implements Iterator {
     type Item = T
     mut fn next(): T? {
@@ -1935,19 +2135,49 @@ extend<T: Step> Range<T> implements BidirectionalIterator {
 }
 pub fn range<T: Copy>(start: T, end: T): Range<T> { Range(start, end) }
 
-pub type RangeTo<T> { end: T }
+pub copy type RangeTo<T> { end: T }
+extend<T: Clone> RangeTo<T> implements Clone {
+    fn clone(): RangeTo<T> { RangeTo(self.end.clone()) }
+}
+extend<T: PartialEq> RangeTo<T> implements PartialEq {
+    fn eq(read other: RangeTo<T>): bool { self.end == other.end }
+}
+extend<T: Eq> RangeTo<T> implements Eq {}
 pub fn range_to<T>(take end: T): RangeTo<T> { RangeTo(end) }
 
-pub type RangeFull {}
+pub copy type RangeFull {}
+extend RangeFull implements Clone { fn clone(): RangeFull { self } }
+extend RangeFull implements PartialEq { fn eq(read other: RangeFull): bool { true } }
+extend RangeFull implements Eq {}
 pub fn range_full(): RangeFull { RangeFull() }
+extend RangeFull implements Default {
+    static fn default(): RangeFull { range_full() }
+}
 
-pub type RangeToInclusive<T> { end: T }
+pub copy type RangeToInclusive<T> { end: T }
+extend<T: Clone> RangeToInclusive<T> implements Clone {
+    fn clone(): RangeToInclusive<T> { RangeToInclusive(self.end.clone()) }
+}
+extend<T: PartialEq> RangeToInclusive<T> implements PartialEq {
+    fn eq(read other: RangeToInclusive<T>): bool { self.end == other.end }
+}
+extend<T: Eq> RangeToInclusive<T> implements Eq {}
 pub fn range_to_inclusive<T>(take end: T): RangeToInclusive<T> {
     RangeToInclusive(end)
 }
 
 // The closed range `[start, end]`; `done` avoids stepping past the type's bounds.
 pub type RangeInclusive<T> { pub start: T; pub end: T; done: bool }
+// Safety: both ordinary and exhausted intervals check successor overflow and slice extent.
+unsafe extend RangeInclusive<usize> implements core.slice.SliceRange {
+    fn slice_bounds(len: usize): (usize, usize)? {
+        if !self.done { return core.slice.index_bounds(read self, len) }
+        match self.end.checked_add(1usize) {
+            present(end) => if end <= len { present((end, end)) } else { none },
+            none => none
+        }
+    }
+}
 extend<T: Clone> RangeInclusive<T> implements Clone {
     fn clone(): RangeInclusive<T> { RangeInclusive(self.start.clone(), self.end.clone(), self.done) }
 }
@@ -2003,6 +2233,42 @@ extend<T: Step> RangeInclusive<T> implements BidirectionalIterator {
     }
 }
 pub fn range_inclusive<T: Copy>(start: T, end: T): RangeInclusive<T> { RangeInclusive(start, end, false) }
+
+extend<T: Step> core.range.Range<T> {
+    pub fn iter(): Range<T> { range(self.start, self.end) }
+}
+extend<T: Step> core.range.RangeFrom<T> {
+    pub fn iter(): RangeFrom<T> { range_from(self.start) }
+}
+extend<T: Step> core.range.RangeInclusive<T> {
+    pub fn iter(): RangeInclusive<T> { range_inclusive(self.start, self.last) }
+}
+extend<T: Step> core.range.Range<T> implements OwnedIterable {
+    type Item = T
+    type IntoIter = Range<T>
+    fn into_iter(receiver take self: Self): Range<T> { range(self.start, self.end) }
+}
+extend<T: Step> core.range.RangeFrom<T> implements OwnedIterable {
+    type Item = T
+    type IntoIter = RangeFrom<T>
+    fn into_iter(receiver take self: Self): RangeFrom<T> { range_from(self.start) }
+}
+extend<T: Step> core.range.RangeInclusive<T> implements OwnedIterable {
+    type Item = T
+    type IntoIter = RangeInclusive<T>
+    fn into_iter(receiver take self: Self): RangeInclusive<T> { range_inclusive(self.start, self.last) }
+}
+extend<T: PartialOrd> core.range.Range<T> {
+    pub fn is_empty(): bool { !(self.start < self.end) }
+}
+extend<T: PartialOrd> core.range.RangeInclusive<T> {
+    pub fn is_empty(): bool { !(self.start <= self.last) }
+}
+extend<T: Default> core.range.Range<T> implements Default {
+    static fn default(): core.range.Range<T> {
+        core.range.Range(T.(Default).default(), T.(Default).default())
+    }
+}
 
 // Folding capabilities: `zero`/`one` are the identities of `plus`/`times`.
 pub interface Sum<Input = Self>: Sized {
@@ -2338,24 +2604,162 @@ extend usize implements Product {
     static fn one(): usize { 1usize }
     fn times(take other: usize): usize { self * other }
 }
+extend<region r> i8 implements Sum<read i8 from r> {
+    static fn zero(): i8 { 0i8 }
+    fn plus(take other: read i8 from r): i8 { self + *other }
+}
+extend<region r> i8 implements Product<read i8 from r> {
+    static fn one(): i8 { 1i8 }
+    fn times(take other: read i8 from r): i8 { self * *other }
+}
+extend<region r> i16 implements Sum<read i16 from r> {
+    static fn zero(): i16 { 0i16 }
+    fn plus(take other: read i16 from r): i16 { self + *other }
+}
+extend<region r> i16 implements Product<read i16 from r> {
+    static fn one(): i16 { 1i16 }
+    fn times(take other: read i16 from r): i16 { self * *other }
+}
+extend<region r> i32 implements Sum<read i32 from r> {
+    static fn zero(): i32 { 0i32 }
+    fn plus(take other: read i32 from r): i32 { self + *other }
+}
+extend<region r> i32 implements Product<read i32 from r> {
+    static fn one(): i32 { 1i32 }
+    fn times(take other: read i32 from r): i32 { self * *other }
+}
+extend<region r> i64 implements Sum<read i64 from r> {
+    static fn zero(): i64 { 0i64 }
+    fn plus(take other: read i64 from r): i64 { self + *other }
+}
+extend<region r> i64 implements Product<read i64 from r> {
+    static fn one(): i64 { 1i64 }
+    fn times(take other: read i64 from r): i64 { self * *other }
+}
+extend<region r> i128 implements Sum<read i128 from r> {
+    static fn zero(): i128 { 0i128 }
+    fn plus(take other: read i128 from r): i128 { self + *other }
+}
+extend<region r> i128 implements Product<read i128 from r> {
+    static fn one(): i128 { 1i128 }
+    fn times(take other: read i128 from r): i128 { self * *other }
+}
+extend<region r> isize implements Sum<read isize from r> {
+    static fn zero(): isize { 0isize }
+    fn plus(take other: read isize from r): isize { self + *other }
+}
+extend<region r> isize implements Product<read isize from r> {
+    static fn one(): isize { 1isize }
+    fn times(take other: read isize from r): isize { self * *other }
+}
+extend<region r> u8 implements Sum<read u8 from r> {
+    static fn zero(): u8 { 0u8 }
+    fn plus(take other: read u8 from r): u8 { self + *other }
+}
+extend<region r> u8 implements Product<read u8 from r> {
+    static fn one(): u8 { 1u8 }
+    fn times(take other: read u8 from r): u8 { self * *other }
+}
+extend<region r> u16 implements Sum<read u16 from r> {
+    static fn zero(): u16 { 0u16 }
+    fn plus(take other: read u16 from r): u16 { self + *other }
+}
+extend<region r> u16 implements Product<read u16 from r> {
+    static fn one(): u16 { 1u16 }
+    fn times(take other: read u16 from r): u16 { self * *other }
+}
+extend<region r> u32 implements Sum<read u32 from r> {
+    static fn zero(): u32 { 0u32 }
+    fn plus(take other: read u32 from r): u32 { self + *other }
+}
+extend<region r> u32 implements Product<read u32 from r> {
+    static fn one(): u32 { 1u32 }
+    fn times(take other: read u32 from r): u32 { self * *other }
+}
+extend<region r> u64 implements Sum<read u64 from r> {
+    static fn zero(): u64 { 0u64 }
+    fn plus(take other: read u64 from r): u64 { self + *other }
+}
+extend<region r> u64 implements Product<read u64 from r> {
+    static fn one(): u64 { 1u64 }
+    fn times(take other: read u64 from r): u64 { self * *other }
+}
+extend<region r> u128 implements Sum<read u128 from r> {
+    static fn zero(): u128 { 0u128 }
+    fn plus(take other: read u128 from r): u128 { self + *other }
+}
+extend<region r> u128 implements Product<read u128 from r> {
+    static fn one(): u128 { 1u128 }
+    fn times(take other: read u128 from r): u128 { self * *other }
+}
+extend<region r> usize implements Sum<read usize from r> {
+    static fn zero(): usize { 0usize }
+    fn plus(take other: read usize from r): usize { self + *other }
+}
+extend<region r> usize implements Product<read usize from r> {
+    static fn one(): usize { 1usize }
+    fn times(take other: read usize from r): usize { self * *other }
+}
 extend f32 implements Sum {
     static fn zero(): f32 { 0.0f32 }
     fn plus(take other: f32): f32 { self + other }
+}
+extend<region r> f32 implements Sum<read f32 from r> {
+    static fn zero(): f32 { 0.0f32 }
+    fn plus(take other: read f32 from r): f32 { self + *other }
 }
 extend f32 implements Product {
     static fn one(): f32 { 1.0f32 }
     fn times(take other: f32): f32 { self * other }
 }
+extend<region r> f32 implements Product<read f32 from r> {
+    static fn one(): f32 { 1.0f32 }
+    fn times(take other: read f32 from r): f32 { self * *other }
+}
 extend f64 implements Sum {
     static fn zero(): f64 { 0.0f64 }
     fn plus(take other: f64): f64 { self + other }
+}
+extend<region r> f64 implements Sum<read f64 from r> {
+    static fn zero(): f64 { 0.0f64 }
+    fn plus(take other: read f64 from r): f64 { self + *other }
 }
 extend f64 implements Product {
     static fn one(): f64 { 1.0f64 }
     fn times(take other: f64): f64 { self * other }
 }
+extend<region r> f64 implements Product<read f64 from r> {
+    static fn one(): f64 { 1.0f64 }
+    fn times(take other: read f64 from r): f64 { self * *other }
+}
 
 // Cloning preserves iterator position, buffered items and callable state.
+extend<T: Clone> Once<T> implements Clone {
+    fn clone(): Once<T> { Once(self.value.clone()) }
+}
+extend<T, F: Clone> OnceWith<T, F> implements Clone {
+    fn clone(): OnceWith<T, F> { OnceWith(self.f.clone(), Phantom<T>()) }
+}
+extend<T, F: Clone> FromFn<T, F> implements Clone {
+    fn clone(): FromFn<T, F> { FromFn(self.f.clone(), Phantom<T>()) }
+}
+extend<T, F: Clone> RepeatWith<T, F> implements Clone {
+    fn clone(): RepeatWith<T, F> { RepeatWith(self.f.clone(), Phantom<T>()) }
+}
+extend<T: Clone> Repeated<T> implements Clone {
+    fn clone(): Repeated<T> { Repeated(self.value.clone()) }
+}
+extend<T: Clone> RepeatN<T> implements Clone {
+    fn clone(): RepeatN<T> { RepeatN(self.value.clone(), self.remaining) }
+}
+extend<T: Clone, F: Clone> Successors<T, F> implements Clone {
+    fn clone(): Successors<T, F> { Successors(self.current.clone(), self.step.clone()) }
+}
+extend<B, I: Clone, S: Clone, F: Clone> Scanned<B, I, S, F> implements Clone {
+    fn clone(): Scanned<B, I, S, F> {
+        Scanned(self.iter.clone(), self.state.clone(), self.f.clone(), Phantom<B>())
+    }
+}
 extend<B, I: Clone, F: Clone> Mapped<B, I, F> implements Clone {
     fn clone(): Mapped<B, I, F> { Mapped(self.iter.clone(), self.f.clone(), Phantom<B>()) }
 }
@@ -2549,6 +2953,11 @@ extend<I: Iterator + Debug, F> Filtered<I, F> implements Debug {
         try debug_one(mut f, "Filtered", "iter", read self.iter)
     }
 }
+extend<B, I: Iterator + Debug, F> FilterMapped<B, I, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "FilterMapped", "iter", read self.iter)
+    }
+}
 extend<O: Iterator + Debug, U: OwnedIterable, F> FlatMapped<O, U, F> implements Debug where U.IntoIter: Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         try debug_four(mut f, "FlatMapped", "outer", read self.outer, "front", read self.front, "back", read self.back, "outer_done", read self.outer_done)
@@ -2584,6 +2993,16 @@ extend<I: Iterator + Debug, F> SkippedWhile<I, F> implements Debug {
         try debug_two(mut f, "SkippedWhile", "iter", read self.iter, "started", read self.started)
     }
 }
+extend<I: Iterator + Debug> Fused<I> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "Fused", "iter", read self.iter, "done", read self.done)
+    }
+}
+extend<I: Debug> Cycled<I> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_four(mut f, "Cycled", "original", read self.original, "iter", read self.iter, "yielded", read self.yielded, "done", read self.done)
+    }
+}
 extend<I: Iterator + Debug> Stepped<I> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         try debug_three(mut f, "Stepped", "iter", read self.iter, "step", read self.step, "first", read self.first)
@@ -2599,6 +3018,25 @@ extend<I: Iterator + Debug, F> TakenWhile<I, F> implements Debug {
         try debug_two(mut f, "TakenWhile", "iter", read self.iter, "done", read self.done)
     }
 }
+extend<I: Iterator + Debug, F> Inspected<I, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "Inspected", "iter", read self.iter)
+    }
+}
+extend<B, I: Iterator + Debug, F> MappedWhile<B, I, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "MappedWhile", "iter", read self.iter)
+    }
+}
+extend<B, I: Debug, S: Debug, F: Debug> Scanned<B, I, S, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("Scanned")
+        try debug.field("iter", self.iter)
+        try debug.field("state", self.state)
+        try debug.field("f", self.f)
+        try debug.finish()
+    }
+}
 extend<A: Iterator + Debug, B: Iterator + Debug> Zipped<A, B> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         try debug_two(mut f, "Zipped", "first", read self.first, "second", read self.second)
@@ -2610,6 +3048,30 @@ extend<T: Hash> Range<T> implements Hash {
         self.start.hash(mut state)
         self.end.hash(mut state)
     }
+}
+extend<T: Hash> Bound<T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit {
+        match self {
+            Bound.Included(value) => {
+                state.write_u8(0u8)
+                value.hash(mut state)
+            },
+            Bound.Excluded(value) => {
+                state.write_u8(1u8)
+                value.hash(mut state)
+            },
+            Bound.Unbounded => state.write_u8(2u8)
+        }
+    }
+}
+extend<T: Hash> RangeFrom<T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit { self.start.hash(mut state) }
+}
+extend<T: Hash> RangeTo<T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit { self.end.hash(mut state) }
+}
+extend RangeFull implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit {}
 }
 extend<T: Debug> Range<T> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
@@ -2623,8 +3085,84 @@ extend<T: Hash> RangeInclusive<T> implements Hash {
         self.done.hash(mut state)
     }
 }
+extend<T: Hash> RangeToInclusive<T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit { self.end.hash(mut state) }
+}
 extend<T: Debug> RangeInclusive<T> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         try debug_three(mut f, "RangeInclusive", "start", read self.start, "end", read self.end, "done", read self.done)
+    }
+}
+extend<T: Debug> Bound<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        match self {
+            Bound.Included(value) => {
+                var tuple = try f.debug_tuple("Included")
+                try tuple.field(read value)
+                try tuple.finish()
+            },
+            Bound.Excluded(value) => {
+                var tuple = try f.debug_tuple("Excluded")
+                try tuple.field(read value)
+                try tuple.finish()
+            },
+            Bound.Unbounded => { try f.write_str("Unbounded") }
+        }
+    }
+}
+extend<T: Debug> RangeFrom<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "RangeFrom", "start", read self.start, "done", read self.done)
+    }
+}
+extend<T: Debug> RangeTo<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "RangeTo", "end", read self.end)
+    }
+}
+extend RangeFull implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("RangeFull") }
+}
+extend<T: Debug> RangeToInclusive<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "RangeToInclusive", "end", read self.end)
+    }
+}
+extend<T: Debug> Once<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "Once", "value", read self.value)
+    }
+}
+extend<T, F: Debug> OnceWith<T, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "OnceWith", "f", read self.f)
+    }
+}
+extend<T: Debug> RepeatN<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "RepeatN", "value", read self.value, "remaining", read self.remaining)
+    }
+}
+extend<T> Empty<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error { try f.write_str("Empty") }
+}
+extend<T, F: Debug> FromFn<T, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "FromFn", "f", read self.f)
+    }
+}
+extend<T, F: Debug> RepeatWith<T, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "RepeatWith", "f", read self.f)
+    }
+}
+extend<T: Debug> Repeated<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_one(mut f, "Repeated", "value", read self.value)
+    }
+}
+extend<T: Debug, F: Debug> Successors<T, F> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try debug_two(mut f, "Successors", "current", read self.current, "step", read self.step)
     }
 }

@@ -362,6 +362,7 @@ public:
   std::shared_ptr<const Resolution> run() {
     collectModules();
     collectItems();
+    collectBuiltins();
     collectAssociatedConstants();
     imports();
     if (!diagnostics.empty())
@@ -581,6 +582,27 @@ private:
         result.associatedItems[owner].push_back(index);
         associatedFunctions.push_back({&function, index, item, owner});
       }
+    }
+  }
+
+  void collectBuiltins() {
+    for (auto [module, name] : {std::pair{"core::marker", "PhantomPinned"},
+                                std::pair{"core::cell", "Cell"}}) {
+      auto owner = moduleNames.find(module);
+      if (owner == moduleNames.end())
+        continue;
+      Span span{};
+      for (const auto &declaration : tree.modules) {
+        auto parent = scope(declaration.item.scope);
+        if (result.moduleInfos[owner->second].parent == parent &&
+            declaration.name == result.moduleInfos[owner->second].name) {
+          span = declaration.span;
+          break;
+        }
+      }
+      auto canonical = std::string(module) + "::" + name;
+      for (auto space : {Namespace::Type, Namespace::Value})
+        define(space, owner->second, publicBoundary, name, canonical, span);
     }
   }
 

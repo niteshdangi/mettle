@@ -36,13 +36,15 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     else if (checked.types->isPointer(self))
       operation = "ptr." + callee.text;
     else if (checked.types->isProduct(self) &&
-             checked.types->product(self).kind == AggregateKind::VarArgs)
+             checked.types->product(self).kind == AggregateKind::VarArgs) {
+      if (callee.text != "arg" && callee.text != "copy" && callee.text != "end")
+        return std::nullopt;
       operation = "va." + callee.text;
-    else if (checked.types->isProduct(self) &&
-             (checked.types->product(self).kind == AggregateKind::Cell ||
-              checked.types->product(self).kind == AggregateKind::RefCell ||
-              checked.types->product(self).kind == AggregateKind::Ref ||
-              checked.types->product(self).kind == AggregateKind::RefMut)) {
+    } else if (checked.types->isProduct(self) &&
+               (checked.types->product(self).kind == AggregateKind::Cell ||
+                checked.types->product(self).kind == AggregateKind::RefCell ||
+                checked.types->product(self).kind == AggregateKind::Ref ||
+                checked.types->product(self).kind == AggregateKind::RefMut)) {
       argument = self;
       operation = "cell." + callee.text;
     } else if (checked.types->isProduct(self) &&
@@ -88,6 +90,10 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     if (separator == std::string::npos)
       return std::nullopt;
     auto owner = callee.text.substr(0, separator);
+    if (auto resolved = checked.symbols->lookup(
+            nameModule(callee.span, callee.context, true), owner,
+            resolution::Namespace::Type, callee.span))
+      owner = *resolved;
     auto name = callee.text.substr(separator + 2);
     if (owner.starts_with("core::sync::atomic::Atomic")) {
       TypeSyntax syntax;
@@ -140,17 +146,40 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       operation = name;
     else if (owner == "core::intrinsics" && name == "type_id")
       operation = "type_id";
+    else if (owner == "core::intrinsics" && name == "fn_addr")
+      operation = "intrinsics.fn_addr";
+    else if (owner == "core::intrinsics" &&
+             (name == "va_arg" || name == "va_copy"))
+      operation = name == "va_arg" ? "va.next_arg" : "va.copy";
+    else if (owner == "core::intrinsics" &&
+             (name == "addr_of" || name == "addr_of_mut" ||
+              name == "offset_of"))
+      operation = "intrinsics." + name;
     else if (owner == "core::mem" &&
-             (name == "transmute" || name == "zeroed" || name == "forget" ||
-              name == "drop" || name == "replace" || name == "swap" ||
-              name == "size_of_val" || name == "align_of_val"))
+             (name == "transmute" || name == "transmute_copy" ||
+              name == "zeroed" || name == "forget" || name == "drop" ||
+              name == "replace" || name == "swap" || name == "size_of_val" ||
+              name == "align_of_val" || name == "size_of_val_raw" ||
+              name == "align_of_val_raw"))
       operation = "mem." + name;
-    else if (owner == "core::hint" && name == "black_box")
-      operation = "hint.black_box";
+    else if (owner == "core::hint" &&
+             (name == "black_box" || name == "spin_loop" ||
+              name == "cold_path" || name == "assert_unchecked" ||
+              name == "select_unpredictable" ||
+              name == "unreachable_unchecked"))
+      operation = "hint." + name;
     else if (owner == "core::intrinsics" && name == "abort")
       operation = "intrinsics.abort";
     else if (owner == "core::intrinsics" && name == "panic_message")
       operation = "intrinsics.panic_message";
+    else if (owner == "core::intrinsics" && name == "panic_fmt")
+      operation = "intrinsics.panic_fmt";
+    else if (owner == "core::intrinsics" && name == "type_name")
+      operation = "intrinsics.type_name";
+    else if (owner == "core::intrinsics" && name == "caller_location")
+      operation = "intrinsics.caller_location";
+    else if (owner == "core::intrinsics" && name == "variant_ordinal")
+      operation = "intrinsics.variant_ordinal";
     else if (owner == "core::intrinsics" && name.starts_with("coroutine_"))
       operation = "coroutine." + name.substr(10);
     else if (owner == "core::ptr")
@@ -165,13 +194,106 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     } else
       return std::nullopt;
   }
+  if (operation == "intrinsics.addr_of" ||
+      operation == "intrinsics.addr_of_mut") {
+    if (call.children.size() != 2 || !callee.genericArguments.empty()) {
+      error("type", call.span, "raw address requires one place argument");
+      return inference.fresh();
+    }
+    auto &value = *call.children[1];
+    auto *part = &value;
+    while ((part->kind == Kind::Field || part->kind == Kind::Index ||
+            part->kind == Kind::Group ||
+            (part->kind == Kind::Unary && part->text == "*")) &&
+           !part->children.empty()) {
+      if (part->kind == Kind::Unary) {
+        // Its operand is loaded as an ordinary value, so inner derefs stay unsafe.
+        rawAddressDereferences.insert(part);
+        break;
+      }
+      part = part->children[0].get();
+    }
+    if (value.kind != Kind::Name && value.kind != Kind::Field &&
+        value.kind != Kind::Index && value.kind != Kind::Group &&
+        !(value.kind == Kind::Unary && value.text == "*")) {
+      error("type", value.span, "raw address requires a place");
+      return inference.fresh();
+    }
+    auto variable = node(value, reachable);
+    fields(false);
+    bool exclusive = operation == "intrinsics.addr_of_mut";
+    if (exclusive)
+      requireMutablePlace(value);
+    facts(call).machineOperation = operation;
+    facts(call).machineType = inference.value(variable);
+    facts(call).machineBorrowModes = {ParameterMode::Value};
+    return inference.fresh(checked.types->pointerType(
+        inference.value(variable),
+        exclusive ? ParameterMode::Mut : ParameterMode::Read));
+  }
   if (operation == "coroutine.suspend" || operation == "coroutine.context") {
     auto found = closureFunctions.find(current);
     if (found == closureFunctions.end() ||
         checked.closureBodies[found->second]->syntax->text != "coroutine")
       error("effects", call.span, "suspension outside an async body");
   }
-  if (!callee.genericArguments.empty() && !operation.starts_with("atomic.") &&
+  bool pointerView = operation == "ptr.as_ref" || operation == "ptr.as_mut" ||
+                     operation == "ptr.as_ref_unchecked" ||
+                     operation == "ptr.as_mut_unchecked";
+  if (pointerView) {
+    auto region = RegionId::Unspecified;
+    if (!callee.genericArguments.empty()) {
+      if (callee.genericArguments.size() != 1 ||
+          callee.genericArguments[0].region.empty()) {
+        error("type", call.span,
+              "pointer view projection requires one region argument");
+        return inference.fresh();
+      }
+      const auto &source = callee.genericArguments[0];
+      region = regionReference(source.region, source.span);
+    }
+    if (checked.types->isPointer(self))
+      argument = checked.types->viewType(
+          checked.types->pointer(self).payload,
+          operation == "ptr.as_mut" || operation == "ptr.as_mut_unchecked"
+              ? ParameterMode::Mut
+              : ParameterMode::Read,
+          region);
+  }
+  bool pointerArray =
+      operation == "ptr.as_array" || operation == "ptr.as_mut_array";
+  if (pointerArray) {
+    if (callee.genericArguments.size() != 1 ||
+        !callee.genericArguments[0].region.empty()) {
+      error("type", call.span,
+            "array pointer projection requires one constant length argument");
+      return inference.fresh();
+    }
+    auto count = genericArgument(callee.genericArguments[0],
+                                 checked.types->constant(Type::Usize, 0));
+    if (count == Type::Unknown)
+      return inference.fresh();
+    if (!isInteger(checked.types->parameter(count).valueType)) {
+      error("type", call.span, "array length requires an integer constant");
+      return inference.fresh();
+    }
+    if (auto value = checked.types->scalarConstantValue(count);
+        value && (value->negative || value->magnitude[1])) {
+      error("limit", call.span, "array length limit exceeded");
+      return inference.fresh();
+    }
+    if (checked.types->isPointer(self)) {
+      const auto &pointer = checked.types->pointer(self);
+      if (checked.types->isSlice(pointer.payload))
+        argument = checked.types->pointerType(
+            checked.types->arrayType(
+                checked.types->slice(pointer.payload).element, count),
+            operation == "ptr.as_mut_array" ? ParameterMode::Mut
+                                            : ParameterMode::Read);
+    }
+  }
+  if (!pointerView && !pointerArray && !callee.genericArguments.empty() &&
+      !operation.starts_with("atomic.") &&
       storageKind == AggregateKind::Product) {
     if (callee.genericArguments.size() != 1 ||
         !callee.genericArguments[0].type) {
@@ -186,8 +308,60 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       checked.types->isPointer(expectedTypes.at(&call)))
     argument = checked.types->pointer(expectedTypes.at(&call)).payload;
   if (argument == Type::Unknown && expectedTypes.contains(&call) &&
-      (operation == "mem.transmute" || operation == "mem.zeroed"))
+      (operation == "mem.transmute" || operation == "mem.transmute_copy" ||
+       operation == "mem.zeroed"))
     argument = expectedTypes.at(&call);
+  if (operation == "intrinsics.offset_of") {
+    if (call.children.size() != 2 || !checked.types->isProduct(argument)) {
+      error("type", call.span,
+            "offset_of requires a product type and field path");
+      return inference.fresh();
+    }
+    std::vector<std::string> path;
+    auto syntax = call.children[1].get();
+    while (syntax->kind == Kind::Field && syntax->children.size() == 1) {
+      path.push_back(syntax->text);
+      syntax = syntax->children[0].get();
+    }
+    if ((syntax->kind != Kind::Name && syntax->kind != Kind::Integer) ||
+        syntax->text.find("::") != std::string::npos) {
+      error("type", call.span, "offset_of requires a field path");
+      return inference.fresh();
+    }
+    path.push_back(syntax->text);
+    std::reverse(path.begin(), path.end());
+    auto owner = argument;
+    std::vector<std::size_t> indices;
+    for (const auto &name : path) {
+      if (!checked.types->isProduct(owner) || checked.types->isSum(owner)) {
+        error("type", call.span,
+              "offset_of path does not select product fields");
+        return inference.fresh();
+      }
+      const auto &fields = checked.types->product(owner).fields;
+      auto field = std::find_if(
+          fields.begin(), fields.end(),
+          [&](const TypeField &entry) { return entry.name == name; });
+      if (field == fields.end()) {
+        error("name", call.span, "unknown offset_of field '" + name + "'");
+        return inference.fresh();
+      }
+      auto index = static_cast<std::size_t>(field - fields.begin());
+      visibleField(owner, index, call.span);
+      indices.push_back(index);
+      if (checked.types->pointerMetadata(field->type) ==
+          PointerMetadata::Witness) {
+        error("feature", call.span, "offset_of field alignment is dynamic");
+        return inference.fresh();
+      }
+      owner = field->type;
+    }
+    facts(call).machineOperation = operation;
+    facts(call).machineType = argument;
+    facts(call).machineBorrowModes = {ParameterMode::Value};
+    facts(call).argumentOrder = std::move(indices);
+    return inference.fresh(Type::Usize);
+  }
   if (operation == "numeric.to_int_unchecked") {
     if (argument == Type::Unknown && expectedTypes.contains(&call))
       argument = expectedTypes.at(&call);
@@ -277,6 +451,14 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   auto operandErrors = diagnostics.count();
   for (std::size_t i = 1; i < call.children.size(); ++i) {
     auto &value = *call.children[i];
+    if (operation == "intrinsics.panic_fmt" && i == 1) {
+      auto *recipe = &value;
+      while ((recipe->kind == Kind::Group || recipe->kind == Kind::Block) &&
+             recipe->children.size() == 1 &&
+             (recipe->kind != Kind::Block || !recipe->children[0]->semicolon))
+        recipe = recipe->children[0].get();
+      permittedRecipes.insert(recipe);
+    }
     if (!value.name.empty())
       error("type", value.span,
             "primitive operations use positional arguments");
@@ -414,6 +596,10 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       expected = operands.size() == 1   ? Type::U8
                  : operands.size() == 2 ? Type::Usize
                                         : Type::Unknown;
+    if ((operation == "ptr.slice_from_raw_parts" ||
+         operation == "ptr.slice_from_raw_parts_mut") &&
+        i == 2)
+      expected = Type::Usize;
     if (operation == "ptr.replace" && !operands.empty() &&
         checked.types->isPointer(operands[0]))
       expected = checked.types->pointer(operands[0]).payload;
@@ -447,15 +633,16 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       mode = ParameterMode::Take;
     if (operation == "mem.transmute" || operation == "mem.forget" ||
         operation == "mem.drop" || operation == "hint.black_box" ||
+        (operation == "hint.select_unpredictable" && i >= 2) ||
         operation == "coroutine.start" ||
         (operation == "ptr.replace" && operands.size() == 1) ||
         (operation == "mem.replace" && operands.size() == 1))
       mode = ParameterMode::Take;
     if (mode == ParameterMode::Take && checked.types->isCopy(type))
       mode = ParameterMode::Value;
-    if (i == 1 &&
-        (operation == "ptr.from_ref" || operation == "ptr.from_mut")) {
-      mode = operation == "ptr.from_mut" ? ParameterMode::Mut
+    if (i == 1 && (operation == "ptr.from_ref" || operation == "ptr.from_mut" ||
+                   operation == "storage.from_mut")) {
+      mode = operation != "ptr.from_ref" ? ParameterMode::Mut
                                          : ParameterMode::Read;
       if (checked.types->isView(type))
         type = checked.types->view(type).payload;
@@ -464,12 +651,21 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       type = checked.types->viewType(type, mode);
     }
     if ((operation == "mem.replace" && i == 1) ||
+        (operation == "va.next_arg" && i == 1) ||
+        (operation == "va.copy" && i == 1) ||
         (operation == "coroutine.resume" && i == 1) ||
         (operation == "mem.swap" && i <= 2) ||
+        (operation == "intrinsics.panic_fmt" && i == 1) ||
+        (operation == "intrinsics.variant_ordinal" && i == 1) ||
+        (operation == "mem.transmute_copy" && i == 1) ||
         (operation == "mem.size_of_val" && i == 1) ||
         (operation == "mem.align_of_val" && i == 1)) {
-      mode = operation.ends_with("_of_val") ? ParameterMode::Read
-                                            : ParameterMode::Mut;
+      mode = operation.ends_with("_of_val") || operation == "va.copy" ||
+                     operation == "intrinsics.panic_fmt" ||
+                     operation == "intrinsics.variant_ordinal" ||
+                     operation == "mem.transmute_copy"
+                 ? ParameterMode::Read
+                 : ParameterMode::Mut;
       if (checked.types->isView(type))
         type = checked.types->view(type).payload;
       if (mode == ParameterMode::Mut)
@@ -486,9 +682,23 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     borrowed.push_back(mode);
   }
   if (operation.starts_with("mem.") && operation != "mem.transmute" &&
-      operation != "mem.zeroed" && operation != "mem.forget" &&
-      !operands.empty() && checked.types->isView(operands[0]))
+      operation != "mem.transmute_copy" && operation != "mem.zeroed" &&
+      operation != "mem.forget" && !operands.empty() &&
+      checked.types->isView(operands[0]))
     argument = checked.types->view(operands[0]).payload;
+  if ((operation == "ptr.slice_from_raw_parts" ||
+       operation == "ptr.slice_from_raw_parts_mut") &&
+      operands.size() == 2 && checked.types->isPointer(operands[0]))
+    argument =
+        checked.types->sliceType(checked.types->pointer(operands[0]).payload);
+  if (operation == "intrinsics.variant_ordinal" && argument == Type::Unknown &&
+      operands.size() == 1 && checked.types->isView(operands[0]))
+    argument = checked.types->view(operands[0]).payload;
+  if ((operation == "mem.size_of_val_raw" ||
+       operation == "mem.align_of_val_raw") &&
+      argument == Type::Unknown && operands.size() == 1 &&
+      checked.types->isPointer(operands[0]))
+    argument = checked.types->pointer(operands[0]).payload;
   if ((operation == "numeric.to_be_bytes" ||
        operation == "numeric.to_le_bytes" ||
        operation == "numeric.to_ne_bytes") &&
@@ -512,9 +722,19 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   if (operation == "hint.black_box" && argument == Type::Unknown &&
       operands.size() == 1)
     argument = operands[0];
+  if (operation == "hint.select_unpredictable" && argument == Type::Unknown &&
+      operands.size() == 3 && operands[1] == operands[2])
+    argument = operands[1];
   if (operation == "storage.new" && argument == Type::Unknown &&
       operands.size() == 1)
     argument = checked.types->structural(storageKind, {operands[0]});
+  if (operation == "storage.from_mut" && argument == Type::Unknown &&
+      operands.size() == 1 && checked.types->isView(operands[0]))
+    argument = checked.types->structural(
+        storageKind, {checked.types->view(operands[0]).payload});
+  if (operation == "storage.raw_get" && argument == Type::Unknown &&
+      operands.size() == 1 && checked.types->isPointer(operands[0]))
+    argument = checked.types->pointer(operands[0]).payload;
   if (operation == "cell.new" && argument == Type::Unknown &&
       operands.size() == 1)
     argument = checked.types->structural(storageKind, {operands[0]});
@@ -529,6 +749,39 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     unpinSubject =
         checked.types->view(checked.types->product(argument).components[0])
             .payload;
+  if (operation == "intrinsics.fn_addr" || operation == "ptr.fn_addr_eq")
+    for (auto operand : operands) {
+      if (!checked.types->isParameter(operand))
+        continue;
+      auto assumptions = interfaceAssumptions();
+      interfaces::Solver solver(*checked.types, *checked.interfaceData,
+                                diagnostics, std::move(assumptions),
+                                regionEnvironment());
+      bool bounded = false;
+      for (std::size_t declaration = 0;
+           declaration < checked.interfaceData->definitions.size();
+           ++declaration) {
+        const auto &definition =
+            checked.interfaceData->definitions[declaration];
+        if (definition.name != "core::clone::FunctionPointer" &&
+            definition.name != "core::ops::FnPtr")
+          continue;
+        ErasedType marker;
+        marker.name = definition.name;
+        marker.declaration = static_cast<std::uint32_t>(declaration);
+        if (solver.prove(
+                {operand, checked.types->erasedType(std::move(marker))},
+                call.span, false)) {
+          bounded = true;
+          break;
+        }
+      }
+      if (!bounded) {
+        error("type", call.span,
+              "function address requires a function-pointer type or bound");
+        return inference.fresh();
+      }
+    }
   if (unpinSubject != Type::Unknown && !checked.types->isUnpin(unpinSubject)) {
     std::set<Type> visited;
     auto conditional = [&](auto &&visit, Type type) -> bool {
@@ -560,6 +813,12 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   }
   if (signature->unsafeCall)
     requireUnsafe(call.span);
+  if (operation == "va.next_arg" && checked.types->isParameter(argument)) {
+    TypeSyntax safe;
+    safe.name = "core::ffi::VaArgSafe";
+    if (!interfaceObligation(argument, safe, call.span))
+      return inference.fresh();
+  }
   if (operation == "va.arg")
     if (auto vector = targetVector(checked.types->name(argument))) {
       if (vector->arch != checked.targetDescription.arch)
@@ -617,6 +876,9 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     result = checked.types->viewType(result, signature->shape == Shape::ViewMut
                                                  ? ParameterMode::Mut
                                                  : ParameterMode::Read);
+  else if (signature->shape == Shape::ViewReadStatic)
+    result =
+        checked.types->viewType(result, ParameterMode::Read, RegionId::Static);
   else if (signature->shape == Shape::PinRead ||
            signature->shape == Shape::PinMut)
     result = checked.types->structural(

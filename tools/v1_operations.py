@@ -244,6 +244,11 @@ def generate(records, previous):
     return sorted(rows, key=lambda row: (row["family"], row["canonical_id"]))
 
 
+# Library and trait-implementation obligations (groups D-J) gate V1; architecture
+# and OS-extension obligations stay with I17.
+PRE_V1_CATEGORIES = {"library", "trait-implementation"}
+
+
 def worklist(records, previous):
     """Reconcile stable contracts without treating members as separate impls."""
     index = {record["url"]: record for record in records}
@@ -311,6 +316,8 @@ def worklist(records, previous):
             category = "trait-implementation"
         else:
             category = "library"
+        if disposition == "post-v1-obligation" and category in PRE_V1_CATEGORIES:
+            milestone = "I13B"
         old = previous.get(identity, {})
         rows.append({
             "canonical_id": identity, "disposition": disposition,
@@ -326,6 +333,12 @@ def worklist(records, previous):
             "recorded_v1_status": old.get("status", ""),
             "evidence_test": old.get("evidence_test", ""),
         })
+    milestones = {row["canonical_id"]: row["milestone"] for row in rows}
+    for row in rows:
+        covered = json.loads(row["covered_by"])
+        if covered and row["milestone"] == "I17" and "I13B" in {
+                milestones[identity] for identity in covered}:
+            row["milestone"] = "I13B"
     return rows
 
 

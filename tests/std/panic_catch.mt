@@ -25,9 +25,13 @@ fn overwrite(mut value: Replacement): Unit {
     value = Replacement(drops, 42, false)
 }
 
-unsafe extern "C" fn hook(message: ptr<read u8>, length: u64): Unit {
+unsafe extern "C" fn hook(raw: ptr<read std.panic.PanicHookInfo>): Unit {
+    let info = unsafe { *raw }
     std.io.print("hook: ")
-    let _written = unsafe { std.sys.write(1, message, length as usize) }
+    match info.payload_as_str() {
+        present(text) => std.io.print(text),
+        none => std.io.print(" missing-payload")
+    }
     std.io.print("\n")
 }
 

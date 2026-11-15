@@ -23,6 +23,23 @@ void check(const ir::Function &function, const ir::Program &program,
       return overlaps(first, second);
     return overlaps(*program.types, function.locals[root].type, first, second);
   };
+  auto overlapsLoans = [&](const Loan &first, const Loan &second) {
+    if ((first.targets.empty() && first.frozen.empty()) ||
+        (second.targets.empty() && second.frozen.empty()))
+      return true;
+    auto overlapsTargets = [&](const std::set<Target> &left,
+                               const std::set<Target> &right) {
+      for (const auto &a : left)
+        for (const auto &b : right)
+          if (a.place.root == b.place.root)
+            return true;
+      return false;
+    };
+    return overlapsTargets(first.targets, second.targets) ||
+           overlapsTargets(first.targets, second.frozen) ||
+           overlapsTargets(first.frozen, second.targets) ||
+           overlapsTargets(first.frozen, second.frozen);
+  };
   std::set<std::tuple<std::size_t, std::size_t, SourceId>> reported;
   for (const auto &[sources, span] : info.escapes) {
     // One report per escaping store, however many local loans back it.
@@ -234,27 +251,32 @@ void check(const ir::Function &function, const ir::Program &program,
     live.erase(loan, live.end());
   };
   auto before = [&](Origins live, const Origins &available, std::size_t b,
-                    std::size_t i) {
+                    std::size_t i, bool includeParents) {
     retainAvailable(live, available);
     for (auto id : info.points[b][i].defines)
       live.erase(id);
     join(live, info.points[b][i].uses);
-    return ancestors(live, info.loans);
+    return includeParents ? ancestors(live, info.loans) : live;
   };
-  std::vector<Origins> inputs(count), outputs(count);
+  std::vector<Origins> inputs(count), outputs(count), directInputs(count),
+      directOutputs(count);
   do {
     changed = false;
     for (std::size_t b = count; b-- > 0;) {
       if (!reachable[b])
         continue;
-      Origins live = info.returns[b];
-      for (auto next : successors[b])
+      Origins live = info.returns[b], direct = info.returns[b];
+      for (auto next : successors[b]) {
         join(live, inputs[next]);
+        join(direct, directInputs[next]);
+      }
       outputs[b] = ancestors(live, info.loans);
+      directOutputs[b] = direct;
       Origins available = availableOut[b];
       auto remaining = definitionCounts[b];
       for (std::size_t i = info.points[b].size(); i-- > 0;) {
-        live = before(std::move(live), available, b, i);
+        live = before(std::move(live), available, b, i, true);
+        direct = before(std::move(direct), available, b, i, false);
         rewindAvailability(available, remaining, b, i);
         if (live.size() > limits::activeLoans) {
           diagnostics.error("limit", function.blocks[b].instructions[i].span,
@@ -264,6 +286,10 @@ void check(const ir::Function &function, const ir::Program &program,
       }
       if (inputs[b] != live) {
         inputs[b] = std::move(live);
+        changed = true;
+      }
+      if (directInputs[b] != direct) {
+        directInputs[b] = std::move(direct);
         changed = true;
       }
     }
@@ -287,7 +313,7 @@ void check(const ir::Function &function, const ir::Program &program,
                             "returned view escapes local storage or its "
                             "declared input sources");
       }
-    auto live = outputs[b];
+    auto live = outputs[b], direct = directOutputs[b];
     Origins available = availableOut[b];
     auto remaining = definitionCounts[b];
     for (std::size_t i = info.points[b].size(); i-- > 0;) {
@@ -311,6 +337,21 @@ void check(const ir::Function &function, const ir::Program &program,
       for (auto id : live)
         if (available.contains(id))
           current.insert(id);
+      Origins introduced;
+      for (auto id : point.defines)
+        if (direct.contains(id) && !availableIn[b].contains(id) &&
+            remaining.at(id) == 1)
+          introduced.insert(id);
+      if (!introduced.empty()) {
+        auto priorDirect = direct;
+        for (auto id : introduced)
+          priorDirect.erase(id);
+        const auto createdAncestors = ancestors(introduced, info.loans);
+        const auto retained = ancestors(priorDirect, info.loans);
+        std::erase_if(current, [&](int id) {
+          return createdAncestors.contains(id) && !retained.contains(id);
+        });
+      }
       bool activation = instruction.op == ir::Op::Activate;
       bool reservation = instruction.op == ir::Op::ReserveMut;
       bool read = instruction.op == ir::Op::Load ||
@@ -451,8 +492,12 @@ void check(const ir::Function &function, const ir::Program &program,
                     containsPlace(access.place, referent.place)))
                 conflict = true;
         }
+        // Intermediate ancestors can outlive a view solely through its
+        // contents.
         for (auto moved : point.movedViews)
-          if (id != moved && ancestors({id}, info.loans).contains(moved))
+          if (direct.contains(id) && id != moved &&
+              ancestors({id}, info.loans).contains(moved) &&
+              overlapsLoans(loan, info.loans.at(moved)))
             conflict = true;
         if (conflict && !priorConflict)
           exclusiveConflict = loan.mode == ParameterMode::Mut;
@@ -462,7 +507,8 @@ void check(const ir::Function &function, const ir::Program &program,
             "ownership", instruction.span,
             std::string("access or storage conflicts with a live ") +
                 (exclusiveConflict ? "exclusive" : "read") + " loan");
-      live = before(std::move(live), available, b, i);
+      live = before(std::move(live), available, b, i, true);
+      direct = before(std::move(direct), available, b, i, false);
       rewindAvailability(available, remaining, b, i);
     }
   }

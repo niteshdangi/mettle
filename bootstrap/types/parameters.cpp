@@ -148,7 +148,7 @@ bool TypeStore::isProjection(Type type) const {
 Type TypeStore::projection(Type subject, Type interfaceType,
                            std::size_t associated, std::vector<Type> arguments,
                            Type valueType, bool copyRequested, bool sized,
-                           std::vector<RegionId> regions) {
+                           std::vector<RegionId> regions, bool thin) {
   arguments.insert(arguments.begin(), interfaceType);
   arguments.insert(arguments.begin(), subject);
   syncLookup();
@@ -162,7 +162,8 @@ Type TypeStore::projection(Type subject, Type interfaceType,
                    record.value == static_cast<std::int64_t>(associated) &&
                    record.valueType == valueType &&
                    record.copyRequested == copyRequested &&
-                   record.sized == sized && record.regionArguments == regions;
+                   record.sized == sized && record.thin == thin &&
+                   record.regionArguments == regions;
           }))
     return *existing;
   auto display = std::string(name(subject)) + "::<associated." +
@@ -174,6 +175,7 @@ Type TypeStore::projection(Type subject, Type interfaceType,
   record.value = static_cast<std::int64_t>(associated);
   record.operands = std::move(arguments);
   record.regionArguments = std::move(regions);
+  record.thin = thin;
   return result;
 }
 const TypeParameter &TypeStore::parameter(Type type) const {
@@ -189,6 +191,11 @@ void TypeStore::constrainParameter(Type type, bool copyRequested, bool sized) {
   auto &record = parameters.at(entries.at(type.index() - builtins).index);
   record.copyRequested |= copyRequested;
   record.sized |= sized;
+}
+void TypeStore::constrainThin(Type type) {
+  if (!isParameter(type) || parameter(type).kind != TypeParameterKind::Type)
+    throw std::invalid_argument("thin constraint requires a type parameter");
+  parameters.at(entries.at(type.index() - builtins).index).thin = true;
 }
 std::optional<std::int64_t> TypeStore::constantValue(Type type) const {
   auto scalar = scalarConstantValue(type);
@@ -528,7 +535,7 @@ Type TypeStore::arrayType(Type payload, Type count) {
     return *existing;
   auto result = declareProduct("[" + std::string(name(payload)) + "; " +
                                    std::string(name(count)) + "]",
-                               isCopy(payload));
+                               true);
   auto &record = products.at(entries.at(result.index() - builtins).index);
   record.kind = AggregateKind::Array;
   record.components = {payload};
@@ -549,9 +556,10 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
                               descriptor.operands.begin() + 2);
     auto result = projection(
         subject, interfaceType, static_cast<std::size_t>(descriptor.value),
-        std::move(descriptor.operands), descriptor.valueType,
-        descriptor.copyRequested, descriptor.sized,
-        std::move(descriptor.regionArguments));
+        std::move(descriptor.operands),
+        substitute(descriptor.valueType, bindings), descriptor.copyRequested,
+        descriptor.sized, std::move(descriptor.regionArguments),
+        descriptor.thin);
     return result;
   }
   if (isConstant(type) &&

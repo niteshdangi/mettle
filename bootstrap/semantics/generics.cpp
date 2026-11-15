@@ -4,6 +4,7 @@
 #include "syntax/lexer.h"
 #include <algorithm>
 #include <charconv>
+#include <set>
 #include <stdexcept>
 
 namespace mettle {
@@ -27,10 +28,12 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
             "duplicate generic parameter '" + parameter.name + "'");
       continue;
     }
-    bool copy = false, sized = true, requiredSized = false, unpin = false;
+    bool copy = false, sized = true, requiredSized = false, unpin = false,
+         thin = false;
     for (const auto &bound : parameter.bounds) {
       copy |= interfaceProperty(bound, "Copy", parameter.span);
       unpin |= interfaceProperty(bound, "Unpin", parameter.span);
+      thin |= interfaceProperty(bound, "Thin", parameter.span);
       requiredSized |= interfaceProperty(bound, "Sized", parameter.span);
       if (bound.name == "unsized")
         sized = false;
@@ -41,6 +44,7 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
         for (const auto &bound : constraint.bounds) {
           copy |= interfaceProperty(bound, "Copy", parameter.span);
           unpin |= interfaceProperty(bound, "Unpin", parameter.span);
+          thin |= interfaceProperty(bound, "Thin", parameter.span);
           requiredSized |= interfaceProperty(bound, "Sized", parameter.span);
           if (bound.name == "unsized")
             sized = false;
@@ -58,6 +62,8 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
       type = checked.types->declareParameter(parameter.name, copy, sized);
     if (unpin && parameter.kind == GenericParameterKind::Type)
       checked.types->constrainUnpin(type);
+    if (thin && parameter.kind == GenericParameterKind::Type)
+      checked.types->constrainThin(type);
     result.names.emplace(key, type);
     genericNames.emplace(type, key);
     result.parameters.push_back(type);
@@ -75,6 +81,24 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
       result.boundConstraints.insert(&constraint);
     }
   }
+  for (const auto &[subject, bounds] : result.bounds)
+    for (const auto &bound : bounds) {
+      if (bound.form != TypeForm::Callable)
+        continue;
+      auto contract = callableAnnotation(bound, result.declarationSpan, {});
+      std::vector<std::size_t> local;
+      const auto &declared = bound.callable->parameters;
+      const auto &formal = checked.types->callable(contract).parameters;
+      for (std::size_t p = 0; p < declared.size() && p < formal.size(); ++p)
+        if (declared[p].annotation.sources.empty() &&
+            (formal[p].mode == ParameterMode::Read ||
+             formal[p].mode == ParameterMode::Mut))
+          local.push_back(p);
+      if (!checked.types->constrainCallableParameter(subject, contract,
+                                                     std::move(local)))
+        error("type", result.declarationSpan,
+              "incompatible declared callable bounds");
+    }
   genericEnvironment = saved;
   return result;
 }
@@ -128,9 +152,55 @@ void Checker::prepareGenerics() {
       validateGenericEnvironment(interface.genericParameters,
                                  interface.constraints,
                                  interfaceGenerics.at(&interface));
+  for (const auto &implementation : module.implementations) {
+    if (imported(implementation.span) || !implementation.interface.empty() ||
+        implementation.negative ||
+        std::none_of(implementation.associated.begin(),
+                     implementation.associated.end(),
+                     [](const auto &item) { return item.constant; }))
+      continue;
+    auto environment = makeGenericEnvironment(implementation.genericParameters,
+                                              implementation.constraints);
+    environment.declarationSpan = implementation.span;
+    auto *saved = genericEnvironment;
+    genericEnvironment = &environment;
+    pushRegionParameters(implementation.genericParameters, implementation.span);
+    assumeRegionConstraints(implementation.constraints, implementation.span);
+    auto target = annotation(implementation.target, implementation.span);
+    environment.names[nameKey("Self", implementation.span)] = target;
+    popRegionParameters();
+    genericEnvironment = saved;
+    validateGenericEnvironment(implementation.genericParameters,
+                               implementation.constraints, environment);
+    implementationGenerics.emplace(&implementation, std::move(environment));
+  }
   for (auto &function : module.functions) {
     if (imported(function.span))
       continue;
+    if (function.associatedConstantInitializer) {
+      if (function.implementation < 0 ||
+          static_cast<std::size_t>(function.implementation) >=
+              module.implementations.size()) {
+        error("internal", function.span,
+              "associated constant initializer has an invalid owner");
+        continue;
+      }
+      auto index = static_cast<std::size_t>(function.implementation);
+      auto owner = implementationGenerics.find(
+          &module.implementations[static_cast<std::size_t>(
+              function.implementation)]);
+      if (owner == implementationGenerics.end()) {
+        error("internal", function.span,
+              "associated constant initializer has no owner environment");
+        continue;
+      }
+      functionGenerics.emplace(&function, owner->second);
+      functionGenerics.at(&function)
+          .names[nameKey("Self", function.lexicalContext)] =
+          owner->second.names.at(
+              nameKey("Self", module.implementations[index].span));
+      continue;
+    }
     const GenericEnvironment *parent = nullptr;
     if (!function.owner.empty() && function.implementation < 0) {
       auto name = typeName(function.owner, function.span);
@@ -145,14 +215,24 @@ void Checker::prepareGenerics() {
   for (auto &function : module.functions) {
     if (imported(function.span))
       continue;
+    if (function.associatedConstantInitializer)
+      continue;
     if (function.implementation >= 0) {
+      auto index = static_cast<std::size_t>(function.implementation);
+      if (index >= module.implementations.size()) {
+        error("internal", function.span,
+              "implementation method has an invalid owner");
+        continue;
+      }
       auto saved = genericEnvironment;
       genericEnvironment = &functionGenerics.at(&function);
-      const auto &implementation =
-          module.implementations[function.implementation];
       genericEnvironment->names[nameKey("Self", function.lexicalContext)] =
-          annotation(implementation.target, function.span);
+          annotation(module.implementations[index].target, function.span);
       genericEnvironment = saved;
+      validateGenericEnvironment(function.genericParameters,
+                                 function.constraints,
+                                 functionGenerics.at(&function));
+      continue;
     }
     validateGenericEnvironment(function.genericParameters, function.constraints,
                                functionGenerics.at(&function));
@@ -179,23 +259,9 @@ void Checker::validateGenericEnvironment(
   }
   for (const auto &[subject, bounds] : environment.bounds)
     for (const auto &bound : bounds) {
-      if (bound.form == TypeForm::Callable) {
-        auto contract =
-            callableAnnotation(bound, environment.declarationSpan, {});
-        std::vector<std::size_t> local;
-        const auto &declared = bound.callable->parameters;
-        const auto &formal = checked.types->callable(contract).parameters;
-        for (std::size_t p = 0; p < declared.size() && p < formal.size(); ++p)
-          if (declared[p].annotation.sources.empty() &&
-              (formal[p].mode == ParameterMode::Read ||
-               formal[p].mode == ParameterMode::Mut))
-            local.push_back(p);
-        if (!checked.types->constrainCallableParameter(subject, contract,
-                                                       std::move(local)))
-          error("type", environment.declarationSpan,
-                "incompatible declared callable bounds");
-      } else if (!propertyBound(bound, environment.declarationSpan) &&
-                 bound.name != "unsized")
+      if (bound.form != TypeForm::Callable &&
+          !propertyBound(bound, environment.declarationSpan) &&
+          bound.name != "unsized")
         interfaceBound(bound, environment.declarationSpan, {}, subject);
     }
   for (const auto &constraint : constraints) {
@@ -221,6 +287,11 @@ void Checker::validateGenericEnvironment(
           left, a.copyRequested || b.copyRequested, a.sized || b.sized);
       checked.types->constrainParameter(
           right, a.copyRequested || b.copyRequested, a.sized || b.sized);
+      if (a.kind == TypeParameterKind::Type &&
+          b.kind == TypeParameterKind::Type && (a.thin || b.thin)) {
+        checked.types->constrainThin(left);
+        checked.types->constrainThin(right);
+      }
       auto &target = environment.bounds[right];
       const auto &source = environment.bounds[left];
       target.insert(target.end(), source.begin(), source.end());
@@ -308,6 +379,51 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
   // projection `I::Item` and bind `T` to it.
   auto fromBounds = [&] {
     bool progress = false;
+    auto saved = genericEnvironment;
+    genericEnvironment = const_cast<GenericEnvironment *>(&environment);
+    auto queries = interfaceAssumptions();
+    genericEnvironment = saved;
+    std::vector<TypeBinding> known;
+    std::vector<Type> parameters;
+    for (const auto &binding : bindings)
+      if (binding.argument == Type::Unknown)
+        parameters.push_back(binding.parameter);
+      else
+        known.push_back(binding);
+    for (const auto &query : queries) {
+      auto owner = std::find_if(known.begin(), known.end(), [&](const auto &b) {
+        return b.parameter == query.subject;
+      });
+      if (owner == known.end() || !checked.types->isErased(query.interfaceType))
+        continue;
+      auto positional = checked.types->erased(query.interfaceType);
+      positional.associated.clear();
+      auto pattern = checked.types->substitute(
+          checked.types->erasedType(std::move(positional)), known);
+      if (!std::any_of(checked.types->erased(pattern).arguments.begin(),
+                       checked.types->erased(pattern).arguments.end(), open))
+        continue;
+      interfaces::Solver solver(*checked.types, *checked.interfaceData,
+                                diagnostics, interfaceAssumptions(),
+                                regionEnvironment());
+      auto actual = solver.implementedInterface(owner->argument, pattern, span,
+                                                parameters);
+      if (!actual)
+        continue;
+      const auto expected = checked.types->erased(pattern).arguments;
+      const auto provided = checked.types->erased(*actual).arguments;
+      auto attempt = bindings;
+      bool valid = expected.size() == provided.size();
+      for (std::size_t i = 0; valid && i < expected.size(); ++i)
+        valid = inferGeneric(expected[i], provided[i], attempt, span);
+      for (std::size_t i = 0; valid && i < bindings.size(); ++i)
+        if (bindings[i].argument == Type::Unknown &&
+            attempt[i].argument != Type::Unknown &&
+            !open(attempt[i].argument)) {
+          bindings[i].argument = attempt[i].argument;
+          progress = true;
+        }
+    }
     for (const auto &[subject, bounds] : environment.bounds) {
       auto owner = std::find_if(bindings.begin(), bindings.end(),
                                 [&](const auto &binding) {
@@ -316,7 +432,7 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
                                 });
       if (owner == bindings.end())
         continue;
-      for (const auto &bound : bounds)
+      for (const auto &bound : bounds) {
         for (const auto &argument : bound.arguments) {
           if (argument.binding.empty() || !argument.type)
             continue;
@@ -327,17 +443,18 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
                 nameKey(argument.type->name, argument.type->context));
             if (target == environment.names.end())
               continue;
-            slot = std::find_if(
-                bindings.begin(), bindings.end(), [&](const auto &binding) {
-                  return binding.parameter == target->second &&
-                         binding.argument == Type::Unknown;
-                });
+            slot = std::find_if(bindings.begin(), bindings.end(),
+                                [&](const auto &binding) {
+                                  return binding.parameter == target->second &&
+                                         binding.argument == Type::Unknown;
+                                });
             if (slot == bindings.end())
               continue;
           } else if (argument.type->form == TypeForm::Tuple) {
             auto savedPattern = genericEnvironment;
             genericEnvironment = const_cast<GenericEnvironment *>(&environment);
-            pattern = annotation(*argument.type, environment.declarationSpan, {});
+            pattern =
+                annotation(*argument.type, environment.declarationSpan, {});
             genericEnvironment = savedPattern;
             if (pattern == Type::Unknown || !open(pattern))
               continue;
@@ -380,6 +497,7 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
           slot->argument = value;
           progress = true;
         }
+      }
     }
     return progress;
   };
@@ -693,7 +811,11 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
                                  const Node *call) {
   bool valid = true;
   auto caller = genericEnvironment;
+  std::set<Type> parameterUnpinRequirements;
   for (const auto &binding : bindings) {
+    if (checked.types->isParameter(binding.parameter) &&
+        checked.types->parameter(binding.parameter).unpin)
+      parameterUnpinRequirements.insert(binding.parameter);
     if (binding.argument == Type::Unknown) {
       valid = false;
       continue;
@@ -729,6 +851,10 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
       error("type", span, "generic argument does not satisfy Unpin");
       valid = false;
     }
+    if (parameter.thin && !checked.types->isThin(binding.argument)) {
+      error("type", span, "generic argument does not satisfy Thin");
+      valid = false;
+    }
     auto found = environment.bounds.find(binding.parameter);
     if (found == environment.bounds.end())
       continue;
@@ -736,7 +862,11 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
       if (auto property = propertyBound(bound, environment.declarationSpan);
           property && (*property == interfaces::Property::Transferable ||
                        *property == interfaces::Property::Shareable ||
-                       *property == interfaces::Property::Static)) {
+                       *property == interfaces::Property::Static ||
+                       *property == interfaces::Property::UnwindSafe ||
+                       *property == interfaces::Property::RefUnwindSafe ||
+                       *property == interfaces::Property::Freeze ||
+                       *property == interfaces::Property::Thin)) {
         if (*property == interfaces::Property::Static && call) {
           std::vector<RegionId> regions;
           interfaces::Solver proof(*checked.types, *checked.interfaceData,
@@ -885,7 +1015,8 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
   if (genericEnvironment)
     solver.setEqualities(genericEnvironment->equalities);
   for (auto requirement : requirements) {
-    if (requirement.property != interfaces::Property::Unpin)
+    if (requirement.property != interfaces::Property::Unpin ||
+        parameterUnpinRequirements.contains(requirement.subject))
       continue;
     requirement.subject =
         checked.types->substitute(requirement.subject, bindings);

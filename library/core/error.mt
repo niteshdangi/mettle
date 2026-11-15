@@ -8,3 +8,9 @@ pub interface Error: Debug + Display {
         none
     }
 }
+
+pub interface ThreadSafeError: Error + Transferable + Shareable {}
+
+extend<T: Error + Transferable + Shareable + unsized> T implements ThreadSafeError {}
+
+extend Never implements Error {}

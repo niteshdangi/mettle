@@ -162,6 +162,11 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
     parameterSyntax = &syntax.genericParameters;
   } else
     return std::nullopt;
+  if (checked.types->product(patternType).kind == AggregateKind::VarArgs) {
+    error("type", n.span,
+          "VaList construction requires a compiler-owned variadic frame");
+    return inference.fresh();
+  }
   auto origin = patternType;
   if (checked.types->product(origin).genericOrigin != Type::Unknown)
     origin = checked.types->product(origin).genericOrigin;
@@ -229,26 +234,27 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
           genericArgument(argument, bindings[genericIndex].parameter);
     ++genericIndex;
   }
+  auto inferExpected = [&](std::vector<TypeBinding> &target) {
+    auto hint = expectedTypes.find(&n);
+    if (hint == expectedTypes.end())
+      return;
+    auto expected = hint->second;
+    if (!declaration)
+      inferFromExpected(patternType, expected, target);
+    else if (checked.types->isProduct(expected)) {
+      const auto &actual = checked.types->product(expected);
+      if (actual.genericOrigin == origin &&
+          actual.genericArguments.size() == target.size())
+        for (std::size_t i = 0; i < target.size(); ++i)
+          if (target[i].argument == Type::Unknown)
+            target[i].argument = actual.genericArguments[i];
+    }
+  };
   std::vector<std::pair<Node *, int>> actuals;
   std::vector<bool> used(fields.size());
   bool named = false;
   for (std::size_t i = 1; i < n.children.size(); ++i) {
     auto &argument = *n.children[i];
-    if (argument.kind == Kind::Closure && argument.name.empty() &&
-        i - 1 < fields.size()) {
-      // Explicit or already inferred arguments give a closure its signature.
-      std::vector<TypeBinding> solved;
-      for (const auto &binding : bindings)
-        if (binding.argument != Type::Unknown)
-          solved.push_back(binding);
-      auto expected =
-          checked.types->substitute(pattern.fields[fields[i - 1]].type, solved);
-      if (checked.types->isFunctionPointer(expected))
-        contextualize(argument, expected);
-    }
-    auto variable = node(argument, reachable);
-    this->fields(false);
-    reachable &= facts(argument).flow.normal;
     std::size_t target = i - 1;
     if (!argument.name.empty()) {
       named = true;
@@ -259,6 +265,30 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
     } else if (named)
       error("type", argument.span,
             "positional arguments must precede named arguments");
+    if (target < fields.size()) {
+      auto contextBindings = bindings;
+      inferExpected(contextBindings);
+      std::vector<TypeBinding> solved;
+      for (const auto &binding : contextBindings)
+        if (binding.argument != Type::Unknown)
+          solved.push_back(binding);
+      auto expected = checked.types->substitute(
+          pattern.fields[fields[target]].type, solved);
+      const auto parameters = checked.types->typeParameters(expected);
+      bool open =
+          std::any_of(contextBindings.begin(), contextBindings.end(),
+                      [&](const auto &binding) {
+                        return binding.argument == Type::Unknown &&
+                               std::find(parameters.begin(), parameters.end(),
+                                         binding.parameter) != parameters.end();
+                      });
+      if (!open || (argument.kind == Kind::Closure &&
+                    checked.types->isFunctionPointer(expected)))
+        contextualize(argument, expected);
+    }
+    auto variable = node(argument, reachable);
+    this->fields(false);
+    reachable &= facts(argument).flow.normal;
     facts(n).argumentOrder.push_back(target < fields.size() ? target : 0);
     actuals.push_back({&argument, variable});
     if (target >= fields.size()) {
@@ -274,28 +304,24 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
                                          : argument.fieldSpan,
                    argument.name.empty() ? n.children[0]->context
                                          : argument.fieldContext);
-    inferGeneric(pattern.fields[fields[target]].type, inference.value(variable),
-                 bindings, argument.span);
+    std::vector<TypeBinding> solved;
+    for (const auto &binding : bindings)
+      if (binding.argument != Type::Unknown)
+        solved.push_back(binding);
+    auto inferred =
+        checked.types->substitute(pattern.fields[fields[target]].type, solved);
+    const auto remaining = checked.types->typeParameters(inferred);
+    if (std::any_of(bindings.begin(), bindings.end(), [&](const auto &binding) {
+          return binding.argument == Type::Unknown &&
+                 std::find(remaining.begin(), remaining.end(),
+                           binding.parameter) != remaining.end();
+        }))
+      inferGeneric(inferred, inference.value(variable), bindings,
+                   argument.span);
   }
   if (std::find(used.begin(), used.end(), false) != used.end())
     error("type", n.span, "missing constructor argument");
-  if (auto hint = expectedTypes.find(&n);
-      hint != expectedTypes.end() &&
-      std::any_of(bindings.begin(), bindings.end(), [](const auto &binding) {
-        return binding.argument == Type::Unknown;
-      })) {
-    auto expected = hint->second;
-    if (!declaration)
-      inferFromExpected(patternType, expected, bindings);
-    else if (checked.types->isProduct(expected)) {
-      const auto &actual = checked.types->product(expected);
-      if (actual.genericOrigin == origin &&
-          actual.genericArguments.size() == bindings.size())
-        for (std::size_t i = 0; i < bindings.size(); ++i)
-          if (bindings[i].argument == Type::Unknown)
-            bindings[i].argument = actual.genericArguments[i];
-    }
-  }
+  inferExpected(bindings);
   auto caller = genericEnvironment;
   genericEnvironment = &environment;
   completeGenericBindings(environment, bindings, n.span);

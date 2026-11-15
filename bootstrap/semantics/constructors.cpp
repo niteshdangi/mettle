@@ -627,7 +627,8 @@ int Checker::genericCustomConstruction(Node &call, bool reachable, Type origin,
   completeGenericBindings(environment, selectedOwner, call.span);
   genericObligations(environment, selectedOwner, call.span);
   auto &function = module.functions[*selected];
-  formatArguments(call, function, 0);
+  if (!formatArguments(call, function, 0))
+    return inference.fresh();
   requireFeatures(facts(function).targetFeatures, call.span);
   if (function.unsafeFunction)
     requireUnsafe(call.span);

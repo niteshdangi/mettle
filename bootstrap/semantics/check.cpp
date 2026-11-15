@@ -161,9 +161,10 @@ void Checker::inferFunctionResult(Function &f) {
 
 std::optional<CheckedModule> Checker::run() {
   auto needsConstantTypeCheck = [&](auto &&self, const Node &node) -> bool {
-    if (node.kind == Kind::If || node.kind == Kind::Match ||
-        node.kind == Kind::Block || node.kind == Kind::While ||
-        node.kind == Kind::Loop || node.kind == Kind::For ||
+    if (node.kind == Kind::Call || node.kind == Kind::If ||
+        node.kind == Kind::Match || node.kind == Kind::Block ||
+        node.kind == Kind::While || node.kind == Kind::Loop ||
+        node.kind == Kind::For ||
         (node.kind == Kind::Binary && (node.text == "&&" || node.text == "||")))
       return true;
     return std::any_of(node.children.begin(), node.children.end(),
@@ -187,12 +188,13 @@ std::optional<CheckedModule> Checker::run() {
   }
   for (std::size_t i = 0; i < module.implementations.size(); ++i) {
     const auto &owner = module.implementations[i];
-    if (!owner.interface.empty() || owner.negative ||
-        !owner.genericParameters.empty())
+    if (!owner.interface.empty() || owner.negative)
       continue;
     for (const auto &item : owner.associated) {
       if (!item.constant || !item.constantValue ||
-          !needsConstantTypeCheck(needsConstantTypeCheck, *item.constantValue))
+          (owner.genericParameters.empty() &&
+           !needsConstantTypeCheck(needsConstantTypeCheck,
+                                   *item.constantValue)))
         continue;
       Function initializer;
       initializer.name =
@@ -202,8 +204,11 @@ std::optional<CheckedModule> Checker::run() {
       initializer.item.scope = owner.item.scope;
       initializer.owner = owner.target.name;
       initializer.implementation = static_cast<int>(i);
+      initializer.associatedConstantInitializer = true;
       initializer.lexicalContext = diagnostics.syntaxContext(item.span);
+      initializer.genericParameters = owner.genericParameters;
       initializer.constraints = owner.constraints;
+      initializer.implicitGenericParameters = owner.genericParameters.size();
       initializer.constFunction = true;
       initializer.body =
           NodeOwner::borrow(const_cast<Node &>(*item.constantValue));
@@ -941,6 +946,13 @@ std::optional<CheckedModule> Checker::run() {
       entry->second = containsVarArgs(*checked.types, type);
     return entry->second;
   };
+  auto frameBoundCursor = [&](Type type) {
+    while (checked.types->isView(type))
+      type = checked.types->view(type).payload;
+    return checked.types->isProduct(type) &&
+           checked.types->product(type).kind == AggregateKind::VarArgs &&
+           checked.types->product(type).name == "core::ffi::VaList";
+  };
   for (const auto &[syntax, resolved] : checked.nodes) {
     if (resolved.opaqueSource != Type::Unknown &&
         !checked.types->isSized(resolved.opaqueSource))
@@ -966,7 +978,8 @@ std::optional<CheckedModule> Checker::run() {
       for (std::size_t i = 1; i < syntax->children.size(); ++i)
         if (auto argument = checked.nodes.find(syntax->children[i].get());
             argument != checked.nodes.end() &&
-            holdsVarArgs(argument->second.type))
+            holdsVarArgs(argument->second.type) &&
+            !frameBoundCursor(argument->second.type))
           error("ownership", syntax->children[i]->span,
                 "a variadic cursor cannot be passed outside its invocation");
     if (syntax->kind == Kind::Integer && resolved.numeric &&
@@ -984,7 +997,8 @@ std::optional<CheckedModule> Checker::run() {
     }
   }
   for (const auto &function : module.functions)
-    if (holdsVarArgs(facts(function).result))
+    if (holdsVarArgs(facts(function).result) &&
+        !frameBoundCursor(facts(function).result))
       error("ownership", function.span,
             "a variadic cursor cannot escape its invocation");
   if (diagnostics.empty())

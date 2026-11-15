@@ -8,7 +8,7 @@ import std.time.from_millis
 fn serve(): i32 throws Error {
     var listener = try std.net.tcp_listen(std.net.socket_addr(std.net.localhost(), 0u16))
     let port = (try listener.local_addr()).port
-    var me = std.process.command(std.env.args()[0usize].as_os_str())
+    var me = std.process.command(std.env.args_os()[0usize].as_os_str())
     me.arg_text("client")
     let digits = ffi.os_string_from_vec(decimal(port as u32))
     me.arg(digits.as_os_str())
@@ -66,7 +66,7 @@ fn client(read port_text: ffi.OsStr): i32 throws Error {
 }
 
 fn main(): i32 {
-    let args = std.env.args()
+    let args = std.env.args_os()
     var mode = 0
     if args.len() > 2usize { mode = 1 }
     var r = 0

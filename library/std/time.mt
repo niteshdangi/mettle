@@ -157,10 +157,21 @@ extend Duration {
 
 pub copy type TryFromFloatSecsError {}
 
+extend TryFromFloatSecsError implements Clone {
+    fn clone(): TryFromFloatSecsError { self }
+}
+extend TryFromFloatSecsError implements PartialEq {
+    fn eq(read other: TryFromFloatSecsError): bool { true }
+}
+extend TryFromFloatSecsError implements Eq {}
+
 extend TryFromFloatSecsError implements Debug {
     fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
         try f.write_str("TryFromFloatSecsError")
     }
+}
+extend TryFromFloatSecsError implements Display {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error { try f.write_str("out of range") }
 }
 
 extend Duration implements Debug {
@@ -216,6 +227,22 @@ pub fn system_now(): SystemTime {
 }
 
 pub copy type SystemTimeError { backwards_by: Duration }
+extend SystemTimeError implements Debug {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
+        var debug = try f.debug_tuple("SystemTimeError")
+        try debug.field(self.backwards_by)
+        try debug.finish()
+    }
+}
+extend SystemTimeError implements Display {
+    fn fmt(mut f: Formatter): Unit throws core.fmt.Error {
+        try f.write_str("second time provided was later than self")
+    }
+}
+
+extend SystemTimeError implements Clone {
+    fn clone(): SystemTimeError { self }
+}
 
 extend SystemTime {
     pub static fn now(): SystemTime { system_now() }

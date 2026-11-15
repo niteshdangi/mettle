@@ -1,4 +1,5 @@
 #include "semantics/checker.h"
+#include "support/limits.h"
 #include "types/layout.h"
 #include "types/machine.h"
 #include <algorithm>
@@ -47,7 +48,20 @@ bool chargeConstant(const TypeStore &types, const StaticConstant &constant,
 // its diagnostics.
 class ConstantHost : public evaluation::Host {
 public:
-  explicit ConstantHost(Checker &checker) : checker(checker) {}
+  explicit ConstantHost(Checker &checker,
+                        std::span<const TypeBinding> bindings = {})
+      : originalEnvironment(checker.genericEnvironment), checker(checker) {
+    if (bindings.empty() || !checker.genericEnvironment)
+      return;
+    Context context;
+    context.previous = checker.genericEnvironment;
+    context.environment = *checker.genericEnvironment;
+    context.bindings.assign(bindings.begin(), bindings.end());
+    bind(context);
+    contexts.push_back(std::move(context));
+    checker.genericEnvironment = &contexts.back().environment;
+  }
+  ~ConstantHost() override { checker.genericEnvironment = originalEnvironment; }
   Type substitute(Type type) {
     for (auto context = contexts.rbegin(); context != contexts.rend();
          ++context)
@@ -71,6 +85,17 @@ public:
         *const_cast<Node *>(node.children[0]->children[0].get()));
     bool projected = false;
     for (const auto &step : facts->receiverPlan->steps) {
+      if (step.kind == ReceiverStep::Kind::Borrow) {
+        auto view = std::make_unique<Node>();
+        view->kind = Kind::Unary;
+        view->text = step.mode == ParameterMode::Mut ? "mut" : "read";
+        view->span = node.children[0]->children[0]->span;
+        view->children.push_back(std::move(expression));
+        syntheticFacts[view.get()].type = step.target;
+        expression = NodeOwner(std::move(view));
+        projected = true;
+        continue;
+      }
       if (step.kind != ReceiverStep::Kind::Projection)
         continue;
       auto call = std::make_unique<Node>();
@@ -117,6 +142,9 @@ public:
   }
   bool callableCoercion(Type source, Type target) override {
     return checker.compatibleCallable(substitute(source), substitute(target));
+  }
+  std::string typeIdentity(Type type) override {
+    return mettle::typeIdentity(checker.typeStore(), substitute(type));
   }
   Type valueType(const Value &value) override {
     if (value.type != Type::Unknown)
@@ -207,10 +235,9 @@ public:
     }
     if (!prepared->body)
       return result;
-    prepared->parameters.push_back({"self", std::move(*shape),
-                                    declaration->span, nullptr,
-                                    declaration->lexicalContext,
-                                    ParameterMode::Mut});
+    prepared->parameters.push_back(
+        {"self", std::move(*shape), declaration->span, nullptr,
+         declaration->lexicalContext, ParameterMode::Mut});
     result.kind = Lookup::Kind::Function;
     result.declaration = declaration;
     result.prepared = std::move(prepared);
@@ -299,7 +326,7 @@ public:
         return {"try.outcome"};
       if (!facts->machineOperation.empty())
         return {facts->machineOperation, substitute(facts->machineType),
-                facts->field};
+                facts->field, facts->argumentOrder};
       if (facts->callee >= 0) {
         const auto &function = checker.module.functions.at(facts->callee);
         auto name = checker.definitionName(function.span, function.name);
@@ -330,6 +357,7 @@ public:
       if (found != checker.functionGenerics.end())
         context.environment = found->second;
     }
+    bind(context);
     contexts.push_back(std::move(context));
     checker.genericEnvironment = &contexts.back().environment;
   }
@@ -392,7 +420,7 @@ public:
       declaration = &checker.module.functions.at(selected->function);
       typeArguments = std::move(selected->arguments);
     } else if (facts && facts->callee >= 0)
-      declaration = &checker.module.functions.at(facts->callee);
+      declaration = checker.resolvedCall(facts);
     Type constructed = Type::Unknown;
     if (!declaration && receiver) {
       auto type = valueType(*receiver);
@@ -698,6 +726,25 @@ public:
     Lookup result;
     if (name.kind != Kind::Name)
       return result;
+    auto functionLookup = [&](const Function &function) {
+      Lookup found;
+      found.kind = Lookup::Kind::Function;
+      auto index =
+          static_cast<std::size_t>(&function - checker.module.functions.data());
+      found.value = functionValue(index);
+      if (checker.checked.importedDeclarations) {
+        auto imported =
+            checker.checked.importedDeclarations->functions.find(index);
+        if (imported != checker.checked.importedDeclarations->functions.end() &&
+            imported->second.body) {
+          found.checkedFunction = &imported->second.evaluation;
+          found.declaration = &function;
+          return found;
+        }
+      }
+      found.function = &function;
+      return found;
+    };
     auto materialized = [&](const StaticConstant &constant,
                             bool fresh = false) {
       Lookup found;
@@ -746,19 +793,22 @@ public:
       if (facts.constantValue)
         return materialized(*facts.constantValue, true);
       if (facts.callee >= 0) {
-        const auto &imports = *checker.checked.importedDeclarations;
-        auto function = imports.functions.find(facts.callee);
-        result.kind = Lookup::Kind::Function;
-        result.value = functionValue(facts.callee);
-        if (function != imports.functions.end() && function->second.body) {
-          result.checkedFunction = &function->second.evaluation;
-          result.declaration = &checker.module.functions.at(facts.callee);
-        } else
-          result.function = &checker.module.functions.at(facts.callee);
-        return result;
+        if (auto function = checker.resolvedCall(&facts))
+          return functionLookup(*function);
       }
-      if (facts.constantParameter != Type::Unknown)
-        return carrier(facts.constantParameter);
+      if (facts.constantParameter != Type::Unknown) {
+        auto identity = substitute(facts.constantParameter);
+        if (checker.typeStore().isProjection(identity)) {
+          auto reported = checker.reportedErrors;
+          if (auto associated = checker.associatedConstant(name))
+            return carrier(*associated);
+          if (checker.reportedErrors != reported) {
+            result.kind = Lookup::Kind::Failed;
+            return result;
+          }
+        }
+        return carrier(identity);
+      }
       if (facts.variant >= 0 &&
           checker.typeStore().isSum(substitute(facts.type))) {
         auto type = substitute(facts.type);
@@ -786,6 +836,19 @@ public:
         result.value.number = *facts.numeric;
         return result;
       }
+      if (facts.type != Type::Unknown &&
+          checker.typeStore().isProduct(substitute(facts.type))) {
+        auto reported = checker.reportedErrors;
+        if (auto associated = checker.associatedConstant(name))
+          return carrier(*associated);
+        if (auto local = checker.checked.find(name);
+            local && local->constantValue)
+          return materialized(*local->constantValue, true);
+        if (checker.reportedErrors != reported)
+          result.kind = Lookup::Kind::Failed;
+        if (result.kind != Lookup::Kind::Missing)
+          return result;
+      }
       if (facts.type != Type::Unknown)
         return result;
       checker.error("metadata", name.span,
@@ -793,6 +856,9 @@ public:
       result.kind = Lookup::Kind::Failed;
       return result;
     }
+    if (auto facts = checker.checked.find(name); facts && facts->callee >= 0)
+      if (auto function = checker.resolvedCall(facts))
+        return functionLookup(*function);
     auto separator = name.text.rfind("::");
     if (separator != std::string::npos) {
       TypeSyntax syntax;
@@ -863,20 +929,7 @@ public:
         checker.callableName(name.text, "", name.span, name.context);
     if (auto function = checker.names.find(canonical);
         !canonical.empty() && function != checker.names.end()) {
-      result.kind = Lookup::Kind::Function;
-      result.value = functionValue(function->second);
-      if (checker.checked.importedDeclarations) {
-        auto imported = checker.checked.importedDeclarations->functions.find(
-            function->second);
-        if (imported != checker.checked.importedDeclarations->functions.end() &&
-            imported->second.body) {
-          result.checkedFunction = &imported->second.evaluation;
-          result.declaration = &checker.module.functions[function->second];
-          return result;
-        }
-      }
-      result.function = &checker.module.functions[function->second];
-      return result;
+      return functionLookup(checker.module.functions[function->second]);
     }
     auto reported = checker.reportedErrors;
     if (auto associated = checker.associatedConstant(name))
@@ -895,6 +948,11 @@ private:
     std::vector<TypeBinding> bindings;
     const Function *declaration = nullptr;
   };
+  void bind(Context &context) {
+    for (auto &[name, type] : context.environment.names)
+      type = checker.typeStore().substitute(type, context.bindings);
+  }
+  Checker::GenericEnvironment *originalEnvironment;
   std::deque<Context> contexts;
   std::map<const Node *, NodeFacts> syntheticFacts;
   std::deque<NodeOwner> receiverExpressions;
@@ -969,26 +1027,29 @@ bool Checker::needsEvaluator(const Node &node) const {
 }
 
 bool Checker::constFunctionCall(const Node &node) {
-  if (node.kind != Kind::Call || node.children.empty())
+  if (node.kind != Kind::Call)
     return false;
-  if (node.children[0]->kind == Kind::Field)
-    return true;
-  if (node.children[0]->kind != Kind::Name)
+  const NodeFacts *facts = checked.find(node);
+  if (!facts)
+    if (auto imported = importedExpressions.find(&node);
+        imported != importedExpressions.end())
+      facts = &imported->second->facts.at(&node);
+  if (!facts)
     return false;
-  const auto &callee = *node.children[0];
-  auto separator = callee.text.rfind("::");
-  if (separator != std::string::npos) {
-    TypeSyntax syntax;
-    syntax.name = callee.text.substr(0, separator);
-    syntax.context = callee.context;
-    ConstantHost host(*this);
-    if (isFloating(host.resolveType(syntax, callee.span)))
-      return true;
-  }
-  auto canonical = callableName(callee.text, "", callee.span, callee.context);
-  auto found = names.find(canonical);
-  return !canonical.empty() && found != names.end() &&
-         module.functions[found->second].constFunction;
+  if (!facts->machineOperation.empty())
+    return facts->machineOperation != "atomic.new" &&
+           facts->machineOperation != "storage.new" &&
+           facts->machineOperation != "cell.new";
+  if (facts->constructor)
+    return false;
+  auto function = resolvedCall(facts);
+  return function && function->constFunction;
+}
+
+const Function *Checker::resolvedCall(const NodeFacts *facts) const {
+  if (!facts || facts->callee < 0)
+    return nullptr;
+  return &module.functions.at(facts->callee);
 }
 
 Type Checker::evaluatedConstant(const Node &node, Type expected) {
@@ -1097,6 +1158,7 @@ std::optional<evaluation::Shape> Checker::constantShape(Type type) {
       record.kind == AggregateKind::Uninit ||
       record.kind == AggregateKind::ManualDrop) {
     shape.kind = evaluation::Shape::Kind::Product;
+    shape.uninitializedStorage = record.kind == AggregateKind::Uninit;
     for (const auto &field : record.fields) {
       auto element = constantShape(field.type);
       if (!element)
@@ -1265,6 +1327,12 @@ std::optional<StaticConstant> Checker::staticFromValue(const Value &value,
     result.kind = StaticConstant::Kind::Function;
     result.symbol = value.symbol;
     return result;
+  case Value::Kind::TypeIdentity:
+    if (type != Type::U64 || value.identity.empty())
+      return mismatch();
+    result.kind = StaticConstant::Kind::TypeIdentity;
+    result.text = value.identity;
+    return result;
   case Value::Kind::Unit:
     if (type != Type::Unit)
       return mismatch();
@@ -1303,7 +1371,12 @@ std::optional<StaticConstant> Checker::staticFromValue(const Value &value,
                                     : StaticConstant::Kind::Address;
     result.symbol = value.symbol;
     result.byteOffset = value.addressOnly ? 0 : value.offset;
-    result.scalar.magnitude[0] = value.addressOnly ? value.offset : value.count;
+    result.scalar.magnitude[0] =
+        value.addressOnly ? value.offset
+        : checked.types->pointerMetadata(checked.types->view(type).payload) ==
+                PointerMetadata::ElementCount
+            ? value.count
+            : 0;
     if (value.addressOnly &&
         checked.types->pointerMetadata(checked.types->view(type).payload) ==
             PointerMetadata::ElementCount) {
@@ -1403,8 +1476,9 @@ std::optional<StaticConstant> Checker::staticFromValue(const Value &value,
   }
 }
 
-std::optional<StaticConstant> Checker::evaluatedStatic(const Node &node,
-                                                       Type type) {
+std::optional<StaticConstant>
+Checker::evaluatedStatic(const Node &node, Type type,
+                         std::span<const TypeBinding> bindings) {
   auto shape = constantShape(type);
   if (!shape) {
     error("constant", node.span,
@@ -1412,7 +1486,7 @@ std::optional<StaticConstant> Checker::evaluatedStatic(const Node &node,
           "evaluator");
     return std::nullopt;
   }
-  ConstantHost host(*this);
+  ConstantHost host(*this, bindings);
   evaluation::Options options;
   options.pointerBits = pointerBits();
   options.littleEndian = checked.targetDescription.littleEndian;
@@ -1435,6 +1509,130 @@ std::optional<Type> Checker::inherentConstantValue(std::size_t index,
                                                    Type subject,
                                                    const Node *use) {
   auto &constant = inherentConstants.at(index);
+  auto &environment = implementationGenerics.at(constant.implementation);
+  const bool genericNominal =
+      checked.types->isProduct(constant.declaredType) &&
+      (!environment.parameters.empty() ||
+       checked.types->isSymbolic(constant.target) ||
+       checked.types->isSymbolic(constant.declaredType));
+  if (genericNominal) {
+    if (checked.types->isSymbolic(subject)) {
+      if (use)
+        error("feature", use->span,
+              "generic nominal associated constant requires a concrete "
+              "owner type");
+      return std::nullopt;
+    }
+
+    auto savedEnvironment = genericEnvironment;
+    auto *savedFunction = current;
+    genericEnvironment = &environment;
+    current = nullptr;
+    std::vector<TypeBinding> bindings;
+    for (auto parameter : environment.parameters)
+      bindings.push_back({parameter, Type::Unknown});
+    const auto span = use ? use->span : constant.declaration->span;
+    if (!inferGeneric(constant.target, subject, bindings, span)) {
+      error("type", span,
+            "associated constant owner does not match its implementation");
+      genericEnvironment = savedEnvironment;
+      current = savedFunction;
+      return std::nullopt;
+    }
+    completeGenericBindings(environment, bindings, span);
+    bool complete = true;
+    std::vector<Type> arguments;
+    for (const auto &binding : bindings) {
+      complete &= binding.argument != Type::Unknown;
+      arguments.push_back(binding.argument);
+    }
+    if (!complete) {
+      error("type", span, "cannot infer generic associated constant arguments");
+      genericEnvironment = savedEnvironment;
+      current = savedFunction;
+      return std::nullopt;
+    }
+    if (!genericObligations(environment, bindings, span)) {
+      genericEnvironment = savedEnvironment;
+      current = savedFunction;
+      return std::nullopt;
+    }
+    genericEnvironment = savedEnvironment;
+    current = savedFunction;
+
+    auto &instance = constant.instances[arguments];
+    if (instance.state == 1) {
+      error("constant", constant.declaration->span,
+            "cycle in associated constant definition");
+      return std::nullopt;
+    }
+    if (instance.state == 0) {
+      if (constantEvaluationDepth >= limits::constEvalDepth) {
+        error("limit", constant.declaration->span,
+              "associated constant evaluation exceeded the nesting limit");
+        return std::nullopt;
+      }
+      instance.state = 1;
+      ++constantEvaluationDepth;
+      struct DepthGuard {
+        unsigned &depth;
+        ~DepthGuard() { --depth; }
+      } depthGuard{constantEvaluationDepth};
+
+      auto *savedEvaluationEnvironment = genericEnvironment;
+      auto *savedEvaluationFunction = current;
+      auto savedUnsafeDepth = unsafeDepth;
+      genericEnvironment = &environment;
+      current = nullptr;
+      unsafeDepth = 0;
+      const auto *initializer = constant.initializer
+                                    ? constant.initializer->syntax.get()
+                                    : constant.declaration->constantValue.get();
+      if (initializer)
+        qualifyDottedPaths(const_cast<Node &>(*initializer));
+      const auto concreteType =
+          checked.types->substitute(constant.declaredType, bindings);
+      if (initializer)
+        instance.materialized =
+            evaluatedStatic(*initializer, concreteType, bindings);
+      else
+        error("type", constant.declaration->span,
+              "associated constant requires a definition");
+      auto supported = [&](auto &&self, const StaticConstant &value) -> bool {
+        if (value.kind == StaticConstant::Kind::Scalar)
+          return value.type == Type::Unit || isNumeric(value.type) ||
+                 value.type == Type::Bool || value.type == Type::Char;
+        if (value.kind != StaticConstant::Kind::Aggregate &&
+            value.kind != StaticConstant::Kind::Repeat)
+          return false;
+        if (!checked.types->isProduct(value.type))
+          return false;
+        const auto &record = checked.types->product(value.type);
+        if (record.layout.unionType || (!checked.types->isSum(value.type) &&
+                                        record.kind != AggregateKind::Product &&
+                                        record.kind != AggregateKind::Tuple &&
+                                        record.kind != AggregateKind::Array))
+          return false;
+        return std::all_of(
+            value.fields.begin(), value.fields.end(),
+            [&](const auto &field) { return self(self, field); });
+      };
+      if (instance.materialized &&
+          !supported(supported, *instance.materialized)) {
+        error("feature", constant.declaration->span,
+              "associated constant payload cannot yet be freshly materialized");
+        instance.materialized.reset();
+      }
+      instance.state = 2;
+      genericEnvironment = savedEvaluationEnvironment;
+      current = savedEvaluationFunction;
+      unsafeDepth = savedUnsafeDepth;
+    }
+    if (instance.materialized && use)
+      facts(*use).constantValue = instance.materialized;
+    return std::nullopt;
+  }
+
   if (constant.state == 1) {
     error("constant", constant.declaration->span,
           "cycle in associated constant definition");

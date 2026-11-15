@@ -8,5 +8,7 @@ pub module condition
 pub module barrier
 pub module once
 pub module once_lock
+pub module lazy_lock
 pub module mpsc
 pub module tls
+module fmt

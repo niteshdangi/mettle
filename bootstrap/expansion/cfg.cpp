@@ -29,8 +29,8 @@ public:
     if (!attribute.parenthesized || attribute.arguments.empty())
       return fail(attribute.span, "cfg requires one predicate");
     auto value = predicate();
-    if (position < attribute.arguments.size() && !failed)
-      fail(attribute.arguments[position].span,
+    if (peek() && !failed)
+      fail(here(),
            "unexpected tokens after the cfg predicate; combine predicates "
            "with all(...) or any(...)");
     return !failed && value;
@@ -43,22 +43,41 @@ private:
   std::size_t position = 0;
   bool failed = false;
 
+  bool trivia(TokenKind kind) const {
+    return kind == TokenKind::Space || kind == TokenKind::Newline ||
+           kind == TokenKind::Comment;
+  }
+  void skipTrivia() {
+    while (position < attribute.arguments.size() &&
+           trivia(attribute.arguments[position].kind))
+      ++position;
+  }
   bool fail(Span span, std::string message) {
     if (!failed)
       diagnostics.error("attribute", span, std::move(message));
     failed = true;
     return false;
   }
-  const Token *peek(std::size_t look = 0) const {
-    return position + look < attribute.arguments.size()
-               ? &attribute.arguments[position + look]
-               : nullptr;
+  const Token *peek(std::size_t look = 0) {
+    skipTrivia();
+    auto index = position;
+    while (look) {
+      if (index >= attribute.arguments.size())
+        return nullptr;
+      ++index;
+      while (index < attribute.arguments.size() &&
+             trivia(attribute.arguments[index].kind))
+        ++index;
+      --look;
+    }
+    return index < attribute.arguments.size() ? &attribute.arguments[index]
+                                              : nullptr;
   }
-  bool symbol(const char *text, std::size_t look = 0) const {
+  bool symbol(const char *text, std::size_t look = 0) {
     auto token = peek(look);
     return token && token->kind == TokenKind::Symbol && token->text == text;
   }
-  Span here() const {
+  Span here() {
     const auto *token = peek();
     return token != nullptr ? token->span : attribute.span;
   }
@@ -73,18 +92,25 @@ private:
       return false;
     }
     auto token = peek();
-    if (!token || token->kind != TokenKind::Word)
+    if (!token || token->kind != TokenKind::Word) {
       return fail(here(), "expected a cfg predicate");
+    }
     auto name = token->text;
     auto span = token->span;
     if (name == "true" || name == "false") {
       ++position;
       return name == "true";
     }
+    if (name == "debug_assertions") {
+      ++position;
+      return configuration.debugAssertions;
+    }
     if (symbol("(", 1)) {
       if (name != "all" && name != "any" && name != "not")
         return fail(span, "unknown cfg predicate '" + name + "'");
-      position += 2;
+      ++position;
+      peek();
+      ++position;
       std::vector<bool> operands;
       while (!symbol(")")) {
         if (failed || !peek())

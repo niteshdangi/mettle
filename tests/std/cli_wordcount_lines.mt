@@ -45,7 +45,7 @@ fn count(read input: PathInput, read report: PathInput): Unit throws io.Error {
 }
 
 fn main(): i32 {
-    let args = env.args()
+    let args = env.args_os()
     if args.len() != 3 {
         io.eprint("usage: wordcount INPUT REPORT\n")
         return 2

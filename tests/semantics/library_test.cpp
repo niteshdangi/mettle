@@ -79,6 +79,11 @@ pub module core {
     pub interface Value { fn get(): i32; }
     extend Number implements Value { fn get(): i32 { 5 } }
     pub interface Cursor { type Item; mut fn next(): Self.Item?; }
+    pub type GenericOwner<T> { value: T }
+    pub type Payload { value: i32 }
+    extend<T> GenericOwner<T> {
+        pub const CACHED: Payload = Payload(1)
+    }
     pub type Borrowed<region r> { value: read i32 from r }
     extend<region r> Borrowed<region r> implements Cursor {
         type Item = i32
@@ -476,7 +481,7 @@ fn main(): i32 {
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
       sizeof(std::uint64_t) +
-      std::string_view("mettle.checked-contracts.7").size();
+      std::string_view("mettle.checked-contracts.9").size();
   std::fill_n(oversized.begin() + inventoryOffset, sizeof(std::uint64_t), 0xff);
   expect(!importLibraryDeclarations(oversized, types, decode),
          "oversized function inventories fail before allocation");
@@ -549,6 +554,36 @@ fn main(): i32 {
       errors(nonConstDiagnostics);
     expect(rejectsNonConst,
            "imported interface dispatch rejects non-const implementations");
+  }
+  {
+    Source source{"overlap.mt", "interface Marker {}\n"
+                                "extend i32 implements Marker {}\n"
+                                "extend i32 implements Marker {}\n"
+                                "fn main(): i32 { 0 }\n"};
+    Diagnostics diagnostics;
+    auto tree = parse(source, diagnostics);
+    auto checked = check(std::move(tree), diagnostics);
+    auto first = source.text.find("extend");
+    auto second = source.text.find("extend", first + 1);
+    bool bothSpans = diagnostics.items.size() == 1;
+    if (bothSpans) {
+      const auto &error = diagnostics.items.front();
+      bothSpans =
+          error.phase == "type" &&
+          error.message ==
+              "overlapping implementations cannot be selected by order" &&
+          error.related.size() == 1;
+      if (bothSpans) {
+        const auto &note = error.related.front();
+        bothSpans =
+            note.kind == "note" && note.span &&
+            note.message == "conflicting implementation is declared here" &&
+            ((error.span.begin == first && note.span->begin == second) ||
+             (error.span.begin == second && note.span->begin == first));
+      }
+    }
+    expect(!checked && bothSpans,
+           "genuine overlap identifies both implementation spans");
   }
   std::cout << failures << " failures\n";
   return failures ? 1 : 0;

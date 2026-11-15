@@ -1,58 +1,174 @@
-// Operating-system strings: arbitrary bytes (never required to be Unicode)
-// that round-trip losslessly. `OsStr` is the unsized view, `OsString` the
-// owner. Interior NUL bytes are representable here and rejected only where a
-// C string is required (`cstring`).
+// Operating-system strings preserve native bytes on Unix/WASI and use WTF-8 on
+// Windows. `OsStr` is the unsized view, `OsString` the owner. Interior NUL bytes
+// are representable here and rejected only where a C string is required.
 import alloc.vec
 import alloc.vec.List
 import alloc.boxed.Heap
 import alloc.arc.Shared
 import alloc.rc.LocalShared
 import alloc.borrow.BorrowedOrOwned
-import alloc.alloc.AllocError
+import alloc.collections.TryReserveError
 import alloc.string.String
 import alloc.string.FromUtf8Error
 import core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
+import core.fmt
 import core.clone.Clone
 import core.default.Default
 import core.convert.{From, TryFrom}
 import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import core.fmt
 import core.iter.{ExtendItems, FromItems, Iterator, OwnedIterable}
 import core.hash.{Hash, Hasher}
 import core.ops.Deref
+import core.slice
 import core.text.{FromStr, Text}
 import super.io
 import super.io.ErrorKind
-pub import core.ffi.{CStr, FromBytesWithNulError, FromBytesUntilNulError}
+pub import core.ffi.{
+    CStr, FromBytesWithNulError, FromBytesUntilNulError, c_char, c_schar,
+    c_uchar, c_short, c_ushort, c_int, c_uint, c_long, c_ulong, c_longlong,
+    c_ulonglong, c_float, c_double, c_void
+}
 pub import alloc.ffi.{CString, NulError, FromVecWithNulError, IntoStringError}
 
 pub type OsStr { bytes: [u8] }
 pub type Display<region r> { value: read OsStr from r }
 static EMPTY_OS_BYTES: [u8; 0] = []
 
-extend<region r> Display<region r> implements fmt.Display {
+@cfg(target_os = "windows")
+pub parent fn decode_wtf8(read bytes: [u8], start: usize): (u32, usize) {
+    if start >= bytes.len() { core.panic.panic("WTF-8 decode index out of bounds") }
+    let first = bytes[start]
+    if first < 0x80u8 { return (first as u32, start + 1usize) }
+
+    if first >= 0xc2u8 && first <= 0xdfu8 {
+        if bytes.len() - start < 2usize { core.panic.panic("invalid WTF-8") }
+        let second = bytes[start + 1usize]
+        if second < 0x80u8 || second > 0xbfu8 { core.panic.panic("invalid WTF-8") }
+        return (
+            (((first & 0x1fu8) as u32) << 6u32) | ((second & 0x3fu8) as u32),
+            start + 2usize
+        )
+    }
+
+    if first >= 0xe0u8 && first <= 0xefu8 {
+        if bytes.len() - start < 3usize { core.panic.panic("invalid WTF-8") }
+        let second = bytes[start + 1usize]
+        let third = bytes[start + 2usize]
+        let second_ok = second >= 0x80u8 && second <= 0xbfu8 &&
+            (first != 0xe0u8 || second >= 0xa0u8)
+        if !second_ok || third < 0x80u8 || third > 0xbfu8 {
+            core.panic.panic("invalid WTF-8")
+        }
+        return (
+            (((first & 0x0fu8) as u32) << 12u32) |
+                (((second & 0x3fu8) as u32) << 6u32) |
+                ((third & 0x3fu8) as u32),
+            start + 3usize
+        )
+    }
+
+    if first >= 0xf0u8 && first <= 0xf4u8 {
+        if bytes.len() - start < 4usize { core.panic.panic("invalid WTF-8") }
+        let second = bytes[start + 1usize]
+        let third = bytes[start + 2usize]
+        let fourth = bytes[start + 3usize]
+        let second_ok = second >= 0x80u8 && second <= 0xbfu8 &&
+            (first != 0xf0u8 || second >= 0x90u8) &&
+            (first != 0xf4u8 || second <= 0x8fu8)
+        if !second_ok || third < 0x80u8 || third > 0xbfu8 ||
+            fourth < 0x80u8 || fourth > 0xbfu8 {
+            core.panic.panic("invalid WTF-8")
+        }
+        return (
+            (((first & 0x07u8) as u32) << 18u32) |
+                (((second & 0x3fu8) as u32) << 12u32) |
+                (((third & 0x3fu8) as u32) << 6u32) |
+                ((fourth & 0x3fu8) as u32),
+            start + 4usize
+        )
+    }
+    core.panic.panic("invalid WTF-8")
+}
+
+@cfg(target_os = "windows")
+pub parent fn validate_os_bytes(read bytes: [u8]): Unit {
+    var index = 0usize
+    var previous_high_surrogate = false
+    while index < bytes.len() {
+        let (value, next) = decode_wtf8(bytes, index)
+        let high_surrogate = value >= 0xd800u32 && value <= 0xdbffu32
+        let low_surrogate = value >= 0xdc00u32 && value <= 0xdfffu32
+        if previous_high_surrogate && low_surrogate {
+            core.panic.panic("noncanonical WTF-8 surrogate pair")
+        }
+        previous_high_surrogate = high_surrogate
+        index = next
+    }
+}
+extend<region r> Display<region r> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
-        let text = self.value.to_string_lossy()
-        try Text.(fmt.Display).fmt(text.as_ref(), mut f)
+        var tuple = try f.debug_tuple("Display")
+        try tuple.field(read self.value)
+        try tuple.finish()
     }
 }
 
-// Any byte sequence is a valid OS string.
-pub fn os_str(read bytes: [u8]): read OsStr from bytes {
+@cfg(not(target_os = "windows"))
+pub parent fn validate_os_bytes(read bytes: [u8]): Unit {}
+
+@cfg(target_os = "windows")
+pub parent fn encode_wtf8_scalar(value: u32, mut out: [u8; 4]): usize {
+    if value < 0x80u32 {
+        out[0usize] = value as u8
+        return 1usize
+    }
+    if value < 0x800u32 {
+        out[0usize] = (0xc0u32 | (value >> 6u32)) as u8
+        out[1usize] = (0x80u32 | (value & 0x3fu32)) as u8
+        return 2usize
+    }
+    if value < 0x10000u32 {
+        out[0usize] = (0xe0u32 | (value >> 12u32)) as u8
+        out[1usize] = (0x80u32 | ((value >> 6u32) & 0x3fu32)) as u8
+        out[2usize] = (0x80u32 | (value & 0x3fu32)) as u8
+        return 3usize
+    }
+    if value <= 0x10ffffu32 {
+        out[0usize] = (0xf0u32 | (value >> 18u32)) as u8
+        out[1usize] = (0x80u32 | ((value >> 12u32) & 0x3fu32)) as u8
+        out[2usize] = (0x80u32 | ((value >> 6u32) & 0x3fu32)) as u8
+        out[3usize] = (0x80u32 | (value & 0x3fu32)) as u8
+        return 4usize
+    }
+    core.panic.panic("invalid Unicode scalar")
+}
+
+pub parent fn os_str_unchecked(read bytes: [u8]): read OsStr from bytes {
     let fat = core.ptr.from_ref(bytes)
     let view = unsafe { core.mem.transmute<ptr<read OsStr>>(fat) }
     unsafe { read *view }
 }
 
-pub fn os_str_mut(mut bytes: [u8]): mut OsStr from bytes {
+pub fn os_str(read bytes: [u8]): read OsStr from bytes {
+    validate_os_bytes(bytes)
+    os_str_unchecked(bytes)
+}
+
+pub parent fn os_str_mut_unchecked(mut bytes: [u8]): mut OsStr from bytes {
     let fat = core.ptr.from_mut(bytes)
     let view = unsafe { core.mem.transmute<ptr<mut OsStr>>(fat) }
     unsafe { mut *view }
 }
 
-pub fn os_str_from_text(read text: Text): read OsStr from text { os_str(text.as_bytes()) }
+pub fn os_str_mut(mut bytes: [u8]): mut OsStr from bytes {
+    validate_os_bytes(bytes)
+    os_str_mut_unchecked(bytes)
+}
+
+pub fn os_str_from_text(read text: Text): read OsStr from text { os_str_unchecked(text.as_bytes()) }
 pub fn os_str_from_encoded_bytes_unchecked(read bytes: [u8]): read OsStr from bytes {
-    os_str(bytes)
+    validate_os_bytes(bytes)
+    os_str_unchecked(bytes)
 }
 
 pub fn lossy(read bytes: [u8]): String {
@@ -67,7 +183,10 @@ fn lossy_view<region r>(read bytes: [u8] from r): BorrowedOrOwned<region r, Text
 }
 
 extend OsStr {
-    pub static fn new(read bytes: [u8]): read OsStr from bytes { os_str(bytes) }
+    pub static fn new(read bytes: [u8]): read OsStr from bytes {
+        validate_os_bytes(bytes)
+        os_str_unchecked(bytes)
+    }
     pub static fn from_encoded_bytes_unchecked(read bytes: [u8]): read OsStr from bytes {
         os_str_from_encoded_bytes_unchecked(bytes)
     }
@@ -164,10 +283,12 @@ pub fn os_string_with_capacity(capacity: usize): OsString {
     OsString(vec.with_capacity<u8>(capacity))
 }
 pub fn os_string_from_encoded_bytes_unchecked(take bytes: List<u8>): OsString {
+    validate_os_bytes(bytes.as_slice())
     OsString(bytes)
 }
 
 pub fn os_string_from_bytes(read bytes: [u8]): OsString {
+    validate_os_bytes(bytes)
     var v = vec.with_capacity<u8>(bytes.len())
     v.extend_from_slice(bytes)
     OsString(v)
@@ -175,7 +296,39 @@ pub fn os_string_from_bytes(read bytes: [u8]): OsString {
 
 pub fn os_string_from_text(read text: Text): OsString { os_string_from_bytes(text.as_bytes()) }
 
-pub fn os_string_from_vec(take bytes: List<u8>): OsString { OsString(bytes) }
+pub fn os_string_from_vec(take bytes: List<u8>): OsString {
+    validate_os_bytes(bytes.as_slice())
+    OsString(bytes)
+}
+
+@cfg(target_os = "windows")
+fn append_os_bytes(mut value: OsString, read bytes: [u8]): Unit {
+    validate_os_bytes(bytes)
+    if value.v.len() >= 3usize && bytes.len() >= 3usize {
+        let tail = value.v.len() - 3usize
+        if value.v[tail] == 0xedu8 &&
+            value.v[tail + 1usize] >= 0xa0u8 && value.v[tail + 1usize] <= 0xafu8 &&
+            bytes[0usize] == 0xedu8 &&
+            bytes[1usize] >= 0xb0u8 && bytes[1usize] <= 0xbfu8 {
+            let (high, _) = decode_wtf8(value.v.as_slice(), tail)
+            let (low, next) = decode_wtf8(bytes, 0usize)
+            let scalar = 0x10000u32 + ((high - 0xd800u32) << 10u32) +
+                (low - 0xdc00u32)
+            value.v.truncate(tail)
+            var encoded: [u8; 4] = [0u8, 0u8, 0u8, 0u8]
+            let width = encode_wtf8_scalar(scalar, mut encoded)
+            value.v.extend_from_slice(slice.subslice(encoded.as_slice(), 0usize, width).or_panic())
+            value.v.extend_from_slice(slice.subslice(bytes, next, bytes.len()).or_panic())
+            return
+        }
+    }
+    value.v.extend_from_slice(bytes)
+}
+
+@cfg(not(target_os = "windows"))
+fn append_os_bytes(mut value: OsString, read bytes: [u8]): Unit {
+    value.v.extend_from_slice(bytes)
+}
 
 extend OsString {
     pub static fn new(): OsString { new_os_string() }
@@ -183,8 +336,8 @@ extend OsString {
     pub static fn from_encoded_bytes_unchecked(take bytes: List<u8>): OsString {
         os_string_from_encoded_bytes_unchecked(take bytes)
     }
-    pub fn as_os_str(): read OsStr from self { os_str(self.v.as_slice()) }
-    pub mut fn as_mut_os_str(): mut OsStr from self { os_str_mut(self.v.as_mut_slice()) }
+    pub fn as_os_str(): read OsStr from self { os_str_unchecked(self.v.as_slice()) }
+    pub mut fn as_mut_os_str(): mut OsStr from self { os_str_mut_unchecked(self.v.as_mut_slice()) }
     pub fn as_bytes(): read [u8] from self { self.v.as_slice() }
     pub fn as_encoded_bytes(): read [u8] from self { self.v.as_slice() }
     pub fn capacity(): usize { self.v.capacity() }
@@ -202,13 +355,17 @@ extend OsString {
     pub fn eq_ignore_ascii_case(read other: OsString): bool {
         self.as_os_str().eq_ignore_ascii_case(other.as_os_str())
     }
-    pub mut fn push_bytes(read bytes: [u8]): Unit { self.v.extend_from_slice(bytes) }
-    pub mut fn push(read s: OsStr): Unit { self.v.extend_from_slice(s.as_bytes()) }
+    pub mut fn push_bytes(read bytes: [u8]): Unit {
+        append_os_bytes(mut self, bytes)
+    }
+    pub mut fn push(read s: OsStr): Unit {
+        append_os_bytes(mut self, s.as_bytes())
+    }
     pub mut fn clear(): Unit { self.v.clear() }
     pub mut fn reserve(extra: usize): Unit { self.v.reserve(extra) }
     pub mut fn reserve_exact(extra: usize): Unit { self.v.reserve_exact(extra) }
-    pub mut fn try_reserve(extra: usize): Unit throws AllocError { try self.v.try_reserve(extra) }
-    pub mut fn try_reserve_exact(extra: usize): Unit throws AllocError {
+    pub mut fn try_reserve(extra: usize): Unit throws TryReserveError { try self.v.try_reserve(extra) }
+    pub mut fn try_reserve_exact(extra: usize): Unit throws TryReserveError {
         try self.v.try_reserve_exact(extra)
     }
     pub mut fn shrink_to_fit(): Unit { self.v.shrink_to_fit() }
@@ -271,7 +428,7 @@ pub fn cstring(read bytes: [u8]): List<u8> throws io.Error {
 
 // Value types duplicate by copy; owners clone their buffers.
 extend OsString implements Clone {
-    fn clone(): OsString { OsString(self.v.clone()) }
+    fn clone(): OsString { OsString(List<u8>.(Clone).clone(self.v)) }
 }
 
 extend<region r> OsString implements Borrow<OsStr> {
@@ -282,9 +439,8 @@ extend<region r> OsString implements AsRef<OsStr> {
     fn as_ref(): read OsStr from self { self.as_os_str() }
 }
 
-// A borrowed owner converts like the owner, so iterators over `read OsString` feed `AsRef<OsStr>` APIs.
-extend<region r> read OsString from r implements AsRef<OsStr> {
-    fn as_ref(): read OsStr from self { self.as_os_str() }
+extend OsStr implements AsRef<OsStr> {
+    fn as_ref(): read OsStr from self { read self }
 }
 
 extend OsStr implements OwnedType {
@@ -307,23 +463,9 @@ extend OsStr implements Ord {
     fn cmp(read other: OsStr): Ordering { self.as_bytes().cmp(other.as_bytes()) }
 }
 
-extend<region r, region s> read OsStr from r implements PartialEq<read OsStr from s> {
-    fn eq(read other: read OsStr from s): bool {
-        bytes_equal(self.as_bytes(), other.as_bytes())
-    }
-}
-
 extend<region r, region s> read OsStr from r implements PartialEq<read Text from s> {
     fn eq(read other: read Text from s): bool {
         bytes_equal(self.as_bytes(), other.as_bytes())
-    }
-}
-
-extend<region r> read OsStr from r implements Eq {}
-
-extend<region r, region s> read OsStr from r implements PartialOrd<read OsStr from s> {
-    fn partial_cmp(read other: read OsStr from s): Ordering? {
-        present(self.as_bytes().cmp(other.as_bytes()))
     }
 }
 
@@ -333,18 +475,12 @@ extend<region r, region s> read OsStr from r implements PartialOrd<read Text fro
     }
 }
 
-extend<region r> read OsStr from r implements Ord {
-    fn cmp(read other: read OsStr from r): Ordering {
-        self.as_bytes().cmp(other.as_bytes())
-    }
-}
-
 extend OsStr implements Hash {
     fn hash<H: Hasher>(mut state: H): Unit { self.as_bytes().hash(mut state) }
 }
 
 extend<region r> read OsStr from r implements Default {
-    static fn default(): read OsStr from r { os_str(EMPTY_OS_BYTES) }
+    static     fn default(): read OsStr from r { os_str_unchecked(EMPTY_OS_BYTES) }
 }
 
 extend OsString implements PartialEq {
@@ -353,6 +489,25 @@ extend OsString implements PartialEq {
 
 extend<region r> OsString implements PartialEq<read Text from r> {
     fn eq(read other: read Text from r): bool {
+        bytes_equal(self.as_bytes(), other.as_bytes())
+    }
+}
+
+extend<region r> read Text from r implements PartialEq<OsString> {
+    fn eq(read other: OsString): bool {
+        bytes_equal(self.as_bytes(), other.as_bytes())
+    }
+}
+
+extend<region r> read Text from r implements PartialEq<OsStr> {
+    fn eq(read other: OsStr): bool {
+        bytes_equal(self.as_bytes(), other.as_bytes())
+    }
+}
+
+extend<region r, region s> read Text from r
+    implements PartialEq<read OsStr from s> {
+    fn eq(read other: read OsStr from s): bool {
         bytes_equal(self.as_bytes(), other.as_bytes())
     }
 }
@@ -432,7 +587,7 @@ extend OsString implements ExtendItems<OsString> {
         var source = items.into_iter()
         while true {
             match take source.next() {
-                present(item) => self.v.extend(item.into_bytes()),
+                present(item) => self.push(item.as_os_str()),
                 none => { break }
             }
         }
@@ -532,11 +687,11 @@ extend<region r> read Text from r implements TryFrom<read OsStr from r> {
 }
 
 extend Text implements AsRef<OsStr> {
-    fn as_ref(): read OsStr from self { os_str(self.as_bytes()) }
+    fn as_ref(): read OsStr from self { os_str_unchecked(self.as_bytes()) }
 }
 
 extend String implements AsRef<OsStr> {
-    fn as_ref(): read OsStr from self { os_str(self.as_bytes()) }
+    fn as_ref(): read OsStr from self { os_str_unchecked(self.as_bytes()) }
 }
 
 extend<region r, T: AsRef<OsStr> + unsized> OsString implements core.convert.From<read T from r> {
@@ -568,6 +723,13 @@ extend Shared<OsStr> implements From<OsString> {
 extend Heap<OsStr> implements From<OsString> {
     static fn from(take value: OsString): Heap<OsStr> {
         value.into_heap_os_str()
+    }
+}
+extend Heap<OsStr> implements core.default.Default {
+    static fn default(): Heap<OsStr> {
+        Heap<OsStr>.(core.convert.From<OsString>).from(
+            OsString.(core.default.Default).default()
+        )
     }
 }
 extend<region r> Heap<OsStr> implements From<read OsStr from r> {
@@ -619,7 +781,7 @@ extend<region r> OsString implements core.convert.From<BorrowedOrOwned<region r,
 
 extend OsString implements core.convert.From<CString> {
     static fn from(take value: CString): OsString {
-        OsString(value.into_bytes())
+        os_string_from_vec(value.into_bytes())
     }
 }
 
@@ -651,5 +813,38 @@ extend<region r, region s> read OsStr from r implements PartialEq<BorrowedOrOwne
 extend<region r, region s> read OsStr from r implements PartialOrd<BorrowedOrOwned<region s, OsStr>> {
     fn partial_cmp(read other: BorrowedOrOwned<region s, OsStr>): Ordering? {
         present(self.as_bytes().cmp(other.as_ref().as_bytes()))
+    }
+}
+
+extend<region r> BorrowedOrOwned<region r, OsStr> implements PartialEq<OsStr> {
+    fn eq(read other: OsStr): bool {
+        bytes_equal(self.as_ref().as_bytes(), other.as_bytes())
+    }
+}
+extend<region r, region s> BorrowedOrOwned<region r, OsStr>
+    implements PartialEq<read OsStr from s> {
+    fn eq(read other: read OsStr from s): bool {
+        bytes_equal(self.as_ref().as_bytes(), other.as_bytes())
+    }
+}
+extend<region r> BorrowedOrOwned<region r, OsStr> implements PartialEq<OsString> {
+    fn eq(read other: OsString): bool {
+        bytes_equal(self.as_ref().as_bytes(), other.as_bytes())
+    }
+}
+extend<region r> BorrowedOrOwned<region r, OsStr> implements PartialOrd<OsStr> {
+    fn partial_cmp(read other: OsStr): Ordering? {
+        present(self.as_ref().as_bytes().cmp(other.as_bytes()))
+    }
+}
+extend<region r, region s> BorrowedOrOwned<region r, OsStr>
+    implements PartialOrd<read OsStr from s> {
+    fn partial_cmp(read other: read OsStr from s): Ordering? {
+        present(self.as_ref().as_bytes().cmp(other.as_bytes()))
+    }
+}
+extend<region r> BorrowedOrOwned<region r, OsStr> implements PartialOrd<OsString> {
+    fn partial_cmp(read other: OsString): Ordering? {
+        present(self.as_ref().as_bytes().cmp(other.as_bytes()))
     }
 }

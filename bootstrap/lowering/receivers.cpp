@@ -41,6 +41,21 @@ Place Builder::receiverSource(const Node &node, bool extend) {
 Place Builder::receiverPlace(Place source, const ReceiverPlan &plan,
                              Span span) {
   for (const auto &step : plan.steps) {
+    if (step.kind == ReceiverStep::Kind::Borrow) {
+      auto value =
+          emit({step.mode == ParameterMode::Mut ? Op::ViewMut : Op::ViewRead,
+                {},
+                {},
+                {},
+                "",
+                source,
+                -1,
+                0,
+                span},
+               step.target);
+      source = materialize(value, span, temporaryScope);
+      continue;
+    }
     if (step.kind == ReceiverStep::Kind::Native) {
       source.fields.push_back(Projection::dereference());
       source = capturePlace(std::move(source));

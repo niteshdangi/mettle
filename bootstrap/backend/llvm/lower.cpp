@@ -15,6 +15,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/TargetParser/Triple.h"
 #include <algorithm>
+#include <array>
 #include <map>
 #include <optional>
 #include <set>
@@ -59,7 +60,8 @@ public:
   Lowerer(const ir::Program &program, llvm::LLVMContext &context,
           llvm::StringRef target, bool freestanding,
           const DebugInfoRequest *debug, bool sanitizeAddress,
-          bool sanitizeThread, CodegenPartition partition)
+          bool sanitizeThread, CodegenPartition partition,
+          const DebugInfoRequest *sourceInfo)
       : program(program), context(context), partition(std::move(partition)),
         module(std::make_unique<llvm::Module>("mettle", context)),
         builder(context),
@@ -71,6 +73,7 @@ public:
                                 .isAArch64()) {
     this->sanitizeAddress = sanitizeAddress;
     this->sanitizeThread = sanitizeThread;
+    this->sourceInfo = sourceInfo ? sourceInfo : debug;
     const auto triple = target.empty() ? defaultTargetTriple() : target.str();
     auto layout = targetDataLayout(triple);
     if (!layout)
@@ -161,6 +164,8 @@ public:
                                  ? builder.getPtrTy()
                                  : type(f.locals[i].type));
       if (f.variadicCursor >= 0)
+        parameters.push_back(builder.getPtrTy());
+      if (f.trackCaller)
         parameters.push_back(builder.getPtrTy());
       if (lowering.indirect(f.result))
         parameters.push_back(builder.getPtrTy());
@@ -295,7 +300,10 @@ public:
         auto saved = builder.saveIP();
         builder.SetInsertPoint(
             llvm::BasicBlock::Create(context, "entry", callback));
-        auto *result = builder.CreateCall(functions[i]);
+        std::vector<llvm::Value *> arguments;
+        if (program.functions[i].trackCaller)
+          arguments.push_back(callerSite(program.functions[i].span));
+        auto *result = builder.CreateCall(functions[i], arguments);
         builder.CreateStore(result, callback->getArg(0));
         builder.CreateRetVoid();
         builder.restoreIP(saved);
@@ -333,6 +341,7 @@ private:
   std::map<std::tuple<int, Type, Type>, llvm::Function *> pinnedWitnessThunks;
   std::map<std::string, llvm::GlobalVariable *> textLiterals;
   std::unique_ptr<DebugInfo> debugInfo;
+  const DebugInfoRequest *sourceInfo = nullptr;
   std::map<Type, int> coroutineStates;
   std::map<int, std::unique_ptr<CleanupFrame>> coroutineFrames;
   std::set<int> buildingFrames;
@@ -461,7 +470,41 @@ private:
     }
     return global;
   }
+  std::array<llvm::Value *, 4> panicLocation(Span span) {
+    std::array<llvm::Value *, 4> location{
+        llvm::ConstantPointerNull::get(builder.getPtrTy()), builder.getInt64(0),
+        builder.getInt64(0), builder.getInt64(0)};
+    if (!sourceInfo || span == Span{})
+      return location;
+    if (sourceInfo->sourceSpan)
+      span = sourceInfo->sourceSpan(span);
+    auto found = std::find_if(
+        sourceInfo->sources.begin(), sourceInfo->sources.end(),
+        [&](const Source &source) { return source.id == span.source; });
+    if (found == sourceInfo->sources.end() || found->path.empty() ||
+        span.begin > found->text.size())
+      return location;
+    auto position = sourcePosition(*found, span.begin);
+    return {textGlobal(found->path), builder.getInt64(found->path.size()),
+            builder.getInt64(position.line), builder.getInt64(position.column)};
+  }
+  llvm::GlobalVariable *typeIdentityGlobal(const std::string &identity) {
+    const auto symbol = "mettle.type_id." + identity;
+    auto *global = module->getNamedGlobal(symbol);
+    if (!global) {
+      global = new llvm::GlobalVariable(*module, builder.getInt8Ty(), true,
+                                        llvm::GlobalValue::LinkOnceODRLinkage,
+                                        builder.getInt8(0), symbol);
+      global->setVisibility(llvm::GlobalValue::HiddenVisibility);
+      if (!module->getTargetTriple().isOSBinFormatMachO())
+        global->setComdat(module->getOrInsertComdat(symbol));
+    }
+    return global;
+  }
   llvm::Constant *staticConstant(const StaticConstant &value) {
+    if (value.kind == StaticConstant::Kind::TypeIdentity)
+      return llvm::ConstantExpr::getPtrToInt(typeIdentityGlobal(value.text),
+                                             builder.getInt64Ty());
     if (value.kind == StaticConstant::Kind::Pointer) {
       auto *integer =
           llvm::ConstantInt::get(module->getDataLayout().getIntPtrType(context),
@@ -489,7 +532,9 @@ private:
     }
     if (value.kind == StaticConstant::Kind::Function)
       return externals.at(value.symbol) ? externals[value.symbol]
-                                        : functions.at(value.symbol);
+             : program.functions[value.symbol].trackCaller
+                 ? callerShim(value.symbol)
+                 : functions.at(value.symbol);
     if (value.kind == StaticConstant::Kind::Address) {
       auto type = program.statics.at(value.symbol).type;
       std::uint64_t offset = value.byteOffset;
@@ -643,6 +688,69 @@ private:
 
   // Set while lowering a large result that the next store would only copy.
   llvm::Value *resultDestination = nullptr;
+  CleanupFrame *callerFrame = nullptr;
+  bool trackingCaller = false;
+  std::map<int, llvm::Function *> callerShims;
+  std::map<llvm::Constant *, llvm::GlobalVariable *> callerSites;
+
+  llvm::StructType *callerType() {
+    return llvm::StructType::get(context,
+                                 {builder.getPtrTy(), builder.getInt64Ty(),
+                                  builder.getInt64Ty(), builder.getInt64Ty()});
+  }
+  llvm::Constant *callerSite(Span span) {
+    auto location = panicLocation(span);
+    std::vector<llvm::Constant *> fields;
+    for (auto *value : location)
+      fields.push_back(llvm::cast<llvm::Constant>(value));
+    auto *initializer = llvm::ConstantStruct::get(callerType(), fields);
+    auto &global = callerSites[initializer];
+    if (!global) {
+      global = new llvm::GlobalVariable(
+          *module, callerType(), true, llvm::GlobalValue::PrivateLinkage,
+          initializer, "mettle.caller.location");
+      global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
+    }
+    return global;
+  }
+  llvm::Value *callerArgument(Span span) {
+    return trackingCaller ? callerFrame->callerLocation() : callerSite(span);
+  }
+  llvm::Function *callerShim(int index) {
+    if (auto found = callerShims.find(index); found != callerShims.end())
+      return found->second;
+    const auto &source = program.functions[index];
+    auto *physical = functions[index]->getFunctionType();
+    std::vector<llvm::Type *> parameters(physical->param_begin(),
+                                         physical->param_end());
+    parameters.erase(parameters.begin() + source.parameters);
+    auto *shim = llvm::Function::Create(
+        llvm::FunctionType::get(physical->getReturnType(), parameters, false),
+        llvm::GlobalValue::LinkOnceODRLinkage,
+        "mettle.caller.shim." + displayPath(source.name), *module);
+    shim->setVisibility(llvm::GlobalValue::HiddenVisibility);
+    shim->setDSOLocal(true);
+    if (!module->getTargetTriple().isOSBinFormatMachO())
+      shim->setComdat(module->getOrInsertComdat(shim->getName()));
+    targetAttributes(*shim, program.target, source.targetFeatures);
+    callerShims.emplace(index, shim);
+    auto saved = builder.saveIP();
+    builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", shim));
+    std::vector<llvm::Value *> arguments;
+    for (auto &argument : shim->args())
+      arguments.push_back(&argument);
+    arguments.insert(arguments.begin() + source.parameters,
+                     callerSite(source.span));
+    auto *result = builder.CreateCall(functions[index], arguments);
+    if (source.result == Type::Never)
+      builder.CreateUnreachable();
+    else if (physical->getReturnType()->isVoidTy())
+      builder.CreateRetVoid();
+    else
+      builder.CreateRet(result);
+    builder.restoreIP(saved);
+    return shim;
+  }
   llvm::Type *type(Type t) { return lowering.type(t); }
   llvm::Type *resultType(Type t) { return lowering.resultType(t); }
   llvm::Value *unit() { return llvm::Constant::getNullValue(type(Type::Unit)); }
@@ -677,6 +785,12 @@ private:
     }
     auto index = instruction.callee;
     const auto &callee = program.functions[index];
+    std::vector<llvm::Value *> trackedArguments;
+    if (callee.trackCaller) {
+      trackedArguments.assign(arguments.begin(), arguments.end());
+      trackedArguments.push_back(callerArgument(instruction.span));
+      arguments = trackedArguments;
+    }
     if (!target)
       target = signatures[index] ? externals[index] : functions[index];
     auto invoke =
@@ -812,6 +926,8 @@ private:
     std::vector<llvm::Value *> arguments{pinned};
     for (std::size_t p = 1; p < contract.parameters.size(); ++p)
       arguments.push_back(thunk->getArg(static_cast<unsigned>(p)));
+    if (implementation.trackCaller)
+      arguments.push_back(callerSite(implementation.span));
     if (indirectResult)
       arguments.push_back(
           thunk->getArg(static_cast<unsigned>(contract.parameters.size())));
@@ -925,6 +1041,28 @@ private:
     emitPanic(code);
     builder.CreateUnreachable();
     builder.SetInsertPoint(next);
+  }
+  void emitPanicMessage(llvm::Value *data, llvm::Value *length, Span span) {
+    if (lowering.freestanding) {
+      builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
+          module.get(), llvm::Intrinsic::trap));
+      return;
+    }
+    auto function = lowering.runtime(
+        "mettle_rt_panic_message", builder.getVoidTy(),
+        {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy(),
+         builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt64Ty()});
+    llvm::cast<llvm::Function>(function.getCallee())
+        ->addFnAttr(llvm::Attribute::NoReturn);
+    auto location = panicLocation(span);
+    if (trackingCaller) {
+      auto *stored =
+          builder.CreateLoad(callerType(), callerFrame->callerLocation());
+      for (unsigned i = 0; i < location.size(); ++i)
+        location[i] = builder.CreateExtractValue(stored, i);
+    }
+    builder.CreateCall(function, {data, length, location[0], location[1],
+                                  location[2], location[3]});
   }
   llvm::Value *binary(const std::string &op, llvm::Value *a, llvm::Value *b,
                       Type operand) {
@@ -1522,12 +1660,22 @@ private:
         operation == "pin.into_inner_unchecked")
       return lowering.extract(arguments[0], argument, 0);
     if (operation == "storage.as_ptr" || operation == "storage.as_mut_ptr" ||
-        operation == "storage.get")
+        operation == "storage.get" || operation == "storage.raw_get" ||
+        operation == "storage.from_mut")
       return arguments[0];
     if (operation == "storage.take" || operation == "storage.assume_init_read")
       return lowering.load(
           instruction.result.type, arguments[0],
           llvm::Align(lowering.alignment(instruction.result.type)));
+    if (operation == "intrinsics.offset_of") {
+      std::uint64_t offset = 0;
+      auto owner = argument;
+      for (auto projection : instruction.place.fields) {
+        offset += lowering.layout(owner).fields[projection.index];
+        owner = program.types->product(owner).fields[projection.index].type;
+      }
+      return builder.getInt64(offset);
+    }
     if (operation == "size_of")
       return builder.getInt64(lowering.layout(argument).size);
     if (operation == "align_of")
@@ -1535,23 +1683,53 @@ private:
     if (operation == "needs_drop")
       return builder.getInt1(program.types->needsDrop(argument));
     if (operation == "type_id") {
-      // Exact identity: one link-once byte per structural identity (not the
-      // display name, which omits regions), named by that identity. Equal
-      // types in every package and partition resolve to one definition;
-      // distinct identities are distinct symbols and are never merged (no
-      // unnamed_addr), so identities cannot collide.
-      const auto symbol =
-          "mettle.type_id." + typeIdentity(*program.types, argument);
-      auto *global = module->getNamedGlobal(symbol);
-      if (!global) {
-        global = new llvm::GlobalVariable(*module, builder.getInt8Ty(), true,
-                                          llvm::GlobalValue::LinkOnceODRLinkage,
-                                          builder.getInt8(0), symbol);
-        global->setVisibility(llvm::GlobalValue::HiddenVisibility);
-        if (!module->getTargetTriple().isOSBinFormatMachO())
-          global->setComdat(module->getOrInsertComdat(symbol));
-      }
-      return builder.CreatePtrToInt(global, builder.getInt64Ty());
+      return builder.CreatePtrToInt(
+          typeIdentityGlobal(typeIdentity(*program.types, argument)),
+          builder.getInt64Ty());
+    }
+    if (operation == "intrinsics.type_name") {
+      const auto name = std::string(program.types->name(argument));
+      auto *global = textGlobal(name);
+      auto *integerType = module->getDataLayout().getIntPtrType(context);
+      auto *address = llvm::ConstantExpr::getGetElementPtr(
+          builder.getInt8Ty(), global, llvm::ConstantInt::get(integerType, 0));
+      auto *type =
+          llvm::cast<llvm::StructType>(lowering.type(instruction.result.type));
+      return llvm::ConstantStruct::get(
+          type, {address, llvm::ConstantInt::get(integerType, name.size())});
+    }
+    if (operation == "intrinsics.caller_location") {
+      auto *location = callerArgument(instruction.span);
+      auto *value = builder.CreateLoad(callerType(), location);
+      const auto &fields = program.types->product(argument).fields;
+      llvm::Value *file = llvm::UndefValue::get(type(fields[0].type));
+      file = builder.CreateInsertValue(file,
+                                       builder.CreateExtractValue(value, 0), 0);
+      file = builder.CreateInsertValue(file,
+                                       builder.CreateExtractValue(value, 1), 1);
+      return lowering.construct(argument,
+                                {file, builder.CreateExtractValue(value, 2),
+                                 builder.CreateExtractValue(value, 3)});
+    }
+    if (operation == "intrinsics.variant_ordinal")
+      return program.types->isSum(argument)
+                 ? builder.CreateZExtOrTrunc(
+                       lowering.enumTag(argument, arguments[0]),
+                       type(Type::Usize))
+                 : llvm::ConstantInt::get(
+                       llvm::cast<llvm::IntegerType>(type(Type::Usize)), 0);
+    if (operation == "intrinsics.fn_addr") {
+      auto *integerType = module->getDataLayout().getIntPtrType(context);
+      return builder.CreatePtrToInt(arguments[0], integerType);
+    }
+    if (operation == "ptr.fn_addr_eq")
+      return builder.CreateICmpEQ(arguments[0], arguments[1]);
+    if (operation == "ptr.slice_from_raw_parts" ||
+        operation == "ptr.slice_from_raw_parts_mut") {
+      llvm::Value *result =
+          llvm::UndefValue::get(type(instruction.result.type));
+      result = builder.CreateInsertValue(result, arguments[0], 0);
+      return builder.CreateInsertValue(result, arguments[1], 1);
     }
     if (operation == "mem.forget")
       return unit();
@@ -1569,12 +1747,79 @@ private:
           ->addFnAttr(llvm::Attribute::NoUnwind);
       return lowering.load(argument, storage, alignment);
     }
+    if (operation == "hint.spin_loop") {
+      const auto arch = module->getTargetTriple().getArch();
+      const char *assembly =
+          arch == llvm::Triple::x86 || arch == llvm::Triple::x86_64 ? "pause"
+          : arch == llvm::Triple::aarch64                           ? "yield"
+                                                                    : nullptr;
+      if (assembly) {
+        auto *hint = llvm::InlineAsm::get(
+            llvm::FunctionType::get(builder.getVoidTy(), false), assembly, "",
+            true);
+        builder.CreateCall(hint)->addFnAttr(llvm::Attribute::NoUnwind);
+      }
+      return unit();
+    }
+    if (operation == "hint.cold_path")
+      return unit();
+    if (operation == "hint.assert_unchecked") {
+      auto *assume = llvm::Intrinsic::getOrInsertDeclaration(
+          module.get(), llvm::Intrinsic::assume);
+      builder.CreateCall(assume, {arguments[0]});
+      return unit();
+    }
+    if (operation == "hint.select_unpredictable") {
+      if (argument == Type::Unit)
+        return unit();
+      auto *type = lowering.type(argument);
+      auto *unpredictable = llvm::MDNode::get(context, {});
+      auto metadataKind = context.getMDKindID("unpredictable");
+      if (!type->isAggregateType() && !program.types->isProduct(argument)) {
+        auto *selected =
+            builder.CreateSelect(arguments[0], arguments[1], arguments[2]);
+        if (auto *instruction = llvm::dyn_cast<llvm::Instruction>(selected))
+          instruction->setMetadata(metadataKind, unpredictable);
+        return selected;
+      }
+      auto *function = builder.GetInsertBlock()->getParent();
+      auto *whenTrue =
+          llvm::BasicBlock::Create(context, "hint.select.true", function);
+      auto *whenFalse =
+          llvm::BasicBlock::Create(context, "hint.select.false", function);
+      auto *merge =
+          llvm::BasicBlock::Create(context, "hint.select.merge", function);
+      auto *branch = builder.CreateCondBr(arguments[0], whenTrue, whenFalse);
+      branch->setMetadata(metadataKind, unpredictable);
+      builder.SetInsertPoint(whenTrue);
+      builder.CreateBr(merge);
+      builder.SetInsertPoint(whenFalse);
+      builder.CreateBr(merge);
+      builder.SetInsertPoint(merge);
+      auto *selected = builder.CreatePHI(type, 2);
+      selected->addIncoming(arguments[1], whenTrue);
+      selected->addIncoming(arguments[2], whenFalse);
+      return selected;
+    }
+    if (operation == "hint.unreachable_unchecked") {
+      builder.CreateUnreachable();
+      builder.SetInsertPoint(llvm::BasicBlock::Create(
+          context, "after.unreachable_unchecked",
+          builder.GetInsertBlock()->getParent()));
+      return unit();
+    }
     if (operation == "intrinsics.abort") {
       builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
           module.get(), llvm::Intrinsic::trap));
       return unit();
     }
     if (operation == "intrinsics.panic_message") {
+      emitPanicMessage(builder.CreateExtractValue(arguments[0], 0),
+                       builder.CreateExtractValue(arguments[0], 1),
+                       instruction.span);
+      return unit();
+    }
+    if (operation == "intrinsics.panic_fmt") {
       // The single runtime hook: hosted programs report the message and
       // unwind; freestanding programs have no sink and trap.
       if (lowering.freestanding) {
@@ -1582,14 +1827,21 @@ private:
             module.get(), llvm::Intrinsic::trap));
         return unit();
       }
-      auto function =
-          lowering.runtime("mettle_rt_panic_message", builder.getVoidTy(),
-                           {builder.getPtrTy(), builder.getInt64Ty()});
+      auto function = lowering.runtime(
+          "mettle_rt_panic_fmt", builder.getVoidTy(),
+          {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy(),
+           builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt64Ty()});
       llvm::cast<llvm::Function>(function.getCallee())
           ->addFnAttr(llvm::Attribute::NoReturn);
-      builder.CreateCall(function,
-                         {builder.CreateExtractValue(arguments[0], 0),
-                          builder.CreateExtractValue(arguments[0], 1)});
+      auto location = panicLocation(instruction.span);
+      if (trackingCaller) {
+        auto *stored =
+            builder.CreateLoad(callerType(), callerFrame->callerLocation());
+        for (unsigned i = 0; i < location.size(); ++i)
+          location[i] = builder.CreateExtractValue(stored, i);
+      }
+      builder.CreateCall(function, {arguments[0], arguments[1], location[0],
+                                    location[1], location[2], location[3]});
       return unit();
     }
     if (operation == "mem.replace" || operation == "mem.swap") {
@@ -1607,16 +1859,19 @@ private:
       builder.CreateMemCpy(arguments[1], alignment, temporary, alignment, size);
       return unit();
     }
-    if (operation == "mem.size_of_val" || operation == "mem.align_of_val") {
+    if (operation == "mem.size_of_val" || operation == "mem.align_of_val" ||
+        operation == "mem.size_of_val_raw" ||
+        operation == "mem.align_of_val_raw") {
+      bool alignmentOnly = operation == "mem.align_of_val" ||
+                           operation == "mem.align_of_val_raw";
       if (program.types->isErased(argument)) {
         auto *table = builder.CreateExtractValue(arguments[0], 2);
-        auto slotIndex = operation == "mem.size_of_val" ? std::uint32_t{1}
-                                                        : std::uint32_t{2};
+        auto slotIndex = alignmentOnly ? std::uint32_t{2} : std::uint32_t{1};
         auto *slot = builder.CreateGEP(builder.getPtrTy(), table,
                                        builder.getInt32(slotIndex));
         auto *value = builder.CreatePtrToInt(
             builder.CreateLoad(builder.getPtrTy(), slot), builder.getInt64Ty());
-        if (operation == "mem.align_of_val")
+        if (alignmentOnly)
           return value;
         auto *kind = builder.CreateLoad(
             builder.getPtrTy(),
@@ -1645,7 +1900,7 @@ private:
       auto element = program.types->isSlice(argument)
                          ? program.types->slice(argument).element
                          : argument;
-      if (operation == "mem.align_of_val")
+      if (alignmentOnly)
         return builder.getInt64(lowering.alignment(element));
       auto *size = builder.getInt64(lowering.layout(element).size);
       if (program.types->isSlice(argument))
@@ -1686,6 +1941,23 @@ private:
       lowering.store(source, arguments[0], storage,
                      llvm::Align(lowering.alignment(source)));
       return lowering.load(instruction.result.type, storage, llvm::Align(1));
+    }
+    if (operation == "mem.transmute_copy") {
+      auto source = program.types->view(instruction.operands[0].type).payload;
+      if (lowering.layout(instruction.result.type).size >
+          lowering.layout(source).size) {
+        static const std::string message =
+            "transmute_copy destination is larger than source";
+        emitPanicMessage(textGlobal(message), builder.getInt64(message.size()),
+                         instruction.span);
+        builder.CreateUnreachable();
+        auto *continuation =
+            llvm::BasicBlock::Create(context, "after.invalid.transmute_copy",
+                                     builder.GetInsertBlock()->getParent());
+        builder.SetInsertPoint(continuation);
+      }
+      return lowering.load(instruction.result.type, arguments[0],
+                           llvm::Align(1));
     }
     if (operation.starts_with("numeric.")) {
       auto method = operation.substr(8);
@@ -2740,6 +3012,19 @@ private:
                      ? builder.CreateExtractValue(handle, 0)
                      : handle;
     auto method = operation.substr(4);
+    if (method == "as_array" || method == "as_mut_array") {
+      auto pointer = instruction.typeArguments[0];
+      auto array = program.types->pointer(pointer).payload;
+      auto *count = builder.CreateExtractValue(handle, 1);
+      auto *matches = builder.CreateICmpEQ(
+          count, llvm::ConstantInt::get(count->getType(),
+                                        *program.types->arrayLength(array)));
+      llvm::Value *result =
+          llvm::Constant::getNullValue(type(instruction.result.type));
+      result = builder.CreateInsertValue(
+          result, builder.CreateZExt(matches, builder.getInt32Ty()), 0);
+      return builder.CreateInsertValue(result, data, 1);
+    }
     if (method == "addr" || method == "expose_provenance")
       return builder.CreatePtrToInt(data, builder.getInt64Ty());
     if (method == "is_null")
@@ -2907,6 +3192,8 @@ private:
     auto &frame = source.coroutine ? coroutineFrame(static_cast<int>(
                                          &source - program.functions.data()))
                                    : *ownFrame;
+    callerFrame = &frame;
+    trackingCaller = source.trackCaller;
     if (debugInfo)
       debugInfo->begin(builder, debugInfo->attach(*target, source, true),
                        nullptr, false);
@@ -3244,8 +3531,10 @@ private:
                   program.types->callable(n.result.type).parameters[0].type))
             result = pinnedWitnessThunk(n);
           else
-            result =
-                externals[n.callee] ? externals[n.callee] : functions[n.callee];
+            result = externals[n.callee] ? externals[n.callee]
+                     : program.functions[n.callee].trackCaller
+                         ? callerShim(n.callee)
+                         : functions[n.callee];
           break;
         case ir::Op::CallableCoerce:
           result = get(0);
@@ -3319,7 +3608,7 @@ private:
                                    {builder.getPtrTy()}),
                                {storage, arguments[0]});
             result = builder.CreateLoad(type(n.result.type), storage);
-          } else if (n.text == "va.arg")
+          } else if (n.text == "va.arg" || n.text == "va.next_arg")
             result = abi.variadicArgument(arguments[0], n.result.type);
           else if (n.text == "va.end") {
             auto *storage = lowering.temporary(n.operands[0].type);
@@ -3364,6 +3653,13 @@ private:
             debugInfo->invalidate(builder,
                                   static_cast<std::size_t>(n.place.root),
                                   n.span, n.scope);
+          break;
+        case ir::Op::RawAddress:
+          result = address(n.place);
+          if (program.types->pointerMetadata(
+                  program.types->pointer(n.result.type).payload) !=
+              PointerMetadata::None)
+            result = builder.CreateLoad(type(n.result.type), result);
           break;
         case ir::Op::BorrowRead:
         case ir::Op::BorrowMut:
@@ -3548,6 +3844,8 @@ private:
                 stored, data);
           }
           if (n.op == ir::Op::CatchCall) {
+            if (program.functions[n.callee].trackCaller)
+              arguments.push_back(callerArgument(n.span));
             std::vector<llvm::Type *> members;
             for (auto *argument : arguments)
               members.push_back(argument->getType());
@@ -3658,10 +3956,14 @@ private:
       case ir::Exit::Jump:
         builder.CreateBr(blocks[exit.first]);
         break;
-      case ir::Exit::Branch:
-        builder.CreateCondBr(values[exit.value.id], blocks[exit.first],
-                             blocks[exit.second]);
+      case ir::Exit::Branch: {
+        auto *branch = builder.CreateCondBr(
+            values[exit.value.id], blocks[exit.first], blocks[exit.second]);
+        if (exit.unpredictable)
+          branch->setMetadata(context.getMDKindID("unpredictable"),
+                              llvm::MDNode::get(context, {}));
         break;
+      }
       case ir::Exit::Suspend:
         resumes.push_back(exit.first);
         builder.CreateStore(builder.getInt32(static_cast<int>(resumes.size())),
@@ -3719,6 +4021,8 @@ private:
       }
     if (dispatch)
       coroutineDispatch(frame, dispatch, blocks, resumes);
+    callerFrame = nullptr;
+    trackingCaller = false;
   }
   // Entry of a coroutine body: continue at the recorded suspension point and
   // mark the state running, so a panic or a poll after completion is caught.
@@ -3744,30 +4048,34 @@ private:
     else {
       static const std::string message =
           "async future polled after completion or panic";
-      auto function =
-          lowering.runtime("mettle_rt_panic_message", builder.getVoidTy(),
-                           {builder.getPtrTy(), builder.getInt64Ty()});
+      auto function = lowering.runtime(
+          "mettle_rt_panic_message", builder.getVoidTy(),
+          {builder.getPtrTy(), builder.getInt64Ty(), builder.getPtrTy(),
+           builder.getInt64Ty(), builder.getInt64Ty(), builder.getInt64Ty()});
       llvm::cast<llvm::Function>(function.getCallee())
           ->addFnAttr(llvm::Attribute::NoReturn);
-      builder.CreateCall(
-          function, {textGlobal(message), builder.getInt64(message.size())});
+      builder.CreateCall(function,
+                         {textGlobal(message), builder.getInt64(message.size()),
+                          llvm::ConstantPointerNull::get(builder.getPtrTy()),
+                          builder.getInt64(0), builder.getInt64(0),
+                          builder.getInt64(0)});
     }
     builder.CreateUnreachable();
   }
 };
 } // namespace
 
-std::unique_ptr<llvm::Module> lower(const ir::VerifiedProgram &program,
-                                    llvm::LLVMContext &context, bool checked,
-                                    llvm::StringRef target, bool freestanding,
-                                    const DebugInfoRequest *debug,
-                                    bool sanitizeAddress, bool sanitizeThread,
-                                    CodegenPartition partition) {
+std::unique_ptr<llvm::Module>
+lower(const ir::VerifiedProgram &program, llvm::LLVMContext &context,
+      bool checked, llvm::StringRef target, bool freestanding,
+      const DebugInfoRequest *debug, bool sanitizeAddress, bool sanitizeThread,
+      CodegenPartition partition, const DebugInfoRequest *sourceInfo) {
   auto selected = program.program().target.triple.empty()
                       ? target
                       : llvm::StringRef(program.program().target.triple);
   Lowerer lowerer(program.program(), context, selected, freestanding, debug,
-                  sanitizeAddress, sanitizeThread, std::move(partition));
+                  sanitizeAddress, sanitizeThread, std::move(partition),
+                  sourceInfo);
   lowerer.checked = checked;
   return lowerer.run();
 }

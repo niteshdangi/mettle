@@ -547,15 +547,57 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       for (std::size_t p = 0; p < function.parameters; ++p) {
         const auto &parameter = function.locals[p];
         auto &sources = parameterInputs[static_cast<int>(p)];
+        auto declaredViews = viewPaths(parameter.type, types);
+        if (types.isFunctionPointer(function.regionSignature)) {
+          const auto &signature = types.callable(function.regionSignature);
+          if (p < signature.parameters.size())
+            declaredViews = viewPaths(signature.parameters[p].type, types);
+        }
+        std::set<Place> callLocalViews;
+        std::set<Type> activeContents;
+        std::function<void(Type, ViewPath)> retainedContents =
+            [&](Type type, ViewPath path) {
+              if (!activeContents.insert(type).second)
+                return;
+              if (types.isView(type)) {
+                const auto &view = types.view(type);
+                path.push_back(Projection::dereference());
+                if (types.regions().get(view.region).name != parameter.name)
+                  inputs.insert({static_cast<int>(p), std::move(path)});
+                else
+                  retainedContents(view.payload, std::move(path));
+              } else if (types.isErased(type) || types.isParameter(type)) {
+                path.push_back(Projection::opaque(Type::Unknown));
+                path.push_back(Projection::dereference());
+                inputs.insert({static_cast<int>(p), std::move(path)});
+              } else
+                for (const auto &[nested, view] : viewPaths(type, types)) {
+                  auto contents = path;
+                  contents.insert(contents.end(), nested.begin(), nested.end());
+                  retainedContents(view, std::move(contents));
+                }
+              activeContents.erase(type);
+            };
         const auto own = parameter.mode == ParameterMode::Read ||
                          parameter.mode == ParameterMode::Mut;
         if (own)
           sources.insert({static_cast<int>(p), {}});
         for (const auto &[path, type] : viewPaths(parameter.type, types)) {
-          (void)type;
           Place source{static_cast<int>(p), path};
           source.fields.push_back(Projection::dereference());
-          sources.insert(std::move(source));
+          sources.insert(source);
+          auto declared = type;
+          for (const auto &[declaredPath, declaredType] : declaredViews)
+            if (returnPath(declaredPath, path)) {
+              declared = declaredType;
+              break;
+            }
+          if (types.isView(declared) &&
+              types.regions().get(types.view(declared).region).name ==
+                  parameter.name) {
+            callLocalViews.insert(source);
+            retainedContents(types.view(declared).payload, source.fields);
+          }
         }
         // An access view with no declared region is call-local, so an erased
         // receiver cannot retain it. Declared regions and every contained
@@ -577,7 +619,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
         // transient as the view.
         const auto erasedSelf = types.isErased(parameter.type);
         for (const auto &source : sources)
-          if (!transient || (source.fields.size() > (erasedSelf ? 1u : 0u)))
+          if (!callLocalViews.contains(source) &&
+              (!transient || (source.fields.size() > (erasedSelf ? 1u : 0u))))
             inputs.insert(source);
       }
       for (std::size_t p = 0; p < function.parameters; ++p)
@@ -812,6 +855,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       if (borrowed(instruction.op))
         created[b][i].push_back(instruction.result.id);
       else if (instruction.op == ir::Op::Machine &&
+               instruction.text == "storage.from_mut")
+        created[b][i].push_back(synthetic++);
+      else if (instruction.op == ir::Op::Machine &&
                instruction.text.starts_with("cell.") &&
                (types.isView(instruction.result.type) ||
                 instruction.text == "cell.try_borrow_unguarded"))
@@ -841,7 +887,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
     while (value >= 0 && static_cast<std::size_t>(value) < definitions.size() &&
            visited.insert(value).second) {
       const auto *definition = definitions[value];
-      if (!definition || definition->op == ir::Op::VariantConstruct)
+      if (!definition || definition->op == ir::Op::VariantConstruct ||
+          definition->op == ir::Op::Call ||
+          definition->op == ir::Op::IndirectCall)
         return definition;
       if ((definition->op != ir::Op::Load && definition->op != ir::Op::Move) ||
           !definition->place.fields.empty() || definition->place.root < 0 ||
@@ -851,6 +899,33 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       value = storedValues[definition->place.root];
     }
     return nullptr;
+  };
+  auto absentReturn = [&](const ir::Instruction *definition,
+                          const ViewPath &path) {
+    if (!definition)
+      return false;
+    if (definition->op == ir::Op::VariantConstruct && !path.empty() &&
+        path.front().kind == Projection::Kind::Field) {
+      const auto &fields = types.product(definition->result.type)
+                               .variants[definition->number]
+                               .fields;
+      return std::find(fields.begin(), fields.end(), path.front().index) ==
+             fields.end();
+    }
+    if (definition->op != ir::Op::Call &&
+        definition->op != ir::Op::IndirectCall)
+      return false;
+    const auto replacements =
+        callTypes(program.functions[definition->callee], *definition, types);
+    for (auto absent : summaries[definition->callee].absentReturns) {
+      for (auto &projection : absent)
+        if (auto found = replacements.find(projection.type);
+            found != replacements.end())
+          projection.type = found->second;
+      if (returnPath(absent, path))
+        return true;
+    }
+    return false;
   };
   std::vector<std::vector<int>> predecessors(function.blocks.size());
   for (std::size_t b = 0; b < function.blocks.size(); ++b) {
@@ -946,7 +1021,16 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                                                ? types.view(currentType).payload
                                                : Type::Unknown));
                   referent.authority.insert(id);
-                  join(referent.authority, target.authority);
+                  // A precise exclusive-view slot contains only one origin.
+                  if (types.isView(currentType) &&
+                      types.view(currentType).mode == ParameterMode::Mut &&
+                      !imprecise(target.place) &&
+                      memory.contains(target.place) &&
+                      memory.at(target.place) == sources)
+                    join(referent.authority, sources);
+                  if (!types.isView(currentType) ||
+                      types.view(currentType).mode != ParameterMode::Read)
+                    join(referent.authority, target.authority);
                   next.insert(std::move(referent));
                 }
               }
@@ -1095,6 +1179,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       for (std::size_t i = 0; i < function.blocks[b].instructions.size(); ++i) {
         const auto &instruction = function.blocks[b].instructions[i];
         auto &point = result.points[b][i];
+        point.targets.clear();
         point.overwrites.clear();
         ViewOrigins value;
         Origins uses;
@@ -1134,6 +1219,23 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                              instruction.op == ir::Op::SliceBorrowMut ||
                              instruction.op == ir::Op::ArrayBorrowRead ||
                              instruction.op == ir::Op::ArrayBorrowMut;
+        if ((instruction.op == ir::Op::SliceBorrowRead ||
+             instruction.op == ir::Op::SliceBorrowMut) &&
+            instruction.operands.size() == 2 && i > 0) {
+          const auto &length = function.blocks[b].instructions[i - 1];
+          const auto *start = definitions[instruction.operands[0].id];
+          const bool zero =
+              start && start->op == ir::Op::Constant &&
+              start->constantParameter == Type::Unknown &&
+              (start->numeric ? !start->numeric->negative &&
+                                    start->numeric->magnitude[0] == 0 &&
+                                    start->numeric->magnitude[1] == 0
+                              : start->number == 0);
+          if (zero && length.op == ir::Op::SliceLength &&
+              length.result.id == instruction.operands[1].id &&
+              length.place == instruction.place)
+            indexedBorrow = false;
+        }
         if (indexedBorrow) {
           std::set<Target> elements;
           auto element = types.view(instruction.result.type).payload;
@@ -1474,6 +1576,35 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 projected.insert(projected.begin(), Projection::field(index));
               join(value[projected], sources);
             }
+        } else if (instruction.op == ir::Op::Machine &&
+                   instruction.text == "storage.from_mut") {
+          auto id = created[b][i][0];
+          auto &loan = result.loans[id];
+          loan.mode = ParameterMode::Mut;
+          auto parents = flatten(result.values[instruction.operands[0].id]);
+          auto oldTargets = loan.targets.size();
+          auto oldParents = loan.parents.size();
+          join(loan.parents, parents);
+          for (auto parent : parents)
+            for (auto target : result.loans.at(parent).targets) {
+              target.authority.insert(parent);
+              project(target.place,
+                      Projection::opaque(
+                          types.view(instruction.result.type).payload));
+              loan.targets.insert(std::move(target));
+            }
+          changed |= oldTargets != loan.targets.size() ||
+                     oldParents != loan.parents.size();
+          value[{}].insert(id);
+          for (const auto &[path, sources] :
+               result.values[instruction.operands[0].id])
+            if (!path.empty()) {
+              auto wrapped = path;
+              if (wrapped[0].kind == Projection::Kind::Dereference)
+                wrapped.insert(wrapped.begin() + 1, Projection::field(0));
+              join(value[wrapped], sources);
+            }
+          point.defines.insert(id);
         } else if (instruction.op == ir::Op::OpaqueRepack) {
           const auto &source = result.values[instruction.operands[0].id];
           auto paths = viewPaths(instruction.result.type, types);
@@ -1632,6 +1763,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             std::set<Target> referents;
             ViewPath path;
             bool located = argument.access != ir::Access::Owned;
+            bool opaqueContents = false;
             if (located)
               for (auto id : flatten(result.values[argument.id]))
                 for (auto target : result.loans.at(id).targets) {
@@ -1689,14 +1821,18 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                       if (imprecise(referent.place))
                         project(target.place, Projection::opaque(type));
                       target.authority.insert(id);
-                      if (!types.isView(priorType) ||
-                          types.view(priorType).mode == ParameterMode::Mut)
+                      if (types.isView(priorType)
+                              ? types.view(priorType).mode == ParameterMode::Mut
+                              : !opaqueContents || result.loans.at(id).mode ==
+                                                       ParameterMode::Mut)
                         join(target.authority, referent.authority);
                       next.insert(std::move(target));
                     }
                 }
                 referents = std::move(next);
               }
+              opaqueContents = projection.kind == Projection::Kind::Opaque &&
+                               projection.type == Type::Unknown;
             }
             return referents;
           };
@@ -1863,6 +1999,14 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           auto paths = viewPaths(instruction.result.type, types);
           for (std::size_t path = 0; path < created[b][i].size(); ++path) {
             auto &loan = result.loans.at(created[b][i][path]);
+            if (instruction.op != ir::Op::CatchCall &&
+                std::any_of(summaries[instruction.callee].absentReturns.begin(),
+                            summaries[instruction.callee].absentReturns.end(),
+                            [&](const ViewPath &absent) {
+                              return returnPath(rebased(absent),
+                                                paths[path].first);
+                            }))
+              continue;
             auto oldTargets = loan.targets.size(),
                  oldParents = loan.parents.size();
             std::set<int> returnedSources;
@@ -2022,9 +2166,29 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             // loans of the object that holds the destination; those loans
             // govern the access to it, not the stored views.
             const auto &holders = arguments.at(destination);
+            const auto argument = instruction.operands.at(destination.root);
+            const auto argumentHolder =
+                argumentPlace(Place{destination.root, {}});
+            const auto accessAncestors =
+                argument.access == ir::Access::Owned
+                    ? Origins{}
+                    : ancestors(flatten(result.values[argument.id]),
+                                result.loans);
+            auto accessOnly = [&](int parent, const Target &referent) {
+              const auto &prior = result.loans.at(parent);
+              return holds(parent, holders) ||
+                     (accessAncestors.contains(parent) &&
+                      holds(parent, argumentHolder) &&
+                      std::none_of(prior.targets.begin(), prior.targets.end(),
+                                   [&](const Target &target) {
+                                     return overlaps(target.place,
+                                                     referent.place);
+                                   }));
+            };
             auto inherit = [&](const Place &source, const Target &referent) {
               for (auto parent : referent.authority)
-                if (source.root != destination.root || !holds(parent, holders))
+                if (source.root != destination.root ||
+                    !accessOnly(parent, referent))
                   loan.parents.insert(parent);
             };
             for (const auto &source : sources)
@@ -2032,7 +2196,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 auto stored = referent;
                 if (source.root == destination.root)
                   std::erase_if(stored.authority, [&](auto parent) {
-                    return holds(parent, holders);
+                    return accessOnly(parent, referent);
                   });
                 loan.targets.insert(std::move(stored));
                 inherit(source, referent);
@@ -2101,15 +2265,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
             returnDefinition(function.blocks[b].exit.value.id);
         for (const auto &[path, type] : viewPaths(function.result, types)) {
           (void)type;
-          if (definition && definition->op == ir::Op::VariantConstruct &&
-              !path.empty() && path.front().kind == Projection::Kind::Field) {
-            const auto &fields = types.product(definition->result.type)
-                                     .variants[definition->number]
-                                     .fields;
-            if (std::find(fields.begin(), fields.end(), path.front().index) ==
-                fields.end())
-              continue;
-          }
+          if (absentReturn(definition, path))
+            continue;
           auto found = returned.find(path);
           if (found == returned.end() || found->second.empty())
             untracked.insert(path);
@@ -2219,23 +2376,18 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
     }
   }
   std::map<ViewPath, std::size_t> returning;
+  bool hasReturn = false;
   std::map<ViewPath, std::map<Place, std::size_t>> separateWrites;
   for (std::size_t b = 0; b < function.blocks.size(); ++b) {
     if (function.blocks[b].exit.kind != ir::Exit::Return)
       continue;
+    hasReturn = true;
     const auto value = function.blocks[b].exit.value;
     const auto *definition = returnDefinition(value.id);
     for (const auto &[path, type] : viewPaths(function.result, types)) {
       (void)type;
-      if (definition && definition->op == ir::Op::VariantConstruct &&
-          !path.empty() && path.front().kind == Projection::Kind::Field) {
-        const auto &fields = types.product(definition->result.type)
-                                 .variants[definition->number]
-                                 .fields;
-        if (std::find(fields.begin(), fields.end(), path.front().index) ==
-            fields.end())
-          continue;
-      }
+      if (absentReturn(definition, path))
+        continue;
       ++returning[path];
       auto returned = result.values[value.id].find(path);
       if (returned == result.values[value.id].end() || returned->second.empty())
@@ -2272,6 +2424,10 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
   // declared regions promise it stays within the declared inputs: back it with
   // every place those inputs borrow so later access through them conflicts.
   for (const auto &[path, type] : viewPaths(function.result, types)) {
+    if (hasReturn && !returning.contains(path)) {
+      result.effects.absentReturns.insert(path);
+      continue;
+    }
     if ((!untracked.contains(path) &&
          (contentsOnlyPaths.contains(path) ||
           !result.effects.returns[path].empty())) ||

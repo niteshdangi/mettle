@@ -1,9 +1,41 @@
 import super.default.Default
 import super.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import super.clone.Clone
+import super.borrow.{AsMut, AsRef}
 import super.fmt.{Debug, Error, Formatter}
 import super.hash.{Hash, Hasher}
 import super.ops.{Deref, DerefMut}
+
+type DiscriminantMarker<T> {}
+
+pub type Discriminant<T> {
+    ordinal: usize
+    marker: DiscriminantMarker<T>
+}
+
+pub fn discriminant<T>(read value: T): Discriminant<T> {
+    Discriminant(core.intrinsics.variant_ordinal<T>(value), DiscriminantMarker<T>())
+}
+
+extend<T> Discriminant<T> implements Clone {
+    fn clone(): Discriminant<T> {
+        Discriminant(self.ordinal, DiscriminantMarker<T>())
+    }
+}
+
+extend<T> Discriminant<T> implements PartialEq {
+    fn eq(read other: Discriminant<T>): bool { self.ordinal == other.ordinal }
+}
+
+extend<T> Discriminant<T> implements Eq {}
+
+extend<T> Discriminant<T> implements Hash {
+    fn hash<H: Hasher>(mut state: H): Unit { state.write_usize(self.ordinal) }
+}
+
+extend<T: Copy> core.mem.MaybeUninit<T> implements Clone {
+    fn clone(): core.mem.MaybeUninit<T> { self }
+}
 
 extend<T: unsized> core.mem.ManuallyDrop<T> implements Deref {
     type Target = T
@@ -23,7 +55,7 @@ extend<T: unsized> core.mem.ManuallyDrop<T> {
 
 extend<T: Clone> core.mem.ManuallyDrop<T> implements Clone {
     fn clone(): core.mem.ManuallyDrop<T> {
-        core.mem.ManuallyDrop.new(self.deref().clone())
+        core.mem.ManuallyDrop.new(T.(Clone).clone(self.deref()))
     }
 }
 
@@ -56,6 +88,12 @@ extend<T: Default> core.mem.ManuallyDrop<T> implements Default {
 extend<T: Debug + unsized> core.mem.ManuallyDrop<T> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
         try self.deref().fmt(mut f)
+    }
+}
+
+extend<T> core.mem.MaybeUninit<T> implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        try f.write_str("MaybeUninit")
     }
 }
 
@@ -113,12 +151,51 @@ extend<T> [core.mem.MaybeUninit<T>] {
         let data = core.ptr.from_mut(self).cast<T>()
         var guard = SliceCloneGuard(data, 0usize)
         while guard.initialized < source.len() {
-            self[guard.initialized].write(source[guard.initialized].clone())
+            self[guard.initialized].write(
+                T.(Clone).clone(source[guard.initialized])
+            )
             guard.initialized += 1usize
         }
         guard.initialized = 0usize
         let prefix = mut self[..source.len()]
         unsafe { prefix.assume_init_mut() }
+    }
+}
+
+// The element wrapper preserves layout and these views never read `T`.
+extend<T, const N: usize> core.mem.MaybeUninit<[T; N]> {
+    fn uninit_array_ref(): read [core.mem.MaybeUninit<T>; N] from self {
+        let pointer = core.ptr.from_ref(self).cast<[core.mem.MaybeUninit<T>; N]>()
+        unsafe { read *pointer }
+    }
+
+    mut fn uninit_array_mut(): mut [core.mem.MaybeUninit<T>; N] from self {
+        let pointer = core.ptr.from_mut(self).cast<[core.mem.MaybeUninit<T>; N]>()
+        unsafe { mut *pointer }
+    }
+}
+
+extend<T, const N: usize> core.mem.MaybeUninit<[T; N]> implements AsRef<[core.mem.MaybeUninit<T>; N]> {
+    fn as_ref(): read [core.mem.MaybeUninit<T>; N] from self {
+        self.uninit_array_ref()
+    }
+}
+
+extend<T, const N: usize> core.mem.MaybeUninit<[T; N]> implements AsMut<[core.mem.MaybeUninit<T>; N]> {
+    mut fn as_mut(): mut [core.mem.MaybeUninit<T>; N] from self {
+        self.uninit_array_mut()
+    }
+}
+
+extend<T, const N: usize> core.mem.MaybeUninit<[T; N]> implements AsRef<[core.mem.MaybeUninit<T>]> {
+    fn as_ref(): read [core.mem.MaybeUninit<T>] from self {
+        self.uninit_array_ref().as_slice()
+    }
+}
+
+extend<T, const N: usize> core.mem.MaybeUninit<[T; N]> implements AsMut<[core.mem.MaybeUninit<T>]> {
+    mut fn as_mut(): mut [core.mem.MaybeUninit<T>] from self {
+        self.uninit_array_mut().as_mut_slice()
     }
 }
 

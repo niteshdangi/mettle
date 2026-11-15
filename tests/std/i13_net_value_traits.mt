@@ -1,12 +1,13 @@
 // Address value traits: equality, ordering, hashing, bit operations, FromStr,
-// From and Display for IPv4, IPv6, IpAddr and SocketAddr.
+// From and Display for IP and socket address values.
+import core.clone.Clone
 import core.cmp.{PartialEq, Ordering}
 import core.convert.From
 import core.fmt.{Display, buffer_writer, formatter, spec, written_text}
 import core.hash.hash_one
 import core.text.{FromStr, Text}
 import std.io.{Error, ErrorKind}
-import std.net.{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr}
+import std.net.{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6}
 
 fn render<T: Display>(read value: T, mut buffer: [u8]): usize throws core.fmt.Error {
     var writer = buffer_writer(mut buffer)
@@ -86,6 +87,10 @@ fn run(): i32 throws Error {
     let v4_address = IpAddr.(From<Ipv4Addr>).from(Ipv4Addr.new(10u8, 0u8, 0u8, 1u8))
     let v6_address = IpAddr.(From<Ipv6Addr>).from(v6)
     if !v4_address.cmp(v6_address).is_lt() || !v6_address.cmp(v4_address).is_gt() { return 22 }
+    if !(Ipv4Addr.new(10u8, 0u8, 0u8, 1u8) == v4_address) ||
+       !(v6 == v6_address) ||
+       !(Ipv4Addr.new(10u8, 0u8, 0u8, 1u8) < v6_address) ||
+       !(Ipv6Addr.localhost() > v4_address) { return 35 }
     if !(IpAddr.(From<Ipv4Addr>).from(Ipv4Addr.new(10u8, 0u8, 0u8, 2u8)).cmp(v4_address).is_gt()) { return 23 }
     if v4_address != (try IpAddr.parse("10.0.0.1")) { return 24 }
     let from_text = try IpAddr.(FromStr).from_str("2001:db8::1")
@@ -103,6 +108,16 @@ fn run(): i32 throws Error {
     if hash_one(read a) != hash_one(read std.net.socket_addr(Ipv4Addr.new(10u8, 0u8, 0u8, 1u8), 80u16)) { return 30 }
     let text_socket = try SocketAddr.(FromStr).from_str("10.0.0.2:443")
     if text_socket != std.net.socket_addr(Ipv4Addr.new(10u8, 0u8, 0u8, 2u8), 443u16) { return 31 }
+
+    let v4_socket = SocketAddrV4.new(Ipv4Addr.localhost(), 80u16)
+    if v4_socket.clone() != v4_socket ||
+       !v4_socket.cmp(SocketAddrV4.new(Ipv4Addr.localhost(), 81u16)).is_lt() ||
+       hash_one(read v4_socket) != hash_one(read v4_socket.clone()) { return 32 }
+    let v6_socket = SocketAddrV6.new(Ipv6Addr.localhost(), 80u16, 3u32, 5u32)
+    if v6_socket.clone() != v6_socket ||
+       !v6_socket.cmp(SocketAddrV6.new(Ipv6Addr.localhost(), 80u16, 4u32, 5u32)).is_lt() ||
+       !v6_socket.cmp(SocketAddrV6.new(Ipv6Addr.localhost(), 80u16, 3u32, 6u32)).is_lt() ||
+       hash_one(read v6_socket) != hash_one(read v6_socket.clone()) { return 33 }
     0
 }
 

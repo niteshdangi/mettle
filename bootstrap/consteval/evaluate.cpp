@@ -122,6 +122,8 @@ std::string describe(const Value &value) {
     return "a function address";
   case Value::Kind::Uninitialized:
     return "an uninitialized value";
+  case Value::Kind::TypeIdentity:
+    return "a type identity";
   }
   return "value";
 }
@@ -818,6 +820,9 @@ private:
         return realizeFloating(value, want.type, span);
       } else if (value.kind == Value::Kind::Enum && value.type == want.type) {
         return true;
+      } else if (value.kind == Value::Kind::TypeIdentity &&
+                 want.type == Type::U64) {
+        return true;
       } else if (value.kind == Value::Kind::Function &&
                  host.callableCoercion(value.type, want.type)) {
         value.type = want.type;
@@ -988,6 +993,16 @@ private:
       auto equal = left.offset == right.offset &&
                    (!layout || layout->size <= options.pointerBits / 8 ||
                     left.count == right.count);
+      return boolValue(op == "==" ? equal : !equal);
+    }
+    if (left.kind == Value::Kind::TypeIdentity ||
+        right.kind == Value::Kind::TypeIdentity) {
+      if ((op != "==" && op != "!=") ||
+          left.kind != Value::Kind::TypeIdentity ||
+          right.kind != Value::Kind::TypeIdentity)
+        return fail("type", span,
+                    "type identities support equality comparisons only");
+      bool equal = left.identity == right.identity;
       return boolValue(op == "==" ? equal : !equal);
     }
     bool comparison = op == "==" || op == "!=" || op == "<" || op == "<=" ||
@@ -1574,16 +1589,16 @@ private:
     std::optional<Value> address = std::nullopt;
     int symbol = -1;
   };
-  Value addressOf(const Place &place, bool exclusive) {
+  Value addressOf(const Place &place, bool exclusive, bool raw = false) {
     if (place.address) {
       auto result = *place.address;
-      result.kind = Value::Kind::Reference;
+      result.kind = raw ? Value::Kind::Pointer : Value::Kind::Reference;
       result.exclusive &= exclusive;
       if (auto target = pointee(result))
-        result.type = host.referenceType(target->type, result.exclusive, false);
+        result.type = host.referenceType(target->type, result.exclusive, raw);
       return result;
     }
-    if (place.value->kind == Value::Kind::Reference) {
+    if (!raw && place.value->kind == Value::Kind::Reference) {
       auto result = *place.value;
       result.exclusive &= exclusive;
       if (auto target = pointee(result))
@@ -1591,9 +1606,9 @@ private:
       return result;
     }
     Value result;
-    result.kind = Value::Kind::Reference;
+    result.kind = raw ? Value::Kind::Pointer : Value::Kind::Reference;
     auto type = host.valueType(*place.value);
-    result.type = host.referenceType(type, exclusive, false);
+    result.type = host.referenceType(type, exclusive, raw);
     result.storage = place.storage;
     result.storageType = host.valueType(*place.rootValue);
     result.offset = place.offset;
@@ -1832,8 +1847,7 @@ private:
           if (target->kind == Shape::Kind::Array) {
             auto element = host.layout(type);
             if (!element)
-              return unsupported(pattern.span,
-                                 "this viewed constant pattern");
+              return unsupported(pattern.span, "this viewed constant pattern");
             projected.offset += i * element->size;
           } else {
             auto field = i;
@@ -1846,8 +1860,7 @@ private:
               field = target->variants[loaded->selection][i];
             }
             if (!layout || field >= layout->fields.size())
-              return unsupported(pattern.span,
-                                 "this viewed constant pattern");
+              return unsupported(pattern.span, "this viewed constant pattern");
             projected.offset += layout->fields[field];
           }
           projected.type = host.referenceType(type, false, false);
@@ -2473,6 +2486,11 @@ private:
       fail("constant", span, "constant value is not fully initialized");
       return false;
     }
+    if (value.kind == Value::Kind::Product) {
+      if (auto shape = host.typeShape(value.type);
+          shape && shape->uninitializedStorage && value.elements.size() == 1)
+        return true;
+    }
     for (const auto &element : value.elements)
       if (!initialized(element, span))
         return false;
@@ -2495,12 +2513,12 @@ private:
   }
   std::optional<Type> typeArgument(const Node &callee,
                                    const Host::Operation &operation) {
+    if (operation.type != Type::Unknown)
+      return operation.type;
     if (!callee.genericArguments.empty() &&
         callee.genericArguments.front().type)
       return host.resolveType(*callee.genericArguments.front().type,
                               callee.span);
-    if (operation.type != Type::Unknown)
-      return operation.type;
     return std::nullopt;
   }
   Opt intrinsic(const Node &node, const Host::Operation &operation,
@@ -2537,7 +2555,16 @@ private:
         }
       arguments = pointerArguments;
     }
-    if (name == "storage.new" || name == "storage.into_inner") {
+    if (name == "storage.uninit") {
+      auto target = host.typeShape(operation.type);
+      if (!target || !target->uninitializedStorage ||
+          target->kind != Shape::Kind::Product ||
+          target->elements.size() != 1 || receiver || !arguments.empty())
+        return unsupported(node.span, "this constant uninitialized storage");
+      return uninitialized(*target, true);
+    }
+    if (name == "storage.new" || name == "storage.into_inner" ||
+        name == "storage.assume_init") {
       if (name == "storage.new") {
         auto target = host.typeShape(operation.type);
         if (!target || target->kind != Shape::Kind::Product ||
@@ -2553,12 +2580,49 @@ private:
         value.elements.push_back(std::move(payload));
         return value;
       }
+      if (name == "storage.assume_init" && !unsafeDepth)
+        return fail("unsafe", node.span,
+                    "operation requires an unsafe block or unsafe function");
       if (receiver && !initialized(*receiver, node.span))
         return std::nullopt;
       if (!receiver || receiver->kind != Value::Kind::Product ||
           receiver->elements.size() != 1 || !arguments.empty())
         return unsupported(node.span, "this constant storage extraction");
+      if (!initialized(receiver->elements.front(), node.span))
+        return std::nullopt;
       return receiver->elements.front();
+    }
+    if (name == "hint.cold_path") {
+      if (!arguments.empty())
+        return fail("type", node.span, "cold_path requires no arguments");
+      return unitValue();
+    }
+    if (name == "hint.assert_unchecked" ||
+        name == "hint.unreachable_unchecked") {
+      if (!unsafeDepth)
+        return fail("unsafe", node.span,
+                    "operation requires an unsafe block or unsafe function");
+      if (name == "hint.unreachable_unchecked")
+        return fail("constant", node.span,
+                    "unreachable_unchecked reached during constant evaluation");
+      if (arguments.size() != 1 || arguments.front().kind != Value::Kind::Bool)
+        return fail("type", node.span, "assert_unchecked requires bool");
+      if (!arguments.front().number.magnitude[0])
+        return fail("constant", node.span,
+                    "assert_unchecked precondition is false");
+      return unitValue();
+    }
+    if (name == "type_id") {
+      if (!argumentType)
+        return unsupported(node.span, "this type identity");
+      auto identity = host.typeIdentity(*argumentType);
+      if (identity.empty())
+        return unsupported(node.span, "this type identity");
+      Value value;
+      value.kind = Value::Kind::TypeIdentity;
+      value.type = Type::U64;
+      value.identity = std::move(identity);
+      return value;
     }
     if (name == "storage.write") {
       auto storage = receiver && receiver->kind == Value::Kind::Reference
@@ -2580,7 +2644,8 @@ private:
         return std::nullopt;
       return destination;
     }
-    if (name == "cell.as_ptr") {
+    if (name == "cell.as_ptr" || name == "storage.as_ptr" ||
+        name == "storage.as_mut_ptr") {
       if (!receiver || receiver->kind != Value::Kind::Reference ||
           !arguments.empty())
         return unsupported(node.span, "this constant Cell pointer projection");
@@ -2590,9 +2655,12 @@ private:
         return unsupported(node.span, "this constant Cell storage");
       auto value = *receiver;
       value.kind = Value::Kind::Pointer;
-      value.type =
-          host.referenceType(storage->elements.front().type, true, true);
-      value.exclusive = true;
+      value.type = host.referenceType(storage->elements.front().type,
+                                      name != "storage.as_ptr", true);
+      if (name == "cell.as_ptr")
+        value.exclusive = true;
+      else if (name == "storage.as_ptr")
+        value.exclusive = value.writable = false;
       return value;
     }
     if (name == "size_of" || name == "align_of" || name == "mem.size_of" ||
@@ -2620,6 +2688,68 @@ private:
           count = shape->count;
       }
       return integerValue(Type::Usize, integerLiteral(count));
+    }
+    if (name == "ptr.slice_from_raw_parts" ||
+        name == "ptr.slice_from_raw_parts_mut") {
+      if (!argumentType || arguments.size() != 2 ||
+          arguments[0].kind != Value::Kind::Pointer ||
+          arguments[1].kind != Value::Kind::Integer ||
+          arguments[1].number.negative || arguments[1].number.magnitude[1])
+        return fail("constant", node.span, "invalid raw slice components");
+      auto value = arguments[0];
+      bool exclusive = name == "ptr.slice_from_raw_parts_mut";
+      value.count = arguments[1].number.magnitude[0];
+      value.type = host.referenceType(*argumentType, exclusive, true);
+      value.exclusive = exclusive;
+      value.bytes.clear();
+      return value;
+    }
+    if (name == "ptr.fn_addr_eq") {
+      if (arguments.size() != 2 || arguments[0].kind != Value::Kind::Function ||
+          arguments[1].kind != Value::Kind::Function)
+        return fail("constant", node.span, "expected function pointers");
+      return boolValue(arguments[0].symbol == arguments[1].symbol &&
+                       arguments[0].identity == arguments[1].identity);
+    }
+    if (name == "storage.raw_get" || name == "storage.from_mut") {
+      auto wrapper =
+          argumentType ? host.typeShape(*argumentType) : std::nullopt;
+      if (!wrapper || wrapper->elements.size() != 1 || arguments.size() != 1)
+        return fail("constant", node.span, "invalid UnsafeCell operands");
+      auto value = arguments[0];
+      if (name == "storage.from_mut") {
+        if (value.kind != Value::Kind::Reference || !value.exclusive ||
+            !value.writable)
+          return fail("constant", node.span,
+                      "UnsafeCell requires an exclusive view");
+        value.type = host.referenceType(wrapper->type, true, false);
+      } else {
+        if (value.kind != Value::Kind::Pointer)
+          return fail("constant", node.span,
+                      "UnsafeCell raw_get requires a pointer");
+        value.type = host.referenceType(wrapper->elements[0].type, true, true);
+        value.exclusive = true;
+      }
+      value.bytes.clear();
+      return value;
+    }
+    if (name == "mem.transmute_copy") {
+      if (!unsafeDepth)
+        return fail("unsafe", node.span,
+                    "operation requires an unsafe block or unsafe function");
+      auto target = argumentType ? host.typeShape(*argumentType) : std::nullopt;
+      if (!target || arguments.size() != 1 ||
+          arguments[0].kind != Value::Kind::Reference)
+        return fail("constant", node.span, "invalid transmute_copy operands");
+      auto source = pointee(arguments[0]);
+      auto sourceLayout = source ? host.layout(source->type) : std::nullopt;
+      auto targetLayout = host.layout(target->type);
+      if (!sourceLayout || !targetLayout)
+        return unsupported(node.span, "this transmute_copy layout");
+      if (targetLayout->size > sourceLayout->size)
+        return fail("constant", node.span,
+                    "transmute_copy destination is larger than source");
+      return readMemory(arguments[0], *target, node.span, false);
     }
     if (name == "ptr.from_ref" || name == "ptr.from_mut") {
       if (arguments.size() != 1 || arguments[0].kind != Value::Kind::Reference)
@@ -2663,8 +2793,85 @@ private:
       auto target = pointee(value);
       if (!target)
         return std::nullopt;
-      if (name == "ptr.is_null")
+      if (name == "ptr.as_array" || name == "ptr.as_mut_array") {
+        auto shape =
+            argumentType ? host.typeShape(*argumentType) : std::nullopt;
+        auto array = shape && shape->kind == Shape::Kind::Pointer &&
+                             !shape->elements.empty()
+                         ? host.typeShape(shape->elements[0].type)
+                         : std::nullopt;
+        auto resultShape = host.expressionShape(node);
+        if (!array || array->kind != Shape::Kind::Array ||
+            array->count == UINT64_MAX || !resultShape)
+          return unsupported(node.span,
+                             "this constant array pointer projection");
+        Value result;
+        result.kind = Value::Kind::Variant;
+        result.type = resultShape->type;
+        result.selection = value.count == array->count ? 1 : 0;
+        if (result.selection) {
+          value.type = *argumentType;
+          if (name == "ptr.as_array")
+            value.exclusive = false;
+          value.count = 0;
+          result.elements.push_back(std::move(value));
+        }
+        return result;
+      }
+      if (name == "ptr.as_ref" || name == "ptr.as_mut" ||
+          name == "ptr.as_ref_unchecked" || name == "ptr.as_mut_unchecked") {
+        if (!unsafeDepth)
+          return fail("unsafe", node.span,
+                      "constant pointer view requires unsafe");
+        auto resultShape = host.expressionShape(node);
+        if (!resultShape)
+          return unsupported(node.span, "this constant pointer view type");
+        bool optional = !name.ends_with("_unchecked");
+        Value result;
+        if (optional) {
+          result.kind = Value::Kind::Variant;
+          result.type = resultShape->type;
+          result.selection = 0;
+        }
+        if (!value.addressOnly) {
+          auto backing = host.layout(value.storageType);
+          if (!backing || value.offset > backing->size)
+            return unsupported(node.span,
+                               "this provenance-relative null comparison");
+        }
+        if (value.addressOnly && value.offset == 0)
+          return optional
+                     ? Opt{std::move(result)}
+                     : fail("constant", node.span,
+                            "constant pointer view requires non-null data");
+        bool exclusive = name == "ptr.as_mut" || name == "ptr.as_mut_unchecked";
+        if (exclusive && !writableMemory(value, node.span))
+          return std::nullopt;
+        value.exclusive = exclusive;
+        if (!validReference(value, node.span))
+          return std::nullopt;
+        auto contents = host.layout(target->type)
+                            ? readMemory(value, *target, node.span)
+                            : readObject(value, *target, node.span);
+        if (!contents || !initialized(*contents, node.span))
+          return std::nullopt;
+        value.kind = Value::Kind::Reference;
+        value.type = optional ? operation.type : resultShape->type;
+        if (!optional)
+          return value;
+        result.selection = 1;
+        result.elements.push_back(std::move(value));
+        return result;
+      }
+      if (name == "ptr.is_null") {
+        if (!value.addressOnly) {
+          auto backing = host.layout(value.storageType);
+          if (!backing || value.offset > backing->size)
+            return unsupported(node.span,
+                               "this provenance-relative null comparison");
+        }
         return boolValue(value.addressOnly && value.offset == 0);
+      }
       if (name == "ptr.cast" || name == "ptr.cast_const" ||
           name == "ptr.cast_mut") {
         if (name == "ptr.cast")
@@ -2676,6 +2883,26 @@ private:
         value.type = host.referenceType(
             name == "ptr.cast" && argumentType ? *argumentType : target->type,
             value.exclusive, true);
+        return value;
+      }
+      if (name == "ptr.wrapping_add" || name == "ptr.wrapping_sub" ||
+          name == "ptr.wrapping_offset" || name == "ptr.wrapping_byte_add" ||
+          name == "ptr.wrapping_byte_sub" ||
+          name == "ptr.wrapping_byte_offset") {
+        if (arguments.size() != 1 ||
+            arguments.front().kind != Value::Kind::Integer)
+          return fail("type", node.span, "pointer offset requires an integer");
+        auto layout = host.layout(
+            name.starts_with("ptr.wrapping_byte_") ? Type::U8 : target->type);
+        if (!layout)
+          return unsupported(node.span, "this constant pointer element layout");
+        const auto &count = arguments.front().number;
+        const auto mask =
+            integerMaximum(Type::Usize, options.pointerBits).magnitude[0];
+        const auto bytes = count.magnitude[0] * layout->size;
+        const bool subtract = count.negative != name.ends_with("_sub");
+        value.offset =
+            (subtract ? value.offset - bytes : value.offset + bytes) & mask;
         return value;
       }
       if (name == "ptr.add" || name == "ptr.sub" || name == "ptr.offset" ||
@@ -2752,7 +2979,8 @@ private:
     if (name == "ptr.read" || name == "ptr.read_unaligned" ||
         name == "ptr.write" || name == "ptr.write_unaligned" ||
         name == "ptr.copy" || name == "ptr.copy_nonoverlapping" ||
-        name == "ptr.swap" || name == "ptr.write_bytes") {
+        name == "ptr.swap" || name == "ptr.write_bytes" ||
+        name == "ptr.replace") {
       if (!unsafeDepth)
         return fail("unsafe", node.span,
                     "operation requires an unsafe block or unsafe function");
@@ -2768,6 +2996,14 @@ private:
         return unsupported(node.span, "this constant memory layout");
       if (name == "ptr.read" || name == "ptr.read_unaligned")
         return readMemory(address, *target, node.span, name == "ptr.read");
+      if (name == "ptr.replace") {
+        if (operands.size() != 2)
+          return fail("type", node.span, "pointer replace requires one value");
+        auto old = readMemory(address, *target, node.span);
+        if (!old || !writeMemory(address, operands[1], target->type, node.span))
+          return std::nullopt;
+        return old;
+      }
       if (name == "ptr.write" || name == "ptr.write_unaligned") {
         if (operands.size() != 2)
           return fail("type", node.span, "pointer write requires one value");
@@ -2916,6 +3152,32 @@ private:
   Opt aggregateCall(const Node &node, const Shape *want) {
     const auto &callee = *node.children[0];
     auto operation = host.operation(node);
+    if (operation.name == "intrinsics.addr_of" ||
+        operation.name == "intrinsics.addr_of_mut") {
+      if (node.children.size() != 2)
+        return fail("constant", node.span, "address macro requires one place");
+      auto where = place(*node.children[1]);
+      if (!where.value && !where.address)
+        return fail("constant", node.span, "address macro requires a place");
+      bool exclusive = operation.name == "intrinsics.addr_of_mut";
+      if (exclusive && !where.mutableBinding)
+        return fail("constant", node.span, "address requires a mutable place");
+      return addressOf(where, exclusive, true);
+    }
+    if (operation.name == "intrinsics.offset_of") {
+      std::uint64_t offset = 0;
+      auto owner = operation.type;
+      for (auto field : operation.fields) {
+        auto layout = host.layout(owner);
+        auto shape = host.typeShape(owner);
+        if (!layout || !shape || field >= layout->fields.size() ||
+            field >= shape->elements.size())
+          return unsupported(node.span, "this offset_of layout");
+        offset += layout->fields[field];
+        owner = shape->elements[field].type;
+      }
+      return integerValue(Type::Usize, integerLiteral(offset));
+    }
     if (operation.name == "panic" ||
         (callee.kind == Kind::Name &&
          (callee.text == "core::panic::panic" ||
@@ -3041,8 +3303,10 @@ private:
         return value;
       }
     }
-    if (operation.name == "cell.as_ptr" && receiver &&
-        receiver->kind != Value::Kind::Reference) {
+    if ((operation.name == "cell.as_ptr" ||
+         operation.name == "storage.as_ptr" ||
+         operation.name == "storage.as_mut_ptr") &&
+        receiver && receiver->kind != Value::Kind::Reference) {
       if (!receiverPlace.value && !receiverPlace.address) {
         frame().locals.emplace_back("<temporary>", std::move(*receiver), false,
                                     nullptr);
@@ -3050,12 +3314,18 @@ private:
         receiverPlace = {local.value.get(), local.value.get(), {}, false,
                          local.name,        local.value};
       }
-      receiver = addressOf(receiverPlace, false);
+      const bool exclusive = operation.name == "storage.as_mut_ptr";
+      if (exclusive && !receiverPlace.mutableBinding)
+        return fail("constant", node.span,
+                    "constant mutable pointer requires a mutable place");
+      receiver = addressOf(receiverPlace, exclusive);
     }
     if (!operation.name.empty()) {
       auto value = intrinsic(node, operation, receiver ? &*receiver : nullptr,
                              arguments);
-      if (value && operation.name == "storage.into_inner" &&
+      if (value &&
+          (operation.name == "storage.into_inner" ||
+           operation.name == "storage.assume_init") &&
           receiverPlace.value)
         receiverPlace.value->kind = Value::Kind::Uninitialized;
       if (value && operation.name == "storage.new" && !arguments.empty() &&
@@ -3308,8 +3578,8 @@ private:
     } else if (callee.kind == Kind::Name) {
       auto separator = callee.text.rfind("::");
       if (separator != std::string::npos) {
-        // Only a float owner changes how the call evaluates; resolving any other
-        // owner here would reject generic types named without arguments.
+        // Only a float owner changes how the call evaluates; resolving any
+        // other owner here would reject generic types named without arguments.
         owner = floatingOwner(callee, separator);
         method = callee.text.substr(separator + 2);
       }

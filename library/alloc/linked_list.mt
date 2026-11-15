@@ -1,4 +1,5 @@
 import core.iter.{Iterator, BidirectionalIterator, ExactSizeIterator, FusedIterator, OwnedIterable, Iterable, MutableIterable, FromItems, ExtendItems}
+import core.convert.From
 import core.clone.Clone
 import core.default.Default
 import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
@@ -6,6 +7,7 @@ import core.hash.{Hash, Hasher}
 import core.fmt
 
 import super.alloc.{Allocator, Global, AllocError, PushError, layout_of, handle_alloc_error}
+import super.collections.TryReserveError
 
 type Node<T> {
     value: T
@@ -61,7 +63,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
     pub mut fn try_push_back(take value: T): Unit throws PushError<T> {
         let raw = match capture self.a.allocate(layout_of<Node<T>>()) {
             success(p) => p,
-            failure(error) => { throw PushError(value, error) }
+            failure(error) => { throw PushError(value, TryReserveError.from_alloc_error(error)) }
         }
         let n = raw.cast<Node<T>>()
         unsafe { core.ptr.write(n, Node(value, self.tail, core.ptr.null_mut<Node<T>>())) }
@@ -72,7 +74,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
     pub mut fn try_push_front(take value: T): Unit throws PushError<T> {
         let raw = match capture self.a.allocate(layout_of<Node<T>>()) {
             success(p) => p,
-            failure(error) => { throw PushError(value, error) }
+            failure(error) => { throw PushError(value, TryReserveError.from_alloc_error(error)) }
         }
         let n = raw.cast<Node<T>>()
         unsafe { core.ptr.write(n, Node(value, core.ptr.null_mut<Node<T>>(), self.head)) }
@@ -285,6 +287,11 @@ pub type ListIter<region r, T, A: Allocator> {
     back: ptr<mut Node<T>>
     remaining: usize
 }
+extend<region r, T, A: Allocator> ListIter<region r, T, A> implements Clone {
+    fn clone(): ListIter<region r, T, A> {
+        ListIter(self.list, self.front, self.back, self.remaining)
+    }
+}
 extend<region r, T, A: Allocator> ListIter<region r, T, A> implements Iterator {
     type Item = read T from r
     fn size_hint(): (usize, usize?) { (self.remaining, present(self.remaining)) }
@@ -382,10 +389,15 @@ extend<T: Clone, A: Allocator + Clone> LinkedList<T, A> implements Clone {
         var out = new_in<T, A>(self.a.clone())
         var p = self.head
         while p != core.ptr.null_mut<Node<T>>() {
-            out.push_back(unsafe { read (*p).value }.clone())
+            out.push_back(T.(Clone).clone(unsafe { read (*p).value }))
             p = unsafe { (*p).next }
         }
         out
+    }
+}
+extend<T: Clone, A: Allocator + Clone> LinkedListIntoIter<T, A> implements Clone {
+    fn clone(): LinkedListIntoIter<T, A> {
+        LinkedListIntoIter(self.list.clone())
     }
 }
 extend<T: PartialEq, A: Allocator> LinkedList<T, A> implements PartialEq {
@@ -468,6 +480,11 @@ extend<T> LinkedList<T> implements FromItems<T> {
         var out = new<T>()
         out.extend(items)
         out
+    }
+}
+extend<T, const N: usize> LinkedList<T> implements From<[T; N]> {
+    static fn from(take items: [T; N]): LinkedList<T> {
+        LinkedList<T>.(FromItems<T>).from_iter(take items)
     }
 }
 

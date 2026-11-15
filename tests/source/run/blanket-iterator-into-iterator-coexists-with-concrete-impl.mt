@@ -23,4 +23,25 @@ extend Bag implements core.iter.OwnedIterable {
     type IntoIter = Counter
     fn into_iter(receiver take self: Self): Counter { Counter(0, self.max) }
 }
-fn main(): i32 { 0 }
+extend<T> T? implements core.iter.OwnedIterable {
+    type Item = i32
+    type IntoIter = Counter
+    fn into_iter(receiver take self: Self): Counter { Counter(1, 2) }
+}
+extend<T, E> (Outcome<T, E>) implements core.iter.OwnedIterable {
+    type Item = i32
+    type IntoIter = Counter
+    fn into_iter(receiver take self: Self): Counter { Counter(2, 3) }
+}
+fn item(mut iterator: Counter): i32 {
+    match iterator.next() { present(value) => value, none => -1 }
+}
+fn main(): i32 {
+    let iterator = Counter(0, 1).into_iter()
+    let optional: i32? = present(7)
+    let result: (Outcome<i32, bool>) = success(9)
+    if item(iterator) + item(optional.into_iter()) + item(result.into_iter()) != 3 {
+        return 1
+    }
+    0
+}

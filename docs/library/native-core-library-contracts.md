@@ -181,8 +181,12 @@ portable byte encoding it additionally promises. `BuildHasher` associates
 one Hasher type; `build_hasher` constructs state such that repeated builds
 from the same builder hash identical streams identically.
 `BuildHasher.hash_one<T: Hash>(read T)` hashes one value with fresh state.
-`BuildHasherDefault<H: Hasher + Default>` stores no H state and constructs
-H's default. General Hash output, seeds and algorithm are not fixed across
+`BuildHasherDefault<H>` is an empty generic copy type; constructing or defaulting
+the builder requires no properties of H and stores or owns no H state.
+Only its `BuildHasher` implementation requires `H: Hasher + Default` and
+constructs a fresh H default. Consequently, its transfer, sharing, pinning and
+unwind-safety properties do not depend on H. General Hash output, seeds and
+algorithm are not fixed across
 library revisions or targets, and are not cryptographic guarantees.
 
 `core.error.Error: Debug + Display` lends an optional source error from its
@@ -275,16 +279,23 @@ and leading - only for signed types. At least one digit is required; digits
 are ASCII 0..9/a..z/A..Z with value < radix. Whitespace, separators and prefixes
 are not skipped. Bad radix panics; bad input returns ParseIntError with kind
 Empty, InvalidDigit, PosOverflow, NegOverflow, or Zero where a nonzero target
-requires it. Decimal FromStr uses radix ten. Parsing is O(input bytes).
+requires it. IntErrorKind.InvalidRadix remains a public compatibility variant;
+invalid radix values panic and do not produce that error. Decimal FromStr uses
+radix ten. Parsing is O(input bytes).
 
 `Wrapping<T>` delegates arithmetic to wrapping operations and bitwise
 operations to T. `Saturating<T>` delegates arithmetic to saturating operations;
 neither wrapper makes division by zero valid. Wrapper equality/order/hash
 inspect the inner value. `NonZero<Int>` contains exactly a nonzero integer:
-`new` returns optional, `new_unchecked` requires nonzero, `get` returns the
-integer. Nonzero arithmetic and checked/saturating forms use the corresponding
-integer operation while preserving nonzero validity. Bitwise OR of a NonZero
-operand preserves nonzero. A signed nonzero MIN is the signed integer MIN,
+`IntegerBounds` is public and supplies a const zero predicate plus `MIN`, `MAX`,
+and `NONZERO_MIN`; the generic `new` returns none exactly for zero.
+`new_unchecked` requires nonzero, `get` returns the integer. Nonzero arithmetic
+and checked/saturating forms use the corresponding
+integer operation while preserving nonzero validity. `IntegerBounds` is a
+publicly nameable but sealed interface implemented only by the twelve integer
+primitives, so safe construction and the `NONZERO_MIN` constant cannot be
+forged by user implementations. Bitwise OR of a NonZero operand preserves
+nonzero. A signed nonzero MIN is the signed integer MIN,
 unsigned nonzero MIN is one, and MAX is the underlying integer MAX.
 For unsigned NonZero, checked_add takes an ordinary unsigned integer;
 checked_mul takes another NonZero and checked_pow takes a u32 exponent.
@@ -503,9 +514,12 @@ nonempty pattern yields one empty field. Splitting by empty text includes
 empty end fields and one field per scalar.
 `splitn/rsplitn(n)` yield at most n fields: zero gives none; one gives the
 entire input; the last field is the unsplit remainder.
-`split_terminator/rsplit_terminator` suppress the single final empty field of
-the forward decomposition. `split_inclusive` attaches the matched separator
-to its preceding field and does not add a trailing empty field.
+`split_terminator` suppresses the single final empty field of the forward
+decomposition; `rsplit_terminator` suppresses the single initial empty field
+of the reverse decomposition. Their bidirectional capability requires a
+double-ended pattern, just like `split/rsplit`. `split_inclusive` attaches
+the matched separator to its preceding field and does not add a trailing
+empty field.
 Every iterator preserves the original region and is allocation-free.
 
 `trim_start_matches/trim_end_matches` repeatedly remove matching edge
@@ -537,6 +551,27 @@ const N. `len/is_empty` are O(1). `as_ptr/as_mut_ptr` lend raw addresses,
 not ownership; `_ptr_range` gives start and one-past pointers. Pointer
 invalidation follows the backing owner. All element projections preserve
 the slice's region and access mode.
+
+`core.slice.SliceIndex<S>` is the index-to-projection relation used by
+`Index/IndexMut`. Its unsafe implementations must preserve valid projection
+provenance, extent, access, and Text validity. For `S = [T]`, `usize` selects
+`Output = T`; range indices
+select `Output = [T]`. For `S = Text`, only range indices exist and
+`Output = Text`. `SliceRange` supplies normalization for range descriptors,
+iterator-state ranges, and `(Bound<usize>, Bound<usize>)` through
+`RangeBounds<usize>`; excluded starts and inclusive ends use checked successor
+conversion. `get/get_mut` return none for overflow, reversed or out-of-bounds
+intervals and, for Text, non-UTF-8-boundary endpoints. `index/index_mut` panic
+for the same invalid selections. An exhausted inclusive iterator selects an
+empty interval after its final endpoint, still subject to overflow and extent
+checks. `SliceRange` is unsafe to implement: every successful normalization
+must satisfy `start <= end <= len` without overflow. Returned views borrow
+the input slice, not
+the index, and mutable projections retain exclusive access. Unsafe
+`get_unchecked/get_unchecked_mut` accept raw slice pointers and return raw
+projection pointers without allocating or acquiring ownership; callers must
+establish valid provenance, extent, index, and Text boundaries even if the
+result is never dereferenced, plus exclusive writable access for `_mut`.
 
 | Members | Contract |
 | --- | --- |
@@ -573,6 +608,7 @@ false positives across allocations, so neither query establishes provenance.
 `strip_circumfix` removes a matching element prefix and suffix once, only
 when nonoverlapping, and lends the remaining interval.
 
+The public `SplitOffRange` bound is reusable by generic forwarding APIs.
 The split-off-view helpers mutate a stored slice view, not its backing owner:
 on a valid one-sided RangeTo/RangeToInclusive they return the selected prefix
 and replace the stored view with the suffix; on RangeFrom they return the
@@ -621,7 +657,8 @@ elements, including empty fields at ends/adjacent matches.
 `split_inclusive` retains separators on the preceding segment.
 Mutable variants lend nonoverlapping exclusive segments; their predicates
 still read separator elements. Limited splits yield at most n segments with
-the last the remainder. `chunk_by/chunk_by_mut` call
+the last the remainder and are forward-only in their selected direction,
+including mutable variants. `chunk_by/chunk_by_mut` call
 `mut fn(read T, read T): bool` on adjacent original elements; true joins a
 run, false starts a new one. Empty input yields no runs.
 Each visits O(n) elements overall and uses constant iterator state.
@@ -885,7 +922,9 @@ required, not suggestions to be checked only if a result is dereferenced.
 null without proving dereferenceability, uniqueness, initialization or
 thread transfer.
 
-`null/null_mut` have zero address. `dangling/dangling_mut` and
+`null/null_mut` have zero address. Raw-pointer `Default` is available for
+`T: ?Sized + Thin` and returns the corresponding null pointer without
+allocation or provenance. `dangling/dangling_mut` and
 `NonNull.dangling` supply a non-null appropriately aligned pointer without
 allocated T storage. `NonNull.new` returns none on null; `new_unchecked`
 requires non-null. `from_ref/from_mut` derive a pointer preserving provenance
@@ -1135,7 +1174,8 @@ Formatter exposes fill, alignment, width, precision, alternate, sign and
 zero-pad flags without altering them. Default fill is space; width is a
 minimum output width measured in scalar characters, not UTF-8 bytes.
 Text precision is a maximum scalar count. Numerical precision has the
-operation's digit meaning; fixed floating precision rounds ties to even.
+operation's digit meaning; fixed and exponential floating precision round ties
+to even, with exponential precision counting digits after the decimal point.
 Sign-aware zero padding occurs after sign/radix prefix and overrides ordinary
 numeric alignment. Alternate integer formatting supplies the radix prefix;
 alternate Debug selects multiline pretty structure formatting.
@@ -1292,7 +1332,9 @@ the target ABI operation, not a guessed bytewise native struct copy.
 ## 15. Applicability, constant evaluation and coverage
 
 These are portable core semantics wherever their input types and explicit
-target capabilities exist. Core requires no allocator, OS or executor.
+target capabilities exist. Core requires no allocator implementation, OS or
+executor; `core.alloc` defines only allocation-independent layout and provider
+interfaces.
 Alloc-backed results require the alloc layer. V1 qualification is Linux x64
 only; the eight [reference profiles](../spec/platform-contracts.md#8-reference-profiles) remain post-V1
 applicability/qualification obligations. Target pointer width/endian/C ABI/

@@ -153,6 +153,8 @@ bool function(const Function &f, const Program &program,
     fail({}, "invalid function signature or empty block list");
     return false;
   }
+  if (f.trackCaller && (!f.abi.empty() || f.indirectContract || f.coroutine))
+    fail(f.span, "invalid caller-tracking function contract");
   for (const auto &local : f.locals) {
     if (!known(local.type))
       fail(local.span, "unresolved local type");
@@ -273,6 +275,8 @@ bool function(const Function &f, const Program &program,
       definition = {static_cast<int>(b), i, n.result.type, n.result.access};
     }
     const auto &exit = block.exit;
+    if (exit.unpredictable && exit.kind != Exit::Branch)
+      fail(exit.span, "unpredictable hint requires a conditional branch");
     switch (exit.kind) {
     case Exit::Suspend:
       if (!f.coroutine)
@@ -740,6 +744,14 @@ bool function(const Function &f, const Program &program,
           require(n.result.access ==
                   (n.op == Op::BorrowRead ? Access::Read : Access::Mut));
         break;
+      case Op::RawAddress:
+        arity(0);
+        require(program.types->isPointer(result));
+        if (slot() && program.types->isPointer(result))
+          require(program.types->pointer(result).payload ==
+                  *projectedType(*program.types, f.locals[n.place.root].type,
+                                 n.place.fields));
+        break;
       case Op::ViewRead:
       case Op::ViewMut:
         arity(0);
@@ -983,6 +995,27 @@ bool function(const Function &f, const Program &program,
               machineCastAllowed(*program.types, n.operands[0].type, result));
         break;
       case Op::Machine: {
+        if (n.text == "intrinsics.offset_of") {
+          require(n.place.root == -1 && !n.place.fields.empty() &&
+                  n.typeArguments.size() == 1);
+          if (n.typeArguments.size() == 1) {
+            auto owner = n.typeArguments[0];
+            for (auto projection : n.place.fields) {
+              require(projection.kind == Projection::Kind::Field &&
+                      program.types->isProduct(owner));
+              if (projection.kind != Projection::Kind::Field ||
+                  !program.types->isProduct(owner))
+                break;
+              const auto &fields = program.types->product(owner).fields;
+              require(projection.index < fields.size());
+              if (projection.index >= fields.size())
+                break;
+              owner = fields[projection.index].type;
+              require(program.types->pointerMetadata(owner) !=
+                      PointerMetadata::Witness);
+            }
+          }
+        }
         if (n.text == "coroutine.context")
           require(f.coroutine);
         if (n.text == "va.start")
@@ -1003,6 +1036,34 @@ bool function(const Function &f, const Program &program,
             proofs);
         require(signature &&
                 machineResultMatches(*program.types, *signature, result));
+        if (n.text == "intrinsics.fn_addr" || n.text == "ptr.fn_addr_eq")
+          for (auto operand : n.operands) {
+            if (!program.types->isParameter(operand.type))
+              continue;
+            auto subject = operand.type;
+            auto bounded =
+                std::any_of(f.interfaceBounds.begin(), f.interfaceBounds.end(),
+                            [&](const auto &bound) {
+                              if (bound.first != subject ||
+                                  !program.types->isErased(bound.second))
+                                return false;
+                              const auto &name =
+                                  program.types->erased(bound.second).name;
+                              return name == "core::clone::FunctionPointer" ||
+                                     name == "core::ops::FnPtr";
+                            });
+            require(bounded);
+          }
+        if (n.text == "va.next_arg" && n.typeArguments.size() == 1 &&
+            program.types->isParameter(n.typeArguments[0]))
+          require(
+              std::any_of(f.interfaceBounds.begin(), f.interfaceBounds.end(),
+                          [&](const auto &bound) {
+                            return bound.first == n.typeArguments[0] &&
+                                   program.types->isErased(bound.second) &&
+                                   program.types->erased(bound.second).name ==
+                                       "core::ffi::VaArgSafe";
+                          }));
         if (signature && signature->unsafeCall)
           require(n.unsafeAllowed);
         if (auto operation = targetOperation(n.text);
@@ -1396,6 +1457,11 @@ bool verify(const Program &program, Diagnostics &diagnostics,
         if (value.kind != StaticConstant::Kind::Scalar &&
             (value.scalar.floatingBits || !value.scalar.floating.empty()))
           return false;
+        if (value.kind == StaticConstant::Kind::TypeIdentity)
+          return expected == Type::U64 && !value.text.empty() &&
+                 value.fields.empty() && value.symbol == -1 &&
+                 value.projections.empty() && value.selection == -1 &&
+                 value.byteOffset == 0;
         if (value.kind == StaticConstant::Kind::Pointer) {
           if (!(program.types->isPointer(expected) ||
                 program.types->isView(expected)) ||
@@ -1441,6 +1507,18 @@ bool verify(const Program &program, Diagnostics &diagnostics,
             payload = program.types->product(payload).fields[field].type;
           }
           auto target = program.types->view(expected).payload;
+          if (program.types->isPointer(expected)) {
+            if (!integerLiteralFits(integerLiteral(value.byteOffset),
+                                    Type::Usize,
+                                    program.types->targetPointerBits()) ||
+                !integerLiteralFits(value.scalar, Type::Usize,
+                                    program.types->targetPointerBits()))
+              return false;
+            auto metadata = program.types->pointerMetadata(target);
+            return metadata == PointerMetadata::None
+                       ? value.scalar.magnitude[0] == 0
+                       : metadata == PointerMetadata::ElementCount;
+          }
           if (program.types->isView(expected) &&
               (program.types->view(expected).mode == ParameterMode::Mut ||
                program.statics[value.symbol].mutableBinding))

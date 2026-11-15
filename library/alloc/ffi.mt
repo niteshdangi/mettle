@@ -1,10 +1,10 @@
 pub import core.ffi.{CStr, FromBytesWithNulError, FromBytesUntilNulError}
+import core.fmt
 import core.borrow.{AsRef, Borrow, OwnedType, ToOwned}
 import core.clone.Clone
 import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import core.convert.Into
 import core.default.Default
-import core.fmt
 import core.hash.{Hash, Hasher}
 import core.iter.{Iterator, OwnedIterable}
 import core.ops.Deref
@@ -20,18 +20,101 @@ copy enum NulErrorKind { InteriorNul, NotTerminated }
 pub type FromVecWithNulError { bytes: List<u8>; kind: NulErrorKind }
 pub type IntoStringError { value: CString; error: Utf8Error }
 
+extend NulErrorKind implements PartialEq {
+    fn eq(read other: NulErrorKind): bool {
+        match self {
+            NulErrorKind.InteriorNul => match other {
+                NulErrorKind.InteriorNul => true,
+                NulErrorKind.NotTerminated => false
+            },
+            NulErrorKind.NotTerminated => match other {
+                NulErrorKind.InteriorNul => false,
+                NulErrorKind.NotTerminated => true
+            }
+        }
+    }
+}
+extend NulErrorKind implements Eq {}
+extend NulError implements Clone {
+    fn clone(): NulError { NulError(self.bytes.clone(), self.position) }
+}
+extend NulError implements PartialEq {
+    fn eq(read other: NulError): bool {
+        self.bytes == other.bytes && self.position == other.position
+    }
+}
+extend NulError implements Eq {}
+extend FromVecWithNulError implements Clone {
+    fn clone(): FromVecWithNulError { FromVecWithNulError(self.bytes.clone(), self.kind) }
+}
+extend FromVecWithNulError implements PartialEq {
+    fn eq(read other: FromVecWithNulError): bool {
+        self.bytes == other.bytes && self.kind == other.kind
+    }
+}
+extend FromVecWithNulError implements Eq {}
+extend IntoStringError implements Clone {
+    fn clone(): IntoStringError { IntoStringError(self.value.clone(), self.error.clone()) }
+}
+extend IntoStringError implements PartialEq {
+    fn eq(read other: IntoStringError): bool {
+        self.value == other.value && self.error == other.error
+    }
+}
+extend IntoStringError implements Eq {}
+extend NulErrorKind implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
+        match self {
+            NulErrorKind.InteriorNul => { try f.write_str("InteriorNul") },
+            NulErrorKind.NotTerminated => { try f.write_str("NotTerminated") }
+        }
+    }
+}
+extend FromVecWithNulError implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
+        var debug = try f.debug_struct("FromVecWithNulError")
+        try debug.field("bytes", self.bytes.as_slice())
+        try debug.field("kind", self.kind)
+        try debug.finish()
+    }
+}
+extend FromVecWithNulError implements core.fmt.Display {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
+        match self.kind {
+            NulErrorKind.InteriorNul => { try f.write_str("data provided contains an interior nul byte") },
+            NulErrorKind.NotTerminated => { try f.write_str("data provided is not nul terminated") }
+        }
+    }
+}
+extend IntoStringError implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
+        var debug = try f.debug_struct("IntoStringError")
+        try debug.field("value", read self.value)
+        try debug.field("error", self.error)
+        try debug.finish()
+    }
+}
+extend IntoStringError implements core.fmt.Display {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
+        try Utf8Error.(core.fmt.Display).fmt(self.error, mut f)
+    }
+}
+
+extend FromVecWithNulError implements core.error.Error {}
+extend IntoStringError implements core.error.Error {}
+
 extend NulError {
     pub fn nul_position(): usize { self.position }
     pub take fn into_vec(): List<u8> { self.bytes }
 }
-extend NulError implements fmt.Display {
-    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+extend NulError implements core.fmt.Display {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
         try f.write_str("nul byte found in provided data at position: ")
-        try usize.(fmt.Display).fmt(self.position, mut f)
+        try usize.(core.fmt.Display).fmt(self.position, mut f)
     }
 }
-extend NulError implements fmt.Debug {
-    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+extend NulError implements core.fmt.Debug {
+    fn fmt(mut f: core.fmt.Formatter): Unit throws core.fmt.Error {
         var debug = try f.debug_tuple("NulError")
         try debug.field(self.position)
         try debug.field(self.bytes.as_slice())
@@ -197,6 +280,17 @@ extend<region r> CStr implements PartialEq<BorrowedOrOwned<region r, CStr>> {
         CStr.(PartialEq).eq(read self, other.as_ref())
     }
 }
+extend<region r> BorrowedOrOwned<region r, CStr> implements PartialEq<CStr> {
+    fn eq(read other: CStr): bool { CStr.(PartialEq).eq(self.as_ref(), other) }
+}
+extend<region r, region s> BorrowedOrOwned<region r, CStr> implements PartialEq<read CStr from s> {
+    fn eq(read other: read CStr from s): bool {
+        CStr.(PartialEq).eq(self.as_ref(), *other)
+    }
+}
+extend<region r> BorrowedOrOwned<region r, CStr> implements PartialEq<CString> {
+    fn eq(read other: CString): bool { CStr.(PartialEq<CString>).eq(self.as_ref(), other) }
+}
 extend<region r> CString implements PartialEq<BorrowedOrOwned<region r, CStr>> {
     fn eq(read other: BorrowedOrOwned<region r, CStr>): bool {
         CStr.(PartialEq).eq(self.as_c_str(), other.as_ref())
@@ -210,6 +304,18 @@ extend CString implements Clone {
 }
 extend CString implements Borrow<CStr> {
     fn borrow(): read CStr from self { self.as_c_str() }
+}
+extend<region r> BorrowedOrOwned<region r, CStr>
+    implements core.convert.From<read CString from r> {
+    static fn from(take value: read CString from r): BorrowedOrOwned<region r, CStr> {
+        BorrowedOrOwned<region r, CStr>.Borrowed(value.as_c_str())
+    }
+}
+extend<region r> BorrowedOrOwned<region r, CStr>
+    implements core.convert.From<CString> {
+    static fn from(take value: CString): BorrowedOrOwned<region r, CStr> {
+        BorrowedOrOwned<region r, CStr>.Owned(value)
+    }
 }
 extend CString implements AsRef<CStr> {
     fn as_ref(): read CStr from self { self.as_c_str() }

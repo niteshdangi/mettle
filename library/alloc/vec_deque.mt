@@ -5,7 +5,8 @@ import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import core.hash.{Hash, Hasher}
 import core.fmt
 
-import super.alloc.{Allocator, Global, AllocError, PushError, layout_unchecked, handle_alloc_error, layout_of, dangling_for, free_block}
+import super.alloc.{Allocator, Global, PushError, layout_unchecked, dangling_for, free_block}
+import super.collections.TryReserveError
 
 copy type RawSlice<T> { data: ptr<read T>; len: usize }
 
@@ -219,24 +220,17 @@ extend<T, A: Allocator> Deque<T, A> {
     }
 
     // Moves the elements to the front of a larger block; failure changes nothing.
-    mut fn grow_to(need: usize, exact: bool): Unit throws AllocError {
+    mut fn grow_to(need: usize, exact: bool): Unit throws TryReserveError {
+        let ncap = try super.vec.growth_target<T>(self.cap, need, exact)
+        if ncap == self.cap { return () }
         let size = core.mem.size_of<T>()
-        if size == 0usize || need <= self.cap { return () }
-        var ncap = need
-        if !exact {
-            let doubled = self.cap.saturating_mul(2usize)
-            if doubled > ncap { ncap = doubled }
-            if ncap < 4usize { ncap = 4usize }
-        }
         let align = core.mem.align_of<T>()
-        let bytes = match ncap.checked_mul(size) {
-            present(b) => b,
-            none => throw AllocError(0xffffffffffffffffusize, align)
+        let bytes = ncap * size
+        let layout = unsafe { layout_unchecked(bytes, align) }
+        let np = match capture self.a.allocate(layout) {
+            success(p) => p.cast<T>(),
+            failure(_) => throw TryReserveError.allocation_error(layout)
         }
-        if bytes > 0x7fffffffffffffffusize - (align - 1usize) {
-            throw AllocError(bytes, align)
-        }
-        let np = (try self.a.allocate(unsafe { layout_unchecked(bytes, align) })).cast<T>()
         var i = 0usize
         while i < self.len {
             unsafe { core.ptr.`copy`(self.buf.add(self.physical(i)).cast_const(), np.add(i), 1usize) }
@@ -251,33 +245,33 @@ extend<T, A: Allocator> Deque<T, A> {
             unsafe { self.a.deallocate(old_buf.cast<u8>(), layout_unchecked(old_cap * size, align)) }
         }
     }
-    pub mut fn try_reserve(additional: usize): Unit throws AllocError {
+    pub mut fn try_reserve(additional: usize): Unit throws TryReserveError {
         let need = match self.len.checked_add(additional) {
             present(n) => n,
-            none => throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
+            none => throw TryReserveError.capacity_overflow()
         }
         try self.grow_to(need, false)
     }
-    pub mut fn try_reserve_one(): Unit throws AllocError {
+    pub mut fn try_reserve_one(): Unit throws TryReserveError {
         try self.try_reserve(1usize)
     }
     pub mut fn reserve(additional: usize): Unit {
         match capture self.try_reserve(additional) {
             success(_) => (),
-            failure(_) => handle_alloc_error(layout_of<T>())
+            failure(error) => error.handle()
         }
     }
-    pub mut fn try_reserve_exact(additional: usize): Unit throws AllocError {
+    pub mut fn try_reserve_exact(additional: usize): Unit throws TryReserveError {
         let need = match self.len.checked_add(additional) {
             present(n) => n,
-            none => throw AllocError(0xffffffffffffffffusize, core.mem.align_of<T>())
+            none => throw TryReserveError.capacity_overflow()
         }
         try self.grow_to(need, true)
     }
     pub mut fn reserve_exact(additional: usize): Unit {
         match capture self.try_reserve_exact(additional) {
             success(_) => (),
-            failure(_) => handle_alloc_error(layout_of<T>())
+            failure(error) => error.handle()
         }
     }
     pub mut fn append(mut other: Deque<T, A>): Unit {
@@ -331,7 +325,7 @@ extend<T, A: Allocator> Deque<T, A> {
         unsafe { self.a.deallocate(old_buf.cast<u8>(), layout_unchecked(old_cap * size, align)) }
     }
     pub mut fn try_push_back(take value: T): Unit throws PushError<T> {
-        match capture self.try_reserve_one() {
+        match take capture self.try_reserve_one() {
             success(_) => {},
             failure(error) => { throw PushError(value, error) }
         }
@@ -340,7 +334,7 @@ extend<T, A: Allocator> Deque<T, A> {
         self.len += 1usize
     }
     pub mut fn try_push_front(take value: T): Unit throws PushError<T> {
-        match capture self.try_reserve_one() {
+        match take capture self.try_reserve_one() {
             success(_) => {},
             failure(error) => { throw PushError(value, error) }
         }
@@ -351,7 +345,7 @@ extend<T, A: Allocator> Deque<T, A> {
     pub mut fn push_back(take value: T): Unit {
         match capture self.try_reserve_one() {
             success(_) => {},
-            failure(_) => handle_alloc_error(layout_of<T>())
+            failure(error) => error.handle()
         }
         let at = self.physical(self.len)
         unsafe { core.ptr.write(self.buf.add(at), value) }
@@ -364,7 +358,7 @@ extend<T, A: Allocator> Deque<T, A> {
     pub mut fn push_front(take value: T): Unit {
         match capture self.try_reserve_one() {
             success(_) => {},
-            failure(_) => handle_alloc_error(layout_of<T>())
+            failure(error) => error.handle()
         }
         self.head = if self.head == 0usize { self.cap - 1usize } else { self.head - 1usize }
         unsafe { core.ptr.write(self.buf.add(self.head), value) }

@@ -22,6 +22,9 @@ bool requiresRegionProof(Type type, const TypeStore &types) {
                   self(self, parameter.type);
     } else if (types.isProduct(nested)) {
       const auto &record = types.product(nested);
+      result |= record.kind == AggregateKind::VarArgs &&
+                (record.name == "core::ffi::VaList" ||
+                 !record.regionArguments.empty());
       if (record.kind == AggregateKind::Array && !record.components.empty())
         result |= self(self, record.components[0]);
       else
@@ -651,6 +654,11 @@ Variance RegionTypeSolver::varianceFor(Type type, RegionId region,
     } else if (nested != parameter) {
       for (auto child : children(nested))
         result = combine(result, values.at(child));
+      if (types.isProduct(nested) &&
+          types.product(nested).kind == AggregateKind::VarArgs)
+        for (auto frame : types.product(nested).regionArguments)
+          if (occurrence(frame))
+            result = combine(result, Variance::Covariant);
       if (types.isProduct(nested) && result != Variance::Bivariant &&
           (types.product(nested).kind == AggregateKind::Cell ||
            types.product(nested).kind == AggregateKind::RefCell ||

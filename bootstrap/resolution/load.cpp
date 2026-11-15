@@ -410,7 +410,8 @@ public:
         for (const auto &module : modules)
           packageImport({}, name, module);
       result.packageNames[""] = library.configuration.packageName;
-      reserveRootName({}, library.configuration.packageName, "the package name");
+      reserveRootName({}, library.configuration.packageName,
+                      "the package name");
       for (const auto &package : library.packages)
         if (!package.module.empty()) {
           result.packageNames[package.module] = package.name;
@@ -441,6 +442,7 @@ private:
   SourceId nextSource = 0;
   std::set<SourceId> allocatedSources;
   std::set<SourceId> compiledSourceIds;
+  std::unordered_set<std::string> compiledSources;
   std::map<std::string, Module> compiledHeaders;
   std::map<std::string, SourceId> sourceIds;
   struct MacroModuleLocation {
@@ -534,6 +536,25 @@ private:
       }
       if (!path.empty() && libraryRoot(path.front()))
         owner[id] = path.front();
+    }
+    std::optional<std::pair<SourceId, std::string>> duplicate;
+    for (const auto &source : diagnostics.registeredSources()) {
+      if (!compiledSourceIds.contains(source.id) ||
+          diagnostics.isGenerated(source.id))
+        continue;
+      auto identity = fs::path(source.path).lexically_normal().generic_string();
+      if (loaded.contains(identity)) {
+        auto id = sourceIds.at(identity);
+        if (!duplicate || id < duplicate->first)
+          duplicate.emplace(id, source.path);
+      }
+      compiledSources.insert(std::move(identity));
+    }
+    if (duplicate) {
+      diagnostics.error("name", {},
+                        "source file '" + duplicate->second +
+                            "' has more than one module identity");
+      return false;
     }
     return true;
   }
@@ -713,8 +734,9 @@ private:
         path.erase(path.begin());
         path.insert(path.begin(), module);
       } else if (path.size() > 1 &&
-                 path[0] == (ownerPackage ? ownerPackage->name
-                                          : library.configuration.packageName)) {
+                 path[0] == (ownerPackage
+                                 ? ownerPackage->name
+                                 : library.configuration.packageName)) {
         path.erase(path.begin());
         if (ownerPackage && !ownerPackage->module.empty())
           path.insert(path.begin(), ownerPackage->module);
@@ -783,9 +805,8 @@ private:
       auto name = path[length - 1];
       auto firstPath =
           (directory / (name + ".mt")).lexically_normal().generic_string();
-      auto secondPath = (directory / name / "module.mt")
-                            .lexically_normal()
-                            .generic_string();
+      auto secondPath =
+          (directory / name / "module.mt").lexically_normal().generic_string();
       auto first = provider(firstPath);
       auto second = provider(secondPath);
       if (first && second)
@@ -1006,11 +1027,11 @@ private:
       if (imported.path.empty() || !libraryRoot(imported.path.front()))
         continue;
       auto origin = owner.find(imported.span.source);
-      found.push_back({imported.path.front(),
-                       imported.path.size() > 1 ? imported.path[1]
-                                                : std::string{},
-                       origin == owner.end() ? std::string{} : origin->second,
-                       imported.span, false});
+      found.push_back(
+          {imported.path.front(),
+           imported.path.size() > 1 ? imported.path[1] : std::string{},
+           origin == owner.end() ? std::string{} : origin->second,
+           imported.span, false});
     }
     for (auto i = scannedLiterals; i < result.textLiterals.size(); ++i) {
       auto span = result.textLiterals[i];
@@ -1374,8 +1395,8 @@ private:
                                              ? currentPackage->name
                                              : currentPackage->module}
               : std::vector<std::string>{};
-      auto ownName =
-          currentPackage ? currentPackage->name : library.configuration.packageName;
+      auto ownName = currentPackage ? currentPackage->name
+                                    : library.configuration.packageName;
       if (path.size() > 1 && path[0] == ownName) {
         scope = packageRoot;
         ++start;
@@ -1456,7 +1477,7 @@ private:
   void read(Source source, std::vector<std::string> prefix, fs::path directory,
             unsigned depth, bool rootPackageSource = false) {
     auto identity = fs::path(source.path).lexically_normal().generic_string();
-    if (!loaded.insert(identity).second) {
+    if (compiledSources.contains(identity) || !loaded.insert(identity).second) {
       diagnostics.error("name", {},
                         "source file '" + source.path +
                             "' has more than one module identity");
@@ -1495,6 +1516,17 @@ private:
                const std::vector<std::string> &from) {
           return macroModule(path, from);
         };
+    expansion::MacroFileProvider macroFileProvider =
+        [this](const std::string &path) -> std::optional<Source> {
+      auto included = provider(path);
+      if (!included)
+        return std::nullopt;
+      sourceId(*included);
+      sourceInstances[included->id] = sourceInstance();
+      if (!currentRoot.empty())
+        owner[included->id] = currentRoot;
+      return included;
+    };
     std::vector<Module::MacroDeclaration> macros;
     expansion::MacroLibrary macroExports;
     if (auto generated = expansion::expandMacros(
@@ -1512,7 +1544,8 @@ private:
               return macroModule(path, from, true);
             },
             &configuration(), library.macroExports ? &macroExports : nullptr,
-            library.identifyMacroSource))
+            library.identifyMacroSource, macroFileProvider,
+            library.macroEnvironment))
       source = std::move(*generated);
     if (!diagnostics.empty())
       return;

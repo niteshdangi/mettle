@@ -332,12 +332,12 @@ pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): LocalShared<T> 
 extend<T: unsized, A: Allocator + Clone> LocalShared<T, A> {
     // Another strong owner of the same payload; the payload is not cloned.
     pub fn retain(): LocalShared<T, A> {
-        let allocator = self.a.clone()
+        let allocator = A.(Clone).clone(self.a)
         unsafe { (*self.h).strong = bump((*self.h).strong) }
         LocalShared(self.p, self.h, allocator)
     }
     pub fn downgrade(): Weak<T, A> {
-        let allocator = self.a.clone()
+        let allocator = A.(Clone).clone(self.a)
         unsafe { (*self.h).wk = bump((*self.h).wk) }
         Weak(self.p, self.h, allocator)
     }
@@ -407,7 +407,7 @@ extend<T, A: Allocator> LocalShared<T, A> {
         let result = capture self.try_unwrap()
         match take result {
             success(value) => value,
-            failure(owner) => owner.get().clone()
+            failure(owner) => T.(Clone).clone(owner.get())
         }
     }
 }
@@ -430,7 +430,7 @@ pub unsafe fn from_raw<T: unsized, A: Allocator>(take raw: RawLocalShared<T, A>)
 pub unsafe fn increment_strong_count<T: unsized, A: Allocator + Clone>(
     read raw: RawLocalShared<T, A>
 ): RawLocalShared<T, A> {
-    let allocator = raw.a.clone()
+    let allocator = A.(Clone).clone(raw.a)
     unsafe { (*raw.h).strong = bump((*raw.h).strong) }
     RawLocalShared(raw.p, raw.h, allocator)
 }
@@ -442,7 +442,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
     pub fn upgrade(): LocalShared<T, A>? {
         if self.h == core.ptr.null_mut<LocalSharedHeader>() { return none }
         if unsafe { (*self.h).strong } == 0usize { return none }
-        let allocator = self.a.clone()
+        let allocator = A.(Clone).clone(self.a)
         unsafe {
             let b = self.h
             if (*b).strong == 0usize { return none }
@@ -451,7 +451,7 @@ extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
         }
     }
     pub fn retain(): Weak<T, A> {
-        let allocator = self.a.clone()
+        let allocator = A.(Clone).clone(self.a)
         if self.h != core.ptr.null_mut<LocalSharedHeader>() {
             unsafe { (*self.h).wk = bump((*self.h).wk) }
         }
@@ -498,7 +498,7 @@ extend<T: unsized, A: Allocator> Weak<T, A> {
 extend<T: Clone, A: Allocator + Clone> LocalShared<T, A> {
     pub mut fn make_mut(): mut T from self {
         if self.is_unique() { return unsafe { mut *self.p } }
-        let replacement = new_uninit_in<T, A>(self.a.clone())
+        let replacement = new_uninit_in<T, A>(A.(Clone).clone(self.a))
         if unsafe { (*self.h).strong } == 1usize {
             unsafe {
                 (*self.h).strong = 0usize
@@ -510,7 +510,7 @@ extend<T: Clone, A: Allocator + Clone> LocalShared<T, A> {
             var allocator = raw.a
             let _implicit = WeakRelease(raw.h, core.ptr.from_mut(allocator))
         } else {
-            let value = self.get().clone()
+            let value = T.(Clone).clone(self.get())
             unsafe { core.ptr.write(replacement.p.cast<T>(), value) }
             let initialized = unsafe { replacement.assume_init() }
             let _old = unsafe { core.ptr.replace(core.ptr.from_mut(self), initialized) }
@@ -703,7 +703,7 @@ extend<T: unsized, A: Allocator> Pinned<T, A> {
 extend<T: unsized, A: Allocator + Clone> Pinned<T, A> {
     // Another pinned owner of the same payload.
     pub fn retain(): Pinned<T, A> {
-        let allocator = self.a.clone()
+        let allocator = A.(Clone).clone(self.a)
         unsafe { (*self.h).strong = bump((*self.h).strong) }
         Pinned(self.p, self.h, allocator)
     }
@@ -771,6 +771,8 @@ extend<region r, T: PartialOrd<U> + unsized, U: unsized, A: Allocator> pinned mu
     fn partial_cmp(read other: Pinned<U, A>): Ordering? { self.get_ref().partial_cmp(other.get_ref()) }
 }
 unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}
+// Moving a LocalShared handle never pins its allocator or payload.
+unsafe extend<T: unsized, A: Allocator> LocalShared<T, A> implements Unpin {}
 extend<T: Default> Pinned<T> implements Default {
     static fn default(): Pinned<T> { pin(T.(Default).default()) }
 }
@@ -855,7 +857,7 @@ extend<region r, T: Clone> LocalShared<[T]> implements From<read [T] from r> {
         var copies = super.vec.with_capacity<T>(values.len())
         var index = 0usize
         while index < values.len() {
-            copies.push(values[index].clone())
+            copies.push(T.(Clone).clone(values[index]))
             index += 1usize
         }
         LocalShared<[T]>.from(copies)
@@ -870,5 +872,16 @@ extend<T> LocalShared<[T]> implements FromItems<T> {
     static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): LocalShared<[T]> {
         let values = super.vec.List<T>.(FromItems<T>).from_iter(items)
         LocalShared<[T]>.from(values)
+    }
+}
+extend<T: unsized, A: Allocator> LocalShared<T, A> implements fmt.Pointer {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try fmt.fmt_pointer(mut f, self.as_ptr().addr())
+    }
+}
+extend<T: unsized, A: Allocator> Pinned<T, A> implements fmt.Pointer {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        let pointer = core.ptr.from_ref(self.get_ref())
+        try fmt.fmt_pointer(mut f, pointer.addr())
     }
 }

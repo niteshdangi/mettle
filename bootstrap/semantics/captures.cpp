@@ -542,6 +542,9 @@ void Checker::inferCaptures(ClosureFacts &closure) {
   };
   auto recordReceiver = [&](const Node &source, const ReceiverPlan &plan,
                             ParameterMode mode) {
+    for (const auto &step : plan.steps)
+      if (step.kind == ReceiverStep::Kind::Borrow)
+        mode = step.mode;
     if (!facts(source).place)
       return false;
     auto place = *facts(source).place;

@@ -1,7 +1,7 @@
 import core.borrow.{AsMut, AsRef, Borrow, BorrowMut}
 import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import core.convert.{From, TryFrom}
-import core.error.Error
+import core.error.{Error, ThreadSafeError}
 import core.fmt
 import core.hash.{Hash, Hasher}
 import core.any.Any
@@ -597,7 +597,7 @@ extend<A: Allocator> Heap<Text> implements FromItems<Heap<Text, A>> {
     }
 }
 extend<T: Clone, A: Allocator + Clone> Heap<T, A> implements Clone {
-    fn clone(): Heap<T, A> { new_in(self.get().clone(), self.a.clone()) }
+    fn clone(): Heap<T, A> { new_in(T.(Clone).clone(self.get()), self.a.clone()) }
 }
 extend<T> Heap<T> implements From<T> {
     static fn from(take value: T): Heap<T> { new(value) }
@@ -677,6 +677,13 @@ extend Heap<core.ffi.CStr> implements From<super.ffi.CString> {
         value.into_heap_c_str()
     }
 }
+extend Heap<core.ffi.CStr> implements Default {
+    static fn default(): Heap<core.ffi.CStr> {
+        Heap<core.ffi.CStr>.(From<super.ffi.CString>).from(
+            super.ffi.CString.(Default).default()
+        )
+    }
+}
 extend<region r> Heap<core.ffi.CStr> implements From<read core.ffi.CStr from r> {
     static fn from(take value: read core.ffi.CStr from r): Heap<core.ffi.CStr> {
         value.to_owned().into_heap_c_str()
@@ -722,8 +729,28 @@ extend<A: Allocator> Heap<any Any, A> {
         success(Heap(raw.0.cast<T>(), raw.1))
     }
 }
-extend<E: Error + Static> Heap<any Error> implements From<E> {
-    static fn from(take value: E): Heap<any Error> { new(value) }
+extend<region r, E: Error> Heap<any Error from r> implements From<E from r> {
+    static fn from(take value: E from r): Heap<any Error from r> { new(value) }
+}
+extend<region r, E: ThreadSafeError> Heap<any ThreadSafeError from r> implements From<E from r> {
+    static fn from(take value: E from r): Heap<any ThreadSafeError from r> { new(value) }
+}
+extend<region r> Heap<any ThreadSafeError from r> implements From<super.string.String> {
+    static fn from(take value: super.string.String): Heap<any ThreadSafeError from r> {
+        new(HeapTextError(value))
+    }
+}
+extend<region r> Heap<any ThreadSafeError from r> implements From<read Text from r> {
+    static fn from(take value: read Text from r): Heap<any ThreadSafeError from r> {
+        new(HeapTextError(super.string.from_text(value)))
+    }
+}
+extend<region r> Heap<any ThreadSafeError from r> implements From<super.borrow.BorrowedOrOwned<region r, Text>> {
+    static fn from(
+        take value: super.borrow.BorrowedOrOwned<region r, Text>
+    ): Heap<any ThreadSafeError from r> {
+        new(HeapTextError(value.into_owned()))
+    }
 }
 extend Heap<any Error> implements From<super.string.String> {
     static fn from(take value: super.string.String): Heap<any Error> {
@@ -761,8 +788,8 @@ extend<T: fmt.Debug + unsized, A: Allocator> Heap<T, A> implements fmt.Debug {
 }
 
 // Owned storage moves or is shared exactly when its elements and allocator do.
-unsafe extend<T: Transferable, A: Allocator + Transferable> Heap<T, A> implements Transferable {}
-unsafe extend<T: Shareable, A: Allocator + Shareable> Heap<T, A> implements Shareable {}
+unsafe extend<T: Transferable + unsized, A: Allocator + Transferable> Heap<T, A> implements Transferable {}
+unsafe extend<T: Shareable + unsized, A: Allocator + Shareable> Heap<T, A> implements Shareable {}
 
 // Unique heap owner whose payload stays at its address until destruction.
 // Moving the handle never moves the payload; safe code reaches the payload
@@ -838,7 +865,12 @@ extend<T: unsized + Future, A: Allocator> Pinned<T, A> implements Future {
     }
 }
 extend<T: Clone, A: Allocator + Clone> Pinned<T, A> implements Clone {
-    fn clone(): Pinned<T, A> { new_in(self.get_ref().clone(), self.a.clone()).into_pinned() }
+    fn clone(): Pinned<T, A> {
+        new_in(
+            T.(Clone).clone(self.get_ref()),
+            A.(Clone).clone(self.a)
+        ).into_pinned()
+    }
 }
 extend<T: Eq + unsized, A: Allocator> Pinned<T, A> implements Eq {}
 extend<T: Ord + unsized, A: Allocator> Pinned<T, A> implements Ord {
@@ -897,8 +929,8 @@ extend<region r, T: PartialOrd<U> + unsized, U: unsized, A: Allocator> pinned mu
 }
 // The handle is movable; pinning is a property of the payload's storage.
 unsafe extend<T: unsized, A: Allocator> Pinned<T, A> implements Unpin {}
-unsafe extend<T: Transferable, A: Allocator + Transferable> Pinned<T, A> implements Transferable {}
-unsafe extend<T: Shareable, A: Allocator + Shareable> Pinned<T, A> implements Shareable {}
+unsafe extend<T: Transferable + unsized, A: Allocator + Transferable> Pinned<T, A> implements Transferable {}
+unsafe extend<T: Shareable + unsized, A: Allocator + Shareable> Pinned<T, A> implements Shareable {}
 extend<T: Default> Pinned<T> implements Default {
     static fn default(): Pinned<T> { pin(T.(Default).default()) }
 }
@@ -911,4 +943,18 @@ extend<T> Pinned<[T]> implements Default {
 }
 extend Pinned<Text> implements Default {
     static fn default(): Pinned<Text> { copy_text("").into_pinned() }
+}
+
+// Moving a Heap handle never pins its allocator or payload.
+unsafe extend<T: unsized, A: Allocator> Heap<T, A> implements Unpin {}
+extend<T: unsized, A: Allocator> Heap<T, A> implements fmt.Pointer {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        try fmt.fmt_pointer(mut f, self.as_ptr().addr())
+    }
+}
+extend<T: unsized, A: Allocator> Pinned<T, A> implements fmt.Pointer {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        let pointer = core.ptr.from_ref(self.get_ref())
+        try fmt.fmt_pointer(mut f, pointer.addr())
+    }
 }

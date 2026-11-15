@@ -100,9 +100,17 @@ def signals(nodes):
 
 
 def summary_nodes(node):
-    if node.parent and node.parent.tag == "summary":
-        return list(node.parent.walk())
-    return list(node.walk())
+    summary = node.parent if node.parent and node.parent.tag == "summary" else node
+    result = list(summary.walk())
+    if summary.parent:
+        siblings = summary.parent.children
+        for sibling in siblings[siblings.index(summary) + 1:]:
+            if not isinstance(sibling, Node):
+                continue
+            if not sibling.cls("item-info"):
+                break
+            result.extend(sibling.walk())
+    return result
 
 
 def source_link(nodes, url):

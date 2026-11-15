@@ -5,7 +5,7 @@ import std.io.Error
 import std.path.path_from_text
 
 fn run(): i32 throws Error {
-    let args = std.env.args()
+    let args = std.env.args_os()
     if args.len() != 3usize { return 1 }
     if !args[1usize].as_os_str().same(ffi.os_str_from_text("one")) { return 2 }
     if !args[2usize].as_os_str().same(ffi.os_str_from_text("two")) { return 3 }
@@ -16,7 +16,7 @@ fn run(): i32 throws Error {
     unsafe { try std.env.set_var(name, ffi.os_str_from_text("a=b")) }
     match std.env.var_os(name) { present(v) => { if !v.as_os_str().same(ffi.os_str_from_text("a=b")) { return 5 } }, none => { return 6 } }
     var seen = false
-    let all = std.env.vars()
+    let all = std.env.vars_os()
     var i = 0usize
     while i < all.len() {
         if all[i].name.as_os_str().same(name) && all[i].value.as_os_str().same(ffi.os_str_from_text("a=b")) { seen = true }

@@ -154,7 +154,7 @@ fn integration(): Unit {
 }
 
 fn run(): i32 throws io.Error {
-    let args = env.args()
+    let args = env.args_os()
     assert(args.len() == 3usize, "expected NormalizationTest.txt and DerivedCoreProperties.txt")
     integration()
     let normalization_data = try fs.read_to_string(args[1usize])

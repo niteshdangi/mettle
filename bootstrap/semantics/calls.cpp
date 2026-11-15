@@ -1,5 +1,6 @@
 #include "semantics/checker.h"
 #include "support/path.h"
+#include "syntax/lexer.h"
 #include "types/layout.h"
 
 namespace mettle {
@@ -133,8 +134,92 @@ bool Checker::formatMessage(Type type) const {
 // Recipes may reach only `format` parameters: an f-string, a forwarded
 // `format` parameter, or any other expression, which becomes the single hole
 // of a recipe (a Text or String argument, say). Nothing else can hold one.
-void Checker::formatArguments(Node &n, const Function &callee,
+bool Checker::formatArguments(Node &n, const Function &callee,
                               std::size_t offset) {
+  if (facts(callee).canonicalName == "core::panic::panic_fmt" &&
+      n.children.size() > 1 && n.children[1].owns()) {
+    const auto *literal = n.children[1].get();
+    while ((literal->kind == Kind::Group || literal->kind == Kind::Block) &&
+           literal->children.size() == 1 &&
+           (literal->kind != Kind::Block || !literal->children[0]->semicolon))
+      literal = literal->children[0].get();
+    if (literal->kind == Kind::Text) {
+      auto text = textLiteral(literal->text, diagnostics, literal->span);
+      if (!text)
+        return false;
+      std::vector<std::unique_ptr<Node>> pieces, holes;
+      std::string piece;
+      auto finishPiece = [&] {
+        auto node = std::make_unique<Node>();
+        node->kind = Kind::Text;
+        node->span = literal->span;
+        node->text = quoteText(piece);
+        pieces.push_back(std::move(node));
+        piece.clear();
+      };
+      for (std::size_t at = 0; at < text->size(); ++at) {
+        auto c = (*text)[at];
+        if (c != '{' && c != '}') {
+          piece += c;
+          continue;
+        }
+        if (at + 1 < text->size() && (*text)[at + 1] == c) {
+          piece += c;
+          ++at;
+          continue;
+        }
+        if (c == '{' && at + 1 < text->size() && (*text)[at + 1] == '}') {
+          if (pieces.size() == n.children.size() - 2) {
+            error("type", literal->span,
+                  "formatted panic has more placeholders than arguments");
+            return false;
+          }
+          finishPiece();
+          ++at;
+          continue;
+        }
+        if (c == '{' && text->find('}', at + 1) != std::string::npos)
+          error("type", literal->span,
+                "formatted panic supports only sequential '{}' placeholders");
+        else
+          error("type", literal->span,
+                "unbalanced brace in formatted panic message");
+        return false;
+      }
+      finishPiece();
+      auto count = pieces.size() - 1;
+      auto arguments = n.children.size() - 2;
+      if (count != arguments) {
+        error("type", literal->span,
+              count > arguments
+                  ? "formatted panic has more placeholders than arguments"
+                  : "formatted panic has more arguments than placeholders");
+        return false;
+      }
+      for (std::size_t i = 2; i < n.children.size(); ++i)
+        if (!n.children[i].owns() || !n.children[i]->name.empty()) {
+          error("type", literal->span,
+                "formatted panic arguments must be positional");
+          return false;
+        }
+      const auto span = n.children[1]->span;
+      auto name = std::move(n.children[1]->name);
+      auto nameContext = std::move(n.children[1]->fieldContext);
+      auto nameSpan = n.children[1]->fieldSpan;
+      for (std::size_t i = 2; i < n.children.size(); ++i)
+        holes.push_back(n.children[i].release());
+      auto recipe = formatRecipe(span, std::move(holes), std::move(pieces));
+      recipe->name = std::move(name);
+      recipe->fieldContext = std::move(nameContext);
+      recipe->fieldSpan = nameSpan;
+      for (auto *discarded = n.children[1].get(); discarded != literal;
+           discarded = discarded->children[0].get())
+        checked.nodes.erase(discarded);
+      checked.nodes.erase(literal);
+      n.children.resize(2);
+      n.children[1] = NodeOwner(std::move(recipe));
+    }
+  }
   for (std::size_t i = 1; i < n.children.size(); ++i) {
     auto &argument = *n.children[i];
     std::size_t target = i - 1 + offset;
@@ -207,6 +292,7 @@ void Checker::formatArguments(Node &n, const Function &callee,
     permittedRecipes.insert(recipe.get());
     n.children[i] = NodeOwner(std::move(recipe));
   }
+  return true;
 }
 int Checker::call(Node &n, bool reachable) {
   if (n.label == formatRecipeLabel && !permittedRecipes.contains(&n)) {
@@ -386,6 +472,12 @@ int Checker::call(Node &n, bool reachable) {
   }
   if (constructed != typeNames.end() &&
       checked.types->isProduct(constructed->second)) {
+    if (checked.types->product(constructed->second).kind ==
+        AggregateKind::VarArgs) {
+      error("type", n.span,
+            "VaList construction requires a compiler-owned variadic frame");
+      return result;
+    }
     auto origin = checked.types->product(constructed->second).genericOrigin;
     if (origin == Type::Unknown)
       origin = constructed->second;
@@ -453,7 +545,8 @@ int Checker::call(Node &n, bool reachable) {
       return result;
     }
     facts(n).callee = static_cast<int>(found->second);
-    formatArguments(n, module.functions[found->second], offset);
+    if (!formatArguments(n, module.functions[found->second], offset))
+      return result;
     if (const auto &declared = module.functions[found->second];
         !declared.body.get() && !declared.foreignDeclaration &&
         !declared.interfaceOwner.empty() && declared.implementation < 0 &&
@@ -478,9 +571,10 @@ int Checker::call(Node &n, bool reachable) {
     };
     if (std::any_of(n.children[0]->genericArguments.begin(),
                     n.children[0]->genericArguments.end(), runtimeArgument) ||
-        std::any_of(n.children[0]->ownerGenericArguments.begin(),
-                    n.children[0]->ownerGenericArguments.end(),
-                    runtimeArgument))
+        (facts(n).interfaceSelf == Type::Unknown &&
+         std::any_of(n.children[0]->ownerGenericArguments.begin(),
+                     n.children[0]->ownerGenericArguments.end(),
+                     runtimeArgument)))
       error("type", n.span, "function does not accept generic arguments");
     auto &function = module.functions[found->second];
     if (facts(n).method && function.receiver == "mut")

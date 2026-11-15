@@ -334,6 +334,7 @@ Module::Implementation Parser::implementationDeclaration() {
   result.span = peek().span;
   expect("extend");
   result.genericParameters = genericParameters();
+  newlines();
   result.target = type(false);
   if (take("not")) {
     result.negative = true;

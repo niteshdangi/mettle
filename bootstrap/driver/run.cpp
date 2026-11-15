@@ -1140,6 +1140,7 @@ int build(const Options &requested,
   configuration.pointerWidth = facts.pointerBits;
   configuration.targetFeatures = facts.baseline;
   configuration.features = std::move(rootFeatures);
+  configuration.debugAssertions = options.profile != "release";
   auto mounts = dependencies;
   resolution::Library library;
   library.directory = options.libraryDirectory;
@@ -1150,6 +1151,15 @@ int build(const Options &requested,
   library.packageDependencies = std::move(packageDependencies);
   library.configuration = configuration;
   library.configuration.packageName = options.packageName;
+  library.macroEnvironment =
+      [&inputs](const std::string &name) -> std::optional<std::string> {
+    const char *value = std::getenv(name.c_str());
+    inputs.generated("environment:" + name,
+                     value ? "present:" + std::string(value) : "absent");
+    if (!value)
+      return std::nullopt;
+    return std::string(value);
+  };
   if (options.harness == "test")
     library.harness = resolution::Library::Harness::Test;
   else if (options.harness == "bench")
@@ -1419,8 +1429,9 @@ int build(const Options &requested,
   if (checkedCore && checkedCore->active() && store) {
     for (const auto &[owner, sources] : checkedCore->packageSources()) {
       std::string error;
-      if (auto object = nativePackageObject(options, inputs, *program, owner,
-                                            sources, checkedCore->key(), error))
+      if (auto object =
+              nativePackageObject(options, inputs, *program, owner, sources,
+                                  checkedCore->key(), error, diagnostics))
         packageObjects.push_back(std::move(*object));
       else if (!error.empty()) {
         std::cerr << "mettle: error[backend]: " << error << '\n';

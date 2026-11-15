@@ -6,6 +6,7 @@ import core.cmp.{Eq, Ordering, PartialEq, PartialOrd}
 import core.default.Default
 import core.fmt.{Debug, Error, buffer_writer, formatter, spec, written_text}
 import core.hash.hash_one
+import core.iter.Bound
 import core.iter.{ExtendItems, FromItems, OwnedIterable}
 
 fn default_value<T: Default>(): T { T.(Default).default() }
@@ -69,13 +70,13 @@ fn run(): i32 throws Error {
     }
     if ordered != 4 { return 16 }
     var inside = 0
-    for value in set.range(2, 7) { inside += value.key }
-    if inside != 2 + 4 { return 17 }
+    for value in set.range((Bound.Excluded(2), Bound.Included(4))) { inside += value.key }
+    if inside != 4 { return 17 }
     var none_inside = 0
-    for value in set.range(7, 7) { none_inside += 1 }
+    for value in set.range(core.iter.range(7, 7)) { none_inside += 1 }
     if none_inside != 0 { return 18 }
     match take std.panic.catch_panic(fn(): Unit {
-        let _ = set.range(7, 2)
+        let _ = set.range((Bound.Included(7), Bound.Excluded(2)))
     }) {
         std.panic.CatchResult.Panicked(_) => {},
         _ => { return 18 }
@@ -99,7 +100,7 @@ fn run(): i32 throws Error {
     })
     if kept_visits != 4 || set.len() != 2usize || !set.contains(4) || !set.contains(10) { return 23 }
     var extracted = 0
-    for value in set.extract_if(fn(read value: i32): bool { value == 4 }) { extracted += value }
+    for value in set.extract_if(core.iter.range_full(), fn(read value: i32): bool { value == 4 }) { extracted += value }
     if extracted != 4 || set.len() != 1usize { return 24 }
     var upper = set_of(20, 30, 40)
     var tail = upper.split_off(30)
@@ -120,6 +121,13 @@ fn run(): i32 throws Error {
         union_count += 1
     }
     if union_count != 5 || union_total != 15 { return 30 }
+    var union_cursor = left.`union`(read right)
+    if union_cursor.next().is_none() { return 37 }
+    var union_cursor_copy = union_cursor.clone()
+    match (union_cursor.next(), union_cursor_copy.next()) {
+        (present(a), present(b)) => { if *a != *b { return 38 } },
+        _ => { return 38 }
+    }
     var common = 0
     for value in left.intersection(read right) { common += *value }
     if common != 3 { return 31 }
@@ -163,6 +171,17 @@ fn run(): i32 throws Error {
     let sym = left ^ right
     if sym.len() != 4usize || sym.contains(3) || !sym.contains(5) { return 49 }
     if left.len() != 3usize || right.len() != 3usize { return 50 }
+    let borrowed_joined = read left | read right
+    if borrowed_joined.len() != 5usize || !borrowed_joined.contains(1) ||
+        !borrowed_joined.contains(5) { return 55 }
+    let borrowed_meet = read left & read right
+    if borrowed_meet.len() != 1usize || !borrowed_meet.contains(3) { return 56 }
+    let borrowed_diff = read left - read right
+    if borrowed_diff.len() != 2usize || borrowed_diff.contains(3) { return 57 }
+    let borrowed_sym = read left ^ read right
+    if borrowed_sym.len() != 4usize || borrowed_sym.contains(3) ||
+        !borrowed_sym.contains(5) { return 58 }
+    if left.len() != 3usize || right.len() != 3usize { return 59 }
     let same_order = set_of(1, 2, 3)
     let reordered = set_of(3, 1, 2)
     if !require_eq(read same_order) || !(same_order == reordered) ||

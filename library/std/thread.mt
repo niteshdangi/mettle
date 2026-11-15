@@ -16,6 +16,8 @@ import core.text.Text
 import core.option
 import std.time.Duration
 import std.sync.mutex
+pub import std.sync.tls.LocalKey
+pub import std.sync.tls.AccessError
 import super.sys
 
 extern "C" {
@@ -138,6 +140,14 @@ fn native_thread_name(raw: usize): String? {
 pub type Builder {
     name: String?
     stack_size: usize
+}
+extend Builder implements Debug {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        var debug = try f.debug_struct("Builder")
+        try debug.field("name", read self.name)
+        try debug.field("stack_size", self.stack_size)
+        try debug.finish()
+    }
 }
 
 extend Builder {
@@ -323,6 +333,8 @@ pub type JoinHandle<T> {
         }
     }
 }
+extend<T> JoinHandle<T> not core.marker.UnwindSafe;
+extend<T> JoinHandle<T> not core.marker.RefUnwindSafe;
 unsafe extend<T: Transferable> JoinHandle<T> implements Transferable {}
 unsafe extend<T: Transferable> JoinHandle<T> implements Shareable {}
 
@@ -415,6 +427,7 @@ pub type Scope<region s> {
     threads: mutex.Mutex<alloc.vec.List<ptr<mut Header>>>
     brand: core.cell.Cell<Brand<region s>>
 }
+extend<region s> Scope<region s> not core.marker.UnwindSafe;
 unsafe extend<region s> Scope<region s> implements Transferable {}
 unsafe extend<region s> Scope<region s> implements Shareable {}
 
@@ -493,6 +506,8 @@ pub type ScopedJoinHandle<T> {
         }
     }
 }
+extend<T> ScopedJoinHandle<T> not core.marker.UnwindSafe;
+extend<T> ScopedJoinHandle<T> not core.marker.RefUnwindSafe;
 unsafe extend<T: Transferable> ScopedJoinHandle<T> implements Transferable {}
 unsafe extend<T: Transferable> ScopedJoinHandle<T> implements Shareable {}
 

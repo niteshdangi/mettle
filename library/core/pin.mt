@@ -1,6 +1,6 @@
 import super.clone.Clone
 import super.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
-import super.fmt.{Debug, Display, Error, Formatter}
+import super.fmt.{Debug, Display, Error, Formatter, Pointer, fmt_pointer}
 import super.future.{Context, Future, Poll}
 import super.hash.{Hash, Hasher}
 import super.ops.{Deref, DerefMut}
@@ -77,6 +77,13 @@ extend<region r, T: Debug + unsized> pinned read T from r implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error { try T.(Debug).fmt(self.get_ref(), mut f) }
 }
 
+extend<region r, T: unsized> pinned read T from r implements Pointer {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let pointer = core.ptr.from_ref(self.get_ref())
+        try fmt_pointer(mut f, pointer.addr())
+    }
+}
+
 extend<region r, T: Display + unsized> pinned read T from r implements Display {
     fn fmt(mut f: Formatter): Unit throws Error { try T.(Display).fmt(self.get_ref(), mut f) }
 }
@@ -123,6 +130,13 @@ extend<region r, T: Hash + unsized> pinned mut T from r implements Hash {
 
 extend<region r, T: Debug + unsized> pinned mut T from r implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error { try T.(Debug).fmt(self.get_ref(), mut f) }
+}
+
+extend<region r, T: unsized> pinned mut T from r implements Pointer {
+    fn fmt(mut f: Formatter): Unit throws Error {
+        let pointer = core.ptr.from_ref(self.get_ref())
+        try fmt_pointer(mut f, pointer.addr())
+    }
 }
 
 extend<region r, T: Display + unsized> pinned mut T from r implements Display {

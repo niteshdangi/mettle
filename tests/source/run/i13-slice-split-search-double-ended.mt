@@ -101,5 +101,68 @@ fn main(): i32 {
         values[2usize] != 7 || values[4usize] != 6 {
         return 17
     }
+    var limited_values = [1, 0, 2, 0, 3]
+    var visits = 0usize
+    {
+        var limited = limited_values.splitn_mut(2usize, fn(read x: i32): bool {
+            visits += 1usize
+            x == 0
+        })
+        match take limited.next() {
+            present(part) => {
+                if part.len() != 1usize || part[0] != 1 { return 21 }
+                part[0] = 10
+            },
+            none => { return 21 }
+        }
+        match take limited.next() {
+            present(part) => {
+                if part.len() != 3usize || part[0] != 2 || part[1] != 0 { return 22 }
+                part[0] = 20
+            },
+            none => { return 22 }
+        }
+        if limited.next().is_present() { return 23 }
+    }
+    if visits != 2usize || limited_values[0] != 10 || limited_values[2] != 20 { return 24 }
+    visits = 0usize
+    {
+        var limited = limited_values.rsplitn_mut(2usize, fn(read x: i32): bool {
+            visits += 1usize
+            x == 0
+        })
+        match take limited.next() {
+            present(part) => {
+                if part.len() != 1usize || part[0] != 3 { return 25 }
+                part[0] = 30
+            },
+            none => { return 25 }
+        }
+        match take limited.next() {
+            present(part) => {
+                if part.len() != 3usize || part[0] != 10 || part[1] != 0 { return 26 }
+                part[0] = 40
+            },
+            none => { return 26 }
+        }
+        if limited.next().is_present() { return 27 }
+    }
+    if visits != 2usize || limited_values[0] != 40 || limited_values[4] != 30 { return 28 }
+    {
+        var unlimited = limited_values.split_mut(fn(read x: i32): bool { x == 0 })
+        match take unlimited.next_back() {
+            present(part) => { if part.len() != 1usize || part[0] != 30 { return 29 } },
+            none => { return 29 }
+        }
+        match take unlimited.next() {
+            present(part) => { if part.len() != 1usize || part[0] != 40 { return 30 } },
+            none => { return 30 }
+        }
+        match take unlimited.next_back() {
+            present(part) => { if part.len() != 1usize || part[0] != 20 { return 31 } },
+            none => { return 31 }
+        }
+        if unlimited.next().is_present() { return 32 }
+    }
     0
 }

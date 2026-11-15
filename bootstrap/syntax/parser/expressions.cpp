@@ -178,10 +178,12 @@ std::unique_ptr<Node> Parser::primary() {
     result->children.push_back(block());
   } else if (is("fn") || is("async") || (is("take") && peek(1).text == "fn"))
     result = closure();
-  else if (is("[") && sliceInterfaceMember()) {
+  else if ((is("ptr") && peek(1).text == "<" &&
+            (peek(2).text == "read" || peek(2).text == "mut")) ||
+           (is("[") && sliceInterfaceMember())) {
     auto projection = type(false);
     if (projection.form != TypeForm::Projection)
-      fail("expected an interface member after a slice type");
+      fail("expected an interface member after a pointer or slice type");
     result = node(Kind::Name, token.span, projection.name);
     result->annotation = std::move(projection);
     result->span.end = tokens[position - 1].span.end;

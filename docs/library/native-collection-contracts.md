@@ -38,12 +38,15 @@ No owner is Copy. Clone follows section 11, not ordinary assignment.
 
 Ordinary allocation exhaustion aborts through the selected allocation handler.
 Capacity arithmetic overflow is a checked capacity panic, not a wrapped small
-allocation. `try_reserve/try_reserve_exact` return a typed reserve failure for
-capacity overflow or allocation failure and preserve the original initialized
-contents; they do not convert callback panics into failures.
-`try_push(take T)` returns a PushError owning the uninserted T on capacity/
-allocation failure. Other `try_` constructors consume and clean their
-arguments unless their explicit result returns those owners.
+allocation. `try_reserve/try_reserve_exact` throw the opaque
+`alloc.collections.TryReserveError` for capacity overflow or allocation failure
+and preserve the collection on failure. Fallible capacity constructors,
+`String.try_push_str`, and hash map/set `try_insert` throw the same error.
+These operations do not convert callback panics into failures.
+`try_push(take T)` throws `PushError<T>` with `value` owning the uninserted
+value and `error` containing the `TryReserveError`. Other `try_` constructors
+consume and clean their arguments unless their explicit result returns those
+owners.
 Allocation policy does not excuse a safe operation from valid partial cleanup.
 
 Unless a stronger rule is given, callback panic leaves initialized owned
@@ -117,8 +120,10 @@ The placeholder cannot be used to access a nonzero-sized T.
 Allocator effects and cost are allocator-specific; no constant-time,
 nonblocking or bounded-memory allocator guarantee is implied.
 
-`Global` is the stateless global-provider handle. Raw global functions
-`alloc/alloc_zeroed/dealloc/realloc` (also reexported through core.alloc)
+`Layout`, `LayoutError` (with the `LayoutErr` alias) and `GlobalAlloc` are
+defined in `core.alloc` and reexported through `alloc.alloc` and `std.alloc`.
+`Global` is the stateless global-provider handle in `alloc.alloc`. Raw global
+functions `alloc/alloc_zeroed/dealloc/realloc` (reexported through `std.alloc`)
 follow their unsafe allocation-provider contract: allocation size is nonzero,
 alignment/layout valid, allocation failure returns null, and zeroed allocation
 zeros all requested bytes. Dealloc requires the exact live allocation/layout.
@@ -878,7 +883,7 @@ The authored runtime coverage is the explicit groups in sections 1..11:
 
 | Native module/type (source family) | Assigned groups |
 | --- | --- |
-| `alloc.alloc`, core.alloc reexports | Layout construction/access/array/extension/alignment/padding/repetition/dangling; native allocator operations; raw global allocation/provider operations |
+| `core.alloc` with `alloc.alloc` and `std.alloc` reexports | Layout construction/access/array/extension/alignment/padding/repetition/dangling; native allocator operations; raw global allocation/provider operations |
 | `alloc.boxed.Heap` | Initialized/uninitialized/zeroed construction, projections, extraction/raw/leak/pin/downcast, array/slice iteration and listed conversions |
 | `alloc.rc.LocalShared/Weak`, `alloc.arc.Shared/Weak` (source sync) | Construction/retain/weak/count/uniqueness/extraction/cyclic/uninit/raw/pin groups |
 | `alloc.vec.List` | Capacity, mutation, raw/spare storage, drain/splice/extract, slice delegation, flatten/box/leak/iteration groups |

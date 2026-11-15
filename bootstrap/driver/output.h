@@ -15,15 +15,14 @@ struct PackageObject {
 };
 // Single hosted executable, debug/release without debug info, sanitizers,
 // harness or global assembly; only root/native-library ownership.
-std::optional<PackageObject>
-nativePackageObject(const Options &options, const BuildInputs &inputs,
-                    const ir::VerifiedProgram &program,
-                    const std::string &identity,
-                    const std::vector<std::string> &sources,
-                    const std::string &checkedKey, std::string &error);
+std::optional<PackageObject> nativePackageObject(
+    const Options &options, const BuildInputs &inputs,
+    const ir::VerifiedProgram &program, const std::string &identity,
+    const std::vector<std::string> &sources, const std::string &checkedKey,
+    std::string &error, const Diagnostics &diagnostics);
 bool outputOverwritesSource(const Options &options, const Source &source,
                             const Diagnostics &diagnostics);
-// Diagnostics supplies source texts and generation provenance for `-g`.
+// Diagnostics supplies source texts/provenance for debug and panic locations.
 int emit(const Options &options, const Source &source,
          const ir::VerifiedProgram &program, const Diagnostics &diagnostics,
          const std::vector<PackageObject> &packageObjects = {},

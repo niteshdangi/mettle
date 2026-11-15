@@ -14,6 +14,7 @@ type Arm<region r> {
 }
 
 pub copy type OnceState { pub poisoned: bool }
+extend OnceState not core.marker.RefUnwindSafe;
 extend OnceState implements Clone {
     fn clone(): OnceState { OnceState(self.poisoned) }
 }
@@ -39,7 +40,7 @@ pub type Once {
 unsafe extend Once implements Transferable {}
 unsafe extend Once implements Shareable {}
 
-pub fn new(): Once { Once(core.sync.atomic.AtomicU32.new(0u32)) }
+pub const fn new(): Once { Once(core.sync.atomic.AtomicU32.new(0u32)) }
 extend Once implements Default {
     static fn default(): Once { new() }
 }

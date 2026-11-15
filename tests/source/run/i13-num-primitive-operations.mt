@@ -6,7 +6,7 @@
 import core.option
 import core.num
 import core.char.{decode_utf16, DecodeUtf16Error}
-import core.iter.Iterator
+import core.iter.{FusedIterator, Iterator}
 
 // A fixed sequence of code units for decoding.
 type Units { data: [u16; 6]; length: usize; index: usize }
@@ -68,6 +68,10 @@ fn decode_operations(): i32 {
     0
 }
 
+fn stays_exhausted<I: FusedIterator>(mut items: I): bool {
+    items.next().is_none() && items.next().is_none()
+}
+
 fn escape_is(byte: u8, expected: [u8; 4], length: usize): bool {
     var escape = byte.escape_ascii()
     var produced = [0u8; 4]
@@ -87,7 +91,7 @@ fn escape_is(byte: u8, expected: [u8; 4], length: usize): bool {
         if produced[index] != expected[index] { return false }
         index += 1usize
     }
-    true
+    stays_exhausted(mut escape)
 }
 
 fn escape_operations(): i32 {

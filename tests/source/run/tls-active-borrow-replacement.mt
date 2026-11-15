@@ -8,7 +8,7 @@ static KEY: tls.LocalKey<Item> = tls.LocalKey(initialize)
 fn main(): i32 {
     let observed = KEY.with(fn(read old: Item): i32 {
         let nested = KEY.with(fn(read same: Item): i32 { same.value })
-        if nested.or_panic() != 7 { return 1 }
+        if nested != 7 { return 1 }
         let result = catch_panic(fn(): Unit { KEY.set(Item(9)) })
         match result {
             CatchResult.Panicked(_) => {},
@@ -16,9 +16,9 @@ fn main(): i32 {
         }
         if old.value == 7 { 0 } else { 3 }
     })
-    if observed.or_panic() != 0 { return 4 }
+    if observed != 0 { return 4 }
     KEY.set(Item(11))
-    if KEY.with(fn(read value: Item): i32 { value.value }).or_panic() != 11 { return 5 }
+    if KEY.with(fn(read value: Item): i32 { value.value }) != 11 { return 5 }
 
     let owned = tls.new<Item>()
     owned.set(Item(13))

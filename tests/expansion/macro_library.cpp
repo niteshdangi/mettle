@@ -423,9 +423,80 @@ void nativeShadowing(const std::string &root, bool compiled) {
     }
   }
 }
+void builtinInputs() {
+  SourceId next = 60001;
+  auto allocate = [&] { return next++; };
+  MacroFileProvider files = [&](const std::string &path) {
+    return std::optional<Source>{
+        Source{path, std::string("\xff\0", 2), next++}};
+  };
+  for (bool text : {false, true}) {
+    Source source{"builtin.mt",
+                  text ? "fn main() { include_str!(\"bytes.bin\") }"
+                       : "fn main() { include_bytes!(\"bytes.bin\") }",
+                  60000};
+    Diagnostics diagnostics;
+    auto expanded = expandMacros(source, diagnostics, allocate, nullptr, {}, {},
+                                 nullptr, {}, nullptr, nullptr, {}, files);
+    if (text) {
+      std::ostringstream report;
+      diagnostics.print(source, report);
+      expect(!expanded && diagnostics.count() == 1 &&
+                 report.str().find("include_str! file is not valid UTF-8") !=
+                     std::string::npos &&
+                 report.str().find(":1:13") != std::string::npos,
+             "text inclusion rejects invalid UTF-8 at its invocation");
+    } else {
+      std::optional<std::string> bytes;
+      if (expanded)
+        for (const auto &token : tokenize(*expanded, diagnostics))
+          if (token.kind == TokenKind::PrefixedText)
+            bytes = textLiteral(token.text, diagnostics, token.span);
+      expect(expanded && diagnostics.empty() &&
+                 bytes == std::string("\xff\0", 2),
+             "byte inclusion preserves invalid UTF-8 and embedded zero bytes");
+    }
+  }
+  MacroEnvironmentProvider environment =
+      [](const std::string &name) -> std::optional<std::string> {
+    return name == "PRESENT" ? std::optional<std::string>{"controlled\nvalue"}
+                             : std::nullopt;
+  };
+  {
+    Source source{"environment.mt",
+                  "fn main() { (env!(\"PRESENT\"), option_env!(\"MISSING\")) }",
+                  60000};
+    Diagnostics diagnostics;
+    auto expanded =
+        expandMacros(source, diagnostics, allocate, nullptr, {}, {}, nullptr,
+                     {}, nullptr, nullptr, {}, {}, environment);
+    expect(expanded && diagnostics.empty() &&
+               expanded->text.find("controlled\\nvalue") != std::string::npos &&
+               expanded->text.find("none") != std::string::npos,
+           "environment macros distinguish controlled presence and absence");
+  }
+  {
+    Source source{
+        "environment.mt",
+        "fn main() { env!(\"MISSING\", \"required input is absent\") }", 60000};
+    Diagnostics diagnostics;
+    auto expanded =
+        expandMacros(source, diagnostics, allocate, nullptr, {}, {}, nullptr,
+                     {}, nullptr, nullptr, {}, {}, environment);
+    std::ostringstream report;
+    diagnostics.print(source, report);
+    expect(
+        !expanded && diagnostics.count() == 1 &&
+            report.str().find("required input is absent") !=
+                std::string::npos &&
+            report.str().find(":1:13") != std::string::npos,
+        "missing environment input preserves its custom use-site diagnostic");
+  }
+}
 } // namespace
 
 int main() {
+  builtinInputs();
   for (const auto *root : {"core", "alloc", "std"}) {
     nativeShadowing(root, false);
     nativeShadowing(root, true);
@@ -508,13 +579,35 @@ int main() {
       overlappingConsumer(first, changedOwner, false,
                           "overlap rejects a different logical package owner");
 
-      auto changedModule = *overlapping;
-      changedModule.indexedModules.push_back("dep::bridge");
+      auto granularIndex = *overlapping;
+      granularIndex.indexedModules.push_back("dep::bridge");
       overlappingConsumer(
-          first, changedModule, false,
-          "overlap rejects changed definition module ownership");
+          first, granularIndex, true,
+          "equal lexical modules deduplicate across source-root granularities");
+      overlappingConsumer(
+          first, granularIndex, true,
+          "source-root granularities deduplicate in reverse load order", true);
 
       auto changedBody = *overlapping;
+      auto repeatedReexport = *overlapping;
+      auto reexport = std::find_if(
+          repeatedReexport.imports.begin(), repeatedReexport.imports.end(),
+          [](const auto &import) { return import.alias == "exposed"; });
+      if (reexport != repeatedReexport.imports.end())
+        repeatedReexport.imports.push_back(*reexport);
+      overlappingConsumer(first, repeatedReexport, true,
+                          "repeated identical reexports deduplicate");
+      overlappingConsumer(first, repeatedReexport, true,
+                          "repeated identical reexports deduplicate in reverse",
+                          true);
+
+      auto conflictingReexport = *overlapping;
+      for (auto &import : conflictingReexport.imports)
+        if (import.alias == "exposed")
+          import.path.back() = "support";
+      overlappingConsumer(first, conflictingReexport, false,
+                          "same reexport name rejects a different target");
+
       for (auto &definition : changedBody.definitions)
         if (definition.name == "choose")
           for (auto &rule : definition.rules)

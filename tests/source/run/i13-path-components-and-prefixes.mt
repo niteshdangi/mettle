@@ -3,9 +3,15 @@
 // stripping, capacity, and lossy conversion.
 
 import core.iter.{BidirectionalIterator, Iterator}
+import core.borrow.AsRef
+import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
+import alloc.borrow.BorrowedOrOwned
 import alloc.string.ToString
-import std.ffi.os_str_from_text
-import std.path.{Component, Path, PathBuf, StripPrefixError, path, path_from_text, path_buf_from_text}
+import std.ffi.{OsStr, OsString, os_str_from_text, os_string_from_text}
+import std.path.{Component, Components, Iter, Path, PathBuf, StripPrefixError, path, path_from_text, path_buf_from_text}
+
+fn require_eq<T: Eq>(read value: T): Unit {}
+fn require_ord<T: Ord>(read value: T): Unit {}
 
 fn normal_is(c: Component, read want: Text): bool {
     match c {
@@ -31,8 +37,27 @@ fn checks_components(): i32 {
     if component_count(p) != 5usize { return 1 }
     var it = p.components()
     match it.next() {
-        present(c) => { match c { Component.RootDir => {}, _ => { return 2 } } },
+        present(c) => {
+            match c { Component.RootDir => {}, _ => { return 2 } }
+            if Component.(AsRef<OsStr>).as_ref(c).as_bytes() != "/".as_bytes() {
+                return 60
+            }
+            if !Component.(AsRef<Path>).as_ref(c).same(path_from_text("/")) {
+                return 62
+            }
+        },
         none => { return 2 }
+    }
+    if Components.(AsRef<OsStr>).as_ref(it).as_bytes() !=
+        it.as_path().as_os_str().as_bytes() {
+        return 61
+    }
+    if !Components.(AsRef<Path>).as_ref(it).same(it.as_path()) { return 63 }
+    let path_iter = path_from_text("/a/./b/../c").iter()
+    if !Iter.(AsRef<Path>).as_ref(path_iter).same(path_iter.as_path()) { return 64 }
+    if Iter.(AsRef<OsStr>).as_ref(path_iter).as_bytes() !=
+        path_iter.as_path().as_os_str().as_bytes() {
+        return 65
     }
     match it.next_back() {
         present(c) => { if !normal_is(c, "c") { return 3 } },
@@ -60,6 +85,45 @@ fn checks_components(): i32 {
         }
     }
     if walked != 3usize { return 8 }
+    0
+}
+
+fn checks_component_comparisons(): i32 {
+    var left_iter = path_from_text("a").components()
+    var same_iter = path_from_text("a").components()
+    var later_iter = path_from_text("b").components()
+    let left = match left_iter.next() { present(component) => component, none => { return 50 } }
+    let same = match same_iter.next() { present(component) => component, none => { return 51 } }
+    let later = match later_iter.next() { present(component) => component, none => { return 52 } }
+    if left != same || left == later || !(left < later) { return 53 }
+
+    let normalized = path_from_text("a/./b").components()
+    let same_path = path_from_text("a/b").components()
+    let later_path = path_from_text("a/c").components()
+    if normalized != same_path || !(normalized < later_path) { return 54 }
+    require_eq(read normalized)
+    require_ord(read normalized)
+    0
+}
+
+fn checks_cow_cross_comparisons(): i32 {
+    let path_view = path_from_text("same")
+    let os_view = os_str_from_text("same")
+    let path_cow: BorrowedOrOwned<region static, Path> = BorrowedOrOwned.Borrowed(path_view)
+    let owned_path_cow: BorrowedOrOwned<region static, Path> =
+        BorrowedOrOwned.Owned(path_buf_from_text("same"))
+    let os_cow: BorrowedOrOwned<region static, OsStr> = BorrowedOrOwned.Borrowed(os_view)
+    let owned_os_cow: BorrowedOrOwned<region static, OsStr> =
+        BorrowedOrOwned.Owned(os_string_from_text("same"))
+    if !BorrowedOrOwned<region static, Path>.(PartialEq<OsStr>).eq(path_cow, os_view) { return 62 }
+    if !BorrowedOrOwned<region static, Path>.(PartialEq<OsString>).eq(owned_path_cow, os_string_from_text("same")) { return 63 }
+    if !BorrowedOrOwned<region static, OsStr>.(PartialEq<OsStr>).eq(os_cow, os_view) { return 64 }
+    if !BorrowedOrOwned<region static, OsStr>.(PartialEq<OsString>).eq(owned_os_cow, os_string_from_text("same")) { return 65 }
+    if BorrowedOrOwned<region static, Path>.(PartialOrd<OsString>).partial_cmp(path_cow, os_string_from_text("z")) != present(Ordering.Less) { return 69 }
+    if BorrowedOrOwned<region static, OsStr>.(PartialOrd<OsString>).partial_cmp(os_cow, os_string_from_text("z")) != present(Ordering.Less) { return 70 }
+    if !Text.(PartialEq<Path>).eq("same", path_view) { return 66 }
+    if !Text.(PartialEq<PathBuf>).eq("same", path_buf_from_text("same")) { return 67 }
+    if !("same" == path_view) || !("same" == path_buf_from_text("same")) { return 68 }
     0
 }
 
@@ -142,6 +206,7 @@ fn checks_buffers(): i32 {
     0
 }
 
+@cfg(not(target_os = "windows"))
 fn checks_lossy(): i32 {
     let bytes: [u8; 3] = [0x61u8, 0xffu8, 0x62u8]
     let raw = path(bytes)
@@ -153,9 +218,16 @@ fn checks_lossy(): i32 {
     0
 }
 
+@cfg(target_os = "windows")
+fn checks_lossy(): i32 { 0 }
+
 fn main(): i32 {
     let first = checks_components()
     if first != 0 { return first }
+    let comparisons = checks_component_comparisons()
+    if comparisons != 0 { return comparisons }
+    let cow_comparisons = checks_cow_cross_comparisons()
+    if cow_comparisons != 0 { return cow_comparisons }
     let second = checks_prefix_and_suffix()
     if second != 0 { return second }
     let third = checks_buffers()

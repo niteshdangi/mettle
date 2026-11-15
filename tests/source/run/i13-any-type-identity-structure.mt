@@ -11,9 +11,13 @@ alias Bound = for<region r> fn(read (read i32 from r)): read i32 from r
 alias Renamed = for<region s> fn(read (read i32 from s)): read i32 from s
 alias Unbound = fn(read (read i32 from static)): read i32 from static
 
+const CONST_I32: u64 = core.intrinsics.type_id<i32>()
+const CONST_I64: u64 = core.intrinsics.type_id<i64>()
+
 fn type_of<T: Static>(read value: T): TypeId { any.type_id<T>() }
 
 fn main(): i32 {
+    if CONST_I32 != core.intrinsics.type_id<i32>() || CONST_I32 == CONST_I64 { return 9 }
     if any.type_id<Bound>() != any.type_id<Renamed>() { return 1 }
     if any.type_id<Bound>() == any.type_id<Unbound>() { return 2 }
     if any.type_id<(i32, (i32, i32))>() == any.type_id<((i32, i32), i32)>() {
