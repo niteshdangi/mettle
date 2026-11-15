@@ -1,5 +1,5 @@
-// expect-error: type 6:5 generic argument does not satisfy Freeze
-// expect-error: type 7:5 generic argument does not satisfy Freeze
+// expect-error: type 6:5 unsatisfied interface bound 'Freeze'
+// expect-error: type 7:5 unsatisfied interface bound 'Freeze'
 
 fn require_freeze<T: Freeze>(take value: T): Unit {}
 fn main(): i32 {

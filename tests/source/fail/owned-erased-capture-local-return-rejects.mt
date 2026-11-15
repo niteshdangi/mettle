@@ -1,4 +1,4 @@
-// expect-error: region 13:26 erased owner payload view does not outlive
+// expect-error: region 13:27 erased owner payload view does not outlive
 import alloc.boxed.Heap
 interface Show { fn value(): i32; }
 type Held<region r> { value: read i32 from r; drop {} }

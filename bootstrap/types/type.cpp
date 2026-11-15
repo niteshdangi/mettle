@@ -908,6 +908,12 @@ bool TypeStore::isUnpin(Type type) const {
     origin = product(origin).regionOrigin;
   if (product(origin).genericOrigin != Type::Unknown)
     origin = product(origin).genericOrigin;
+  if (product(origin).name == "core::marker::PhantomData") {
+    const auto &arguments = record.genericArguments.empty()
+                                ? record.genericParameters
+                                : record.genericArguments;
+    return arguments.size() == 1 && isUnpin(arguments.front());
+  }
   const auto &property = product(origin).layout;
   if (property.unpin >= 0) {
     if (!property.unpin || property.conditionalUnpin)
@@ -922,12 +928,6 @@ bool TypeStore::isUnpin(Type type) const {
           ((requirements & 4) && !isUnpin(arguments[index])))
         return false;
     return true;
-  }
-  if (product(origin).name == "core::iter::Phantom") {
-    const auto &arguments = record.genericArguments.empty()
-                                ? record.genericParameters
-                                : record.genericArguments;
-    return arguments.size() == 1 && isUnpin(arguments.front());
   }
   if (record.kind == AggregateKind::PhantomPinned ||
       record.kind == AggregateKind::Coroutine)

@@ -1,8 +1,8 @@
 // profiles: debug release
 // expect-error-source: core/num.mt
-// expect-error: constant 2833:23 panic during constant evaluation
-// expect-error: constant 2858:23 panic during constant evaluation
-// expect-error: constant 2903:13 panic during constant evaluation
+// expect-error: constant 3201:23 panic during constant evaluation
+// expect-error: constant 3226:23 panic during constant evaluation
+// expect-error: constant 3271:13 panic during constant evaluation
 // expect-error-count: 3
 import core.num
 

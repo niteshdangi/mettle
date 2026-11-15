@@ -916,6 +916,19 @@ std::optional<CheckedModule> Checker::run() {
             if (checked.types->isParameter(carrier))
               associatedCarriers[parameter].insert(carrier);
     }
+    // A result related by `U: From<T>` or `U: Into<T>` carries its counterpart's views.
+    for (const auto &[subject, bound] : facts(f).interfaceBounds) {
+      if (!checked.types->isErased(bound))
+        continue;
+      for (auto argument : checked.types->erased(bound).arguments)
+        for (auto carried : checked.types->typeParameters(argument))
+          if (checked.types->isParameter(carried))
+            for (auto owner : checked.types->typeParameters(subject))
+              if (checked.types->isParameter(owner)) {
+                associatedCarriers[owner].insert(carried);
+                associatedCarriers[carried].insert(owner);
+              }
+    }
     // Associated results carry views through their implementing input, too.
     std::set<Type> carriers(resultParameters.begin(), resultParameters.end());
     for (std::size_t p = 0; p < resultParameters.size(); ++p)
@@ -953,6 +966,16 @@ std::optional<CheckedModule> Checker::run() {
            checked.types->product(type).kind == AggregateKind::VarArgs &&
            checked.types->product(type).name == "core::ffi::VaList";
   };
+  // A cursor bound to its invocation frame may only reach a concrete cursor
+  // parameter, never a generic one that could store or erase it.
+  auto genericFormal = [&](const auto &call, std::size_t argument) {
+    if (call.callee < 0 || call.method)
+      return false;
+    auto signature = functionSignature(static_cast<std::size_t>(call.callee));
+    return argument <= signature.parameters.size() &&
+           checked.types->isParameter(signature.parameters[argument - 1].type);
+  };
+  const bool typesAccepted = diagnostics.empty();
   for (const auto &[syntax, resolved] : checked.nodes) {
     if (resolved.opaqueSource != Type::Unknown &&
         !checked.types->isSized(resolved.opaqueSource))
@@ -979,7 +1002,8 @@ std::optional<CheckedModule> Checker::run() {
         if (auto argument = checked.nodes.find(syntax->children[i].get());
             argument != checked.nodes.end() &&
             holdsVarArgs(argument->second.type) &&
-            !frameBoundCursor(argument->second.type))
+            (!frameBoundCursor(argument->second.type) ||
+             (typesAccepted && genericFormal(resolved, i))))
           error("ownership", syntax->children[i]->span,
                 "a variadic cursor cannot be passed outside its invocation");
     if (syntax->kind == Kind::Integer && resolved.numeric &&
