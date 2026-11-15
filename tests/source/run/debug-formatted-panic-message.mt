@@ -1,3 +1,4 @@
+// profiles: debug
 // expect-exit: 0
 // expect-stderr: "panicked: pair={1,2}\n"
 

@@ -1,3 +1,4 @@
+import core.clone.Clone
 import core.cmp.{Ordering, Ord, PartialEq}
 import core.hash
 import core.hash.Hash
@@ -18,11 +19,11 @@ fn digest<T: Hash>(read value: T): u64 {
 
 fn main(): i32 {
     var value = 7i32
-    let shared = core.ptr.from_ref(read value)
-    let shared_clone = shared.clone()
-    if !equal(read shared, read shared_clone) { return 1 }
-    if order(read shared, read shared_clone) != Ordering.Equal { return 2 }
-    if digest(read shared) != digest(read shared_clone) { return 3 }
+    let pointer = core.ptr.from_ref(read value)
+    let pointer_clone = pointer.clone()
+    if !equal(read pointer, read pointer_clone) { return 1 }
+    if order(read pointer, read pointer_clone) != Ordering.Equal { return 2 }
+    if digest(read pointer) != digest(read pointer_clone) { return 3 }
 
     let exclusive = core.ptr.from_mut(mut value)
     let exclusive_clone = exclusive.clone()

@@ -1028,8 +1028,12 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                       memory.contains(target.place) &&
                       memory.at(target.place) == sources)
                     join(referent.authority, sources);
+                  // A shared view copied out of a precisely known slot stands
+                  // alone; behind an imprecise place the container's exclusive
+                  // authority is what the read goes through.
                   if (!types.isView(currentType) ||
-                      types.view(currentType).mode != ParameterMode::Read)
+                      types.view(currentType).mode != ParameterMode::Read ||
+                      imprecise(target.place))
                     join(referent.authority, target.authority);
                   next.insert(std::move(referent));
                 }

@@ -74,7 +74,7 @@ fn main(): i32 {
     if pointer.load(relaxed).addr() != address { return 111 }
     let empty: core.sync.atomic.AtomicPtr<i32> = default_value<core.sync.atomic.AtomicPtr<i32>>()
     if !empty.load(relaxed).is_null() { return 112 }
-    if !debug_is(read empty, "AtomicPtr(0)") { return 113 }
+    if !debug_is(read empty, "0x0") { return 113 }
     let original = core.sync.atomic.Ordering.SeqCst
     let cloned = core.sync.atomic.Ordering.(Clone).clone(read original)
     core.sync.atomic.fence(cloned)

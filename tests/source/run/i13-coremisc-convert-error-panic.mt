@@ -44,9 +44,9 @@ fn write_through<T: AsMut<i32>>(mut target: T, value: i32): Unit { *target.as_mu
 fn checks_convert(): i32 {
     var wrapper = Wrapper(5)
     if read_through(read wrapper) != 5 { return 1 }
-    if *read Wrapper.(AsRef<i32>).as_ref(read wrapper) != 5 { return 3 }
-    if *mut Wrapper.(AsRef<i32>).as_ref(mut wrapper) != 5 { return 4 }
-    *mut Wrapper.(AsMut<i32>).as_mut(mut wrapper) = 7
+    if *Wrapper.(AsRef<i32>).as_ref(read wrapper) != 5 { return 3 }
+    if *Wrapper.(AsRef<i32>).as_ref(mut wrapper) != 5 { return 4 }
+    *Wrapper.(AsMut<i32>).as_mut(mut wrapper) = 7
     if wrapper.value != 7 { return 5 }
     write_through(mut wrapper, 9)
     if read_through(read wrapper) != 9 { return 2 }

@@ -177,6 +177,24 @@ bool TypeStore::constrainCallableParameter(
   if (!isParameter(type) || !isFunctionPointer(contract))
     return false;
   auto prior = parameter(type).callableConstraint;
+  // Bounds written twice differ in the identities of their quantified regions.
+  if (prior != Type::Unknown && isFunctionPointer(prior) &&
+      callable(prior).regionParameters.size() ==
+          callable(contract).regionParameters.size() &&
+      !callable(prior).regionParameters.empty()) {
+    auto renamed = callable(contract);
+    std::vector<RegionBinding> bindings;
+    for (std::size_t i = 0; i < renamed.regionParameters.size(); ++i)
+      bindings.push_back(
+          {renamed.regionParameters[i], callable(prior).regionParameters[i]});
+    for (auto &entry : renamed.parameters)
+      entry.type = substituteRegions(entry.type, bindings);
+    renamed.result = substituteRegions(renamed.result, bindings);
+    renamed.error = substituteRegions(renamed.error, bindings);
+    renamed.regionParameters = callable(prior).regionParameters;
+    if (satisfiesCallable(prior, callableType(std::move(renamed))))
+      return true;
+  }
   if (prior != Type::Unknown && !satisfiesCallable(prior, contract) &&
       !satisfiesCallable(contract, prior))
     return false;

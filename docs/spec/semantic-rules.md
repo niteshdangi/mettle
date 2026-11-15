@@ -314,8 +314,12 @@ pointer, representation and ABI preconditions of their particular operation.
 
 Method search constructs receiver candidates from the receiver type, successive
 sound native/user-declared dereference targets, and permitted final unsizing.
-For each candidate T, consider T, read T, then mut T. Do not dereference a raw
-pointer implicitly or invent exclusive access through an ordinary shared owner.
+For each candidate T, consider T, read T, then mut T. When T is a view, methods
+declared on the view type come first, then the referent's own methods (an
+inherent consuming one, or one whose receiver mode is the view's mode), so a
+`read` view of X selects X's `to_owned`, not the view type's. Do not dereference
+a raw pointer implicitly or invent exclusive access through an ordinary shared
+owner.
 
 At each candidate, consider inherent methods, then applicable interface methods
 visible under the bounded lookup of section 13.2. Multiple applicable interface methods at the same priority are

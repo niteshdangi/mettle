@@ -282,6 +282,10 @@ std::optional<StaticConstant> Checker::staticValue(std::size_t index) {
     return std::nullopt;
   }
   staticStates[index] = 1;
+  // A use in a type (an array length) can precede the initializer's own check.
+  if (index < staticInitializerFunctions.size() &&
+      staticInitializerFunctions[index] >= 0)
+    inferFunctionResult(module.functions[staticInitializerFunctions[index]]);
   qualifyDottedPaths(*source.initializer);
   auto depth = unsafeDepth;
   unsafeDepth = 0;
@@ -340,7 +344,14 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     result.scalar.magnitude[0] = node.text == "true";
     return result;
   }
-  if (constFunctionCall(node) || node.kind == Kind::Capture)
+  // Taking a static's address is a relocation, not an evaluated read.
+  const bool addressCall = node.kind == Kind::Call &&
+                           node.children.size() == 2 &&
+                           node.children[0]->kind == Kind::Name &&
+                           (node.children[0]->text == "core::ptr::from_ref" ||
+                            node.children[0]->text == "core::ptr::from_mut") &&
+                           checked.types->isPointer(type);
+  if ((!addressCall && constFunctionCall(node)) || node.kind == Kind::Capture)
     return evaluatedStatic(node, type);
   if (isFloating(type) && needsEvaluator(node))
     return evaluatedStatic(node, type);

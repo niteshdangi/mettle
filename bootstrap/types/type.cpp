@@ -529,8 +529,11 @@ void TypeStore::setDestructor(Type type, int function) {
   record.hasDestructor = true;
   record.destructor = function;
 }
-void TypeStore::setConditionalCopy(Type type) {
-  products.at(entries.at(type.index() - builtins).index).conditionalCopy = true;
+void TypeStore::setConditionalCopy(Type type,
+                                   std::vector<std::size_t> parameters) {
+  auto &record = products.at(entries.at(type.index() - builtins).index);
+  record.conditionalCopy = true;
+  record.copyConditions = std::move(parameters);
 }
 bool TypeStore::needsDrop(Type type) const {
   if (isErased(type))
@@ -881,8 +884,11 @@ bool TypeStore::copyProduct(Type type) const {
   const auto &arguments = record.genericArguments.empty()
                               ? record.genericParameters
                               : record.genericArguments;
-  return std::all_of(arguments.begin(), arguments.end(),
-                     [&](Type argument) { return isCopy(argument); });
+  return std::all_of(origin.copyConditions.begin(), origin.copyConditions.end(),
+                     [&](std::size_t index) {
+                       return index >= arguments.size() ||
+                              isCopy(arguments[index]);
+                     });
 }
 bool TypeStore::isCopy(Type type) const {
   return isFunctionPointer(type) || isPointer(type) ? true

@@ -1,6 +1,7 @@
 #include "semantics/checker.h"
 #include <algorithm>
 #include <array>
+#include <functional>
 
 namespace mettle {
 std::optional<int> Checker::operatorCall(Node &node, int left, int right,
@@ -114,6 +115,28 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
       if (sole && !ambiguous)
         inference.set(right, *sole);
     }
+    // `Rhs = Self`: a right operand whose generic arguments are still open
+    // (`success(1)`) is the same type as the receiver.
+    std::function<bool(Type)> open = [&](Type type) {
+      if (type == Type::Unknown)
+        return true;
+      if (checked.types->isView(type) || checked.types->isPointer(type))
+        return open(checked.types->view(type).payload);
+      if (!checked.types->isProduct(type))
+        return false;
+      const auto &record = checked.types->product(type);
+      return std::any_of(record.genericArguments.begin(),
+                         record.genericArguments.end(), open) ||
+             std::any_of(record.components.begin(), record.components.end(),
+                         open);
+    };
+    if (dereferences == 0 &&
+        (protocol->interface == "core::cmp::PartialEq" ||
+         protocol->interface == "core::cmp::PartialOrd") &&
+        open(inference.value(right)) &&
+        (agreesWherePartial(self, inference.value(right)) ||
+         agreesWherePartial(inference.value(right), self)))
+      inference.equal(left, right, node.span);
     auto argument = inference.value(right);
     // A view operand compares through its payload like the receiver does.
     while (dereferences != 0 && checked.types->isView(argument))

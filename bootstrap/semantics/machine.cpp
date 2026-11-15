@@ -184,8 +184,11 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       operation = "coroutine." + name.substr(10);
     else if (owner == "core::ptr")
       operation = "ptr." + name;
-    else if (isNumeric(builtinType(owner))) {
-      argument = builtinType(owner);
+    else if (isNumeric(primitiveOwner(
+                 owner, nameModule(callee.span, callee.context, true),
+                 callee.span))) {
+      argument = primitiveOwner(
+          owner, nameModule(callee.span, callee.context, true), callee.span);
       operation = "numeric." + name;
       if (operation == "numeric.to_int_unchecked") {
         self = argument;

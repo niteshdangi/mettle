@@ -60,7 +60,7 @@ extend<region r, region s, T: Same<U> + unsized, U: unsized>
     }
 }
 extend i32 implements Same<i32> {
-    fn same(read other: i32): bool { *self == *other }
+    fn same(read other: i32): bool { self == other }
 }
 fn stored_same<region r, region s, T: Same<U> + unsized, U: unsized>(
     take left: read T from r, take right: read U from s

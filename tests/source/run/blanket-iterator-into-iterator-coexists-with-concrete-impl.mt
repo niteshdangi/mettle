@@ -37,7 +37,7 @@ fn item(mut iterator: Counter): i32 {
     match iterator.next() { present(value) => value, none => -1 }
 }
 fn main(): i32 {
-    let iterator = Counter(0, 1).into_iter()
+    var iterator = Counter(0, 1).into_iter()
     let optional: i32? = present(7)
     let result: (Outcome<i32, bool>) = success(9)
     if item(iterator) + item(optional.into_iter()) + item(result.into_iter()) != 3 {

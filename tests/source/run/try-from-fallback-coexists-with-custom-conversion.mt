@@ -22,8 +22,7 @@ fn main(): i32 {
         failure(_) => { return 2 }
     }
     match i32.(TryFrom<i32>).try_from(9i32) {
-        success(value) => { if value != 9 { return 3 } },
-        failure(_) => { return 4 }
+        success(value) => { if value != 9 { return 3 } }
     }
     0
 }

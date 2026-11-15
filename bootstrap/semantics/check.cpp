@@ -172,15 +172,23 @@ std::optional<CheckedModule> Checker::run() {
   };
   auto sourceFunctionCount = module.functions.size();
   module.functions.reserve(sourceFunctionCount + module.statics.size());
-  for (auto &storage : module.statics) {
+  staticInitializerFunctions.assign(module.statics.size(), -1);
+  for (std::size_t index = 0; index < module.statics.size(); ++index) {
+    auto &storage = module.statics[index];
     if (storage.foreignDeclaration || !storage.initializer.get() ||
         !needsConstantTypeCheck(needsConstantTypeCheck, *storage.initializer))
       continue;
+    staticInitializerFunctions[index] =
+        static_cast<int>(module.functions.size());
     Function initializer;
     initializer.name =
         "<static." + std::to_string(module.functions.size()) + ">";
     initializer.span = storage.initializer->span;
     initializer.annotation = storage.annotation;
+    // A static's view lives for the whole program.
+    if (!initializer.annotation.view.empty() &&
+        initializer.annotation.sources.empty())
+      initializer.annotation.sources.push_back({"static", storage.span});
     initializer.item.scope = storage.item.scope;
     initializer.constFunction = true;
     initializer.body = NodeOwner::borrow(*storage.initializer);
@@ -969,7 +977,9 @@ std::optional<CheckedModule> Checker::run() {
   // A cursor bound to its invocation frame may only reach a concrete cursor
   // parameter, never a generic one that could store or erase it.
   auto genericFormal = [&](const auto &call, std::size_t argument) {
-    if (call.callee < 0 || call.method)
+    // An interface method named at the cursor's own type (`VaList.(Clone)`)
+    // receives exactly that cursor as `Self`.
+    if (call.callee < 0 || call.method || call.interfaceType != Type::Unknown)
       return false;
     auto signature = functionSignature(static_cast<std::size_t>(call.callee));
     return argument <= signature.parameters.size() &&

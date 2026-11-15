@@ -38,7 +38,8 @@ fn main(): i32 {
     if successors.next() != present(1) { return 8 }
     var successors_copy = successors.clone()
     if successors.next() != present(2) || successors_copy.next() != present(2) { return 9 }
-    if successors.next().is_present() || successors_copy.next().is_present() { return 10 }
+    if successors.next() != present(3) || successors_copy.next() != present(3) { return 10 }
+    if successors.next().is_present() || successors_copy.next().is_present() { return 31 }
 
     var finite = iter.repeat_n(12i32, 3usize)
     if finite.next() != present(12) { return 11 }
@@ -55,7 +56,7 @@ fn main(): i32 {
     if array.next().is_present() || array_copy.next().is_present() { return 18 }
 
     let values = [1i32, 2i32, 3i32]
-    var slice_iter = read values.iter()
+    var slice_iter = values.iter()
     match slice_iter.next() {
         present(value) => { if *value != 1i32 { return 19 } },
         none => { return 19 }
@@ -76,7 +77,7 @@ fn main(): i32 {
         return 29
     }
 
-    var split = read values.split(fn(read value: i32): bool { value == 2i32 })
+    var split = values.split(fn(read value: i32): bool { value == 2i32 })
     if split.next().is_none() { return 21 }
     var split_copy = split.clone()
     match (split.next(), split_copy.next()) {

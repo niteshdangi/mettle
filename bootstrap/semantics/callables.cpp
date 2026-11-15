@@ -177,7 +177,7 @@ Type Checker::callableAnnotation(const TypeSyntax &syntax, Span span,
       }
     } else if (eligible.size() == 1)
       descriptor.resultSources = eligible;
-    else
+    else if (!eligible.empty())
       error("ownership", span,
             "callable view result requires an unambiguous from contract");
     std::sort(descriptor.resultSources.begin(), descriptor.resultSources.end());
@@ -321,7 +321,7 @@ Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
     if (resultSources.empty()) {
       if (eligible.size() == 1)
         descriptor.resultSources = eligible;
-      else
+      else if (!eligible.empty())
         error("ownership", span,
               "callable view result requires an unambiguous from contract");
     }

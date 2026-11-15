@@ -192,6 +192,7 @@ Attribute families and payloads:
 | target_feature | Defined target feature names | Codegen requirement and caller safety obligation |
 | cfg | Boolean target/feature expression | Conditional item inclusion |
 | nonexhaustive | None | External consumers require fallback/construction restrictions |
+| fallback | None (implementations only) | A blanket implementation that never overlaps another implementation and yields to it when both apply |
 | derive | Macro paths | Generate specified implementations |
 | diagnostic | Defined lint code and level | Control diagnostic reporting, not semantic validity |
 

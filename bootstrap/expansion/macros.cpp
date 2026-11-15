@@ -39,6 +39,21 @@ struct Piece {
 };
 using Pieces = std::vector<Piece>;
 
+// The value text of a numeric literal piece, without its type suffix.
+std::string numericWithoutSuffix(const Piece &piece) {
+  if (piece.kind == TokenKind::Word)
+    return piece.text;
+  const bool based = piece.text.starts_with("0x") ||
+                     piece.text.starts_with("0o") ||
+                     piece.text.starts_with("0b");
+  for (std::string_view suffix :
+       {"i128", "u128", "isize", "usize", "i64", "u64", "i32", "u32", "i16",
+        "u16", "i8", "u8", "f32", "f64"})
+    if (piece.text.ends_with(suffix) && !(based && suffix.starts_with('f')))
+      return piece.text.substr(0, piece.text.size() - suffix.size());
+  return piece.text;
+}
+
 bool symbol(const Piece &piece, std::string_view text) {
   return piece.kind == TokenKind::Symbol && piece.text == text;
 }
@@ -2529,7 +2544,7 @@ private:
                    piece.kind == TokenKind::Floating ||
                    (piece.kind == TokenKind::Word &&
                     (piece.text == "true" || piece.text == "false"))) {
-          value += piece.text;
+          value += numericWithoutSuffix(piece);
         } else {
           error(site, "concat! operands must be supported literals");
           return false;

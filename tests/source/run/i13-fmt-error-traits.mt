@@ -1,3 +1,4 @@
+import core.clone.Clone
 import core.cmp.Ordering
 import core.default.Default
 import core.fmt.Error

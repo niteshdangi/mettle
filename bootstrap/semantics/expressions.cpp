@@ -319,6 +319,15 @@ int Checker::checkNode(Node &n, bool reachable) {
     auto literal = booleanLiteral(*n.children[0]);
     bool shortcut = (n.text == "&&" && literal == false) ||
                     (n.text == "||" && literal == true);
+    // `PartialEq<Rhs = Self>`: an operand that leaves generic arguments to its
+    // context (`E.B`, `none`) takes them from the other operand.
+    if (n.text == "==" || n.text == "!=" || n.text == "<" || n.text == ">" ||
+        n.text == "<=" || n.text == ">=") {
+      auto known = inference.value(a);
+      if (known != Type::Unknown && checked.types->isProduct(known) &&
+          n.children[1]->kind != Kind::Closure)
+        contextualize(*n.children[1], known);
+    }
     auto b = node(*n.children[1],
                   reachable && facts(*n.children[0]).flow.normal && !shortcut);
     if (auto overloaded = operatorCall(n, a, b)) {

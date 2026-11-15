@@ -1,4 +1,3 @@
-import core.outcome.Outcome
 import std.clone.Clone
 import std.cmp.{Ordering, min_by}
 import std.convert.{Infallible, identity}

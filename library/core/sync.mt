@@ -165,10 +165,8 @@ extend<T> core.sync.atomic.AtomicPtr<T> implements From<ptr<mut T>> {
 }
 extend<T> core.sync.atomic.AtomicPtr<T> implements Debug {
     fn fmt(mut f: Formatter): Unit throws Error {
-        try f.write_str("AtomicPtr(")
         let pointer = self.load(core.sync.atomic.Ordering.Relaxed)
         try fmt_pointer(mut f, pointer.addr())
-        try f.write_str(")")
     }
 }
 extend<T> core.sync.atomic.AtomicPtr<T> implements Pointer {

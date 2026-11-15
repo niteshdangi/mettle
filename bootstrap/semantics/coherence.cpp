@@ -590,6 +590,8 @@ bool Solver::coherent() {
       const auto &right = database.implementations[j];
       if (left.checkedImport && database.implementations[j].checkedImport)
         continue;
+      if (left.fallback != database.implementations[j].fallback)
+        continue;
       bool same = types.isErased(left.interfaceType) &&
                   types.isErased(right.interfaceType) &&
                   types.erased(left.interfaceType).declaration ==

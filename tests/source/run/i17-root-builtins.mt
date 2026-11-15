@@ -21,7 +21,7 @@ fn main(): i32 {
     if stringify!((left, [right])) != "(left, [right])" { return 4 }
     if !cfg!(target_pointer_width = "64") { return 5 }
     if cfg_select!(cfg(target_pointer_width = "64") => 64, _ => 32) != 64 { return 6 }
-    if CONTENT.len() == 0usize || core.mem.size_of_val(read bytes) != CONTENT.len() { return 7 }
+    if CONTENT.len() == 0usize || core.mem.size_of_val(bytes) != CONTENT.len() { return 7 }
     if SETTING.len() == 0usize { return 8 }
     match option_env!("PATH") {
         present(value) => if value != SETTING { return 9 },

@@ -25,16 +25,16 @@ fn require_never_traits<T: Clone + Ord + Hash>() {}
 fn require_never_from<T: From<Never>>() {}
 
 fn check_control_flow(): i32 {
-    let continued = ControlFlow.Continue(7i32)
+    let continued = ControlFlow<i32, i32>.Continue(7i32)
     if !continued.is_continue() || continued.is_break() { return 12 }
     let duplicate = continued.clone()
     if duplicate != continued || hash_one(read duplicate) != hash_one(read continued) { return 13 }
-    if ControlFlow.Continue(7i32) == ControlFlow.Break(7i32) { return 14 }
+    if ControlFlow<i32, i32>.Continue(7i32) == ControlFlow<i32, i32>.Break(7i32) { return 14 }
     match take ControlFlow.Break(9i32).break_ok() {
         success(value) => { if value != 9 { return 15 } },
         failure(_) => { return 16 }
     }
-    match take ControlFlow.Continue(11i32).continue_ok() {
+    match take ControlFlow<i32, i32>.Continue(11i32).continue_ok() {
         success(value) => { if value != 11 { return 17 } },
         failure(_) => { return 18 }
     }
@@ -59,8 +59,7 @@ fn main(): i32 {
     if value.rank != 7 || value.id != 9 { return 2 }
 
     match take ConvertTarget.(TryFrom<ConvertSource>).try_from(ConvertSource(17)) {
-        success(converted) => { if converted.value != 17 { return 7 } },
-        failure(_) => { return 8 }
+        success(converted) => { if converted.value != 17 { return 7 } }
     }
 
     var comparisons = 0

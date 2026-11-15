@@ -86,7 +86,7 @@ fn main(): i32 {
     bit_flag.bitand_assign(true)
     bit_flag.bitor_assign(false)
     bit_flag.bitxor_assign(true)
-    if !bit_flag { return 15 }
+    if bit_flag { return 15 }
 
     var acc = Bits(6)
     acc += three

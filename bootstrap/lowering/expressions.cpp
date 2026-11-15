@@ -287,6 +287,11 @@ ir::Value Builder::rawExpression(const Node &node, bool consume,
       auto right = use(expression(*node.children[1]));
       if (!live())
         return {};
+      // An operand of the empty type never exists at run time.
+      if (left.type == Type::Never || right.type == Type::Never) {
+        terminate({Exit::Unreachable});
+        return {};
+      }
       return emit({Op::Binary,
                    {},
                    {left, right},

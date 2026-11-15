@@ -138,6 +138,11 @@ extend Empty implements Clone {
     fn clone(): Empty { self }
 }
 
+extend Empty implements PartialEq {
+    fn eq(read other: Empty): bool { true }
+}
+extend Empty implements Eq {}
+
 extend Empty implements Default {
     static fn default(): Empty { Empty() }
 }

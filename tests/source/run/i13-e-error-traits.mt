@@ -1,5 +1,6 @@
 // expect-exit: 0
 import core.clone.Clone
+import core.convert.From
 import core.ffi.{FromBytesUntilNulError, FromBytesWithNulError}
 import core.future.{RawWaker, RawWakerVTable}
 import core.hash.BuildHasherDefault
@@ -57,9 +58,9 @@ fn main(): i32 {
     if default_builder.clone() != BuildHasherDefault<NoTraitHasher>() { return 3 }
     if !requires_eq(default_builder) { return 4 }
 
-    let exit_code = ExitCode(7u8)
-    if exit_code.clone() != ExitCode(7u8) { return 5 }
-    if exit_code == ExitCode(8u8) { return 6 }
+    let exit_code = ExitCode.(From<u8>).from(7u8)
+    if exit_code.clone() != ExitCode.(From<u8>).from(7u8) { return 5 }
+    if exit_code == ExitCode.(From<u8>).from(8u8) { return 6 }
     if !requires_eq(exit_code) { return 7 }
 
     let file_times = FileTimes.new()

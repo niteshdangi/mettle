@@ -921,6 +921,8 @@ extend<region r> Components<region r> {
             self.prefix_end < bytes.len() && is_sep(bytes[self.prefix_end]) {
             end = self.prefix_end + 1usize
         }
+        // Dot components consumed from both ends may cross: nothing remains.
+        if end < start { end = start }
         path_unchecked(checked_part(bytes, start, end))
     }
 }

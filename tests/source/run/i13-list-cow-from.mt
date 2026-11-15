@@ -3,7 +3,7 @@ import alloc.vec.List
 import core.convert.From
 
 fn borrow_array<region r>(read items: [i32; 3] from r): i32 {
-    let cow = BorrowedOrOwned<region r, [i32]>.(From<read [i32; 3] from r>).from(items)
+    let cow = BorrowedOrOwned<region r, [i32]>.(From<read [i32; 3] from r>).from(read items)
     if !cow.is_borrowed() || cow.as_ref().len() != 3usize ||
         cow.as_ref()[1usize] != 7 { return 8 }
     0

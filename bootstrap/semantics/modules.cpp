@@ -87,11 +87,9 @@ Checker::callableName(std::string_view spelling, std::string_view owner,
   auto found = typeNames.find(prefix);
   if (found == typeNames.end() || !checked.types->isProduct(found->second))
     return {};
-  auto canonical = checked.types->product(found->second).name;
-  auto member = spelling.substr(separator + 2);
   return checked.symbols
-      ->lookup(context, "package::" + canonical + "::" + std::string(member),
-               resolution::Namespace::Value, span)
+      ->associatedItem(checked.types->product(found->second).name,
+                       spelling.substr(separator + 2), context)
       .value_or("");
 }
 

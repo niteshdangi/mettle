@@ -13,7 +13,7 @@ bool knownAttribute(const std::string &name) {
       "test",          "ignore",      "should_panic",   "global_allocator",
       "panic_handler", "no_std",      "no_main",        "doc",
       "allow",         "warn",        "deny",           "forbid",
-      "expect",        "bench"};
+      "expect",        "bench",       "fallback"};
   return names.contains(name);
 }
 

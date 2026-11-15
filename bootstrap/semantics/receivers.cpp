@@ -224,6 +224,33 @@ std::optional<std::size_t> Checker::receiverCandidate(
         return false;
       if (checked.symbols->moduleOf(definition.span) == caller)
         return true;
+      // Interfaces of the receiver type's own package are candidates; a
+      // builtin type has no package, so the compiled package's interfaces are.
+      // (Not while the library itself is built: its packages share one id.)
+      if (!imported(definition.span) && checked.types->isProduct(self)) {
+        const auto &record = checked.types->product(self);
+        if (record.kind == AggregateKind::Optional ||
+            record.kind == AggregateKind::Outcome)
+          return true;
+        const auto &origin = record.genericOrigin == Type::Unknown
+                                 ? record
+                                 : checked.types->product(record.genericOrigin);
+        auto modulePath = [](std::string_view name) {
+          auto separator = name.rfind("::");
+          return separator == std::string_view::npos
+                     ? std::string_view{}
+                     : name.substr(0, separator);
+        };
+        // Declared at or below the receiver type's own module.
+        const auto owner = modulePath(origin.name);
+        const auto declared = modulePath(definition.name);
+        if ((record.kind == AggregateKind::Product ||
+             record.kind == AggregateKind::Enumeration) &&
+            declared.starts_with(owner) &&
+            (declared.size() == owner.size() || owner.empty() ||
+             declared.substr(owner.size()).starts_with("::")))
+          return true;
+      }
       auto separator = definition.name.rfind("::");
       auto shortName = definition.name.substr(
           separator == std::string::npos ? 0 : separator + 2);
@@ -296,7 +323,11 @@ std::optional<std::size_t> Checker::receiverCandidate(
             checked.types->substitute(implementation.interfaceType, *bindings),
             regions);
         auto parameters = checked.types->typeParameters(bound);
+        // A region-only argument (`PartialEq<read CStr from r>`) still fixes
+        // the argument type the call must supply.
         bool needsArguments =
+            (checked.types->isErased(bound) &&
+             !checked.types->erased(bound).arguments.empty()) ||
             std::any_of(implementation.parameters.begin(),
                         implementation.parameters.end(), [&](Type parameter) {
                           return std::find(parameters.begin(), parameters.end(),
@@ -362,8 +393,31 @@ std::optional<std::size_t> Checker::receiverCandidate(
     }
   }
   std::sort(candidates.begin(), candidates.end());
-  candidates.erase(std::unique(candidates.begin(), candidates.end()),
-                   candidates.end());
+  // One interface instance reached through its own implementation and through
+  // a subinterface's parent differs only in regions.
+  candidates.erase(
+      std::unique(candidates.begin(), candidates.end(),
+                  [&](const auto &a, const auto &b) {
+                    if (std::get<0>(a) != std::get<0>(b) ||
+                        std::get<2>(a) != std::get<2>(b))
+                      return false;
+                    if (std::get<1>(a) == std::get<1>(b))
+                      return true;
+                    if (!checked.types->isErased(std::get<1>(a)) ||
+                        !checked.types->isErased(std::get<1>(b)))
+                      return false;
+                    const auto &left = checked.types->erased(std::get<1>(a));
+                    const auto &right = checked.types->erased(std::get<1>(b));
+                    if (left.declaration != right.declaration ||
+                        left.arguments.size() != right.arguments.size())
+                      return false;
+                    for (std::size_t i = 0; i < left.arguments.size(); ++i)
+                      if (checked.types->eraseRegions(left.arguments[i]) !=
+                          checked.types->eraseRegions(right.arguments[i]))
+                        return false;
+                    return true;
+                  }),
+      candidates.end());
   auto sameMethod = [&](const auto &candidate) {
     const auto &first = candidates.front();
     return std::get<0>(candidate) == std::get<0>(first) &&
@@ -720,6 +774,50 @@ std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
         checked.types->product(plan.target).kind == AggregateKind::Pin &&
         builtinPinMethod(call.children[0]->text))
       return std::nullopt;
+    // A view receiver already is the borrow of its referent, so the referent's
+    // own methods are by-value candidates that precede blanket implementations
+    // for the view type itself (`read CStr`.to_owned() is a `CString`).
+    if (checked.types->isView(plan.target)) {
+      // Methods declared directly on the view type come first.
+      for (auto mode :
+           {ParameterMode::Take, ParameterMode::Read, ParameterMode::Mut}) {
+        auto before = diagnostics.items.size();
+        auto own = receiverCandidate(plan.target, mode, call.children[0]->text,
+                                     call, arguments, true);
+        if (own) {
+          selectedPlan(plan, mode);
+          return own;
+        }
+        if (diagnostics.items.size() != before)
+          return std::nullopt;
+      }
+      auto referent = plan;
+      ReceiverStep step;
+      step.source = plan.target;
+      step.target = checked.types->view(plan.target).payload;
+      referent.target = step.target;
+      referent.steps.push_back(std::move(step));
+      const auto viewMode = checked.types->view(plan.target).mode;
+      for (auto mode : {ParameterMode::Take, viewMode}) {
+        auto before = diagnostics.items.size();
+        auto selected = receiverCandidate(
+            referent.target, mode, call.children[0]->text, call, arguments);
+        // A consuming interface method of the referent must not preempt the
+        // view's own implementation (`mut I`.fold); only an inherent one does.
+        if (selected && mode == ParameterMode::Take &&
+            facts(call).interfaceType != Type::Unknown) {
+          facts(call).interfaceType = Type::Unknown;
+          facts(call).interfaceSelf = Type::Unknown;
+          selected.reset();
+        }
+        if (selected) {
+          selectedPlan(std::move(referent), mode);
+          return selected;
+        }
+        if (diagnostics.items.size() != before)
+          return std::nullopt;
+      }
+    }
     for (auto mode :
          {ParameterMode::Take, ParameterMode::Read, ParameterMode::Mut}) {
       auto before = diagnostics.items.size();

@@ -1581,8 +1581,22 @@ void RegionPass::pattern(const Pattern &syntax, Type type, RegionId region) {
 }
 Type RegionPass::receiver(Type actual, RegionId &location,
                           const ReceiverPlan &plan, Span span, bool bounded) {
-  while (types.isView(actual) &&
-         types.eraseRegions(actual) != types.eraseRegions(plan.source)) {
+  // The plan was made on the checked type, where a closure argument is only
+  // its callable; the same nominal instance still names the plan's source.
+  auto sameSource = [&](auto &&self, Type left, Type right) -> bool {
+    left = types.eraseRegions(left);
+    right = types.eraseRegions(right);
+    if (left == right)
+      return true;
+    if (types.isView(left) && types.isView(right))
+      return types.view(left).mode == types.view(right).mode &&
+             self(self, types.view(left).payload, types.view(right).payload);
+    return types.isProduct(left) && types.isProduct(right) &&
+           types.product(left).genericOrigin != Type::Unknown &&
+           types.product(left).genericOrigin ==
+               types.product(right).genericOrigin;
+  };
+  while (types.isView(actual) && !sameSource(sameSource, actual, plan.source)) {
     location = types.view(actual).region;
     actual = types.view(actual).payload;
     bounded = true;
@@ -1781,9 +1795,44 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
                             context, node.span);
         }
       }
-      expectType(
-          *node.children[i],
-          replace(types.substitute(formal, checkedArguments), argumentRegions));
+      // The checked arguments are region-erased; a closure's expected
+      // signature must name the region-bearing types already known here.
+      auto refined = checkedArguments;
+      // A receiver embeds its closures' own types, which the checked argument
+      // only knows as callables, so it is matched by nominal origin.
+      auto refine = [&](Type known, bool byOrigin) {
+        const Type given = known;
+        while (types.isView(known))
+          known = types.view(known).payload;
+        if (!types.isProduct(known))
+          return;
+        const auto erased = types.eraseRegions(known);
+        const auto origin = types.product(known).genericOrigin;
+        auto matches = [&](Type candidate) {
+          return types.isProduct(candidate) &&
+                 (types.eraseRegions(candidate) == erased ||
+                  (byOrigin && origin != Type::Unknown &&
+                   types.product(candidate).genericOrigin == origin));
+        };
+        for (auto &binding : refined) {
+          if (binding.argument == known || binding.argument == given)
+            continue;
+          if (matches(binding.argument))
+            binding.argument = known;
+          else if (types.isView(binding.argument) && types.isView(given) &&
+                   types.view(binding.argument).mode ==
+                       types.view(given).mode &&
+                   matches(types.view(binding.argument).payload))
+            binding.argument = given;
+        }
+      };
+      if (methodReceiver)
+        refine(*methodReceiver, true);
+      for (std::size_t earlier = 1; earlier < i; ++earlier)
+        if (node.children[earlier]->kind != Kind::Closure)
+          refine(expression(*node.children[earlier]), false);
+      expectType(*node.children[i],
+                 replace(types.substitute(formal, refined), argumentRegions));
     }
   } else if (facts(node).indirect) {
     auto callable = expression(*node.children[0]);
@@ -2701,6 +2750,9 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
     if (target >= formals.size())
       continue;
     auto actual = arguments[i];
+    // An operand the checker left untyped (an index range) holds no views.
+    if (actual == Type::Unknown)
+      continue;
     bool borrowed =
         functions[callee].locals[target].mode == ParameterMode::Read ||
         functions[callee].locals[target].mode == ParameterMode::Mut;
@@ -2864,6 +2916,14 @@ Type RegionPass::closure(const Node &node) {
                     : decorate(checked.function.locals[i + 1].type,
                                parameter.annotation, nested.context,
                                parameter.span, lifetime);
+    // Regions the annotation leaves elided come from the expected signature.
+    if (expected && i < expected->parameters.size() &&
+        !parameter.annotation.empty() && parameter.annotation.sources.empty()) {
+      auto wanted =
+          normalizeValue(expected->parameters[i].type, parameter.span);
+      if (types.eraseRegions(type) == types.eraseRegions(wanted))
+        type = wanted;
+    }
     nested.parameters.push_back(type);
     locals[i + 1] = type;
     storage[i + 1] = lifetime;

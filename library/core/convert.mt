@@ -49,6 +49,7 @@ extend<T, U> T implements Into<U> where U: From<T> {
     take fn into(): U { U.(From<T>).from(self) }
 }
 
+@fallback
 extend<T, U> T implements TryFrom<U> where U: Into<T> {
     type Error = Never
     static fn try_from(take value: U): (Outcome<T, Never>) {

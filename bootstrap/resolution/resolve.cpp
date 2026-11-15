@@ -233,6 +233,15 @@ std::vector<std::size_t> Resolution::associated(std::string canonical,
   return matches;
 }
 
+std::optional<std::string> Resolution::associatedItem(std::string type,
+                                                      std::string_view name,
+                                                      ModuleId from) const {
+  auto matches = associated(std::move(type), name, from);
+  if (matches.size() != 1)
+    return std::nullopt;
+  return definitions[matches.front()].canonical;
+}
+
 ModuleId Resolution::packageRoot(ModuleId module) const {
   while (module != 0 && moduleInfos[module].parent != 0)
     module = moduleInfos[module].parent;

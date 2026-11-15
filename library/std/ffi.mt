@@ -105,6 +105,12 @@ pub parent fn validate_os_bytes(read bytes: [u8]): Unit {
         index = next
     }
 }
+extend<region r> Display<region r> implements fmt.Display {
+    fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
+        let text = alloc.string.from_utf8_lossy(self.value.as_bytes())
+        try f.write_str(text.as_text())
+    }
+}
 extend<region r> Display<region r> implements fmt.Debug {
     fn fmt(mut f: fmt.Formatter): Unit throws fmt.Error {
         var tuple = try f.debug_tuple("Display")
@@ -453,6 +459,14 @@ extend OsStr implements ToOwned {
 extend OsStr implements PartialEq {
     fn eq(read other: OsStr): bool { bytes_equal(self.as_bytes(), other.as_bytes()) }
 }
+extend OsStr implements PartialEq<Text> {
+    fn eq(read other: Text): bool { bytes_equal(self.as_bytes(), other.as_bytes()) }
+}
+extend OsStr implements PartialOrd<Text> {
+    fn partial_cmp(read other: Text): Ordering? {
+        present(self.as_bytes().cmp(other.as_bytes()))
+    }
+}
 extend OsStr implements Eq {}
 extend OsStr implements PartialOrd {
     fn partial_cmp(read other: OsStr): Ordering? {
@@ -461,18 +475,6 @@ extend OsStr implements PartialOrd {
 }
 extend OsStr implements Ord {
     fn cmp(read other: OsStr): Ordering { self.as_bytes().cmp(other.as_bytes()) }
-}
-
-extend<region r, region s> read OsStr from r implements PartialEq<read Text from s> {
-    fn eq(read other: read Text from s): bool {
-        bytes_equal(self.as_bytes(), other.as_bytes())
-    }
-}
-
-extend<region r, region s> read OsStr from r implements PartialOrd<read Text from s> {
-    fn partial_cmp(read other: read Text from s): Ordering? {
-        present(self.as_bytes().cmp(other.as_bytes()))
-    }
 }
 
 extend OsStr implements Hash {
@@ -493,21 +495,14 @@ extend<region r> OsString implements PartialEq<read Text from r> {
     }
 }
 
-extend<region r> read Text from r implements PartialEq<OsString> {
+extend Text implements PartialEq<OsString> {
     fn eq(read other: OsString): bool {
         bytes_equal(self.as_bytes(), other.as_bytes())
     }
 }
 
-extend<region r> read Text from r implements PartialEq<OsStr> {
+extend Text implements PartialEq<OsStr> {
     fn eq(read other: OsStr): bool {
-        bytes_equal(self.as_bytes(), other.as_bytes())
-    }
-}
-
-extend<region r, region s> read Text from r
-    implements PartialEq<read OsStr from s> {
-    fn eq(read other: read OsStr from s): bool {
         bytes_equal(self.as_bytes(), other.as_bytes())
     }
 }

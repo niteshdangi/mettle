@@ -4,8 +4,8 @@
 import core.text.Text
 
 const INVOCATION_LINE: u32 = line!()
-const CONTENT: Text = include_str!("root-macros-text.txt")
-const BYTES = include_bytes!("root-macros-text.txt")
+const CONTENT: read Text = include_str!("root-macros-text.txt")
+const BYTES: read [u8; 15] = include_bytes!("root-macros-text.txt")
 include!("../support/root-macros-included.mt")
 
 fn macro_column(): u32 {
@@ -13,7 +13,7 @@ fn macro_column(): u32 {
 }
 
 module macro_scope {
-    pub fn path(): core.text.Text { module_path!() }
+    pub fn path(): read core.text.Text from static { module_path!() }
 }
 
 fn main(): i32 {

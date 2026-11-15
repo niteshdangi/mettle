@@ -12,6 +12,106 @@
 
 namespace mettle::instances {
 namespace {
+// A generic body instantiated with the empty type (`Outcome<T, Never>`) keeps
+// code that handles a value which cannot exist. Nothing reaches it, so it is
+// reduced to inert constants that keep their value ids.
+void neutralizeEmptyValues(ir::Function &function) {
+  std::set<int> empty;
+  auto neutralize = [&](ir::Instruction &instruction) {
+    ir::Instruction inert;
+    inert.op = ir::Op::Constant;
+    inert.result = instruction.result;
+    inert.result.type = Type::Bool;
+    inert.result.access = ir::Access::Owned;
+    inert.span = instruction.span;
+    inert.scope = instruction.scope;
+    empty.insert(instruction.result.id);
+    instruction = std::move(inert);
+  };
+  auto diverges = [](const ir::Instruction &instruction) {
+    return instruction.op == ir::Op::Call ||
+           instruction.op == ir::Op::CatchCall ||
+           instruction.op == ir::Op::IndirectCall ||
+           instruction.op == ir::Op::Panic || instruction.op == ir::Op::Machine;
+  };
+  bool changed = false;
+  for (auto &block : function.blocks) {
+    bool cut = false;
+    for (auto &instruction : block.instructions) {
+      if (!cut && !diverges(instruction) &&
+          (instruction.result.type == Type::Never ||
+           std::any_of(instruction.operands.begin(), instruction.operands.end(),
+                       [](const auto &operand) {
+                         return operand.type == Type::Never;
+                       })))
+        cut = true;
+      if (cut && instruction.op != ir::Op::Constant)
+        neutralize(instruction);
+    }
+    if (cut) {
+      block.exit = {};
+      block.exit.kind = ir::Exit::Unreachable;
+      changed = true;
+    }
+  }
+  // A join keeps only the inputs that still reach it.
+  auto reaches = [&](int from, std::size_t to) {
+    const auto &exit = function.blocks.at(static_cast<std::size_t>(from)).exit;
+    return (exit.kind == ir::Exit::Jump || exit.kind == ir::Exit::Suspend)
+               ? exit.first == static_cast<int>(to)
+               : exit.kind == ir::Exit::Branch &&
+                     (exit.first == static_cast<int>(to) ||
+                      exit.second == static_cast<int>(to));
+  };
+  while (changed) {
+    changed = false;
+    for (std::size_t b = 0; b < function.blocks.size(); ++b) {
+      auto &block = function.blocks[b];
+      for (auto &instruction : block.instructions) {
+        if (instruction.op == ir::Op::Phi) {
+          std::vector<ir::Value> operands;
+          std::vector<int> predecessors;
+          for (std::size_t i = 0; i < instruction.operands.size(); ++i)
+            if (i < instruction.predecessors.size() &&
+                reaches(instruction.predecessors[i], b) &&
+                !empty.contains(instruction.operands[i].id)) {
+              operands.push_back(instruction.operands[i]);
+              predecessors.push_back(instruction.predecessors[i]);
+            }
+          if (operands.size() != instruction.operands.size()) {
+            if (operands.empty()) {
+              neutralize(instruction);
+              changed = true;
+            } else {
+              instruction.operands = std::move(operands);
+              instruction.predecessors = std::move(predecessors);
+            }
+          }
+          continue;
+        }
+        if (instruction.op == ir::Op::Constant && instruction.operands.empty())
+          continue;
+        const bool uses = std::any_of(instruction.operands.begin(),
+                                      instruction.operands.end(),
+                                      [&](const auto &operand) {
+                                        return empty.contains(operand.id);
+                                      }) ||
+                          empty.contains(instruction.target.id);
+        if (uses) {
+          neutralize(instruction);
+          changed = true;
+        }
+      }
+      if (block.exit.kind != ir::Exit::None &&
+          block.exit.kind != ir::Exit::Unreachable &&
+          empty.contains(block.exit.value.id)) {
+        block.exit = {};
+        block.exit.kind = ir::Exit::Unreachable;
+        changed = true;
+      }
+    }
+  }
+}
 struct LocatedLimit : std::length_error {
   LocatedLimit(const std::string &message, Span span)
       : std::length_error(message), span(span) {}
@@ -562,6 +662,7 @@ private:
         }
       }
     }
+    neutralizeEmptyValues(function);
     for (auto &loop : function.arrayLoops) {
       substitute(loop.index.type);
       for (auto &projection : loop.source.fields)

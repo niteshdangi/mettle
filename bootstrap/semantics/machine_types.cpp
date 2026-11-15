@@ -134,13 +134,26 @@ std::optional<Type> Checker::machineAnnotation(const TypeSyntax &syntax,
     error("type", span, "uninitialized by-value storage requires Sized");
   return checked.types->structural(family, {payload});
 }
+Type Checker::primitiveOwner(std::string_view spelling,
+                             resolution::ModuleId scope, Span span) {
+  if (auto builtin = builtinType(spelling); builtin != Type::Unknown)
+    return builtin;
+  auto resolved = checked.symbols->lookup(scope, spelling,
+                                          resolution::Namespace::Type, span);
+  if (!resolved || !aliases.contains(*resolved))
+    return Type::Unknown;
+  TypeSyntax syntax;
+  syntax.name = std::string(spelling);
+  return annotation(syntax, span, current ? current->owner : "");
+}
 std::optional<int> Checker::machineValue(const Node &node) {
   constexpr std::string_view phantomPinned = "core::marker::PhantomPinned";
   const auto scope = nameModule(node.span, node.context, true);
   const auto separator = node.text.rfind("::");
-  const auto numericType = separator == std::string::npos
-                               ? Type::Unknown
-                               : builtinType(node.text.substr(0, separator));
+  const auto numericType =
+      separator == std::string::npos
+          ? Type::Unknown
+          : primitiveOwner(node.text.substr(0, separator), scope, node.span);
   const bool numericOwner = isNumeric(numericType);
   bool builtinValue = node.text == phantomPinned;
   if (scope < checked.symbols->modules().size()) {
@@ -170,7 +183,7 @@ std::optional<int> Checker::machineValue(const Node &node) {
       return inference.fresh(type);
     }
   }
-  auto type = builtinType(owner);
+  auto type = numericType;
   if (isFloating(type)) {
     auto value = machineFloatingValue(type, member);
     if (!value)

@@ -219,8 +219,10 @@ struct ProductType {
   std::string name;
   std::vector<TypeField> fields;
   bool copyRequested;
-  // A generic Copy product is Copy only when all its type arguments are.
+  // A generic Copy product is Copy only when the type arguments at
+  // `copyConditions` are; the other parameters never reach a non-Copy field.
   bool conditionalCopy = false;
+  std::vector<std::size_t> copyConditions{};
   bool hasDestructor = false;
   int destructor = -1;
   AggregateKind kind = AggregateKind::Product;
@@ -374,7 +376,7 @@ public:
   void setRegionPattern(Type type, Type pattern);
   Type declaredRegions(Type type);
   void setDestructor(Type type, int function);
-  void setConditionalCopy(Type type);
+  void setConditionalCopy(Type type, std::vector<std::size_t> parameters);
   // A coroutine state's size and alignment are backend facts: its frame is
   // the lowered body's cleanup frame. The backend installs the resolver for
   // the duration of code generation; it is not part of type identity.

@@ -140,6 +140,9 @@ void Checker::interfaceImplementations() {
     assumeRegionConstraints(syntax.constraints, syntax.span);
     interfaces::Implementation implementation;
     implementation.declaration = i;
+    implementation.fallback = std::any_of(
+        syntax.item.attributes.begin(), syntax.item.attributes.end(),
+        [](const auto &attribute) { return attribute.name == "fallback"; });
     implementation.span = syntax.span;
     implementation.package =
         checked.namespaces().packageOf(syntax.span).value_or(unknownPackage);

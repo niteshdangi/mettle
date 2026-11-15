@@ -58,7 +58,7 @@ fn main(): i32 {
         core.ptr.from_mut(mismatches)
     )
     let observer: alloc.arc.Weak<[i32], Tracker> = {
-        let sized = alloc.arc.new_in([1, 2, 3], tracker)
+        let sized = alloc.arc.new_in([1, 2, 3], tracker.clone())
         let owner: Shared<[i32], Tracker> = sized
         weak owner
     }

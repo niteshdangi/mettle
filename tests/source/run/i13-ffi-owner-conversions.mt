@@ -12,13 +12,13 @@ import core.iter.{ExtendItems, FromItems}
 import std.ffi.{CStr, CString, OsStr, OsString, bytes_equal, os_string_from_text}
 
 fn borrowed_cstr<region r>(read value: CStr from r): BorrowedOrOwned<region r, CStr> {
-    BorrowedOrOwned<region r, CStr>.(From<read CStr from r>).from(value)
+    BorrowedOrOwned<region r, CStr>.(From<read CStr from r>).from(read value)
 }
 
 fn borrowed_cstring<region r>(
     read value: CString from r
 ): BorrowedOrOwned<region r, CStr> {
-    BorrowedOrOwned<region r, CStr>.(From<read CString from r>).from(value)
+    BorrowedOrOwned<region r, CStr>.(From<read CString from r>).from(read value)
 }
 
 fn main(): i32 {

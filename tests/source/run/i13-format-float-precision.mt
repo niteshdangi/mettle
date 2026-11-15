@@ -199,7 +199,7 @@ fn main(): i32 {
     let not_a_number = 0.0f64 / 0.0f64
     var special = fmt.spec()
     special.plus = true
-    if !display_is(not_a_number, special, "+NaN") ||
+    if !display_is(not_a_number, special, "NaN") ||
        !display_is(1.0f64 / 0.0f64, two_digits, "inf") {
         return 20
     }

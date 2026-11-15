@@ -35,6 +35,9 @@ public:
   std::optional<std::string> lookup(ModuleId from, std::string_view spelling,
                                     Namespace space, Span use,
                                     Diagnostics *diagnostics = nullptr) const;
+  // The associated item `name` of the type with canonical name `type`.
+  std::optional<std::string>
+  associatedItem(std::string type, std::string_view name, ModuleId from) const;
   const std::vector<ModuleInfo> &modules() const { return moduleInfos; }
   // Whether a lookup resolved through the binding that import `index` (the
   // position in `Module::imports`) made under `name`; an empty `name` asks

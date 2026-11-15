@@ -108,7 +108,7 @@ int main() {
     auto optional = types.structural(AggregateKind::Optional, {instance});
     auto array = types.arrayType(instance,
                                  types.declareConstParameter("N", Type::Usize));
-    types.setConditionalCopy(payload);
+    types.setConditionalCopy(payload, {0});
     expect(!types.isCopy(tuple) && !types.isCopy(optional) &&
                !types.isCopy(array),
            "structural Copy follows finalized nominal payload constraints");

@@ -145,8 +145,24 @@ void Checker::products() {
       error("type", module.products[index].span,
             "Copy product field '" + field.name + "' is not Copy");
     }
-    if (conditional)
-      checked.types->setConditionalCopy(identities[index]);
+    if (conditional) {
+      // A parameter matters when a field stops being Copy with only it
+      // left unbounded.
+      std::vector<std::size_t> required;
+      for (std::size_t p = 0; p < type.genericParameters.size(); ++p) {
+        std::vector<TypeBinding> others;
+        for (std::size_t q = 0; q < type.genericParameters.size(); ++q)
+          if (q != p)
+            others.push_back({type.genericParameters[q], Type::I32});
+        if (std::any_of(type.fields.begin(), type.fields.end(),
+                        [&](const auto &field) {
+                          return !checked.types->isCopy(
+                              checked.types->substitute(field.type, others));
+                        }))
+          required.push_back(p);
+      }
+      checked.types->setConditionalCopy(identities[index], std::move(required));
+    }
     state[index] = 2;
   };
   for (std::size_t i = 0; i < identities.size(); ++i)

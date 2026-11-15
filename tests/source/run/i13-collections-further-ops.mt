@@ -299,7 +299,7 @@ fn main(): i32 {
     if clone_drops != 3usize { return 22 }
     let values = [7i32, 8i32, 9i32]
     let list = vec.List<i32>.(From<[i32; 3]>).from([7i32, 8i32, 9i32])
-    if list != read values || list != read values.as_slice() { return 23 }
+    if list != read values || list != values.as_slice() { return 23 }
     var mutable_values = [7i32, 8i32, 9i32]
     if list != mutable_values.as_mut_slice() { return 24 }
     if !slice_equals_list(read values, read list) { return 25 }

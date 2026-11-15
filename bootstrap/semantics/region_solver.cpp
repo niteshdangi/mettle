@@ -150,8 +150,9 @@ RegionAnswer RegionSolver::prove(RegionId longer, RegionId shorter,
     return inconclusive ? RegionAnswer::Inconclusive : RegionAnswer::Rejected;
   }
   RegionOutlives goal{longer, shorter};
+  // Reachability search: a goal already being explored contributes nothing.
   if (std::find(active.begin(), active.end(), goal) != active.end())
-    return RegionAnswer::Inconclusive;
+    return RegionAnswer::Rejected;
   active.push_back(goal);
   bool inconclusive = false;
   for (const auto &edge : environment.assumptions) {

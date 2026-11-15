@@ -98,6 +98,9 @@ struct Implementation {
   // Mounted from a checked library, whose coherence was proven when it was
   // built; only pairs involving the program's own implementations are new.
   bool checkedImport = false;
+  // A `@fallback` blanket implementation yields to any other implementation
+  // that applies: they never overlap and the other one is selected.
+  bool fallback = false;
 };
 struct Projection {
   Type parameter, subject, interfaceType;

@@ -608,7 +608,7 @@ void wire(Archive &a, interfaces::Implementation &v) {
   a(v.target, v.interfaceType, v.span);
   a.package(v.package);
   a(v.parameters, v.requirements, v.methods, v.associated, v.inherent,
-    v.regions, v.regionRequirements, v.equalities);
+    v.regions, v.regionRequirements, v.equalities, v.fallback);
 }
 void wire(Archive &a, interfaces::Database &v) {
   std::uint64_t count = v.definitions.size();
@@ -1041,7 +1041,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   }
   result.header = std::move(header.output);
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.10");
+  contracts.tag("mettle.checked-contracts.11");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size();
   contracts(count);
@@ -1113,7 +1113,7 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
     return result;
   }
   Archive archive(bytes, references, types.get());
-  archive.tag("mettle.checked-contracts.10");
+  archive.tag("mettle.checked-contracts.11");
   auto value = std::make_shared<ImportedDeclarations>();
   value->types = std::move(types);
   std::uint64_t count = 0;

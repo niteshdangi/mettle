@@ -586,6 +586,16 @@ extend Ipv6Addr implements BitOrAssign<Ipv6Addr> {
         self.bytes = Ipv6Addr.from_bits(self.to_bits() | rhs.to_bits()).bytes
     }
 }
+extend<region r> Ipv6Addr implements BitAndAssign<read Ipv6Addr from r> {
+    mut fn bitand_assign(read rhs: read Ipv6Addr from r): Unit {
+        self.bytes = Ipv6Addr.from_bits(self.to_bits() & rhs.to_bits()).bytes
+    }
+}
+extend<region r> Ipv6Addr implements BitOrAssign<read Ipv6Addr from r> {
+    mut fn bitor_assign(read rhs: read Ipv6Addr from r): Unit {
+        self.bytes = Ipv6Addr.from_bits(self.to_bits() | rhs.to_bits()).bytes
+    }
+}
 extend Ipv6Addr implements From<u128> {
     static fn from(take value: u128): Ipv6Addr { Ipv6Addr.from_bits(value) }
 }

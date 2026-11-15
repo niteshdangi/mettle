@@ -691,9 +691,15 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
     provingUnpin.erase(subject);
     return valid;
   }
-  if (functionPointerMarker &&
-      types.isFunctionPointer(normalize(obligation.subject, {}, span)))
-    return deriveFunctionPointerMarker();
+  if (functionPointerMarker) {
+    auto subject = normalize(obligation.subject, {}, span);
+    // A closure is as duplicable as its captures, exactly when it is Copy.
+    if (types.isFunctionPointer(subject) ||
+        (functionPointerMarker->name == "core::clone::FunctionPointer" &&
+         types.isProduct(subject) && types.product(subject).callable >= 0 &&
+         types.isCopy(subject)))
+      return deriveFunctionPointerMarker();
+  }
   auto selected = implementation(obligation.subject, obligation.interfaceType,
                                  span, report);
   if (selected)
@@ -1285,6 +1291,12 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
     }
     if (!valid)
       continue;
+    if (found && found->fallback != candidate.fallback) {
+      if (found->fallback)
+        found = nullptr;
+      else
+        continue;
+    }
     if (found) {
       active.erase(key);
       if (report)

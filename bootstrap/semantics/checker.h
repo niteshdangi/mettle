@@ -147,6 +147,9 @@ private:
   int featureTest(Node &node);
   std::optional<int> targetCall(Node &node, bool reachable);
   ProductLayout productLayout(const Module::Product &product);
+  // The builtin a primitive spelling or an alias of one names, else Unknown.
+  Type primitiveOwner(std::string_view spelling, resolution::ModuleId scope,
+                      Span span);
   std::optional<Type> machineAnnotation(const TypeSyntax &syntax, Span span,
                                         std::string_view owner);
   std::optional<int> machineValue(const Node &node);
@@ -160,6 +163,8 @@ private:
   };
   std::map<Type, std::vector<ConstructorCandidate>> constructors;
   std::unordered_map<std::string, std::size_t> aliases;
+  // The synthetic function type-checking each static's initializer, or -1.
+  std::vector<int> staticInitializerFunctions;
   std::vector<unsigned char> aliasStates;
   mutable std::unordered_map<std::string, std::vector<const Module::Product *>>
       productIndex;

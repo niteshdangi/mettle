@@ -7,7 +7,8 @@ import core.clone.Clone
 import core.default.Default
 import core.hash.hash_one
 import core.iter
-import core.iter.{BidirectionalIterator, ExactSizeIterator, Iterator, RangeBounds}
+import core.convert.Into
+import core.iter.{BidirectionalIterator, Bound, ExactSizeIterator, Iterator, RangeBounds}
 import core.slice.SliceIndex
 import core.text.Text
 
@@ -170,7 +171,7 @@ fn checks_bound_and_open_ranges(): i32 {
     let copied_included = included
     if included != copied_included || included == Bound.Excluded(4i32) { return 30 }
     if hash_one(read included) != hash_one(read copied_included) { return 31 }
-    if Bound.Unbounded != Bound.Unbounded || Bound.Included(4i32) == Bound.Unbounded { return 32 }
+    if Bound<i32>.Unbounded != Bound<i32>.Unbounded || Bound.Included(4i32) == Bound.Unbounded { return 32 }
     let text = "bound"
     let borrowed_bound = Bound.Included(read text)
     match take borrowed_bound.cloned() {

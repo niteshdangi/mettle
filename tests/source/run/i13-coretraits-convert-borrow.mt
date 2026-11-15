@@ -23,6 +23,10 @@ extend Wrapped implements TryFrom<i32> {
     }
 }
 
+extend Wrapped implements AsRef<i32> {
+    fn as_ref(): read i32 from self { read self.value }
+}
+
 type Positive { value: i32 }
 extend Positive implements TryFrom<i32> {
     type Error = ConversionError
@@ -90,8 +94,7 @@ fn main(): i32 {
     var target = 0i32
     21i32.clone_into(mut target)
     if target != 21 { return 6 }
-    let borrowed = wrapped.as_ref()
-    if borrowed.value != 17 { return 7 }
+    if *wrapped.as_ref() != 17 { return 7 }
     let key = wrapped.borrow()
     if key.value != 17 { return 8 }
     0

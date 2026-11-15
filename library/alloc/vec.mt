@@ -1199,6 +1199,12 @@ extend<T, A: Allocator> List<T, A> implements AsRef<[T]> {
 extend<T, A: Allocator> List<T, A> implements AsMut<[T]> {
     mut fn as_mut(): mut [T] from self { self.as_mut_slice() }
 }
+extend<T, A: Allocator> List<T, A> implements AsRef<List<T, A>> {
+    fn as_ref(): read List<T, A> from self { read self }
+}
+extend<T, A: Allocator> List<T, A> implements AsMut<List<T, A>> {
+    mut fn as_mut(): mut List<T, A> from self { mut self }
+}
 extend<T, A: Allocator> List<T, A> implements Borrow<[T]> {
     fn borrow(): read [T] from self { self.as_slice() }
 }

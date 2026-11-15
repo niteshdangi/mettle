@@ -72,7 +72,7 @@ fn checks_sources(): i32 {
     var none_left = iter.empty<i32>()
     if none_left.next().is_present() || none_left.next_back().is_present() { return 4 }
     if iter.empty<i32>().size_hint() != (0usize, present(0usize)) { return 5 }
-    let optional_items: iter.Once<i32> = present(9).into_iter()
+    var optional_items: iter.Once<i32> = present(9).into_iter()
     if optional_items.next() != present(9) || optional_items.next().is_present() { return 45 }
     var counter = 0
     var generated = iter.from_fn(fn(): i32? {
@@ -92,11 +92,11 @@ fn checks_sources(): i32 {
     var single_successor = iter.successors(present(9), fn(read value: i32): i32? { none })
     if single_successor.next() != present(9) || single_successor.next().is_present() { return 10 }
     if iter.successors(none, fn(read value: i32): i32? { none }).next().is_present() { return 11 }
-    var calls = 0
-    var once_generated = iter.once_with(fn(): i32 { calls += 1; 42 })
-    if calls != 0 || once_generated.is_empty() { return 12 }
-    if once_generated.next() != present(42) || calls != 1 || !once_generated.is_empty() { return 13 }
-    if once_generated.next().is_present() || calls != 1 { return 14 }
+    let calls: core.cell.Cell<i32> = core.cell.Cell.new(0)
+    var once_generated = iter.once_with(fn(): i32 { calls.set(calls.get() + 1); 42 })
+    if calls.get() != 0 || once_generated.is_empty() { return 12 }
+    if once_generated.next() != present(42) || calls.get() != 1 || !once_generated.is_empty() { return 13 }
+    if once_generated.next().is_present() || calls.get() != 1 { return 14 }
 
     var clones = 0usize
     var drops = 0usize
