@@ -218,7 +218,9 @@ can therefore turn a lookup into a safe miss, but cannot change build output.
 The whole-build key retains its existing live lease; `clean` refuses to remove
 a store with live leases.
 
-`--no-cache` disables
+Each successful build records the entries it used as that project
+configuration's working set, so the store drops what edits and deleted projects
+leave behind without a global size cap. `--no-cache` disables
 both whole-build and package-object caches. Storage design: performance.md
 section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
 `--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;

@@ -154,11 +154,19 @@ The user build cache is built to retain less than Cargo's `target/` directory:
   records are stored; there are no per-crate metadata, dependency-info,
   incremental or debug side trees. Comment and layout edits reuse the existing
   entry instead of adding one.
-- **Bounded.** After every publication the store applies a byte budget
-  (default unbounded, `--cache-limit-kib`; one release `std` library set measures 740 MiB) and an age limit (default 30 days,
-  `--cache-max-age-days`): entries unused longest are evicted first, the entry
-  just published last, then blobs without references and stale scratch files
-  are removed. Each eviction is reported with `--explain` and its reason.
+- **Follows live projects.** The store has no default size cap; it stays
+  proportional to what live projects currently build. Each successful build
+  records the entries it used as the working set of that project
+  configuration (source path, profile, target and flags). The next build of
+  the same configuration evicts what the edit superseded, and a project whose
+  sources no longer exist releases everything only it held. Entries other live
+  projects (or the same project's other configurations) still use are kept, so
+  shared library and package objects survive while anything needs them. An age
+  limit (default 30 days, `--cache-max-age-days`) and an opt-in byte budget
+  (`--cache-limit-kib`, default unbounded; one release `std` library set
+  measures 740 MiB) remain as backstops, and blobs without references and stale
+  scratch files are removed. Each eviction is reported with `--explain` and its
+  reason.
 - **Verified and atomic.** Writes go to `tmp/` and are published by rename; a
   hit re-hashes the blob and a mismatch deletes the entry and blob and
   rebuilds (`entry corrupt`).

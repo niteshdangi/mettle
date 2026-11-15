@@ -502,6 +502,13 @@ void check(const ir::Function &function, const ir::Program &program,
         if (conflict && !priorConflict)
           exclusiveConflict = loan.mode == ParameterMode::Mut;
       }
+      // A loan a destructor effect creates here (writing a view into outer
+      // storage) outlives the storage that dies at this same point.
+      for (auto id : introduced)
+        for (const auto &dead : point.dead)
+          for (const auto &referent : info.loans.at(id).targets)
+            if (overlapping(dead, referent.place))
+              conflict = true;
       if (conflict)
         diagnostics.error(
             "ownership", instruction.span,

@@ -288,6 +288,7 @@ bool Store::publishLocked(const fs::path &path, const std::string &content) {
 }
 
 bool Store::put(const std::string &key, const fs::path &file, bool executable) {
+  note(key);
   if (key.size() < 2 || !prepare())
     return false;
   std::uint64_t size = 0;
@@ -325,6 +326,7 @@ bool Store::put(const std::string &key, const fs::path &file, bool executable) {
 }
 
 bool Store::putData(const std::string &key, std::string_view bytes) {
+  note(key);
   if (key.size() < 2 ||
       bytes.size() > static_cast<std::uint64_t>(
                          std::numeric_limits<std::streamsize>::max()) ||
@@ -344,6 +346,7 @@ bool Store::putData(const std::string &key, std::string_view bytes) {
 }
 
 Store::Data Store::data(const std::string &key, std::uint64_t maximumBytes) {
+  note(key);
   if (key.size() < 2)
     return {};
   auto path = entryPath(key);
@@ -390,6 +393,8 @@ Store::Data Store::data(const std::string &key, std::uint64_t maximumBytes) {
 }
 
 bool Store::putMany(const std::vector<Artifact> &artifacts) {
+  for (const auto &artifact : artifacts)
+    note(artifact.key);
   if (artifacts.empty())
     return true;
   if (!prepare())
@@ -488,6 +493,7 @@ bool Store::putMany(const std::vector<Artifact> &artifacts) {
 
 Store::Lookup Store::materialize(const std::string &key,
                                  const fs::path &destination) {
+  note(key);
   if (key.size() < 2)
     return Lookup::Miss;
   auto path = entryPath(key);
@@ -550,6 +556,7 @@ Store::Lookup Store::materialize(const std::string &key,
 }
 
 std::optional<std::string> Store::text(const std::string &key) {
+  note(key);
   if (key.size() < 2)
     return std::nullopt;
   auto path = entryPath(key);
@@ -567,6 +574,7 @@ std::optional<std::string> Store::text(const std::string &key) {
 }
 
 bool Store::putText(const std::string &key, const std::string &text) {
+  note(key);
   return key.size() >= 2 && publish(entryPath(key), "text\n" + text);
 }
 
@@ -591,6 +599,96 @@ std::vector<Store::Record> Store::records() const {
     found.push_back(std::move(record));
   }
   return found;
+}
+
+void Store::note(const std::string &key) const {
+  std::lock_guard guard(touched->lock);
+  touched->keys.insert(key);
+}
+
+std::vector<std::string>
+Store::commitProject(const std::string &project, const fs::path &path) {
+  if (project.empty() || !prepare())
+    return {};
+  StoreLock lock(directory);
+  if (!lock)
+    return {};
+  Sha256 name;
+  name.update(project);
+  const auto rootsDirectory = directory / "roots";
+  std::error_code error;
+  fs::create_directories(rootsDirectory, error);
+  struct Root {
+    fs::path file, source;
+    std::set<std::string> keys;
+    fs::file_time_type used;
+  };
+  auto read = [](const fs::path &file) -> std::optional<Root> {
+    auto content = readText(file);
+    if (!content)
+      return std::nullopt;
+    Root root;
+    root.file = file;
+    std::istringstream lines(*content);
+    std::string line;
+    if (!std::getline(lines, line))
+      return std::nullopt;
+    root.source = line;
+    while (std::getline(lines, line))
+      if (!line.empty())
+        root.keys.insert(line);
+    std::error_code stale;
+    root.used = fs::last_write_time(file, stale);
+    return root;
+  };
+  const auto mine = rootsDirectory / name.finish();
+  std::set<std::string> current;
+  {
+    std::lock_guard guard(touched->lock);
+    current = touched->keys;
+  }
+  std::set<std::string> released;
+  if (auto previous = read(mine))
+    for (const auto &key : previous->keys)
+      if (!current.contains(key))
+        released.insert(key);
+  std::string content = path.string() + "\n";
+  for (const auto &key : current)
+    content += key + "\n";
+  if (!publishLocked(mine, content))
+    return {};
+  const auto now = fs::file_time_type::clock::now();
+  std::set<std::string> claimed = current;
+  for (fs::directory_iterator it(rootsDirectory, error), end;
+       !error && it != end; it.increment(error)) {
+    if (it->path() == mine)
+      continue;
+    auto other = read(it->path());
+    std::error_code gone;
+    const bool dead =
+        !other || !fs::exists(other->source, gone) ||
+        (bounds.maxAgeDays &&
+         now - other->used >
+             std::chrono::hours(24 * static_cast<long>(bounds.maxAgeDays)));
+    if (dead) {
+      if (other)
+        released.insert(other->keys.begin(), other->keys.end());
+      fs::remove(it->path(), gone);
+    } else
+      claimed.insert(other->keys.begin(), other->keys.end());
+  }
+  std::vector<std::string> notes;
+  const auto leased = liveLeaseKeys(directory);
+  for (const auto &key : released)
+    if (!claimed.contains(key) && !leased.contains(key) && key.size() >= 2) {
+      std::error_code removed;
+      if (fs::remove(entryPath(key), removed))
+        notes.push_back("evicted " + key.substr(0, 12) +
+                        ": no live project build uses it");
+    }
+  for (auto &note : pruneLocked({}))
+    notes.push_back(std::move(note));
+  return notes;
 }
 
 std::vector<std::string> Store::prune(const std::string &keep) {

@@ -4673,6 +4673,24 @@ void RegionPass::run() {
     }
     expectType(*module.functions[i].body, bodyResult);
     auto result = expression(*module.functions[i].body);
+    if (module.functions[i].asyncDefaultFutureInferred &&
+        types.isProduct(result) && types.isProduct(bodyResult) &&
+        types.product(result).genericOrigin != Type::Unknown &&
+        types.product(result).genericOrigin ==
+            types.product(bodyResult).genericOrigin) {
+      // The coroutine closure is the body just analysed, so its environment
+      // is what the declared default future names; only its other arguments
+      // carry the declared relationships.
+      auto record = types.product(bodyResult);
+      const auto &actual = types.product(result).genericArguments;
+      if (actual.size() == record.genericArguments.size()) {
+        for (std::size_t a = 0; a < actual.size(); ++a)
+          if (types.isFunctionPointer(actual[a]))
+            record.genericArguments[a] = actual[a];
+        bodyResult = types.instantiateProduct(record.genericOrigin,
+                                              std::move(record.genericArguments));
+      }
+    }
     if (facts(*module.functions[i].body).flow.normal &&
         !module.functions[i].constructor)
       require(result, bodyResult, module.functions[i].body->span);

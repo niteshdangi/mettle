@@ -1450,6 +1450,26 @@ int build(const Options &requested,
     for (const auto &note : store->prune(*cacheKey))
       if (options.explain)
         std::cerr << "mettle: cache " << note << '\n';
+    std::error_code absolute;
+    auto root = std::filesystem::absolute(source.path, absolute);
+    if (!absolute) {
+      packages::Sha256 project;
+      for (const auto &field :
+           {root.string(), options.profile, options.target, options.emit,
+            std::string(options.library ? "library" : "executable"),
+            std::string(options.freestanding ? "freestanding" : "hosted"),
+            std::string(options.checks.value_or(options.profile != "release")
+                            ? "checks"
+                            : "wrap")}) {
+        project.update(field);
+        project.update(std::string_view("\0", 1));
+      }
+      for (const auto &sanitizer : options.sanitizers)
+        project.update(sanitizer);
+      for (const auto &note : store->commitProject(project.finish(), root))
+        if (options.explain)
+          std::cerr << "mettle: cache " << note << '\n';
+    }
   }
   return status;
 }

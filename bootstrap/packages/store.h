@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -17,6 +19,8 @@ namespace mettle::packages {
 //   VERSION            marks a directory as a store (required before `clear`)
 //   entries/AA/KEY     one small file per key; its mtime is the last use
 //   blobs/AA/SHA       immutable, read-only artifact bytes
+//   roots/ID           working set (source path, then keys) of one project
+//                      configuration, written by `commitProject`
 //   leases/KEY/TOKEN   live-build markers; excluded from cache accounting
 //   store.lock         cross-process lease/prune coordination
 //   tmp/               in-flight writes, published by atomic rename
@@ -93,6 +97,14 @@ public:
   // entry references and stale scratch files. `keep` (the entry just
   // published) is evicted last. Returns one explanation per removal.
   std::vector<std::string> prune(const std::string &keep = {});
+  // Records the entries this store object read or wrote as the working set of
+  // `project`, a stable name for one project configuration whose sources live
+  // at `path`. Evicts the entries that set held before and no live project
+  // holds now, and those held only by projects whose `path` is gone. The
+  // cache stays proportional to the live projects' current builds without a
+  // global size bound. Returns one explanation per removal.
+  std::vector<std::string> commitProject(const std::string &project,
+                                         const std::filesystem::path &path);
   StoreUsage usage() const;
   // Deletes the store's own directories (never anything else). With `dryRun`
   // only counts. Refuses a non-empty directory that lacks the VERSION marker.
@@ -114,8 +126,14 @@ private:
                      const std::string &content);
   std::vector<std::string> pruneLocked(const std::set<std::string> &keep);
   std::vector<Record> records() const;
+  struct Touched {
+    std::mutex lock;
+    std::set<std::string> keys;
+  };
+  void note(const std::string &key) const;
   std::filesystem::path directory;
   StoreLimits bounds;
+  std::shared_ptr<Touched> touched = std::make_shared<Touched>();
 };
 
 // Lowercase hexadecimal SHA-256 of a file's bytes; `size` receives its length.

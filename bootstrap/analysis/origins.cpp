@@ -1127,6 +1127,9 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                   fields[0] == Projection::field(0) &&
                   fields[1] == Projection::dereference())
                 fields.erase(fields.begin(), fields.begin() + 2);
+              else if (!fields.empty() &&
+                       fields.front() == Projection::dereference())
+                fields.erase(fields.begin());
               append(raw, fields);
               return raw;
             };

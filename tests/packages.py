@@ -1173,6 +1173,31 @@ def cache_dedup_and_bound():
     assert exit_code(built) == 0
 
 
+def cache_follows_live_project_builds():
+    app = packages("incremental/app")
+    explained(app)
+    first = {path.name for path in cache_files("entries")}
+    edit(app / "src/math.mt", "pub fn answer(): i32 { 42 }",
+         "pub fn answer(): i32 { 42 }\npub fn zero(): i32 { 0 }")
+    edit(app / "src/main.mt", "- 42 }", "- 42 + math.zero() }")
+    text, _ = explained(app)
+    second = {path.name for path in cache_files("entries")}
+    # The build the edit replaced is no longer anyone's working set.
+    assert "no live project build uses it" in text, text
+    assert first - second, (first, second)
+    # A project that disappears releases what only it held.
+    sibling = evidence / "sibling"
+    shutil.copytree(app, sibling)
+    explained(sibling)
+    both = {path.name for path in cache_files("entries")}
+    assert both - second, (both, second)
+    shutil.rmtree(sibling)
+    edit(app / "src/main.mt", "math.zero() }", "math.zero() + 0 }")
+    explained(app)
+    final = {path.name for path in cache_files("entries")}
+    assert not ((both - second) & final), (both, second, final)
+
+
 def cache_corruption_and_clean():
     app = packages("incremental/app")
     explained(app)
@@ -3201,7 +3226,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          linked_archive_changes_invalidate_executable,
          object_cache_integrity,
          sanitizer_cache_key, edit_invalidation, comment_newline_invalidates_cache,
-         cache_dedup_and_bound,
+         cache_dedup_and_bound, cache_follows_live_project_builds,
          cache_corruption_and_clean, cache_corrupt_digest_preserves_other_files,
          cache_publication_failure_is_reported, cache_clean_failure, cache_clean_preserves_sources,
          security_output_paths,
