@@ -15,6 +15,7 @@
 #include "llvm/TargetParser/Triple.h"
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -547,7 +548,18 @@ static int emitOne(const Options &options, const Source &source,
         }
 #endif
         std::vector<llvm::StringRef> refs(arguments.begin(), arguments.end());
-        if (llvm::sys::ExecuteAndWait(linker, refs) != 0) {
+        // The linker's diagnostics go through the driver's own stream so a
+        // caller that captures diagnostics (doctests) sees them.
+        const auto linkLog = linked + ".link.log";
+        const std::optional<llvm::StringRef> redirects[] = {
+            std::nullopt, std::nullopt, llvm::StringRef(linkLog)};
+        const int linkStatus =
+            llvm::sys::ExecuteAndWait(linker, refs, std::nullopt, redirects);
+        if (std::ifstream log(linkLog); log)
+          std::cerr << log.rdbuf();
+        std::error_code ignored;
+        std::filesystem::remove(linkLog, ignored);
+        if (linkStatus != 0) {
           std::cerr << "mettle: error[link]: native link failed\n";
           return 1;
         }
