@@ -165,8 +165,6 @@ public:
           const PackageOwners &packageOwners = {},
           NumericEvaluator numericEvaluator = nullptr,
           const resolution::SourcePackages &sourcePackages = {},
-          std::shared_ptr<const ImportedDeclarations> imported = nullptr,
-          const lowering::ImportedBodies *importedBodies = nullptr,
           const LibraryImporter &importLibrary = {}) {
     if (!diagnostics.empty())
       return std::nullopt;
@@ -174,12 +172,8 @@ public:
     if (!resolved)
       return std::nullopt;
     std::optional<ImportedProgram> library;
+    std::shared_ptr<const ImportedDeclarations> imported;
     if (importLibrary) {
-      if (imported || importedBodies) {
-        diagnostics.error("internal", {},
-                          "competing compiled-library import providers");
-        return std::nullopt;
-      }
       library = importLibrary(tree, *resolved, diagnostics);
       if (!library || !diagnostics.empty()) {
         if (diagnostics.empty())
@@ -187,7 +181,6 @@ public:
         return std::nullopt;
       }
       imported = library->declarations;
-      importedBodies = library->bodies.get();
     }
     auto checked =
         check(std::move(tree), diagnostics, std::move(resolved), requireEntry,
@@ -196,20 +189,8 @@ public:
       return std::nullopt;
     if (observe)
       observe(*checked);
-    std::map<std::string, const ir::Function *> normalizedImports;
-    if (importedBodies) {
-      for (const auto &[index, function] : importedBodies->functions) {
-        (void)index;
-        normalizedImports.emplace(function.name, &function);
-      }
-      for (const auto &[owner, function] : importedBodies->defaults) {
-        (void)owner;
-        normalizedImports.emplace(function.name, &function);
-      }
-      for (const auto &function : importedBodies->support)
-        normalizedImports.emplace(function.name, &function);
-    }
-    auto program = lowering::lower(*checked, diagnostics, importedBodies);
+    auto program = lowering::lower(*checked, diagnostics,
+                                   library ? library->bodies.get() : nullptr);
     if (!diagnostics.empty())
       return std::nullopt;
     program.requireEntry = requireEntry;
@@ -270,15 +251,12 @@ public:
     };
     // Bodies imported unchanged from the checked library were verified and
     // analysed when the library was built.
-    std::vector<bool> trusted(program.functions.size(), false);
+    program.libraryBodies.resize(program.functions.size());
+    const auto trusted = program.libraryBodies;
     for (std::size_t i = 0; i < program.functions.size(); ++i) {
-      auto &function = program.functions[i];
-      if (auto imported = normalizedImports.find(function.name);
-          imported != normalizedImports.end() &&
-          function == *imported->second) {
-        trusted[i] = true;
+      if (trusted[i])
         continue;
-      }
+      auto &function = program.functions[i];
       auto valueType = [&](ir::Value &value) {
         value.type = normalize(value.type, {}, function);
       };
@@ -319,7 +297,6 @@ public:
         valueType(block.exit.value);
       }
     }
-    program.libraryBodies = trusted;
     if (!diagnostics.empty() || !ir::verify(program, diagnostics, normalize,
                                             declarationProof, &trusted))
       return std::nullopt;
@@ -495,13 +472,10 @@ prepare(Module module, Diagnostics &diagnostics, bool requireEntry,
         TargetFacts target, const CheckedObserver &observe,
         const PackageOwners &packageOwners, NumericEvaluator numericEvaluator,
         const resolution::SourcePackages &sourcePackages,
-        std::shared_ptr<const ImportedDeclarations> imported,
-        const lowering::ImportedBodies *importedBodies,
         const LibraryImporter &importLibrary) {
   return Compiler::prepare(std::move(module), diagnostics, requireEntry,
                            std::move(target), observe, packageOwners,
-                           numericEvaluator, sourcePackages,
-                           std::move(imported), importedBodies, importLibrary);
+                           numericEvaluator, sourcePackages, importLibrary);
 }
 std::optional<ir::VerifiedProgram> compile(PreparedProgram program,
                                            Diagnostics &diagnostics) {

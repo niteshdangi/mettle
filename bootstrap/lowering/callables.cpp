@@ -73,6 +73,8 @@ void callableContracts(ir::Program &program) {
           instruction.callee = contracts.at(key(instruction));
           instruction.typeArguments =
               program.functions[instruction.callee].genericParameters;
+          if (f < program.libraryBodies.size())
+            program.libraryBodies[f] = false;
         }
 }
 int Builder::closureIndex(std::size_t index) const {

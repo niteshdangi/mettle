@@ -26,7 +26,8 @@ using PackageOwners = std::map<SourceId, std::string>;
 using CheckedObserver = std::function<void(const CheckedModule &)>;
 struct ImportedProgram {
   std::shared_ptr<const ImportedDeclarations> declarations;
-  std::shared_ptr<const lowering::ImportedBodies> bodies;
+  // Consumed by lowering, which moves the bodies into the program.
+  std::shared_ptr<lowering::ImportedBodies> bodies;
   std::optional<ir::Program> metadata;
 };
 using LibraryImporter = std::function<std::optional<ImportedProgram>(
@@ -58,8 +59,6 @@ prepare(Module module, Diagnostics &diagnostics, bool requireEntry = true,
         const PackageOwners &packageOwners = {},
         NumericEvaluator numericEvaluator = nullptr,
         const resolution::SourcePackages &sourcePackages = {},
-        std::shared_ptr<const ImportedDeclarations> imported = nullptr,
-        const lowering::ImportedBodies *importedBodies = nullptr,
         const LibraryImporter &importLibrary = {});
 std::optional<ir::VerifiedProgram> compile(PreparedProgram program,
                                            Diagnostics &diagnostics);

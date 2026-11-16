@@ -237,8 +237,13 @@ ir::Value Builder::merge(Type type, const std::vector<Value> &values,
   return emit(std::move(phi), type);
 }
 ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
-                  const ImportedBodies *imported) {
+                  ImportedBodies *imported) {
   ir::Program result;
+  auto take = [&](ir::Function &function) {
+    result.libraryBodies.resize(result.functions.size());
+    result.libraryBodies.push_back(true);
+    result.functions.push_back(std::move(function));
+  };
   result.types = module.typeStore();
   for (std::size_t i = 0; i < module.syntax().functions.size(); ++i)
     if (!module.imported(i) && !module.function(i).library.empty())
@@ -258,15 +263,14 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
   try {
     for (std::size_t i = 0; i < module.syntax().functions.size(); ++i) {
       if (module.imported(i)) {
-        auto found =
-            imported ? imported->functions.find(i)
-                     : std::map<std::size_t, ir::Function>::const_iterator{};
+        auto found = imported ? imported->functions.find(i)
+                              : std::map<std::size_t, ir::Function>::iterator{};
         if (!imported || found == imported->functions.end()) {
           diagnostics.error("metadata", module.syntax().functions[i].span,
                             "imported function has no verified symbolic body");
           return result;
         }
-        result.functions.push_back(found->second);
+        take(found->second);
       } else
         result.functions.push_back(
             Builder(module, imported).run(module.syntax().functions[i], i));
@@ -282,15 +286,15 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
                   "imported default has no verified symbolic helper");
               return result;
             }
-            result.functions.push_back(imported->defaults.at({i, p}));
+            take(imported->defaults.at({i, p}));
           } else
             result.functions.push_back(
                 Builder(module, imported)
                     .runDefault(module.syntax().functions[i], i, p));
         }
     if (imported) {
-      result.functions.insert(result.functions.end(), imported->support.begin(),
-                              imported->support.end());
+      for (auto &function : imported->support)
+        take(function);
       result.closureFunctions = imported->closureFunctions;
     }
     for (std::size_t i = 0; i < module.closures().size(); ++i) {

@@ -495,7 +495,14 @@ semantic-edit pairs: median 2.72 s to 2.42 s; alternating cold primes 33.8 s
 before and 33.4-34.3 s after (no cold regression). All measured executables
 passed; `ir.codec` and `compiler.library-declarations` pass. ASan/UBSan and
 broad suites not rerun for this batch. Evidence: `~/w/perf-import/`.
-Next: profile declaration import before choosing the next structural change.
+Imported bodies are now moved into the lowered program and marked
+`libraryBodies`; the passes that rewrite existing calls (`opaqueAdapters`,
+`callableContracts`) clear the mark, replacing the pristine copy and deep
+equality comparison (about 10% of the warm profile in copies and destructors).
+Eight alternating warm pairs: median 2.55-2.80 s to 2.35-2.65 s; executables
+passed; `mettle-ir-tests` and `mettle-library-declaration-tests` pass.
+Next: warm-profile leaders are `importTypeGraph` (11%), `resolution::load`
+(9%), declaration import and compiler-identity hashing (about 3%).
 Lazy bodies, cross-program instantiations and parallel analyses/codegen remain
 unimplemented; source freeze and final qualification remain open.
 Handoff: HEAD is the tip of `niteshdangi-post-v1-completed-integration` and

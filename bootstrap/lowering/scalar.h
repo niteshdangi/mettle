@@ -12,8 +12,9 @@ struct ImportedBodies {
   std::vector<ir::Function> support;
   std::vector<int> closureFunctions;
 };
+// Moves the imported bodies into the program and marks them `libraryBodies`.
 ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
-                  const ImportedBodies *imported = nullptr);
+                  ImportedBodies *imported = nullptr);
 void opaqueAdapters(ir::Program &program, TypeStore &types,
                     const interfaces::Database &database,
                     Diagnostics &diagnostics);

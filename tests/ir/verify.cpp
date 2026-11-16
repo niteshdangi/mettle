@@ -1083,7 +1083,7 @@ void importedPreparation() {
     auto prepared = mettle::pipeline::prepare(
         std::move(tree), diagnostics, true, {},
         [&](const mettle::CheckedModule &) { ++checks; }, {}, nullptr, {},
-        nullptr, nullptr, import);
+        import);
     require(imports == 1, "library import repeated namespace resolution");
     if (!failure) {
       require(prepared.has_value() && diagnostics.empty() && checks == 1,

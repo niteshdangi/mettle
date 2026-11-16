@@ -1284,14 +1284,13 @@ int build(const Options &requested,
     };
   }
   auto prepared =
-      tree
-          ? pipeline::prepare(std::move(*tree), diagnostics,
-                              !options.freestanding && !options.library, facts,
-                              observer, packageOwners, backend::evaluateNumeric,
-                              sourcePackages, nullptr, nullptr,
-                              checkedCore ? checkedCore->importer()
-                                          : pipeline::LibraryImporter{})
-          : std::nullopt;
+      tree ? pipeline::prepare(std::move(*tree), diagnostics,
+                               !options.freestanding && !options.library, facts,
+                               observer, packageOwners,
+                               backend::evaluateNumeric, sourcePackages,
+                               checkedCore ? checkedCore->importer()
+                                           : pipeline::LibraryImporter{})
+           : std::nullopt;
   auto program = prepared ? pipeline::compile(std::move(*prepared), diagnostics)
                           : std::nullopt;
   if (!program) {

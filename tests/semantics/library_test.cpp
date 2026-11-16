@@ -444,7 +444,7 @@ fn main(): i32 {
           expect(module.imported(i) && !module.syntax().functions[i].body.get(),
                  "observer sees no parsed dependency bodies");
       },
-      {}, nullptr, consumerPackages, nullptr, nullptr, importer);
+      {}, nullptr, consumerPackages, importer);
   if (!prepared)
     errors(diagnostics);
   expect(bool(prepared) && observations == 1 && imports == 1,

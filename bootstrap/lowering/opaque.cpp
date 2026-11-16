@@ -17,13 +17,13 @@ void opaqueAdapters(ir::Program &program, TypeStore &types,
   auto adapt = [&](ir::Instruction &call) {
     if (call.op != ir::Op::Call || call.interfaceMethod < 0 ||
         !types.isOpaque(call.interfaceSelf))
-      return;
+      return false;
     auto opaque = call.interfaceSelf;
     auto hidden = types.product(opaque).fields[0].type;
     if (hidden == Type::Unknown) {
       diagnostics.error("type", call.span,
                         "opaque result has no established hidden type");
-      return;
+      return false;
     }
     Key key{opaque, call.interfaceType, call.interfaceMethod,
             call.typeArguments};
@@ -162,6 +162,7 @@ void opaqueAdapters(ir::Program &program, TypeStore &types,
                   .genericParameters;
     call.interfaceMethod = -1;
     call.interfaceSelf = call.interfaceType = Type::Unknown;
+    return true;
   };
   std::set<Type> visited, opaqueTypes;
   std::function<void(Type)> visit = [&](Type type) {
@@ -225,10 +226,11 @@ void opaqueAdapters(ir::Program &program, TypeStore &types,
       }
     }
   }
-  for (auto &function : program.functions)
-    for (auto &block : function.blocks)
+  for (std::size_t f = 0; f < program.functions.size(); ++f)
+    for (auto &block : program.functions[f].blocks)
       for (auto &call : block.instructions)
-        adapt(call);
+        if (adapt(call) && f < program.libraryBodies.size())
+          program.libraryBodies[f] = false;
   for (auto &adapter : adapters)
     program.functions.push_back(std::move(adapter));
 }
