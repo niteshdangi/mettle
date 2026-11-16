@@ -1466,6 +1466,13 @@ int build(const Options &requested,
       }
       for (const auto &sanitizer : options.sanitizers)
         project.update(sanitizer);
+      // A feature selection is a distinct build of the same sources.
+      auto features = options.features;
+      std::sort(features.begin(), features.end());
+      for (const auto &feature : features) {
+        project.update(std::string_view("\0", 1));
+        project.update(feature);
+      }
       for (const auto &note : store->commitProject(project.finish(), root))
         if (options.explain)
           std::cerr << "mettle: cache " << note << '\n';

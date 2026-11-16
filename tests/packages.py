@@ -2694,6 +2694,9 @@ def driver_panic_rejects_other_signals():
     directory = packages("driver-contracts/panic-verdict")
     source = directory / "fatal-signal.mt"
     original = source.read_text()
+    # A sanitized runtime would report the raised signal instead of dying of it.
+    os.environ["ASAN_OPTIONS"] = ":".join(filter(None, (
+        os.environ.get("ASAN_OPTIONS"), "handle_segv=0", "handle_sigill=0")))
     for number in (11, 4):
         source.write_text(original.replace("raise(11)", f"raise({number})"))
         events = invoke_json(["test", source, "--format", "json"], 1)
