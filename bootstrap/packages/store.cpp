@@ -345,7 +345,19 @@ bool Store::putData(const std::string &key, std::string_view bytes) {
   return out && put(key, temporary.path, false);
 }
 
+void Store::useShipped(fs::path root) {
+  shipped = std::make_unique<Store>(std::move(root), StoreLimits{0, 0});
+}
+
 Store::Data Store::data(const std::string &key, std::uint64_t maximumBytes) {
+  auto result = localData(key, maximumBytes);
+  return result.status == Lookup::Miss && shipped
+             ? shipped->localData(key, maximumBytes)
+             : result;
+}
+
+Store::Data Store::localData(const std::string &key,
+                             std::uint64_t maximumBytes) {
   note(key);
   if (key.size() < 2)
     return {};
@@ -493,6 +505,14 @@ bool Store::putMany(const std::vector<Artifact> &artifacts) {
 
 Store::Lookup Store::materialize(const std::string &key,
                                  const fs::path &destination) {
+  auto result = localMaterialize(key, destination);
+  return result == Lookup::Miss && shipped
+             ? shipped->localMaterialize(key, destination)
+             : result;
+}
+
+Store::Lookup Store::localMaterialize(const std::string &key,
+                                      const fs::path &destination) {
   note(key);
   if (key.size() < 2)
     return Lookup::Miss;
@@ -556,6 +576,11 @@ Store::Lookup Store::materialize(const std::string &key,
 }
 
 std::optional<std::string> Store::text(const std::string &key) {
+  auto result = localText(key);
+  return !result && shipped ? shipped->localText(key) : result;
+}
+
+std::optional<std::string> Store::localText(const std::string &key) {
   note(key);
   if (key.size() < 2)
     return std::nullopt;

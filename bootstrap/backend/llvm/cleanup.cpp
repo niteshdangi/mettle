@@ -1012,17 +1012,56 @@ llvm::Value *CleanupFrame::createWrapper() {
   if (lowering.freestanding ||
       (nodes.empty() && source.abi != "C" && source.abi != "system"))
     builder.CreateCall(bodyFunction, {frame});
+  else if (source.abi == "C" || source.abi == "system")
+    builder.CreateCall(lowering.runtime("mettle_rt_run_c", builder.getVoidTy(),
+                                        {builder.getPtrTy(), builder.getPtrTy(),
+                                         builder.getPtrTy()}),
+                       {frame, bodyFunction, cleanupFunction});
   else
-    builder.CreateCall(
-        lowering.runtime(
-            source.abi == "C" || source.abi == "system" ? "mettle_rt_run_c"
-                                                        : "mettle_rt_run",
-            builder.getVoidTy(),
-            {builder.getPtrTy(), builder.getPtrTy(), builder.getPtrTy()}),
-        {frame, bodyFunction, cleanupFunction});
+    runWithCleanup();
   finishWrapper(outerFrame);
   frame = bodyFunction->getArg(0);
   return outerFrame;
+}
+// The body is an ordinary call; a panic leaving it runs the cleanup callback
+// on the frame from a landing pad and continues propagating. Direct calls let
+// the optimizer inline both callbacks and keep the frame out of memory.
+void CleanupFrame::runWithCleanup() {
+  auto &builder = lowering.builder;
+  auto &context = lowering.context;
+  auto *function = builder.GetInsertBlock()->getParent();
+  auto *pointer = builder.getPtrTy();
+  function->setPersonalityFn(llvm::cast<llvm::Constant>(
+      lowering.module
+          .getOrInsertFunction(
+              "__gxx_personality_v0",
+              llvm::FunctionType::get(builder.getInt32Ty(), true))
+          .getCallee()));
+  auto *done = llvm::BasicBlock::Create(context, "run.done", function);
+  auto *unwinding = llvm::BasicBlock::Create(context, "run.unwind", function);
+  auto *failed = llvm::BasicBlock::Create(context, "run.failed", function);
+  auto *exception =
+      llvm::StructType::get(context, {pointer, builder.getInt32Ty()});
+  builder.CreateInvoke(bodyFunction, done, unwinding, {frame});
+  builder.SetInsertPoint(unwinding);
+  auto *pad = builder.CreateLandingPad(exception, 0);
+  pad->setCleanup(true);
+  builder.CreateCall(
+      lowering.runtime("mettle_rt_unwind_begin", builder.getVoidTy(), {}));
+  auto *resume = llvm::BasicBlock::Create(context, "run.resume", function);
+  builder.CreateInvoke(cleanupFunction, resume, failed,
+                       {frame, builder.getInt32(1)});
+  builder.SetInsertPoint(failed);
+  builder.CreateLandingPad(exception, 1)
+      ->addClause(llvm::Constant::getNullValue(pointer));
+  builder.CreateCall(
+      lowering.runtime("mettle_rt_unwind_failed", builder.getVoidTy(), {}));
+  builder.CreateUnreachable();
+  builder.SetInsertPoint(resume);
+  builder.CreateCall(
+      lowering.runtime("mettle_rt_unwind_end", builder.getVoidTy(), {}));
+  builder.CreateResume(pad);
+  builder.SetInsertPoint(done);
 }
 void CleanupFrame::clearFlags() {
   auto &builder = lowering.builder;

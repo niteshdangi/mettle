@@ -564,7 +564,8 @@ std::vector<std::size_t> calleeFirstRank(const ir::Program &program) {
 }
 } // namespace
 LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
-                  const ir::Program *prepared, const LoanResults *previous) {
+                  const ir::Program *prepared, const LoanResults *previous,
+                  const std::vector<bool> *trusted) {
   LoanResults result;
   try {
     EffectSummaries summaries(program.functions.size());
@@ -575,6 +576,7 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
       for (std::size_t f = 0; f < program.functions.size(); ++f) {
         const auto &function = program.functions[f];
         reusable[f] = f < prepared->functions.size() &&
+                      f < previous->analyzed.size() && previous->analyzed[f] &&
                       function == prepared->functions[f] &&
                       std::none_of(
                           function.locals.begin(), function.locals.end(),
@@ -609,9 +611,15 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
     // visit instead of re-running every caller after each callee changes.
     const auto rank = calleeFirstRank(program);
     std::set<std::pair<std::size_t, std::size_t>> pending;
+    auto isTrusted = [&](std::size_t f) {
+      return trusted && f < trusted->size() && (*trusted)[f];
+    };
+    std::vector<bool> scheduled(program.functions.size(), false);
     for (std::size_t f = 0; f < program.functions.size(); ++f)
-      if (!reusable[f])
+      if (!reusable[f] && !isTrusted(f)) {
         pending.emplace(rank[f], f);
+        scheduled[f] = true;
+      }
     std::vector<OriginInfo> final(program.functions.size());
     std::size_t steps = 0;
     while (!pending.empty()) {
@@ -621,8 +629,13 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
       summaries.record(&reads);
       auto info = origins(program.functions[f], program, summaries);
       summaries.record(nullptr);
-      for (auto callee : reads)
+      for (auto callee : reads) {
         dependents[callee].insert(f);
+        if (!scheduled[callee] && !reusable[callee]) {
+          scheduled[callee] = true;
+          pending.emplace(rank[callee], callee);
+        }
+      }
       const bool stable = info.effects == summaries.slot(f);
       // The last run of a function saw its final callee summaries, so it is
       // the analysis the ownership check needs.
@@ -636,9 +649,12 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
       }
     }
     for (std::size_t f = 0; f < program.functions.size(); ++f)
-      if (!reusable[f])
+      if (!reusable[f] && !isTrusted(f))
         check(program.functions[f], program, final[f], diagnostics);
     if (diagnostics.empty()) {
+      result.analyzed.assign(program.functions.size(), true);
+      for (std::size_t f = 0; f < program.functions.size(); ++f)
+        result.analyzed[f] = reusable[f] || scheduled[f] || !isTrusted(f);
       result.effects.reserve(program.functions.size());
       for (std::size_t f = 0; f < program.functions.size(); ++f)
         result.effects.push_back(std::move(summaries.slot(f)));

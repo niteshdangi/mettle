@@ -78,6 +78,7 @@ public:
   }
   std::uint64_t align() const { return frameAlignment; }
   void finishCallbacks();
+  void runWithCleanup();
   // Coroutine protocol. The state field holds 0 before the first resumption,
   // the suspension point while suspended, `running` while the body executes
   // or after it panicked, and `complete` after it returned.

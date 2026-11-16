@@ -10,5 +10,7 @@ using TypeNormalizer =
 using UnpinProof = std::function<bool(Type, Type, const Function &, Span)>;
 bool verify(const Program &program, Diagnostics &diagnostics,
             const TypeNormalizer &normalize = {},
-            const UnpinProof &unpinProof = {});
+            const UnpinProof &unpinProof = {},
+            // Functions already verified when their library was built.
+            const std::vector<bool> *trusted = nullptr);
 } // namespace mettle::ir

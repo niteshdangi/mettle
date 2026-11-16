@@ -1122,6 +1122,13 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
   if (!types.isErased(interfaceType))
     return std::nullopt;
   auto key = std::pair(self, interfaceType);
+  const bool pure = assumptions.empty() && contextualEqualities.empty() &&
+                    regionEnvironment.assumptions.empty() &&
+                    regionEnvironment.substitutions.empty();
+  if (pure)
+    if (auto known = selected.find(key); known != selected.end())
+      return known->second;
+  const bool inconclusiveBefore = regionInconclusive;
   if (!active.insert(key).second) {
     regionInconclusive = true;
     return std::nullopt;
@@ -1308,14 +1315,43 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
     selectedRegions = std::move(regions);
   }
   active.erase(key);
-  if (!found)
+  const bool settled = pure && regionInconclusive == inconclusiveBefore;
+  if (!found) {
+    if (settled)
+      selected.emplace(key, std::nullopt);
     return std::nullopt;
+  }
   regionSelections[key] = std::move(selectedRegions);
-  return std::pair(found, std::move(substitutions));
+  std::pair result(found, std::move(substitutions));
+  if (settled)
+    selected.emplace(key, result);
+  return result;
 }
 
 Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
                        Span span) {
+  // A complete top-level normalization of a type depends on nothing else
+  // when no assumptions, equalities or region facts are in play.
+  const bool pure = bindings.empty() && normalizing.empty() &&
+                    normalizationDepth == 0 && assumptions.empty() &&
+                    contextualEqualities.empty() &&
+                    regionEnvironment.assumptions.empty() &&
+                    regionEnvironment.substitutions.empty();
+  if (!pure)
+    return normalizeUncached(type, bindings, span);
+  if (auto known = normalized.find(type); known != normalized.end())
+    return known->second;
+  const auto errors = diagnostics.items.size();
+  const bool inconclusiveBefore = regionInconclusive;
+  auto result = normalizeUncached(type, bindings, span);
+  if (result != Type::Unknown && diagnostics.items.size() == errors &&
+      regionInconclusive == inconclusiveBefore)
+    normalized.emplace(type, result);
+  return result;
+}
+
+Type Solver::normalizeUncached(Type type, std::span<const TypeBinding> bindings,
+                               Span span) {
   if (!normalizationDepth)
     normalizationSteps = 0;
   if (++normalizationSteps > limits::activeLoans ||

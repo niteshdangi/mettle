@@ -1304,7 +1304,8 @@ bool function(const Function &f, const Program &program,
 }
 } // namespace
 bool verify(const Program &program, Diagnostics &diagnostics,
-            const TypeNormalizer &normalize, const UnpinProof &unpinProof) {
+            const TypeNormalizer &normalize, const UnpinProof &unpinProof,
+            const std::vector<bool> *trusted) {
   if (!program.types) {
     diagnostics.error("internal", {}, "CFG has no owned type store");
     return false;
@@ -1629,13 +1630,16 @@ bool verify(const Program &program, Diagnostics &diagnostics,
     return false;
   bool entry = false;
   std::unordered_set<std::string> names;
-  for (const auto &f : program.functions) {
+  for (std::size_t i = 0; i < program.functions.size(); ++i) {
+    const auto &f = program.functions[i];
     if (!names.insert(f.name).second) {
       diagnostics.error("internal", {}, "duplicate CFG function");
       valid = false;
     }
     if (f.name == "main")
       entry = f.parameters == 0 && f.result == Type::I32;
+    if (trusted && i < trusted->size() && (*trusted)[i])
+      continue;
     valid = function(f, program, diagnostics, normalize, unpinProof) && valid;
   }
   if (program.requireEntry && !entry) {

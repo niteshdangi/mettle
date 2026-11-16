@@ -268,10 +268,17 @@ public:
         declared.emplace(std::pair{&function, type}, normalized);
       return normalized;
     };
-    for (auto &function : program.functions) {
+    // Bodies imported unchanged from the checked library were verified and
+    // analysed when the library was built.
+    std::vector<bool> trusted(program.functions.size(), false);
+    for (std::size_t i = 0; i < program.functions.size(); ++i) {
+      auto &function = program.functions[i];
       if (auto imported = normalizedImports.find(function.name);
-          imported != normalizedImports.end() && function == *imported->second)
+          imported != normalizedImports.end() &&
+          function == *imported->second) {
+        trusted[i] = true;
         continue;
+      }
       auto valueType = [&](ir::Value &value) {
         value.type = normalize(value.type, {}, function);
       };
@@ -312,13 +319,15 @@ public:
         valueType(block.exit.value);
       }
     }
-    if (!diagnostics.empty() ||
-        !ir::verify(program, diagnostics, normalize, declarationProof))
+    program.libraryBodies = trusted;
+    if (!diagnostics.empty() || !ir::verify(program, diagnostics, normalize,
+                                            declarationProof, &trusted))
       return std::nullopt;
-    analysis::initialization(program, diagnostics);
+    analysis::initialization(program, diagnostics, nullptr, &trusted);
     if (!diagnostics.empty())
       return std::nullopt;
-    auto loans = analysis::loans(program, diagnostics);
+    auto loans =
+        analysis::loans(program, diagnostics, nullptr, nullptr, &trusted);
     if (!diagnostics.empty())
       return std::nullopt;
     return PreparedProgram(std::move(program), std::move(database),

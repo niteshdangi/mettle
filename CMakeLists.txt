@@ -405,6 +405,22 @@ if(BUILD_TESTING)
   # Checked-library interfaces and library objects are keyed by every compiler
   # flag the suites pass, and parallel cold workers each rebuild them (~26 s
   # for core alone). One build per key before the shards start leaves them warm.
+  # The prebuilt library a toolchain ships beside the compiler: every build,
+  # in any project, finds the checked and compiled core, alloc and std here
+  # instead of rebuilding them. Install packaging runs this with the installed
+  # compiler, whose path is part of the cache keys.
+  set(METTLE_SHIPPED_STORE_DIR "${PROJECT_BINARY_DIR}/../lib/mettle/store")
+  set(shipped_store_commands)
+  foreach(profile debug release)
+    foreach(library core alloc std)
+      list(APPEND shipped_store_commands
+           COMMAND mettle build "${PROJECT_SOURCE_DIR}/tests/cache_prime/${library}.mt"
+                   -o "${PROJECT_BINARY_DIR}/shipped-store-${profile}-${library}"
+                   --profile ${profile} --cache-dir "${METTLE_SHIPPED_STORE_DIR}")
+    endforeach()
+  endforeach()
+  add_custom_target(mettle-shipped-store ${shipped_store_commands}
+                    COMMENT "Building the toolchain's prebuilt library store")
   function(mettle_add_cache_prime fixture config library)
     add_test(NAME cache.prime.${config}.${library}
              COMMAND mettle build "${PROJECT_SOURCE_DIR}/tests/cache_prime/${library}.mt"

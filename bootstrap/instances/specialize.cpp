@@ -133,8 +133,13 @@ public:
   std::optional<ir::Program> run() {
     try {
       for (std::size_t i = 0; i < source.functions.size(); ++i)
+        // An executable keeps its own functions and instantiates the library
+        // bodies its entry, its exports and its statics reach.
         if (source.functions[i].genericParameters.empty() &&
-            !source.functions[i].declarationOnly)
+            !source.functions[i].declarationOnly &&
+            (!source.requireEntry || source.functions[i].name == "main" ||
+             source.functions[i].exportedDefinition ||
+             i >= source.libraryBodies.size() || !source.libraryBodies[i]))
           instance(i, {}, {});
       prepareDynamicDrops();
       std::function<void(StaticConstant &)> constant =

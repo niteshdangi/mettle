@@ -219,6 +219,9 @@ struct Program {
   };
   std::vector<OpaqueAdapter> opaqueAdapters{};
   bool requireEntry = true;
+  // Functions imported unchanged from a checked library; an executable
+  // instantiates the ones its entry reaches. Not part of the encoding.
+  std::vector<bool> libraryBodies{};
   std::vector<Static> statics{};
   std::vector<std::string> staticPackages{};
   std::vector<std::string> libraries{};

@@ -350,9 +350,12 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
 }
 } // namespace
 void initialization(const ir::Program &program, Diagnostics &diagnostics,
-                    const ir::Program *prepared) {
+                    const ir::Program *prepared,
+                    const std::vector<bool> *trusted) {
   for (std::size_t i = 0; i < program.functions.size(); ++i) {
     const auto &function = program.functions[i];
+    if (trusted && i < trusted->size() && (*trusted)[i])
+      continue;
     if (prepared && i < prepared->functions.size() &&
         function == prepared->functions[i])
       continue;

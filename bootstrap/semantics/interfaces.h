@@ -165,6 +165,8 @@ public:
                            bool report = true);
   Type checkedProjection(Type projection, Span span, bool report = true);
   Type normalize(Type type, std::span<const TypeBinding> bindings, Span span);
+  Type normalizeUncached(Type type, std::span<const TypeBinding> bindings,
+                         Span span);
   // The function producing the aggregate value of associated constant `slot`.
   std::optional<Selection> constantInitializer(Type self, Type interfaceType,
                                                std::size_t slot, Span span);
@@ -207,6 +209,12 @@ private:
   RegionEnvironment regionEnvironment;
   bool revealOpaque = false;
   std::map<std::pair<Type, Type>, std::vector<RegionBinding>> regionSelections;
+  // Outcomes of `implementation` that depend on nothing but the two types.
+  std::map<Type, Type> normalized;
+  std::map<std::pair<Type, Type>,
+           std::optional<
+               std::pair<const Implementation *, std::vector<TypeBinding>>>>
+      selected;
   std::set<std::pair<Type, Type>> active;
   std::set<std::pair<Type, Type>> checkingArguments;
   std::set<Type> normalizing;

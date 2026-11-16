@@ -95,6 +95,17 @@ extern "C" void mettle_rt_run(void *context, MettleAction body,
   }
 }
 
+extern "C" void mettle_rt_unwind_begin(void) noexcept {
+  // The panic being propagated is the one in flight; another one is nested.
+  if (unwindDepth != 0 || std::uncaught_exceptions() > 1)
+    std::abort();
+  ++unwindDepth;
+}
+
+extern "C" void mettle_rt_unwind_end(void) noexcept { --unwindDepth; }
+
+extern "C" void mettle_rt_unwind_failed(void) noexcept { std::abort(); }
+
 extern "C" void mettle_rt_run_c(void *context, MettleAction body,
                                 MettleCleanup cleanup) noexcept {
   PanicBoundary policy(true);

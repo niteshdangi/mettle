@@ -79,8 +79,25 @@ std::optional<packages::Store> openStore(const Options &options) {
   root = fs::absolute(root, error);
   if (error)
     return std::nullopt;
-  return packages::Store(
+  packages::Store store(
       root, {options.cacheLimitKib * 1024, options.cacheMaxAgeDays});
+  // The toolchain's prebuilt library, when it ships one beside the compiler
+  // (`METTLE_SHIPPED_STORE` overrides `<compiler dir>/../lib/mettle/store`).
+  std::error_code ignored;
+  fs::path shipped;
+  if (const char *named = std::getenv("METTLE_SHIPPED_STORE"); named && *named)
+    shipped = named;
+  else
+    shipped = fs::path(llvm::sys::fs::getMainExecutable(
+                           "mettle",
+                           reinterpret_cast<void *>(
+                               reinterpret_cast<std::intptr_t>(&openStore))))
+                  .parent_path() /
+              ".." / "lib" / "mettle" / "store";
+  shipped = fs::weakly_canonical(shipped, ignored);
+  if (fs::is_directory(shipped, ignored) && shipped != root)
+    store.useShipped(shipped);
+  return store;
 }
 
 std::string compilerIdentity() {

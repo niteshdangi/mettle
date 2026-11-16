@@ -18,6 +18,11 @@ struct MettlePanicHookInfo {
 void mettle_rt_run(void *context, MettleAction body, MettleCleanup cleanup);
 void mettle_rt_run_c(void *context, MettleAction body,
                      MettleCleanup cleanup) noexcept;
+// Bracket the cleanup that generated code runs from a landing pad while a
+// panic is in flight; `failed` ends the process when that cleanup panics.
+void mettle_rt_unwind_begin(void) noexcept;
+void mettle_rt_unwind_end(void) noexcept;
+[[noreturn]] void mettle_rt_unwind_failed(void) noexcept;
 void mettle_rt_cleanup(void *context, MettleCleanup cleanup,
                        std::int32_t unwinding);
 void mettle_rt_replace(void *context, MettleCleanup destroyOld,

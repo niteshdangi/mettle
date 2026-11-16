@@ -78,6 +78,9 @@ public:
     Lookup status = Lookup::Miss;
     std::string bytes;
   };
+  // Entries a toolchain ships (its prebuilt library) are read through this
+  // store on a miss; the shipped store is never written, touched or pruned.
+  void useShipped(std::filesystem::path root);
   Data data(const std::string &key, std::uint64_t maximumBytes);
   bool putData(const std::string &key, std::string_view bytes);
   // Copies the blob of `key` to `destination` (a fresh, privately owned
@@ -111,6 +114,11 @@ public:
   std::optional<StoreUsage> clear(bool dryRun, std::string &error);
 
 private:
+  Data localData(const std::string &key, std::uint64_t maximumBytes);
+  Lookup localMaterialize(const std::string &key,
+                          const std::filesystem::path &destination);
+  std::optional<std::string> localText(const std::string &key);
+  std::unique_ptr<Store> shipped;
   struct Record {
     std::filesystem::path path;
     std::string key, blob;
