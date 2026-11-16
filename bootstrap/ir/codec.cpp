@@ -1,6 +1,7 @@
 #include "ir/codec.h"
 #include "support/limits.h"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <limits>
 #include <map>
@@ -514,10 +515,24 @@ void decodeRecords(
     decode(i);
   for (auto &thread : threads)
     thread.join();
+  struct CachedBinding {
+    std::uint64_t key = 0;
+    // The corresponding record binding outlives this cache.
+    std::string_view name;
+    bool occupied = false;
+  };
+  std::array<CachedBinding, 4096> recent{};
   for (std::size_t i = 0; i < count; ++i) {
     if (!failures[i].empty())
       reject(failures[i]);
-    symbols.merge(bound[i]);
+    for (const auto &[key, name] : bound[i].identities) {
+      auto encoded = (std::uint64_t(key.first) << 32) | key.second;
+      auto &cached = recent[(encoded ^ (encoded >> 32)) % recent.size()];
+      if (cached.occupied && cached.key == encoded && cached.name == name)
+        continue;
+      symbols.bind(key.first, key.second, name);
+      cached = {encoded, name, true};
+    }
   }
 }
 

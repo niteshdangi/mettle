@@ -84,9 +84,12 @@ hardwareBlocks(std::array<std::uint32_t, 8> &state, const unsigned char *bytes,
     for (int i = 0; i < 4; ++i)
       w[i] = _mm_shuffle_epi8(
           _mm_loadu_si128((const __m128i *)(bytes + 16 * i)), swap);
+#if defined(__clang__)
+#pragma clang loop unroll(full)
+#endif
     for (int r = 0; r < 16; ++r) {
-      __m128i message = _mm_add_epi32(
-          w[r & 3], _mm_loadu_si128((const __m128i *)&k[4 * r]));
+      __m128i message =
+          _mm_add_epi32(w[r & 3], _mm_loadu_si128((const __m128i *)&k[4 * r]));
       cdgh = _mm_sha256rnds2_epu32(cdgh, abef, message);
       message = _mm_shuffle_epi32(message, 0x0E);
       abef = _mm_sha256rnds2_epu32(abef, cdgh, message);
@@ -111,7 +114,8 @@ void blocks(std::array<std::uint32_t, 8> &state, const unsigned char *bytes,
             std::size_t count) {
 #if defined(__x86_64__)
   static const bool hardware = __builtin_cpu_supports("sha") &&
-                               __builtin_cpu_supports("sse4.1");
+                               __builtin_cpu_supports("sse4.1") &&
+                               __builtin_cpu_supports("ssse3");
   if (hardware)
     return hardwareBlocks(state, bytes, count);
 #endif

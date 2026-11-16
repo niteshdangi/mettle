@@ -506,12 +506,96 @@ roots once into the transactional staging store, and moves that store instead
 of copying it. `compiler.type-graph`, `compiler.library-declarations` and the
 checked-library identity case pass. Eight alternating warm semantic-edit pairs
 were 2.50 s before and 2.505 s after; no whole-build improvement is established.
+The single-pass decoder's structural preflight has since been restored: without
+it, malformed sequences could allocate from unvalidated counts and trigger
+symbol resolution before structural rejection. A focused regression confirms
+the preflight; the staging-store move remains.
 Profiles still place `importTypeGraph` at 12-14% inclusive; evidence is in
 `~/w/perf-import/`. A size-only skip for repeated `reserveCompiledSources`
 scans was discarded after eight pairs (2.41 s before, 2.395 s after; no
 measurable gain).
-Next: profile the remaining import costs (`resolution::load`, declaration
-import and IR decode) and retain only changes with focused correctness evidence.
+Current local continuation: imported functions now create inference variables
+only for parameters, while retaining all checked local facts. Six alternating
+warm semantic-edit pairs measured 2.656 s before and 2.524 s after; median peak
+RSS fell from 1205 to 1196 MiB. Canonical type import avoids comparing a newly
+installed definition against itself, while still comparing existing or
+colliding definitions. A second six-pair experiment measured 2.458 s before
+and 2.365 s after, with essentially unchanged peak RSS. All measured programs
+ran successfully. A separate six-pair comparison of both changes together
+measured 2.389 s before and 2.295 s after; median peak RSS was 1201 and
+1192 MiB. IR record merging now caches recently validated symbol bindings
+without weakening cross-record alias checks. Six alternating warm pairs measured
+2.362 s before and 2.272 s after, with median peak RSS 1192 and 1196 MiB.
+All three changes together measured 2.302 s before and 2.179 s after in six
+more alternating pairs; median peak RSS was 1201 and 1192 MiB.
+These are noisy WSL engineering measurements, not release qualification.
+`compiler.library-declarations`, `compiler.type-graph` and `ir.codec` pass in
+Release; the latter two also pass under ASan/UBSan. Focused fixtures cover
+imported constant body locals, conflicting canonical definitions and
+cross-record symbol aliases. Two experiments (hashed IR symbol maps and moving
+canonical definitions) were discarded: neither established a sufficiently
+reliable gain to justify their trade-offs. IR profiling showed 95-119 ms in
+parallel record decode and 59-89 ms merging symbol bindings before the cache.
+Evidence is under `~/w/perf-import/`; temporary WSL source instrumentation was
+removed.
+The store no longer trusts blob size and modification time as proof of
+integrity: mapped reads hash the blob, and materialization hashes the copied
+bytes before replacing the output. Existing timestamped entries remain
+readable. Same-size corruption with a restored timestamp is rejected in both
+paths. Single and batch publication hash staged copies and atomically replace
+any existing blob, including a corrupt one. Two alternating cold pairs measured
+35.63 s before and 37.00 s after staging; this small, noisy sample leaves a
+possible cold regression to investigate. A direct `putData` staging experiment
+was discarded: two cold pairs measured 34.05 s before and 34.56 s after, with
+no established benefit. One instrumented cold build spent 118 ms copying and
+142 ms hashing its 206 MB archive; the previous missing-blob path also copied
+and hashed it. This does not explain the earlier 1.37 s median difference.
+Instrumentation was removed. Four alternating warm pairs measured
+2.209 s before and 2.304 s after restoring verification; this comparison changes
+the safety contract and is not a speedup claim. Unrolling the x86 hardware
+SHA-256 rounds recovered part of that cost: six alternating pairs measured
+2.325 s before and 2.206 s after, with median peak RSS 1192 and 1196 MiB.
+The hardware path also checks SSSE3 before using its instructions. After that
+guard, four further pairs measured 2.526 s before and 2.479 s after, with
+median peak RSS 1192 and 1196 MiB; these warm measurements precede the
+publication change. Four warm pairs comparing guarded SHA with and without
+staged publication were 2.480 s and 2.476 s, respectively, with median peak
+RSS about 1192 MiB for both. All outputs ran successfully. The focused
+`compiler.library-archive` test
+passes in Release and ASan/UBSan, including SHA-256 boundary and
+incremental-input checks; the executable and object cache integration cases
+also pass. A warm profile found none of 8428 imported bodies rewritten by the
+adapter passes, so separating rewritten-body trust from reachability is not a
+demonstrated gain on this workload. Instrumentation was removed. These results
+remain noisy WSL engineering evidence.
+Imported function contracts remain in the checked module's existing immutable
+import owner rather than being copied into a second declaration snapshot.
+Inventories and exports include both imported and local contracts. Six
+alternating warm semantic-edit pairs measured 2.224 s before and 2.080 s after,
+with median peak RSS 1192 and 1114 MiB; all outputs ran successfully. The
+focused declaration test passes in Release and ASan/UBSan, including a
+transitive export/import of imported generics, constant bodies and defaults.
+Two cold primes were 32.87 s and 32.76 s, respectively, and do not establish a
+cold-build result. Evidence: `~/w/perf-import/overlay-timings.json`. These are
+noisy WSL engineering measurements, not release qualification.
+Cached archives are now verified once, by their sealing digest inside the
+store lookup, instead of by a serial blob hash followed by the seal; a
+rejected archive is evicted and rebuilt. Mounting registers library sources
+in place with rollback instead of copying `Diagnostics`, and moves generation
+tables instead of copying them twice. Six alternating warm pairs each:
+2.227 s to 2.124 s for the seal change, then 2.002 s to 1.961 s and 1110 to
+1083 MiB for the mount change; all outputs ran successfully.
+Known failure since `ee2323ca`: `packages.resolution` case
+`checked_alloc_std_reuse` misses the core/alloc/std object caches when a
+second program reaches more library code (async). Executable library
+partitions contain only reachable bodies and are keyed by their bitcode, so
+library objects are per-use-set, not reusable across programs. Owner decision
+needed: restore program-independent partitions (slower per build) or adopt the
+Rust model, where non-generic library code is one object keyed by the checked
+archive and programs emit only generic instances.
+Next: profile remaining warm import costs and design lazy IR bodies with
+archive validation and cross-record symbol checks preserved; investigate cold
+staging variance.
 Lazy bodies, cross-program instantiations and parallel analyses/codegen remain
 unimplemented; source freeze and final qualification remain open.
 Handoff: HEAD is the tip of `niteshdangi-post-v1-completed-integration` and

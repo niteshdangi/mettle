@@ -45,7 +45,10 @@ pub module core {
         static fn value(x: i32): i32 { x }
     }
     pub const fn runtimeValue(): i32 { dispatched<RuntimeProvider>(7) }
-    const fn hidden(x: i32): i32 { dispatched<i32>(x) + BASE }
+    const fn hidden(x: i32): i32 {
+        let intermediate = dispatched<i32>(x);
+        intermediate + BASE
+    }
     pub const fn answer(x: i32 = hidden(2)): i32 { hidden(x) }
     pub fn identity<T>(take value: T): T { value }
     pub const fn constIdentity<T: Copy>(value: T): T { value }
@@ -443,6 +446,98 @@ fn main(): i32 {
         for (std::size_t i = 0; i < sourceFunctionCount; ++i)
           expect(module.imported(i) && !module.syntax().functions[i].body.get(),
                  "observer sees no parsed dependency bodies");
+
+        auto inventory = declarationInventory(module);
+        for (const auto &[index, contract] : imported->functions)
+          for (Type parameter : contract.generics.parameters)
+            expect(std::any_of(inventory.types.begin(), inventory.types.end(),
+                               [&](const auto &identity) {
+                                 return identity.type == parameter;
+                               }),
+                   "transitive imported generic appears in the inventory");
+        std::vector<Type> roundtripTypes;
+        std::map<Type, std::uint32_t> roundtripTypeIndices;
+        std::map<std::string, SourceId> roundtripSources;
+        std::map<std::pair<SymbolKind, std::string>, std::uint32_t>
+            roundtripSymbols;
+        metadata::EncodeReferences roundtripEncode;
+        roundtripEncode.type = [&](Type type) -> std::optional<std::uint32_t> {
+          auto [found, inserted] = roundtripTypeIndices.emplace(
+              type, static_cast<std::uint32_t>(roundtripTypes.size()));
+          if (inserted)
+            roundtripTypes.push_back(type);
+          return found->second;
+        };
+        roundtripEncode.source =
+            [&](Span span) -> std::optional<metadata::SourceReference> {
+          auto revision = std::to_string(span.source);
+          roundtripSources.emplace(revision, span.source);
+          return metadata::SourceReference{revision, std::uint32_t(span.begin),
+                                           std::uint32_t(span.end)};
+        };
+        roundtripEncode.symbol =
+            [&](SymbolKind kind,
+                std::uint32_t index) -> std::optional<std::string> {
+          auto name = std::to_string(index);
+          roundtripSymbols.emplace(std::pair{kind, name}, index);
+          return name;
+        };
+        auto transitive = exportLibraryDeclarations(module, roundtripEncode);
+        if (!transitive)
+          std::cerr << transitive.error << '\n';
+        expect(bool(transitive), "consumer exports transitive contracts");
+        if (transitive) {
+          metadata::DecodeReferences roundtripDecode;
+          roundtripDecode.type =
+              [&](std::uint32_t index) -> std::optional<Type> {
+            if (index >= roundtripTypes.size())
+              return std::nullopt;
+            return roundtripTypes[index];
+          };
+          roundtripDecode.source = [&](const metadata::SourceReference &source)
+              -> std::optional<Span> {
+            auto found = roundtripSources.find(source.revision);
+            if (found == roundtripSources.end())
+              return std::nullopt;
+            return Span{source.begin, source.end, found->second};
+          };
+          roundtripDecode.symbol =
+              [&](SymbolKind kind,
+                  std::string_view name) -> std::optional<std::uint32_t> {
+            auto found = roundtripSymbols.find({kind, std::string(name)});
+            if (found == roundtripSymbols.end())
+              return std::nullopt;
+            return found->second;
+          };
+          auto restored = importLibraryDeclarations(transitive.contracts, types,
+                                                    roundtripDecode);
+          if (!restored)
+            std::cerr << restored.error << '\n';
+          expect(bool(restored), "transitive contracts import");
+          if (restored) {
+            expect(restored.declarations->functions.size() ==
+                       consumerFunctionCount,
+                   "transitive contracts include imported and local functions");
+            for (const auto &[index, original] : imported->functions) {
+              auto found = restored.declarations->functions.find(index);
+              expect(found != restored.declarations->functions.end(),
+                     "transitive contract retains imported function");
+              if (found == restored.declarations->functions.end())
+                continue;
+              const auto &actual = found->second;
+              expect(actual.generics.parameters ==
+                             original.generics.parameters &&
+                         actual.facts.locals.size() ==
+                             original.facts.locals.size() &&
+                         bool(actual.body) == bool(original.body) &&
+                         actual.defaults.size() == original.defaults.size(),
+                     "transitive contract retains generics and checked bodies");
+              for (std::size_t p = 0; p < actual.defaults.size(); ++p)
+                expect(bool(actual.defaults[p]) == bool(original.defaults[p]),
+                       "transitive contract retains checked defaults");
+            }
+          }
+        }
       },
       {}, nullptr, consumerPackages, importer);
   if (!prepared)

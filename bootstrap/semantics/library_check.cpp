@@ -73,8 +73,13 @@ void Checker::importDeclarations() {
       importedAnnotations.emplace(&function.parameters[p].annotation,
                                   contract.facts.locals[p].type);
     inference.set(functionVariables.at(&function), contract.facts.result);
-    for (const auto &local : contract.facts.locals)
-      localVariables[&function].push_back(inference.fresh(local.type));
+    // Imported bodies are not inferred again; their local facts remain intact.
+    auto &variables = localVariables[&function];
+    const auto count =
+        std::min(function.parameters.size(), contract.facts.locals.size());
+    variables.reserve(count);
+    for (std::size_t p = 0; p < count; ++p)
+      variables.push_back(inference.fresh(contract.facts.locals[p].type));
     preparedFunctions.insert(&function);
     checkedFunctions.insert(&function);
     functionGenerics.emplace(&function, environment(contract.generics));
@@ -273,11 +278,9 @@ void Checker::retainDeclarations() {
   };
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
     const auto &source = module.functions[i];
-    if (checked.importedFunctions.contains(i)) {
-      result->functions.emplace(static_cast<std::uint32_t>(i),
-                                checked.importedDeclarations->functions.at(i));
+    // Imported contracts remain owned by checked.importedDeclarations.
+    if (checked.importedFunctions.contains(i))
       continue;
-    }
     ImportedFunction contract;
     contract.span = source.span;
     contract.unsafeFunction = source.unsafeFunction;

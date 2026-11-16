@@ -805,8 +805,10 @@ def checked_core_reuse():
                  if path.name.startswith(prefix))
     digest = entry.read_text().split()[1]
     blob = next(path for path in cache_files("blobs") if path.name == digest)
+    corrupted = bytearray(blob.read_bytes())
+    corrupted[len(corrupted) // 2] ^= 0xFF
     blob.chmod(0o644)
-    blob.write_bytes(b"corrupted")
+    blob.write_bytes(corrupted)
     recovered, program = explained(second, *arguments)
     assert exit_code(program) == 0
     assert "checked library interface cache corrupt core" in recovered, recovered

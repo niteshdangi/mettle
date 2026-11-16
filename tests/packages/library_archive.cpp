@@ -5,8 +5,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <utility>
 
 namespace {
 void expect(bool condition, const char *message) {
@@ -30,14 +32,31 @@ int main() {
   expect(digest("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
              "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
          "SHA-256 across a padding boundary changed");
+  for (const auto &[size, expected] :
+       {std::pair{56, "da2ae4d6b36748f2a318f23e7ab1dfdf45acdc9d049bd80e59de82"
+                      "a60895f562"},
+        std::pair{65, "4bfd2c8b6f1eec7a2afeb48b934ee4b2694182027e6d0fc075074f"
+                      "2fabb31781"},
+        std::pair{4097, "a16560d668b843fb3be99ace41dbd18471f342bd3255a1d21204"
+                        "b35e43f74436"}}) {
+    std::string input;
+    for (int i = 0; i < size; ++i)
+      input.push_back(static_cast<char>(i % 251));
+    packages::Sha256 hash;
+    for (std::size_t offset = 0; offset < input.size(); offset += 29)
+      hash.update(std::string_view(input).substr(offset, 29));
+    expect(digest(input) == expected && hash.finish() == expected,
+           "SHA-256 binary and incremental hashing must agree");
+  }
   {
     packages::Sha256 hash;
     const std::string chunk(1000, 'a');
     for (int i = 0; i < 1000; ++i)
       hash.update(chunk);
-    expect(hash.finish() ==
-               "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
-           "SHA-256 of a long input changed");
+    expect(
+        hash.finish() ==
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+        "SHA-256 of a long input changed");
   }
   Diagnostics original;
   Source first{"core/main.mt", "macro value", 4};
@@ -99,6 +118,8 @@ int main() {
   auto debug = consumer.debugSpan(*span);
   expect(debug.source == 80 && debug.begin == 0,
          "generated debug locations must retain their invocation");
+  expect(!driver::encodeLibraryArchive(*imported, error),
+         "a mounted archive has moved its generations and must not encode");
   expect(!driver::decodeLibraryArchive(*bytes, "other-revision", error),
          "a different compiler/content/config identity must reject");
   for (auto size : {std::size_t(0), bytes->size() / 2, bytes->size() - 1})
@@ -177,6 +198,66 @@ int main() {
       store.putData(key, *bytes) &&
           store.data(key, bytes->size()).bytes == *bytes,
       "corrupt-size blobs must be removed so source rebuilds can repair them");
+  auto corruptWithoutChangingStamp = [&] {
+    auto modified = *bytes;
+    modified[0] ^= 1;
+    auto stamp = fs::last_write_time(blobPath);
+    struct stat status{};
+    expect(stat(blobPath.c_str(), &status) == 0, "must stat the cached blob");
+    auto legacyStamp =
+        static_cast<std::uint64_t>(status.st_mtim.tv_sec) * 1000000000u +
+        static_cast<std::uint64_t>(status.st_mtim.tv_nsec) + 1;
+    {
+      std::ofstream entry(root / "entries" / key.substr(0, 2) / key,
+                          std::ios::trunc);
+      entry << "file " << blob << ' ' << bytes->size() << " - " << legacyStamp
+            << '\n';
+      expect(static_cast<bool>(entry), "must create a legacy cache entry");
+    }
+    fs::permissions(blobPath, fs::perms::owner_write, fs::perm_options::add);
+    {
+      std::ofstream out(blobPath, std::ios::binary | std::ios::trunc);
+      out.write(modified.data(), static_cast<std::streamsize>(modified.size()));
+      expect(static_cast<bool>(out), "must modify the cached blob");
+    }
+    fs::last_write_time(blobPath, stamp);
+  };
+  corruptWithoutChangingStamp();
+  expect(store.data(key, bytes->size()).status ==
+             packages::Store::Lookup::Corrupt,
+         "same-size corruption with a restored timestamp must reject on read");
+  expect(store.putData(key, *bytes), "must restore verified metadata");
+  auto destination = root / "materialized";
+  {
+    std::ofstream out(destination);
+    out << "existing";
+  }
+  corruptWithoutChangingStamp();
+  expect(store.materialize(key, destination) ==
+             packages::Store::Lookup::Corrupt,
+         "same-size corruption with a restored timestamp must reject on copy");
+  {
+    std::ifstream in(destination);
+    std::string value;
+    in >> value;
+    expect(value == "existing", "corrupt blobs must not replace outputs");
+  }
+  expect(store.putData(key, *bytes), "must restore verified metadata");
+  corruptWithoutChangingStamp();
+  expect(store.putData(key, *bytes) &&
+             store.data(key, bytes->size()).bytes == *bytes,
+         "publication must repair an existing corrupt blob");
+  auto artifact = root / "artifact";
+  {
+    std::ofstream out(artifact, std::ios::binary);
+    out.write(bytes->data(), static_cast<std::streamsize>(bytes->size()));
+    expect(static_cast<bool>(out), "must create a batch artifact");
+  }
+  corruptWithoutChangingStamp();
+  packages::Store unbounded(root, {0, 0});
+  expect(unbounded.putMany({{key, artifact, false}}) &&
+             unbounded.data(key, bytes->size()).bytes == *bytes,
+         "batch publication must repair an existing corrupt blob");
   store.prune();
   auto child = fork();
   expect(child >= 0, "must start concurrent publisher");

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -26,7 +27,8 @@ namespace mettle::packages {
 //   tmp/               in-flight writes, published by atomic rename
 // Sizes are logical file sizes; allocated bytes are never smaller.
 struct StoreLimits {
-  // Upper bound on entry files plus referenced blobs after `prune`; 0 is unbounded.
+  // Upper bound on entry files plus referenced blobs after `prune`; 0 is
+  // unbounded.
   std::uint64_t bytes = 0;
   // Entries unused for longer are evicted; 0 disables the age limit.
   std::uint64_t maxAgeDays = 30;
@@ -102,7 +104,11 @@ public:
     Lookup status = Lookup::Miss;
     std::shared_ptr<const Mapping> mapping;
   };
-  Mapped mapped(const std::string &key, std::uint64_t maximumBytes);
+  // `verify`, when given, replaces the blob hash check: it must reject any
+  // bytes but the stored ones (e.g. a cryptographic seal inside the artifact).
+  using Verifier = std::function<bool(const std::shared_ptr<const Mapping> &)>;
+  Mapped mapped(const std::string &key, std::uint64_t maximumBytes,
+                const Verifier &verify = {});
   bool putData(const std::string &key, std::string_view bytes);
   // Copies the blob of `key` to `destination` (a fresh, privately owned
   // file; the shared blob is never exposed) and refreshes the entry's age.
@@ -136,7 +142,8 @@ public:
 
 private:
   Data localData(const std::string &key, std::uint64_t maximumBytes);
-  Mapped localMapped(const std::string &key, std::uint64_t maximumBytes);
+  Mapped localMapped(const std::string &key, std::uint64_t maximumBytes,
+                     const Verifier &verify);
   Lookup localMaterialize(const std::string &key,
                           const std::filesystem::path &destination);
   std::optional<std::string> localText(const std::string &key);

@@ -306,12 +306,11 @@ bool LibrarySources::mount(
     value.source = remap.at(value.source);
     return value;
   };
-  auto mountedGenerations = generations;
   std::unordered_map<SourceId, std::size_t> mountedIndex;
   for (std::size_t i = 0; i < sources.size(); ++i)
     mountedIndex.emplace(remap.at(sources[i].id), i);
   std::unordered_map<std::uint64_t, std::uint64_t> binders;
-  for (auto &generation : mountedGenerations) {
+  for (auto &generation : generations) {
     generation.source = remap.at(generation.source);
     generation.origin = span(generation.origin);
     for (auto &mapping : generation.mappings) {
@@ -341,10 +340,11 @@ bool LibrarySources::mount(
     source.id = remap.at(source.id);
     Diagnostics::SourceContext registerSource(diagnostics, source);
   }
-  for (const auto &generation : mountedGenerations)
-    diagnostics.generated(generation);
+  for (auto &generation : generations)
+    diagnostics.generated(std::move(generation));
+  generations.clear();
   sourceIndex = std::move(mountedIndex);
-  generations = std::move(mountedGenerations);
+  mounted = true;
   return true;
 }
 
@@ -352,6 +352,10 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
                                                 std::string &error) {
   error.clear();
   const auto &sources = archive.sources;
+  if (sources.mounted) {
+    error = "a mounted compiled library cannot be encoded";
+    return std::nullopt;
+  }
   if (!sources.validate(error))
     return std::nullopt;
   if (archive.macros.size() > limits::sourceBytes ||

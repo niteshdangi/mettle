@@ -94,6 +94,16 @@ public:
   void generated(Generation generation) {
     generations.push_back(std::move(generation));
   }
+  // Drops sources and generations registered after the given counts, undoing
+  // a registration batch that failed before it was published.
+  void discardRegistrations(std::size_t sourceCount,
+                            std::size_t generationCount) {
+    sources.erase(sources.begin() + std::min(sources.size(), sourceCount),
+                  sources.end());
+    generations.erase(generations.begin() +
+                          std::min(generations.size(), generationCount),
+                      generations.end());
+  }
   SyntaxContextPtr makeSyntaxContext(std::vector<std::string> scope,
                                      Span definition) {
     return std::make_shared<const SyntaxContext>(

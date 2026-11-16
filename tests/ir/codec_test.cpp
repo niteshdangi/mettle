@@ -424,6 +424,55 @@ void verifiedRemapping() {
   require(imported.roots == rootsBefore,
           "decode mutated shared caller type roots");
 }
+void crossRecordSymbolAliases() {
+  Program program;
+  for (int i = 0; i < 3; ++i) {
+    auto function = constantFunction("caller", 0);
+    auto &call = function.blocks[0].instructions[0];
+    call.op = Op::Call;
+    call.callee = i == 2 ? 101 : 100;
+    program.functions.push_back(std::move(function));
+  }
+  metadata::EncodeReferences encode;
+  encode.type = [](Type type) { return std::optional{type.index()}; };
+  encode.symbol = symbolName;
+  encode.source = [](Span span) {
+    return std::optional{metadata::SourceReference{
+        "source", static_cast<std::uint32_t>(span.begin),
+        static_cast<std::uint32_t>(span.end)}};
+  };
+  auto encoded = encodeProgram(program, encode);
+  require(bool(encoded), encoded.error.c_str());
+  metadata::DecodeReferences decode;
+  decode.type = [](std::uint32_t index) -> std::optional<Type> {
+    for (auto type : {Type::Unknown, Type::Never, Type::I32})
+      if (type.index() == index)
+        return type;
+    return std::nullopt;
+  };
+  decode.source = [](const metadata::SourceReference &source) {
+    return std::optional{Span{source.begin, source.end, 7}};
+  };
+  decode.symbol = [](SymbolKind kind, std::string_view name) {
+    for (std::uint32_t index : {0u, 1u, 2u, 100u, 101u})
+      if (name == *symbolName(kind, index))
+        return std::optional{index};
+    return std::optional<std::uint32_t>{};
+  };
+  require(bool(decodeProgram(encoded.bytes, decode)),
+          "repeated cross-record symbols must decode");
+  auto resolve = decode.symbol;
+  decode.symbol = [resolve](SymbolKind kind, std::string_view name) {
+    auto index = resolve(kind, name);
+    return index == 101 ? std::optional<std::uint32_t>{100} : index;
+  };
+  auto rejected = decodeProgram(encoded.bytes, decode);
+  require(!rejected &&
+              rejected.error ==
+                  "inconsistent or aliased IR logical symbol mapping" &&
+              rejected.program.functions.empty(),
+          "cross-record symbol alias must reject transactionally");
+}
 void literalBacking() {
   auto types = std::make_shared<TypeStore>();
   auto bytes = types->viewType(types->sliceType(Type::U8), ParameterMode::Read,
@@ -725,6 +774,7 @@ void rawFieldCoverage() {
 int main() {
   try {
     verifiedRemapping();
+    crossRecordSymbolAliases();
     literalBacking();
     rawFieldCoverage();
     std::cout << "IR codec tests passed\n";

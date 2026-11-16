@@ -309,6 +309,7 @@ struct Reader : Fields<Reader> {
   std::size_t offset = 0;
   const TypeGraphSymbols &symbols;
   const Header &header;
+  bool scanning = true;
   std::span<const Type> types;
   std::span<const RegionId> regions;
   std::span<const RegionUniverse> universes;
@@ -371,40 +372,52 @@ struct Reader : Fields<Reader> {
     auto ref = u32();
     if (ref >= primitiveCount && ref - primitiveCount >= header.types)
       reject("dangling type graph reference");
-    type = types[ref];
+    if (!scanning)
+      type = types[ref];
   }
   void value(RegionId &region) {
     auto ref = u32();
     if (ref >= 2 && ref - 2 >= header.regions)
       reject("dangling type graph region reference");
-    region = regions[ref];
+    if (!scanning)
+      region = regions[ref];
   }
   void universe(RegionUniverse &universe) {
     auto ref = u32();
     if (ref >= header.universes)
       reject("dangling type graph universe reference");
-    universe = universes[ref];
+    if (!scanning)
+      universe = universes[ref];
   }
   void value(std::string &text) {
     auto count = u32();
     if (count > remaining())
       reject("truncated type graph string");
-    text.assign(reinterpret_cast<const char *>(bytes.data() + offset), count);
+    if (!scanning)
+      text.assign(reinterpret_cast<const char *>(bytes.data() + offset), count);
     offset += count;
   }
   template <class T> void value(std::vector<T> &items) {
     auto count = u32();
     if (count > remaining())
       reject("invalid type graph sequence length");
-    items.resize(count);
-    for (auto &item : items)
-      value(item);
+    if (scanning) {
+      for (std::uint32_t i = 0; i < count; ++i) {
+        T item{};
+        value(item);
+      }
+    } else {
+      items.resize(count);
+      for (auto &item : items)
+        value(item);
+    }
   }
   template <class T> void value(std::optional<T> &item) {
     if (flag()) {
       T temporary{};
       value(temporary);
-      item = std::move(temporary);
+      if (!scanning)
+        item = std::move(temporary);
     } else
       item.reset();
   }
@@ -418,13 +431,15 @@ struct Reader : Fields<Reader> {
     for (std::uint32_t i = 0; i < count; ++i) {
       std::string text;
       value(text);
-      if (!items.insert(std::move(text)).second)
+      if (!scanning && !items.insert(std::move(text)).second)
         reject("duplicate type graph target feature");
     }
   }
   std::uint32_t symbol(SymbolKind kind) {
     std::string logical;
     value(logical);
+    if (scanning)
+      return 0;
     if (logical.empty() || !symbols.resolve)
       reject("missing logical symbol resolver");
     auto index = symbols.resolve(kind, logical);
@@ -451,7 +466,7 @@ struct Reader : Fields<Reader> {
       index = unknownPackage;
     else {
       index = symbol(SymbolKind::Package);
-      if (index == unknownPackage)
+      if (!scanning && index == unknownPackage)
         reject("resolved package has invalid identity");
     }
   }
@@ -517,12 +532,14 @@ template <class A> void record(A &a, WireRegion &r) {
     auto count = a.u32();
     if (count > a.remaining() / 4)
       reject("invalid intersection source count");
-    r.sources.reserve(count);
+    if (!a.scanning)
+      r.sources.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
       auto ref = a.u32();
       if (ref >= 2 && ref - 2 >= a.header.regions)
         reject("dangling intersection source");
-      r.sources.push_back(ref);
+      if (!a.scanning)
+        r.sources.push_back(ref);
     }
     if (r.kind < RegionKind::Bound ||
         (r.kind != RegionKind::Intersection &&
@@ -571,24 +588,28 @@ void readTables(Reader &reader, Tables &tables) {
   for (std::uint32_t i = 0; i < reader.header.types; ++i) {
     ImportedTypeKind kind{};
     reader(kind);
-    tables.kinds.push_back(kind);
+    if (!reader.scanning)
+      tables.kinds.push_back(kind);
   }
   for (std::uint32_t i = 0; i < reader.header.universes; ++i) {
     auto parent = reader.u32();
     if (i ? parent >= i : parent != 0)
       reject("cyclic or dangling region universe ancestry");
-    tables.parents.push_back(parent);
+    if (!reader.scanning)
+      tables.parents.push_back(parent);
   }
   for (std::uint32_t i = 0; i < reader.header.binders; ++i) {
     auto universe = reader.u32();
     if (universe >= reader.header.universes)
       reject("dangling region binder universe");
-    tables.binders.push_back(universe);
+    if (!reader.scanning)
+      tables.binders.push_back(universe);
   }
   for (std::uint32_t i = 0; i < reader.header.regions; ++i) {
     WireRegion region;
     record(reader, region);
-    tables.regions.push_back(std::move(region));
+    if (!reader.scanning)
+      tables.regions.push_back(std::move(region));
   }
 }
 std::vector<Type> builtinTypes() {
@@ -1860,9 +1881,18 @@ public:
   void finish() {
     for (auto type : ids)
       build(type);
-    for (std::size_t i = 0; i < ids.size(); ++i)
-      install(i);
+    const auto base = builtinTypeCount + original.storedTypes().size();
+    std::vector<std::size_t> lastInstalled(ids.size(), ids.size());
     for (std::size_t i = 0; i < ids.size(); ++i) {
+      install(i);
+      if (!original.contains(mapped[i]))
+        lastInstalled[mapped[i].index() - base] = i;
+    }
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+      // The last installed definition is the candidate definition itself.
+      if (!original.contains(mapped[i]) &&
+          lastInstalled[mapped[i].index() - base] == i)
+        continue;
       auto expected = definitions[i];
       remap(expected);
       if (!equalDefinition(candidate, expected,
@@ -1980,8 +2010,29 @@ TypeGraphImport importTypeGraph(TypeStore &types,
                                 const TypeGraphSymbols &symbols) {
   try {
     Header header;
+    Reader scan(bytes, symbols, header);
+    readHeader(scan, header, types.targetPointerBits());
+    auto tablesOffset = scan.offset;
+    Tables ignored;
+    readTables(scan, ignored);
+    auto bodyOffset = scan.offset;
+    for (std::uint32_t i = 0; i < header.types; ++i) {
+      std::optional<DefinitionIdentity> identity;
+      scan(identity);
+      auto kind = static_cast<ImportedTypeKind>(bytes[tablesOffset + i]);
+      auto definition = definitionFor(kind);
+      std::visit([&](auto &r) { scan(r); }, definition);
+    }
+    for (std::uint32_t i = 0; i < header.roots; ++i) {
+      Type root;
+      scan(root);
+    }
+    if (scan.remaining())
+      reject("trailing bytes in type graph");
+
     Reader reader(bytes, symbols, header);
-    readHeader(reader, header, types.targetPointerBits());
+    reader.scanning = false;
+    reader.offset = tablesOffset;
     Tables tables;
     readTables(reader, tables);
     TypeStore candidate = types;
@@ -1995,6 +2046,7 @@ TypeGraphImport importTypeGraph(TypeStore &types,
     reader.types = localTypes;
     reader.regions = regions;
     reader.universes = universes;
+    reader.offset = bodyOffset;
     std::vector<ImportedTypeDefinition> definitions;
     std::vector<std::optional<DefinitionIdentity>> logical;
     TypeGraphImport result;
@@ -2036,8 +2088,6 @@ TypeGraphImport importTypeGraph(TypeStore &types,
       reader(root);
       result.roots.push_back(canonical.build(root));
     }
-    if (reader.remaining())
-      reject("trailing bytes in type graph");
     types = std::move(candidate);
     return result;
   } catch (const InvalidGraph &error) {

@@ -121,27 +121,27 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
     error = "cannot acquire checked " + root + " cache lease";
     return false;
   }
-  auto stored = store.mapped(archiveKey, limits::sourceBytes);
+  // The archive's sealing digest covers every byte, so it replaces the
+  // store's serial blob hash; a rejected archive is evicted as corrupt.
+  std::optional<LibraryArchive> decoded;
+  auto stored = store.mapped(
+      archiveKey, limits::sourceBytes,
+      [&](const std::shared_ptr<const packages::Store::Mapping> &mapping) {
+        decoded =
+            decodeLibraryArchive(mapping->bytes(), archiveKey, error, mapping);
+        return decoded.has_value();
+      });
   if (stored.status == packages::Store::Lookup::Hit) {
-    auto decoded = decodeLibraryArchive(stored.mapping->bytes(), archiveKey,
-                                        error, stored.mapping);
-    if (decoded) {
-      archive = std::move(*decoded);
-      if (options.explain)
-        std::cerr << "mettle: checked library interface cache hit " << root
-                  << " " << archiveKey.substr(0, 12) << '\n';
-      return true;
-    }
+    archive = std::move(*decoded);
     if (options.explain)
-      std::cerr << "mettle: checked library interface corrupt " << root << ": "
-                << error << "; rebuilding\n";
-    error.clear();
-  } else if (stored.status == packages::Store::Lookup::Corrupt &&
-             options.explain) {
-    std::cerr << "mettle: checked library interface cache corrupt " << root
-              << "; "
-                 "rebuilding\n";
+      std::cerr << "mettle: checked library interface cache hit " << root << " "
+                << archiveKey.substr(0, 12) << '\n';
+    return true;
   }
+  if (stored.status == packages::Store::Lookup::Corrupt && options.explain)
+    std::cerr << "mettle: checked library interface cache corrupt " << root
+              << (error.empty() ? "" : ": " + error) << "; rebuilding\n";
+  error.clear();
   LibraryArchive candidate(archiveKey);
   Diagnostics diagnostics;
   expansion::MacroLibrary rules;
@@ -508,9 +508,20 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
   }
   auto &library = *receiverLibrary;
   auto &diagnostics = *receiverDiagnostics;
-  auto candidate = diagnostics;
+  // Registers directly and rolls back on failure instead of copying every
+  // previously mounted library's sources and generations.
+  struct Registration {
+    Diagnostics &diagnostics;
+    std::size_t sources = diagnostics.registeredSources().size();
+    std::size_t generations = diagnostics.registeredGenerations().size();
+    bool published = false;
+    ~Registration() {
+      if (!published)
+        diagnostics.discardRegistrations(sources, generations);
+    }
+  } registration{diagnostics};
   if (!archive.sources.mount(
-          candidate,
+          diagnostics,
           [&]() -> std::optional<SourceId> {
             auto source = allocate();
             return source ? std::optional(source) : std::nullopt;
@@ -554,7 +565,7 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
         defaults.emplace_back(static_cast<std::uint32_t>(i),
                               static_cast<std::uint32_t>(j));
   macros = std::make_shared<const expansion::MacroLibrary>(std::move(*rules));
-  diagnostics = std::move(candidate);
+  registration.published = true;
   for (const auto &[revision, path] : archive.sourceModules) {
     auto source = archive.sources.source(revision);
     if (!source) {

@@ -34,19 +34,8 @@ struct Entry {
   bool text = false;
   std::string blob, payload;
   std::uint64_t size = 0;
-  // The blob's modification time when it was verified at publication; a blob
-  // that still has it and its size is not hashed again on every read.
-  std::uint64_t stamp = 0;
   bool executable = false;
 };
-
-std::uint64_t modificationStamp(const fs::path &file) {
-  struct stat status{};
-  if (stat(file.c_str(), &status) != 0)
-    return 0;
-  return static_cast<std::uint64_t>(status.st_mtim.tv_sec) * 1000000000u +
-         static_cast<std::uint64_t>(status.st_mtim.tv_nsec) + 1;
-}
 
 bool hexName(const std::string &name) {
   return name.size() >= 2 && std::all_of(name.begin(), name.end(), [](char c) {
@@ -73,7 +62,6 @@ std::optional<Entry> parseEntry(const std::string &content) {
       (mode != "x" && mode != "-"))
     return std::nullopt;
   entry.executable = mode == "x";
-  head >> entry.stamp;
   return entry;
 }
 
@@ -304,40 +292,42 @@ bool Store::put(const std::string &key, const fs::path &file, bool executable) {
   note(key);
   if (key.size() < 2 || !prepare())
     return false;
+  auto temporary = scratch();
+  std::error_code error;
+  fs::copy_file(file, temporary, fs::copy_options::overwrite_existing, error);
+  if (error) {
+    fs::remove(temporary, error);
+    return false;
+  }
+  struct Cleanup {
+    fs::path path;
+    ~Cleanup() {
+      std::error_code ignored;
+      fs::remove(path, ignored);
+    }
+  } cleanup{temporary};
   std::uint64_t size = 0;
-  auto blob = hashFile(file, size);
+  auto blob = hashFile(temporary, size);
   if (!blob)
+    return false;
+  fs::permissions(temporary,
+                  fs::perms::owner_read | fs::perms::group_read |
+                      fs::perms::others_read,
+                  fs::perm_options::replace, error);
+  if (error)
     return false;
   StoreLock lock(directory);
   if (!lock)
     return false;
-  std::error_code error;
   auto path = blobPath(*blob);
-  if (!fs::exists(path, error)) {
-    fs::create_directories(path.parent_path(), error);
-    auto temporary = scratch();
-    fs::copy_file(file, temporary, fs::copy_options::overwrite_existing, error);
-    if (error) {
-      std::error_code ignored;
-      fs::remove(temporary, ignored);
-      return false;
-    }
-    fs::permissions(temporary,
-                    fs::perms::owner_read | fs::perms::group_read |
-                        fs::perms::others_read,
-                    fs::perm_options::replace, error);
-    if (!error)
-      fs::rename(temporary, path, error);
-    if (error) {
-      fs::remove(temporary, error);
-      return false;
-    }
-  }
-  return publishLocked(entryPath(key),
-                       "file " + *blob + " " + std::to_string(size) +
-                           (executable ? " x " : " - ") +
-                           std::to_string(modificationStamp(blobPath(*blob))) +
-                           "\n");
+  fs::create_directories(path.parent_path(), error);
+  if (!error)
+    fs::rename(temporary, path, error);
+  if (error)
+    return false;
+  return publishLocked(entryPath(key), "file " + *blob + " " +
+                                           std::to_string(size) +
+                                           (executable ? " x\n" : " -\n"));
 }
 
 bool Store::putData(const std::string &key, std::string_view bytes) {
@@ -376,24 +366,25 @@ Store::Mapping::~Mapping() {
     munmap(const_cast<void *>(address), length);
 }
 
-Store::Mapped Store::mapped(const std::string &key,
-                            std::uint64_t maximumBytes) {
-  auto result = localMapped(key, maximumBytes);
+Store::Mapped Store::mapped(const std::string &key, std::uint64_t maximumBytes,
+                            const Verifier &verify) {
+  auto result = localMapped(key, maximumBytes, verify);
   return result.status == Lookup::Miss && shipped
-             ? shipped->localMapped(key, maximumBytes)
+             ? shipped->localMapped(key, maximumBytes, verify)
              : result;
 }
 
 Store::Data Store::localData(const std::string &key,
                              std::uint64_t maximumBytes) {
-  auto found = localMapped(key, maximumBytes);
+  auto found = localMapped(key, maximumBytes, {});
   if (!found.mapping)
     return {found.status, {}};
   return {Lookup::Hit, std::string(found.mapping->bytes())};
 }
 
 Store::Mapped Store::localMapped(const std::string &key,
-                                 std::uint64_t maximumBytes) {
+                                 std::uint64_t maximumBytes,
+                                 const Verifier &verify) {
   note(key);
   if (key.size() < 2)
     return {};
@@ -407,8 +398,7 @@ Store::Mapped Store::localMapped(const std::string &key,
     fs::remove(path, error);
     return {entry ? Lookup::Miss : Lookup::Corrupt, {}};
   }
-  if (entry->size > maximumBytes ||
-      entry->size > std::string().max_size()) {
+  if (entry->size > maximumBytes || entry->size > std::string().max_size()) {
     fs::remove(path, error);
     return {Lookup::Corrupt, {}};
   }
@@ -439,9 +429,10 @@ Store::Mapped Store::localMapped(const std::string &key,
     return corrupt();
   auto mapping =
       std::make_shared<const Mapping>(address, static_cast<std::size_t>(size));
-  const bool trusted =
-      entry->stamp != 0 && entry->stamp == modificationStamp(blob);
-  if (!trusted) {
+  if (verify) {
+    if (!verify(mapping))
+      return corrupt();
+  } else {
     packages::Sha256 hash;
     hash.update(mapping->bytes());
     if (hash.finish() != entry->blob)
@@ -479,17 +470,18 @@ bool Store::putMany(const std::vector<Artifact> &artifacts) {
       discardTemporaries();
       return false;
     }
-    std::uint64_t size = 0;
-    auto blob = hashFile(artifact.file, size);
-    if (!blob) {
-      discardTemporaries();
-      return false;
-    }
     auto temporary = scratch();
     std::error_code error;
     fs::copy_file(artifact.file, temporary,
                   fs::copy_options::overwrite_existing, error);
     if (error) {
+      fs::remove(temporary, error);
+      discardTemporaries();
+      return false;
+    }
+    std::uint64_t size = 0;
+    auto blob = hashFile(temporary, size);
+    if (!blob) {
       fs::remove(temporary, error);
       discardTemporaries();
       return false;
@@ -515,32 +507,16 @@ bool Store::putMany(const std::vector<Artifact> &artifacts) {
   for (const auto &item : prepared) {
     std::error_code error;
     auto blob = blobPath(item.blob);
-    auto exists = fs::exists(blob, error);
+    fs::create_directories(blob.parent_path(), error);
+    if (!error)
+      fs::rename(item.temporary, blob, error);
     if (error) {
       discardTemporaries();
       return false;
     }
-    if (exists) {
-      fs::remove(item.temporary, error);
-      if (error) {
-        discardTemporaries();
-        return false;
-      }
-    } else {
-      fs::create_directories(blob.parent_path(), error);
-      if (!error)
-        fs::rename(item.temporary, blob, error);
-      if (error) {
-        discardTemporaries();
-        return false;
-      }
-    }
-    if (!publishLocked(
-            entryPath(item.artifact->key),
-            "file " + item.blob + " " + std::to_string(item.size) +
-                (item.artifact->executable ? " x " : " - ") +
-                std::to_string(modificationStamp(blobPath(item.blob))) +
-                "\n")) {
+    if (!publishLocked(entryPath(item.artifact->key),
+                       "file " + item.blob + " " + std::to_string(item.size) +
+                           (item.artifact->executable ? " x\n" : " -\n"))) {
       discardTemporaries();
       return false;
     }
@@ -581,52 +557,48 @@ Store::Lookup Store::localMaterialize(const std::string &key,
     fs::remove(path, error);
     return Lookup::Miss;
   }
-  std::uint64_t size = 0;
-  std::optional<std::string> actual;
-  if (entry->stamp != 0 && entry->stamp == modificationStamp(blob) &&
-      sizeOf(blob) == entry->size) {
-    actual = entry->blob;
-    size = entry->size;
-  } else {
-    actual = hashFile(blob, size);
-  }
-  if (!actual || *actual != entry->blob || size != entry->size) {
-    fs::remove(blob, error);
-    fs::remove(path, error);
-    return Lookup::Corrupt;
-  }
   std::string temporary = destination.string() + ".mettle-cache-XXXXXX";
   int descriptor = mkstemp(temporary.data());
   if (descriptor < 0)
     return Lookup::Miss;
   std::ifstream source(blob, std::ios::binary);
   char buffer[1 << 16];
+  Sha256 hash;
+  std::uint64_t size = 0;
   bool copied = static_cast<bool>(source);
   while (copied && source.read(buffer, sizeof buffer).gcount() != 0) {
-    auto size = source.gcount();
+    auto count = source.gcount();
+    hash.update({buffer, static_cast<std::size_t>(count)});
+    size += static_cast<std::uint64_t>(count);
     std::streamsize written = 0;
-    while (written < size) {
-      auto count = ::write(descriptor, buffer + written, size - written);
-      if (count < 0 && errno == EINTR)
+    while (written < count) {
+      auto result = ::write(descriptor, buffer + written, count - written);
+      if (result < 0 && errno == EINTR)
         continue;
-      if (count <= 0) {
+      if (result <= 0) {
         copied = false;
         break;
       }
-      written += count;
+      written += result;
     }
   }
   copied = copied && source.eof();
+  const bool corrupt =
+      copied && (size != entry->size || hash.finish() != entry->blob);
   mode_t mode = entry->executable ? 0755 : 0644;
   if (fchmod(descriptor, mode) != 0)
     copied = false;
   if (close(descriptor) != 0)
     copied = false;
-  if (copied)
+  if (copied && !corrupt)
     fs::rename(temporary, destination, error);
-  if (!copied || error) {
+  if (!copied || corrupt || error) {
     fs::remove(temporary, error);
-    return Lookup::Miss;
+    if (corrupt) {
+      fs::remove(blob, error);
+      fs::remove(path, error);
+    }
+    return corrupt ? Lookup::Corrupt : Lookup::Miss;
   }
   touch(path);
   return Lookup::Hit;
@@ -688,8 +660,8 @@ void Store::note(const std::string &key) const {
   touched->keys.insert(key);
 }
 
-std::vector<std::string>
-Store::commitProject(const std::string &project, const fs::path &path) {
+std::vector<std::string> Store::commitProject(const std::string &project,
+                                              const fs::path &path) {
   if (project.empty() || !prepare())
     return {};
   StoreLock lock(directory);

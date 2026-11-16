@@ -448,6 +448,15 @@ int main() {
   bad = bytes;
   bad.push_back(0);
   failedUnchanged(bad, symbols);
+  unsigned resolutions = 0;
+  auto countResolutions = symbols;
+  countResolutions.resolve = [&](SymbolKind kind, std::string_view name) {
+    ++resolutions;
+    return symbols.resolve(kind, name);
+  };
+  failedUnchanged(bad, countResolutions);
+  expect(resolutions == 0,
+         "malformed graph must be rejected before resolving symbols");
   bad = bytes;
   put32(bad, 16, UINT32_MAX);
   failedUnchanged(bad, symbols);
@@ -781,6 +790,23 @@ int main() {
                abi.roots[1] != existingCallable &&
                consumer.callable(abi.roots[1]).abiResult == Type::U64,
            "imported ABI result contracts must not collapse");
+  }
+  {
+    TypeStore producer;
+    auto first = producer.structural(AggregateKind::Tuple, {Type::I32});
+    auto duplicate = producer.declareImportedType(ImportedTypeKind::Product);
+    auto definition = producer.importedDefinition(first);
+    auto &product = std::get<ImportedProduct>(definition).descriptor;
+    product.copyRequested = !product.copyRequested;
+    producer.defineImportedType(duplicate, std::move(definition));
+    auto encoded =
+        exportTypeGraph(producer, std::array{first, duplicate}, symbolMaps());
+    expect(static_cast<bool>(encoded), encoded.error);
+    TypeStore target;
+    auto rejected = importTypeGraph(target, encoded.bytes, symbolMaps());
+    expect(!rejected && rejected.error ==
+                            "conflicting logical or structural type definition",
+           "colliding structural identities must retain all their contracts");
   }
   {
     std::uint32_t state = 0x13579bdu;

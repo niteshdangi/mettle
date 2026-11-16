@@ -963,6 +963,11 @@ DeclarationInventory declarationInventory(const CheckedModule &module) {
     if (auto contract = contracts.functions.find(std::uint32_t(i));
         contract != contracts.functions.end())
       types(contract->second.generics, facts.canonicalName, function.span);
+    else if (module.importedFunctions.contains(i)) {
+      auto contract = module.importedDeclarations->functions.find(i);
+      if (contract != module.importedDeclarations->functions.end())
+        types(contract->second.generics, facts.canonicalName, function.span);
+    }
     if (facts.opaqueResult != Type::Unknown &&
         known.insert(facts.opaqueResult).second)
       result.types.push_back({facts.opaqueResult, function.span,
@@ -1051,9 +1056,10 @@ exportLibraryDeclarations(const CheckedModule &module,
   Archive contracts(references, *module.types, header.hygieneState());
   contracts.tag("mettle.checked-contracts.12");
   auto &value = *module.declarationContracts;
-  std::uint64_t count = value.functions.size();
+  std::uint64_t count =
+      value.functions.size() + module.importedFunctions.size();
   contracts(count);
-  for (auto &[index, item] : value.functions) {
+  auto writeFunction = [&](std::uint32_t index, ImportedFunction &item) {
     auto symbol = index;
     contracts.symbol(metadata::SymbolKind::Function, symbol);
     function(contracts, item);
@@ -1062,6 +1068,14 @@ exportLibraryDeclarations(const CheckedModule &module,
         auto index = local.staticIndex;
         contracts.symbol(metadata::SymbolKind::Static, index);
       }
+  };
+  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+    if (module.importedFunctions.contains(i)) {
+      auto item = module.importedDeclarations->functions.at(i);
+      writeFunction(static_cast<std::uint32_t>(i), item);
+    } else
+      writeFunction(static_cast<std::uint32_t>(i),
+                    value.functions.at(static_cast<std::uint32_t>(i)));
   }
   count = value.statics.size();
   contracts(count);

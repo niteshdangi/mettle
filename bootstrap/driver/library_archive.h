@@ -21,6 +21,8 @@ public:
   std::optional<Span> resolve(const metadata::SourceReference &reference) const;
   const Source *source(std::string_view revision) const;
   std::span<const Source> snapshots() const { return sources; }
+  // Registers the sources under fresh ids and moves the generations into
+  // `diagnostics`; a mounted archive can no longer be encoded.
   bool mount(Diagnostics &diagnostics,
              const std::function<std::optional<SourceId>()> &allocate,
              std::string &error);
@@ -38,6 +40,7 @@ private:
   std::vector<std::string> revisions;
   std::unordered_map<SourceId, std::size_t> sourceIndex;
   std::unordered_map<std::string, std::size_t> revisionIndex;
+  bool mounted = false;
 };
 
 // One encoded section: owned bytes, or a view into the mapping the archive
