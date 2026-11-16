@@ -82,6 +82,27 @@ public:
   // store on a miss; the shipped store is never written, touched or pruned.
   void useShipped(std::filesystem::path root);
   Data data(const std::string &key, std::uint64_t maximumBytes);
+  // A read-only view of an artifact's bytes that owns its file mapping.
+  class Mapping {
+  public:
+    Mapping(const void *address, std::size_t size)
+        : address(address), length(size) {}
+    Mapping(const Mapping &) = delete;
+    Mapping &operator=(const Mapping &) = delete;
+    ~Mapping();
+    std::string_view bytes() const {
+      return {static_cast<const char *>(address), length};
+    }
+
+  private:
+    const void *address;
+    std::size_t length;
+  };
+  struct Mapped {
+    Lookup status = Lookup::Miss;
+    std::shared_ptr<const Mapping> mapping;
+  };
+  Mapped mapped(const std::string &key, std::uint64_t maximumBytes);
   bool putData(const std::string &key, std::string_view bytes);
   // Copies the blob of `key` to `destination` (a fresh, privately owned
   // file; the shared blob is never exposed) and refreshes the entry's age.
@@ -115,6 +136,7 @@ public:
 
 private:
   Data localData(const std::string &key, std::uint64_t maximumBytes);
+  Mapped localMapped(const std::string &key, std::uint64_t maximumBytes);
   Lookup localMaterialize(const std::string &key,
                           const std::filesystem::path &destination);
   std::optional<std::string> localText(const std::string &key);

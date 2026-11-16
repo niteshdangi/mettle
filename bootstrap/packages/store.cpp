@@ -13,6 +13,7 @@
 #include <set>
 #include <sstream>
 #include <sys/file.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -370,8 +371,29 @@ Store::Data Store::data(const std::string &key, std::uint64_t maximumBytes) {
              : result;
 }
 
+Store::Mapping::~Mapping() {
+  if (length)
+    munmap(const_cast<void *>(address), length);
+}
+
+Store::Mapped Store::mapped(const std::string &key,
+                            std::uint64_t maximumBytes) {
+  auto result = localMapped(key, maximumBytes);
+  return result.status == Lookup::Miss && shipped
+             ? shipped->localMapped(key, maximumBytes)
+             : result;
+}
+
 Store::Data Store::localData(const std::string &key,
                              std::uint64_t maximumBytes) {
+  auto found = localMapped(key, maximumBytes);
+  if (!found.mapping)
+    return {found.status, {}};
+  return {Lookup::Hit, std::string(found.mapping->bytes())};
+}
+
+Store::Mapped Store::localMapped(const std::string &key,
+                                 std::uint64_t maximumBytes) {
   note(key);
   if (key.size() < 2)
     return {};
@@ -386,8 +408,6 @@ Store::Data Store::localData(const std::string &key,
     return {entry ? Lookup::Miss : Lookup::Corrupt, {}};
   }
   if (entry->size > maximumBytes ||
-      entry->size > static_cast<std::uint64_t>(
-                        std::numeric_limits<std::streamsize>::max()) ||
       entry->size > std::string().max_size()) {
     fs::remove(path, error);
     return {Lookup::Corrupt, {}};
@@ -403,23 +423,32 @@ Store::Data Store::localData(const std::string &key,
     fs::remove(path, error);
     return {Lookup::Corrupt, {}};
   }
-  std::ifstream stream(blob, std::ios::binary);
-  std::string bytes(static_cast<std::size_t>(entry->size), '\0');
-  stream.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-  const bool trusted =
-      entry->stamp != 0 && entry->stamp == modificationStamp(blob);
-  if (!stream || stream.peek() != std::char_traits<char>::eof() ||
-      (!trusted && [&] {
-        packages::Sha256 hash;
-        hash.update(bytes);
-        return hash.finish() != entry->blob;
-      }())) {
+  auto corrupt = [&] {
     fs::remove(blob, error);
     fs::remove(path, error);
-    return {Lookup::Corrupt, {}};
+    return Mapped{Lookup::Corrupt, {}};
+  };
+  int descriptor = open(blob.c_str(), O_RDONLY);
+  if (descriptor < 0)
+    return corrupt();
+  const void *address = size ? mmap(nullptr, static_cast<std::size_t>(size),
+                                    PROT_READ, MAP_PRIVATE, descriptor, 0)
+                             : nullptr;
+  close(descriptor);
+  if (size && address == MAP_FAILED)
+    return corrupt();
+  auto mapping =
+      std::make_shared<const Mapping>(address, static_cast<std::size_t>(size));
+  const bool trusted =
+      entry->stamp != 0 && entry->stamp == modificationStamp(blob);
+  if (!trusted) {
+    packages::Sha256 hash;
+    hash.update(mapping->bytes());
+    if (hash.finish() != entry->blob)
+      return corrupt();
   }
   touch(path);
-  return {Lookup::Hit, std::move(bytes)};
+  return {Lookup::Hit, std::move(mapping)};
 }
 
 bool Store::putMany(const std::vector<Artifact> &artifacts) {

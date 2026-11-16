@@ -2,8 +2,10 @@
 
 #include "diagnostics/diagnostics.h"
 #include "metadata/references.h"
+#include <algorithm>
 #include <functional>
 #include <map>
+#include <memory>
 #include <span>
 #include <unordered_map>
 
@@ -27,7 +29,8 @@ private:
   friend std::optional<std::string> encodeLibraryArchive(const LibraryArchive &,
                                                          std::string &);
   friend std::optional<LibraryArchive>
-  decodeLibraryArchive(std::string_view, std::string_view, std::string &);
+  decodeLibraryArchive(std::string_view, std::string_view, std::string &,
+                       std::shared_ptr<const void>);
   bool validate(std::string &error) const;
   std::string identity;
   std::vector<Source> sources;
@@ -37,18 +40,52 @@ private:
   std::unordered_map<std::string, std::size_t> revisionIndex;
 };
 
+// One encoded section: owned bytes, or a view into the mapping the archive
+// was decoded from.
+class Section {
+public:
+  Section() = default;
+  Section &operator=(std::vector<std::uint8_t> bytes) {
+    owned = std::move(bytes);
+    borrowed = {};
+    return *this;
+  }
+  void borrow(std::span<const std::uint8_t> bytes) {
+    owned.clear();
+    borrowed = bytes;
+  }
+  std::span<const std::uint8_t> bytes() const {
+    return borrowed.data() ? borrowed : std::span<const std::uint8_t>(owned);
+  }
+  operator std::span<const std::uint8_t>() const { return bytes(); }
+  std::size_t size() const { return bytes().size(); }
+  bool operator==(const Section &other) const {
+    return std::ranges::equal(bytes(), other.bytes());
+  }
+
+private:
+  std::vector<std::uint8_t> owned;
+  std::span<const std::uint8_t> borrowed;
+};
+
 struct LibraryArchive {
   explicit LibraryArchive(std::string identity)
       : sources(std::move(identity)) {}
   LibrarySources sources;
   std::map<std::string, std::vector<std::string>> sourceModules;
   std::string macros;
-  std::vector<std::uint8_t> header, types, declarations, ir;
+  Section header, types, declarations, ir;
+  // Keeps the memory the borrowed sections point into alive.
+  std::shared_ptr<const void> backing;
 };
 
+// The integrity digest sealing an archive (see library_archive.cpp).
+std::string archiveDigest(std::string_view bytes);
 std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
                                                 std::string &error);
-std::optional<LibraryArchive> decodeLibraryArchive(std::string_view bytes,
-                                                   std::string_view identity,
-                                                   std::string &error);
+// With `backing`, `bytes` lives in it and the sections are views, not copies.
+std::optional<LibraryArchive>
+decodeLibraryArchive(std::string_view bytes, std::string_view identity,
+                     std::string &error,
+                     std::shared_ptr<const void> backing = nullptr);
 } // namespace mettle::driver

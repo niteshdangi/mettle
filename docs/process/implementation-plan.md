@@ -474,6 +474,20 @@ bodies); cache instantiations of library generics across programs; run
 per-function analyses and LLVM codegen on several cores; then rerun the full
 run suite and the ASan/UBSan CTest (library.std.0/.2/.3 open) on the final
 binary and record the Rust-parity gates.
+The latest import patch maps the cache blob instead of copying it, seals the
+archive with a parallel block digest and decodes length-prefixed IR records on
+several threads (small rebuild 2.9 s to 2.7 s). Type-graph import (about 350 ms)
+and declaration import (about 140 ms) are now the largest serial pieces; lazy
+function-body decode needs stubs in `lower`, `prepare` and `specialize`.
+Handoff: HEAD is the tip of `niteshdangi-post-v1-completed-integration` and
+`main`. Last full run suite (2015 units) passed before the compile-time
+changes; since then the 858-unit fail suite, a 204-unit run sample, the
+`compiler.`/`ir.` CTests and the cache cases pass. Not rerun on the final
+binary: the full run suite and the ASan/UBSan CTest (library.std.0/.2/.3 had
+open findings: intentional `forget` leaks in tests such as
+async-scope-wake-close-race, sources that no longer build, task_scope region
+errors, failing_allocator exit 16). WSL evidence: `~/w/`, sanitizer tree
+`~/mettle-i-asan`, benchmark report `build/i14-20261116-evidence/results.md`.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

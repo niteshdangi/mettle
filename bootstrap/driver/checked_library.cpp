@@ -8,6 +8,7 @@
 #include "support/limits.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <iostream>
 #include <limits>
@@ -17,7 +18,38 @@
 namespace mettle::driver {
 namespace {
 using Symbol = std::pair<metadata::SymbolKind, std::uint32_t>;
-using NamedSymbol = std::pair<metadata::SymbolKind, std::string>;
+struct SymbolNameHash {
+  using is_transparent = void;
+  std::size_t operator()(std::string_view name) const {
+    return std::hash<std::string_view>{}(name);
+  }
+};
+// Symbol names by kind; lookups take a view and never allocate.
+class SymbolTable {
+public:
+  bool emplace(metadata::SymbolKind kind, std::string name, std::uint32_t index,
+               std::uint32_t *existing) {
+    auto [slot, inserted] =
+        byKind[static_cast<std::size_t>(kind)].emplace(std::move(name), index);
+    if (!inserted)
+      *existing = slot->second;
+    return inserted;
+  }
+  std::optional<std::uint32_t> find(metadata::SymbolKind kind,
+                                    std::string_view name) const {
+    const auto &names = byKind[static_cast<std::size_t>(kind)];
+    auto found = names.find(name);
+    if (found == names.end())
+      return std::nullopt;
+    return found->second;
+  }
+
+private:
+  std::array<std::unordered_map<std::string, std::uint32_t, SymbolNameHash,
+                                std::equal_to<>>,
+             5>
+      byKind;
+};
 constexpr std::string_view nativePackage = "native:standard-library";
 constexpr std::array<std::string_view, 3> nativeRoots{"core", "alloc", "std"};
 
@@ -88,9 +120,10 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
     error = "cannot acquire checked " + root + " cache lease";
     return false;
   }
-  auto stored = store.data(archiveKey, limits::sourceBytes);
+  auto stored = store.mapped(archiveKey, limits::sourceBytes);
   if (stored.status == packages::Store::Lookup::Hit) {
-    auto decoded = decodeLibraryArchive(stored.bytes, archiveKey, error);
+    auto decoded = decodeLibraryArchive(stored.mapping->bytes(), archiveKey,
+                                        error, stored.mapping);
     if (decoded) {
       archive = std::move(*decoded);
       if (options.explain)
@@ -573,7 +606,7 @@ CheckedLibrary::import(const Module &module,
   if (module.functions.size() < functions || module.statics.size() < statics ||
       module.interfaces.size() < interfaces)
     return fail("compiled library header was not mounted before its consumer");
-  std::map<NamedSymbol, std::uint32_t> symbols;
+  SymbolTable symbols;
   std::vector<std::string> functionSymbols(functions);
   std::size_t closureCount = 0;
   for (const auto &symbol : header.symbols) {
@@ -602,9 +635,9 @@ CheckedLibrary::import(const Module &module,
     case metadata::SymbolKind::Package:
       break;
     }
-    auto [found, inserted] =
-        symbols.emplace(NamedSymbol{symbol.kind, symbol.definition}, index);
-    if (!inserted && found->second != index)
+    std::uint32_t existing = 0;
+    if (!symbols.emplace(symbol.kind, symbol.definition, index, &existing) &&
+        existing != index)
       return fail("conflicting compiled declaration identities");
   }
   if (std::any_of(functionSymbols.begin(), functionSymbols.end(),
@@ -630,14 +663,16 @@ CheckedLibrary::import(const Module &module,
     auto found = defaultDestinations.find({function, parameter});
     if (found == defaultDestinations.end())
       return fail("compiled default helper is absent from the mounted header");
-    symbols.emplace(NamedSymbol{metadata::SymbolKind::Function,
-                                functionSymbols[function] +
-                                    ":default:" + std::to_string(parameter)},
-                    found->second);
+    std::uint32_t existing = 0;
+    symbols.emplace(metadata::SymbolKind::Function,
+                    functionSymbols[function] +
+                        ":default:" + std::to_string(parameter),
+                    found->second, &existing);
   }
   auto supportBase = module.functions.size() + defaultCount;
   auto prefix = supportPrefix(root, archiveKey);
-  std::optional<std::uint32_t> largestSupportOrdinal;
+  // Raised from the IR decoder's threads.
+  std::atomic<std::int64_t> largestSupportOrdinal{-1};
   metadata::DecodeReferences references;
   references.source = [&](const auto &source) {
     return archive.sources.resolve(source);
@@ -647,9 +682,8 @@ CheckedLibrary::import(const Module &module,
           std::string_view name) -> std::optional<std::uint32_t> {
     if (kind == metadata::SymbolKind::Package)
       return resolution.packageIndex(name);
-    if (auto found = symbols.find({kind, std::string(name)});
-        found != symbols.end())
-      return found->second;
+    if (auto found = symbols.find(kind, name))
+      return found;
     if (kind != metadata::SymbolKind::Function || !name.starts_with(prefix))
       return std::nullopt;
     name.remove_prefix(prefix.size());
@@ -660,8 +694,10 @@ CheckedLibrary::import(const Module &module,
         ordinal >= limits::functions ||
         supportBase + ordinal >= limits::functions)
       return std::nullopt;
-    if (!largestSupportOrdinal || ordinal > *largestSupportOrdinal)
-      largestSupportOrdinal = ordinal;
+    auto largest = largestSupportOrdinal.load();
+    while (ordinal > largest &&
+           !largestSupportOrdinal.compare_exchange_weak(largest, ordinal)) {
+    }
     return static_cast<std::uint32_t>(supportBase + ordinal);
   };
   auto types = std::make_shared<TypeStore>();
@@ -691,7 +727,7 @@ CheckedLibrary::import(const Module &module,
     return fail("compiled IR definitions do not match the declaration header");
   auto supportCount =
       decoded.program.functions.size() - functions - defaults.size();
-  if (largestSupportOrdinal && *largestSupportOrdinal >= supportCount)
+  if (largestSupportOrdinal.load() >= static_cast<std::int64_t>(supportCount))
     return fail("compiled support identity exceeds its artifact-local table");
   auto bodies = std::make_shared<lowering::ImportedBodies>();
   std::vector<std::optional<ir::Function>> support(supportCount);

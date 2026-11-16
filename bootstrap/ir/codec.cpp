@@ -5,6 +5,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <thread>
 #include <type_traits>
 
 namespace mettle::ir {
@@ -173,12 +174,22 @@ struct Symbols {
   std::map<std::pair<SymbolKind, std::uint32_t>, std::string> identities;
   std::map<std::pair<SymbolKind, std::string>, std::uint32_t> indices;
   void bind(SymbolKind kind, std::uint32_t index, const std::string &name) {
-    auto [identity, newIdentity] =
-        identities.emplace(std::pair{kind, index}, name);
-    auto [slot, newSlot] = indices.emplace(std::pair{kind, name}, index);
-    if ((!newIdentity && identity->second != name) ||
-        (!newSlot && slot->second != index))
+    // Repeated references dominate; probe before building a node.
+    auto known = identities.find({kind, index});
+    auto named = indices.find({kind, name});
+    if (known != identities.end() && named != indices.end()) {
+      if (known->second != name || named->second != index)
+        reject("inconsistent or aliased IR logical symbol mapping");
+      return;
+    }
+    if (known != identities.end() || named != indices.end())
       reject("inconsistent or aliased IR logical symbol mapping");
+    identities.emplace(std::pair{kind, index}, name);
+    indices.emplace(std::pair{kind, name}, index);
+  }
+  void merge(const Symbols &other) {
+    for (const auto &[key, name] : other.identities)
+      bind(key.first, key.second, name);
   }
 };
 template <class Derived> struct Fields {
@@ -425,6 +436,50 @@ struct Reader : Fields<Reader> {
   }
 };
 
+// Decodes the records on up to eight threads; each has its own reader, whose
+// symbol bindings are checked against the shared table afterwards. The first
+// failing record (by position) is the one reported.
+template <class Items>
+void decodeRecords(
+    Items &items,
+    const std::vector<std::pair<std::size_t, std::size_t>> &extents,
+    std::span<const std::uint8_t> bytes,
+    const metadata::DecodeReferences &references, Symbols &symbols) {
+  const std::size_t count = extents.size();
+  std::vector<std::string> failures(count);
+  std::vector<Symbols> bound(count);
+  auto decode = [&](std::size_t i) {
+    try {
+      Reader record(bytes.subspan(extents[i].first, extents[i].second),
+                    references);
+      record.value(items[i]);
+      if (record.position != extents[i].second)
+        reject("trailing data in IR record");
+      bound[i] = std::move(record.symbols);
+    } catch (const InvalidArchive &error) {
+      failures[i] = error.message;
+    }
+  };
+  const std::size_t workers = std::max<std::size_t>(
+      1, std::min<std::size_t>(
+             {8, std::thread::hardware_concurrency(), count / 64 + 1}));
+  std::vector<std::thread> threads;
+  for (std::size_t w = 1; w < workers; ++w)
+    threads.emplace_back([&, w] {
+      for (std::size_t i = w; i < count; i += workers)
+        decode(i);
+    });
+  for (std::size_t i = 0; i < count; i += workers)
+    decode(i);
+  for (auto &thread : threads)
+    thread.join();
+  for (std::size_t i = 0; i < count; ++i) {
+    if (!failures[i].empty())
+      reject(failures[i]);
+    symbols.merge(bound[i]);
+  }
+}
+
 bool validIndex(int index, std::size_t size, bool optional = false) {
   return (optional && index == -1) ||
          (index >= 0 && static_cast<std::size_t>(index) < size);
@@ -596,7 +651,7 @@ EncodeResult encodeProgram(const Program &program,
   try {
     Writer writer(references);
     writer.unsignedInteger(0x5249544d, 4);
-    writer.unsignedInteger(8, 4);
+    writer.unsignedInteger(9, 4);
     if ((!program.functionPackages.empty() &&
          program.functionPackages.size() != program.functions.size()) ||
         (!program.staticPackages.empty() &&
@@ -612,7 +667,14 @@ EncodeResult encodeProgram(const Program &program,
           reject("duplicate IR definition identity");
         writer.text(packages.empty() ? std::string{} : packages[i]);
         context = items[i].name;
-        writer.value(items[i]);
+        // Each record carries its length so a reader can decode records on
+        // several threads.
+        Writer record(references);
+        record.value(items[i]);
+        writer.unsignedInteger(record.bytes.size(), 4);
+        writer.bytes.insert(writer.bytes.end(), record.bytes.begin(),
+                            record.bytes.end());
+        writer.symbols.merge(record.symbols);
         context.clear();
       }
     };
@@ -640,7 +702,7 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
   try {
     Reader reader(bytes, references);
     if (reader.unsignedInteger(4) != 0x5249544d ||
-        reader.unsignedInteger(4) != 8)
+        reader.unsignedInteger(4) != 9)
       reject("unsupported IR archive format or version");
     DecodeResult result;
     auto records = [&](auto &items, auto &packages, auto &names,
@@ -648,6 +710,8 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
       auto count = reader.count(limits::functions);
       std::set<std::string> identities;
       std::set<std::uint32_t> slots;
+      std::vector<std::pair<std::size_t, std::size_t>> extents;
+      extents.reserve(count);
       for (std::uint32_t i = 0; i < count; ++i) {
         auto [name, destination] = reader.identity(kind);
         if (!identities.insert(name).second ||
@@ -656,8 +720,14 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
         names.push_back(std::move(name));
         destinations.push_back(destination);
         reader.text(packages.emplace_back());
-        reader.value(items.emplace_back());
+        auto length = reader.unsignedInteger(4);
+        if (length > bytes.size() - reader.position)
+          reject("truncated IR record");
+        extents.emplace_back(reader.position, length);
+        reader.position += length;
+        items.emplace_back();
       }
+      decodeRecords(items, extents, bytes, references, reader.symbols);
     };
     auto &program = result.program;
     records(program.functions, program.functionPackages,

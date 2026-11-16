@@ -116,9 +116,7 @@ int main() {
   expect(sourceText != std::string::npos, "fixture must contain source text");
   invalidSource[sourceText] = static_cast<char>(255);
   invalidSource.resize(invalidSource.size() - 64);
-  packages::Sha256 invalidHash;
-  invalidHash.update(invalidSource);
-  invalidSource += invalidHash.finish();
+  invalidSource += driver::archiveDigest(invalidSource);
   expect(
       !driver::decodeLibraryArchive(invalidSource, "library-revision", error),
       "well-checksummed invalid source encoding must reject");

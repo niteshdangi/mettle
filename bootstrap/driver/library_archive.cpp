@@ -3,15 +3,41 @@
 #include "support/limits.h"
 #include <algorithm>
 #include <limits>
+#include <thread>
 #include <unordered_set>
 
 namespace mettle::driver {
-namespace {
-std::string digest(std::string_view bytes) {
-  packages::Sha256 hash;
-  hash.update(bytes);
-  return hash.finish();
+
+// SHA-256 over the SHA-256 digests of consecutive 1 MiB blocks, so large
+// archives are hashed on several cores with the same collision resistance.
+std::string archiveDigest(std::string_view bytes) {
+  constexpr std::size_t block = std::size_t{1} << 20;
+  const std::size_t blocks = (bytes.size() + block - 1) / block;
+  std::vector<std::string> parts(blocks);
+  const std::size_t workers = std::min<std::size_t>(
+      blocks, std::max(1u, std::min(8u, std::thread::hardware_concurrency())));
+  auto run = [&](std::size_t first) {
+    for (std::size_t i = first; i < blocks; i += workers) {
+      packages::Sha256 hash;
+      hash.update(bytes.substr(i * block, block));
+      parts[i] = hash.finish();
+    }
+  };
+  std::vector<std::thread> threads;
+  for (std::size_t w = 1; w < workers; ++w)
+    threads.emplace_back(run, w);
+  if (workers)
+    run(0);
+  for (auto &thread : threads)
+    thread.join();
+  packages::Sha256 total;
+  for (const auto &part : parts)
+    total.update(part);
+  return total.finish();
 }
+
+namespace {
+std::string digest(std::string_view bytes) { return archiveDigest(bytes); }
 
 class Writer {
 public:
@@ -25,7 +51,7 @@ public:
     integer(static_cast<std::uint32_t>(value.size()));
     bytes.append(value);
   }
-  void data(const std::vector<std::uint8_t> &value) {
+  void data(std::span<const std::uint8_t> value) {
     text({reinterpret_cast<const char *>(value.data()), value.size()});
   }
 };
@@ -80,7 +106,7 @@ public:
     offset += size;
     return result;
   }
-  std::vector<std::uint8_t> data() {
+  std::span<const std::uint8_t> data() {
     auto size = integer();
     if (!good() || size > remaining()) {
       fail("truncated section");
@@ -89,7 +115,7 @@ public:
     const auto *begin =
         reinterpret_cast<const std::uint8_t *>(bytes.data() + offset);
     offset += size;
-    return {begin, begin + size};
+    return {begin, size};
   }
   Span span(std::size_t sourceCount) {
     auto source = integer();
@@ -350,7 +376,7 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
       return std::nullopt;
     }
   Writer out;
-  out.text("mettle-checked-library-1");
+  out.text("mettle-checked-library-2");
   out.text(sources.identity);
   out.integer(static_cast<std::uint32_t>(sources.sources.size()));
   for (const auto &source : sources.sources) {
@@ -421,9 +447,9 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
   return std::move(out.bytes);
 }
 
-std::optional<LibraryArchive> decodeLibraryArchive(std::string_view bytes,
-                                                   std::string_view identity,
-                                                   std::string &error) {
+std::optional<LibraryArchive>
+decodeLibraryArchive(std::string_view bytes, std::string_view identity,
+                     std::string &error, std::shared_ptr<const void> backing) {
   error.clear();
   if (bytes.size() > limits::sourceBytes || bytes.size() < 64 ||
       digest(bytes.substr(0, bytes.size() - 64)) !=
@@ -432,7 +458,7 @@ std::optional<LibraryArchive> decodeLibraryArchive(std::string_view bytes,
     return std::nullopt;
   }
   Reader in(bytes.substr(0, bytes.size() - 64), error);
-  if (in.text() != "mettle-checked-library-1")
+  if (in.text() != "mettle-checked-library-2")
     in.fail("unsupported format");
   auto revision = in.text();
   if (revision != identity || revision.empty())
@@ -499,10 +525,20 @@ std::optional<LibraryArchive> decodeLibraryArchive(std::string_view bytes,
       in.fail("invalid or duplicate source-module reference");
   }
   archive.macros = in.text();
-  archive.header = in.data();
-  archive.types = in.data();
-  archive.declarations = in.data();
-  archive.ir = in.data();
+  // Borrowed sections need the mapping that holds `bytes`; without one they
+  // are copied.
+  auto section = [&](Section &target) {
+    auto view = in.data();
+    if (backing)
+      target.borrow(view);
+    else
+      target = std::vector<std::uint8_t>(view.begin(), view.end());
+  };
+  section(archive.header);
+  section(archive.types);
+  section(archive.declarations);
+  section(archive.ir);
+  archive.backing = std::move(backing);
   if (in.remaining())
     in.fail("trailing data");
   if (!in.good() || !archive.sources.validate(error))
