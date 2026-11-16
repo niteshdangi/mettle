@@ -13,6 +13,10 @@ struct Hooks {
   std::function<bool(ir::Instruction &, std::span<const TypeBinding>,
                      TypeStore &, Diagnostics &)>
       selectCall{};
+  // Turns the constant of an aggregate-typed interface constant, named by its
+  // projection, into a call of the implementation's initializer.
+  std::function<bool(ir::Instruction &, Type, TypeStore &, Diagnostics &)>
+      aggregateConstant{};
   std::function<Type(Type, std::span<const TypeBinding>, const ir::Function &,
                      Span, TypeStore &, Diagnostics &)>
       validateUnpin{};

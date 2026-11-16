@@ -616,7 +616,13 @@ private:
             identity =
                 hooks.normalizeType(identity, bindings, *types, diagnostics);
           auto value = types->scalarConstantValue(identity);
-          if (!value)
+          if (!value && hooks.aggregateConstant &&
+              hooks.aggregateConstant(
+                  instruction,
+                  types->substitute(instruction.constantParameter, bindings),
+                  *types, diagnostics)) {
+            // Replaced by a call of the implementation's initializer.
+          } else if (!value)
             diagnostics.error(
                 "type", instruction.span,
                 "const parameter did not evaluate in generic instance");

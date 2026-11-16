@@ -165,6 +165,12 @@ private:
   std::unordered_map<std::string, std::size_t> aliases;
   // The synthetic function type-checking each static's initializer, or -1.
   std::vector<int> staticInitializerFunctions;
+  // Initializer function of an interface implementation's aggregate constant,
+  // by implementation declaration index and constant name.
+  std::map<std::pair<std::size_t, std::string>, int>
+      interfaceConstantInitializers;
+  // Declared type of each aggregate constant, by its initializer function.
+  std::map<int, std::pair<Type, Span>> aggregateConstantTypes;
   std::vector<unsigned char> aliasStates;
   mutable std::unordered_map<std::string, std::vector<const Module::Product *>>
       productIndex;

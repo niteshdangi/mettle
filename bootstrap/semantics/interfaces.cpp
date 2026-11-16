@@ -902,7 +902,13 @@ Type Checker::interfaceProjection(Type subject, Type interfaceType,
     error("type", span, "associated projection requires its interface bound");
     return Type::Unknown;
   }
-  return solver.normalize(projection, {}, span);
+  auto normalized = solver.normalize(projection, {}, span);
+  // An aggregate constant has no value to substitute; its use stays the
+  // projection until instantiation calls the implementation's initializer.
+  if (associated->constant && checked.types->isConstant(normalized) &&
+      checked.types->isProduct(checked.types->parameter(normalized).valueType))
+    return projection;
+  return normalized;
 }
 
 std::optional<Type> Checker::interfaceAnnotation(const TypeSyntax &syntax,

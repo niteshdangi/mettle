@@ -370,6 +370,12 @@ if(BUILD_TESTING)
   mettle_add_sharded_test(packages.resolution tests/packages.py
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/packages-evidence"
                    "${PROJECT_SOURCE_DIR}/tests/packages")
+  if(METTLE_ENABLE_SANITIZERS)
+    get_property(METTLE_PACKAGE_TESTS DIRECTORY PROPERTY TESTS)
+    list(FILTER METTLE_PACKAGE_TESTS INCLUDE REGEX "^packages\\.resolution\\.")
+    set_property(TEST ${METTLE_PACKAGE_TESTS} APPEND PROPERTY ENVIRONMENT
+                 "METTLE_CONSUMER_LINK_FLAGS=-fsanitize=address,undefined")
+  endif()
   mettle_add_sharded_test(library.alloc tests/alloc.py
                    "$<TARGET_FILE:mettle>" "${PROJECT_BINARY_DIR}/alloc-evidence"
                    "${PROJECT_SOURCE_DIR}/tests/alloc")

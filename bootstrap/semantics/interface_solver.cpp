@@ -1680,6 +1680,23 @@ Type Solver::normalize(Type type, std::span<const TypeBinding> bindings,
   return type;
 }
 
+std::optional<Selection> Solver::constantInitializer(Type self,
+                                                     Type interfaceType,
+                                                     std::size_t slot,
+                                                     Span span) {
+  auto selected = implementation(self, interfaceType, span, true);
+  if (!selected)
+    return std::nullopt;
+  auto found = selected->first->associated.find(slot);
+  if (found == selected->first->associated.end() ||
+      found->second.initializer < 0)
+    return std::nullopt;
+  Selection result{found->second.initializer, {}};
+  for (auto parameter : selected->first->parameters)
+    result.arguments.push_back(normalize(parameter, selected->second, span));
+  return result;
+}
+
 std::optional<Selection> Solver::method(Type self, Type interfaceType,
                                         std::size_t slot,
                                         std::span<const Type> arguments,

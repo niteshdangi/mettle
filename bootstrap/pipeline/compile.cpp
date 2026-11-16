@@ -292,8 +292,13 @@ public:
               normalize(instruction.interfaceType, {}, function);
           instruction.opaqueType =
               normalize(instruction.opaqueType, {}, function);
-          instruction.constantParameter =
-              normalize(instruction.constantParameter, {}, function);
+          // An aggregate constant keeps its projection: instantiation calls
+          // the implementation's initializer.
+          if (auto constant =
+                  normalize(instruction.constantParameter, {}, function);
+              !types->isConstant(constant) ||
+              !types->isProduct(types->parameter(constant).valueType))
+            instruction.constantParameter = constant;
           for (auto &argument : instruction.typeArguments)
             argument = normalize(argument, {}, function);
           for (auto &[subject, runtime] : instruction.unpinProofs)
@@ -356,6 +361,24 @@ public:
           interfaces::Solver solver(store, database, errors);
           return store.declaredRegions(solver.normalize(type, bindings, {}));
         };
+    hooks.aggregateConstant = [&](ir::Instruction &constant, Type projection,
+                                  TypeStore &store, Diagnostics &errors) {
+      if (!store.isProjection(projection))
+        return false;
+      const auto &projected = store.parameter(projection);
+      interfaces::Solver solver(store, database, errors, {}, {}, true);
+      auto selected = solver.constantInitializer(
+          store.eraseRegions(
+              solver.normalize(projected.operands[0], {}, constant.span)),
+          solver.normalize(projected.operands[1], {}, constant.span),
+          static_cast<std::size_t>(projected.value), constant.span);
+      if (!selected)
+        return false;
+      constant.op = ir::Op::Call;
+      constant.callee = selected->function;
+      constant.typeArguments = std::move(selected->arguments);
+      return true;
+    };
     hooks.selectCall = [&](ir::Instruction &call,
                            std::span<const TypeBinding> bindings,
                            TypeStore &store, Diagnostics &errors) {

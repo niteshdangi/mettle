@@ -556,7 +556,8 @@ static int emitOne(const Options &options, const Source &source,
         const int linkStatus =
             llvm::sys::ExecuteAndWait(linker, refs, std::nullopt, redirects);
         if (std::ifstream log(linkLog); log)
-          std::cerr << log.rdbuf();
+          if (std::ostringstream text; text << log.rdbuf())
+            std::cerr << text.str();
         std::error_code ignored;
         std::filesystem::remove(linkLog, ignored);
         if (linkStatus != 0) {

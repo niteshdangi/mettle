@@ -172,6 +172,42 @@ std::optional<CheckedModule> Checker::run() {
   };
   auto sourceFunctionCount = module.functions.size();
   module.functions.reserve(sourceFunctionCount + module.statics.size());
+  auto createInitializers = [&](bool interfaceImplementations) {
+    for (std::size_t i = 0; i < module.implementations.size(); ++i) {
+      const auto &owner = module.implementations[i];
+      if (owner.negative || owner.interface.empty() == interfaceImplementations)
+        continue;
+      for (const auto &item : owner.associated) {
+        if (!item.constant || !item.constantValue ||
+            (owner.genericParameters.empty() &&
+             !needsConstantTypeCheck(needsConstantTypeCheck,
+                                     *item.constantValue)))
+          continue;
+        if (!owner.interface.empty())
+          interfaceConstantInitializers[{i, item.name}] =
+              static_cast<int>(module.functions.size());
+        Function initializer;
+        initializer.name =
+            "<associated." + std::to_string(module.functions.size()) + ">";
+        initializer.span = item.constantValue->span;
+        initializer.annotation = item.annotation;
+        initializer.item.scope = owner.item.scope;
+        initializer.owner = owner.target.name;
+        initializer.implementation = static_cast<int>(i);
+        initializer.associatedConstantInitializer = true;
+        initializer.lexicalContext = diagnostics.syntaxContext(item.span);
+        initializer.genericParameters = owner.genericParameters;
+        initializer.constraints = owner.constraints;
+        initializer.implicitGenericParameters = owner.genericParameters.size();
+        initializer.constFunction = true;
+        initializer.body =
+            NodeOwner::borrow(const_cast<Node &>(*item.constantValue));
+        module.functions.push_back(std::move(initializer));
+      }
+    }
+  };
+  createInitializers(true);
+  const auto keptFunctionCount = module.functions.size();
   staticInitializerFunctions.assign(module.statics.size(), -1);
   for (std::size_t index = 0; index < module.statics.size(); ++index) {
     auto &storage = module.statics[index];
@@ -194,35 +230,7 @@ std::optional<CheckedModule> Checker::run() {
     initializer.body = NodeOwner::borrow(*storage.initializer);
     module.functions.push_back(std::move(initializer));
   }
-  for (std::size_t i = 0; i < module.implementations.size(); ++i) {
-    const auto &owner = module.implementations[i];
-    if (!owner.interface.empty() || owner.negative)
-      continue;
-    for (const auto &item : owner.associated) {
-      if (!item.constant || !item.constantValue ||
-          (owner.genericParameters.empty() &&
-           !needsConstantTypeCheck(needsConstantTypeCheck,
-                                   *item.constantValue)))
-        continue;
-      Function initializer;
-      initializer.name =
-          "<associated." + std::to_string(module.functions.size()) + ">";
-      initializer.span = item.constantValue->span;
-      initializer.annotation = item.annotation;
-      initializer.item.scope = owner.item.scope;
-      initializer.owner = owner.target.name;
-      initializer.implementation = static_cast<int>(i);
-      initializer.associatedConstantInitializer = true;
-      initializer.lexicalContext = diagnostics.syntaxContext(item.span);
-      initializer.genericParameters = owner.genericParameters;
-      initializer.constraints = owner.constraints;
-      initializer.implicitGenericParameters = owner.genericParameters.size();
-      initializer.constFunction = true;
-      initializer.body =
-          NodeOwner::borrow(const_cast<Node &>(*item.constantValue));
-      module.functions.push_back(std::move(initializer));
-    }
-  }
+  createInitializers(false);
   checked.functions.resize(module.functions.size());
   std::unordered_map<std::string, std::size_t> constructorOrdinals;
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
@@ -1051,8 +1059,14 @@ std::optional<CheckedModule> Checker::run() {
     return std::nullopt;
   finalizeInterfaces();
   exhaustiveness();
-  module.functions.resize(sourceFunctionCount);
-  checked.functions.resize(sourceFunctionCount);
+  for (const auto &[function, declared] : aggregateConstantTypes)
+    if (checked.functions[function].result != Type::Unknown &&
+        checked.types->eraseRegions(checked.functions[function].result) !=
+            checked.types->eraseRegions(declared.first))
+      error("type", declared.second,
+            "associated constant value does not match its declared type");
+  module.functions.resize(keptFunctionCount);
+  checked.functions.resize(keptFunctionCount);
   retainDeclarations();
   if (!requireEntry)
     return diagnostics.empty()

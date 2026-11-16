@@ -17,6 +17,8 @@ fn main(): i32 {
     if *initialized_zero.get() != 0 { return 3 }
     let leaked = alloc.boxed.new(17).leak()
     if unsafe { *leaked } != 17 { return 4 }
+    let reclaimed = unsafe { alloc.boxed.from_raw(leaked) }
+    if *reclaimed.get() != 17 { return 4 }
 
     var rc_uninit = alloc.rc.new_uninit<i32>()
     match take rc_uninit.get_mut() {

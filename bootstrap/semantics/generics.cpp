@@ -153,8 +153,7 @@ void Checker::prepareGenerics() {
                                  interface.constraints,
                                  interfaceGenerics.at(&interface));
   for (const auto &implementation : module.implementations) {
-    if (imported(implementation.span) || !implementation.interface.empty() ||
-        implementation.negative ||
+    if (imported(implementation.span) || implementation.negative ||
         std::none_of(implementation.associated.begin(),
                      implementation.associated.end(),
                      [](const auto &item) { return item.constant; }))

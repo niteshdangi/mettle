@@ -233,6 +233,11 @@ def mettle_version():
     invoke(["check", app], 1, ["error[feature]", "package 'units'"])
 
 
+def consumer_link_flags():
+    """A sanitized compiler's archives need the sanitizer runtime at link."""
+    return os.environ.get("METTLE_CONSUMER_LINK_FLAGS", "").split()
+
+
 def library_entries():
     app = packages("path-dependency/app")
     manifest = app / "package.mettle"
@@ -251,7 +256,7 @@ def library_entries():
         invoke(["build", app, "-o", prefix, "--profile", profile])
         for suffix in (".a", shared_suffix):
             executable = evidence / ("caller-" + profile + suffix)
-            result = processes.run([cxx, "-fuse-ld=lld", str(caller), str(prefix) + suffix,
+            result = processes.run([cxx, "-fuse-ld=lld", *consumer_link_flags(), str(caller), str(prefix) + suffix,
                                      "-Wl,-rpath," + str(prefix.parent), "-pthread", "-o", str(executable)], capture_output=True, text=True)
             assert result.returncode == 0, result.stderr
             assert exit_code(executable) == 0
@@ -266,7 +271,7 @@ def library_entries():
     manifest.write_text(original)
     freestanding = evidence / "freestanding.a"
     invoke(["build", app, "-o", freestanding, "--freestanding", "--cc", "missing-mettle-linker"])
-    result = processes.run([cxx, "-fuse-ld=lld", str(caller), str(freestanding), "-o", str(evidence / "freestanding")],
+    result = processes.run([cxx, "-fuse-ld=lld", *consumer_link_flags(), str(caller), str(freestanding), "-o", str(evidence / "freestanding")],
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     assert exit_code(evidence / "freestanding") == 0

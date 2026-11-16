@@ -708,9 +708,11 @@ bool function(const Function &f, const Program &program,
       case Op::Constant:
         arity(0);
         // A generic body's associated constant has the type parameter's type
-        // until the instance fixes it.
+        // until the instance fixes it; an aggregate one is replaced by a call
+        // of its initializer.
         require(scalar(result) || (n.constantParameter != Type::Unknown &&
-                                   program.types->isParameter(result)));
+                                   (program.types->isParameter(result) ||
+                                    program.types->isProduct(result))));
         if (n.numeric)
           require(isFloating(result) ? validFloatingConstant(*n.numeric, result)
                                      : integerLiteralFits(*n.numeric, result));

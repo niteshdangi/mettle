@@ -546,8 +546,11 @@ WIRE(interfaces::Obligation, v.subject, v.interfaceType, v.property)
 WIRE(interfaces::Associated, v.name, v.parameter, v.parameters, v.defaultValue,
      v.bounds, v.requirements, v.constant, v.regions, v.regionRequirements,
      v.asyncFuture, v.asyncFutureDefaultInferred, v.equalities, v.defaults)
-WIRE(interfaces::AssociatedValue, v.parameters, v.value, v.regions,
-     v.regionRequirements, v.requirements, v.fromDefault)
+void wire(Archive &a, interfaces::AssociatedValue &v) {
+  a(v.parameters, v.value, v.regions, v.regionRequirements, v.requirements,
+    v.fromDefault);
+  a.symbol(metadata::SymbolKind::Function, v.initializer);
+}
 WIRE(interfaces::StructuralPropertyDeclaration, v.negative, v.implementation)
 WIRE(interfaces::Projection, v.parameter, v.subject, v.interfaceType,
      v.associated, v.arguments, v.regionArguments)
@@ -1041,7 +1044,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   }
   result.header = std::move(header.output);
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.11");
+  contracts.tag("mettle.checked-contracts.12");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size();
   contracts(count);
@@ -1113,7 +1116,7 @@ importLibraryDeclarations(std::span<const std::uint8_t> bytes,
     return result;
   }
   Archive archive(bytes, references, types.get());
-  archive.tag("mettle.checked-contracts.11");
+  archive.tag("mettle.checked-contracts.12");
   auto value = std::make_shared<ImportedDeclarations>();
   value->types = std::move(types);
   std::uint64_t count = 0;

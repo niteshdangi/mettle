@@ -837,7 +837,7 @@ std::optional<StoreUsage> Store::clear(bool dryRun, std::string &error) {
     error = "cache store has live build leases";
     return std::nullopt;
   }
-  for (const char *name : {"entries", "blobs", "tmp", "leases"}) {
+  for (const char *name : {"entries", "blobs", "tmp", "leases", "roots"}) {
     fs::remove_all(directory / name, code);
     if (code) {
       error = "cannot remove " + (directory / name).generic_string() + ": " +

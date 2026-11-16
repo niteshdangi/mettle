@@ -344,7 +344,16 @@ void Checker::interfaceImplementations() {
                 bindings);
           }
         }
-        value.value = required.constant
+        if (required.constant && checked.types->isProduct(declaredConstantType))
+          if (auto found = interfaceConstantInitializers.find(
+                  {implementation.declaration, provided->name});
+              found != interfaceConstantInitializers.end()) {
+            value.initializer = found->second;
+            aggregateConstantTypes[found->second] = {declaredConstantType,
+                                                     provided->span};
+          }
+        value.value = value.initializer >= 0 ? Type::Unknown
+                      : required.constant
                           ? provided->constantValue
                                 ? constantType(*provided->constantValue,
                                                declaredConstantType)
@@ -352,7 +361,7 @@ void Checker::interfaceImplementations() {
                       : !provided->value.empty()
                           ? annotation(provided->value, provided->span)
                           : Type::Unknown;
-        if (value.value == Type::Unknown)
+        if (value.value == Type::Unknown && value.initializer < 0)
           error("type", provided->span,
                 "associated item requires a definition");
         if (!required.constant && value.value != Type::Unknown) {
@@ -716,14 +725,14 @@ void Checker::checkAssociatedContracts() {
                   "associated family strengthens its interface bounds");
         }
       auto value = checked.types->substitute(provided.value, publicParameters);
-      if (required.constant &&
+      if (required.constant && provided.initializer < 0 &&
           (!checked.types->isConstant(provided.value) ||
-           associated.normalize(
+           checked.types->eraseRegions(associated.normalize(
                checked.types->parameter(provided.value).valueType,
-               publicParameters, implementation.span) !=
-               associated.normalize(
+               publicParameters, implementation.span)) !=
+               checked.types->eraseRegions(associated.normalize(
                    checked.types->parameter(required.parameter).valueType,
-                   bindings, implementation.span)))
+                   bindings, implementation.span))))
         error("type", implementation.span,
               "associated constant type does not match its declaration");
       if (!required.constant && checked.types->isSized(required.parameter) &&

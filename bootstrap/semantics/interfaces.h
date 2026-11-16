@@ -81,6 +81,10 @@ struct AssociatedValue {
   std::vector<RegionRequirement> regionRequirements{};
   std::vector<Obligation> requirements{};
   bool fromDefault = false;
+  // A constant of non-scalar type is produced by calling this function (an
+  // index in the module that declares the implementation); `value` is then
+  // only a placeholder constant of that type.
+  int initializer = -1;
 };
 struct Implementation {
   Type target = Type::Unknown, interfaceType = Type::Unknown;
@@ -161,6 +165,9 @@ public:
                            bool report = true);
   Type checkedProjection(Type projection, Span span, bool report = true);
   Type normalize(Type type, std::span<const TypeBinding> bindings, Span span);
+  // The function producing the aggregate value of associated constant `slot`.
+  std::optional<Selection> constantInitializer(Type self, Type interfaceType,
+                                               std::size_t slot, Span span);
   std::optional<Selection> method(Type self, Type interfaceType,
                                   std::size_t slot,
                                   std::span<const Type> arguments, Span span);
