@@ -26,8 +26,14 @@ Builder::Value Builder::machineExpression(const Node &node) {
     auto location = place(*node.children[0]->children[0]);
     if (!live())
       return {};
-    for (unsigned i = 0; i < facts.dereferences; ++i)
-      location.fields.push_back(Projection::dereference());
+    if (facts.receiverPlan)
+      location =
+          receiverPlace(std::move(location), *facts.receiverPlan, node.span);
+    else
+      for (unsigned i = 0; i < facts.dereferences; ++i)
+        location.fields.push_back(Projection::dereference());
+    if (!live())
+      return {};
     return emit(
         {ir::Op::SliceLength, {}, {}, {}, "", location, -1, 0, node.span},
         Type::Usize);

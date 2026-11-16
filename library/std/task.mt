@@ -791,7 +791,7 @@ extend<region s> Scope<region s> {
     }
 }
 
-pub fn scope<R, F: for<region s> fn(read Scope<region s>): R>(take f: F): R {
+pub fn scope<R, F: for<region s> take fn(read Scope<region s> from s): R>(take f: F): R {
     let state = Scope(executor(), core.cell.Cell.new(Brand(0u8)))
     let result = f(read state)
     let _polls = state.executor.run_until_stalled()

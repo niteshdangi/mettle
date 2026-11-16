@@ -3,6 +3,8 @@ import core.future.{Context, Future, Poll}
 import std.panic.CatchResult
 import std.task
 
+// Raw cleanup copies become sole owners when their originals are forgotten.
+
 type Panics {}
 extend Panics implements Future {
     type Output = Unit
@@ -32,8 +34,10 @@ fn main(): i32 {
         let counter = retained.get()
         var scope = task.async_scope(counter)
         let panics = scope.spawn(Panics())
+        let reclaimed_panics = unsafe { core.ptr.`read`(core.ptr.from_ref(panics)) }
         core.mem.forget(take panics)
         let sibling = scope.spawn(PendingDrop(counter))
+        let reclaimed_sibling = unsafe { core.ptr.`read`(core.ptr.from_ref(sibling)) }
         core.mem.forget(take sibling)
         task.block_on(take scope)
     })

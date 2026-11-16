@@ -1,4 +1,4 @@
-// expect-error: region 8:15 viewed source does not outlive the required region
+// expect-error: ownership 8:15 cannot store a view of local storage into caller-owned storage
 import std.thread
 
 fn main(): i32 {

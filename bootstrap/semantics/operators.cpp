@@ -1,7 +1,9 @@
 #include "semantics/checker.h"
+#include "support/limits.h"
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <set>
 
 namespace mettle {
 std::optional<int> Checker::operatorCall(Node &node, int left, int right,
@@ -87,9 +89,7 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
           "native operator interface has no required method");
     return inference.fresh();
   }
-  ErasedType descriptor{definition.name,
-                        static_cast<std::uint32_t>(interface->second)};
-  if (!definition.parameters.empty() && right >= 0) {
+  auto inferIndex = [&] {
     // An unsuffixed integer index takes the integer type of the receiver's
     // only integer Index implementation (`list[0]` indexes by usize).
     if ((token == "[]" || token == "[]mut") &&
@@ -115,6 +115,11 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
       if (sole && !ambiguous)
         inference.set(right, *sole);
     }
+  };
+  ErasedType descriptor{definition.name,
+                        static_cast<std::uint32_t>(interface->second)};
+  if (!definition.parameters.empty() && right >= 0) {
+    inferIndex();
     // `Rhs = Self`: a right operand whose generic arguments are still open
     // (`success(1)`) is the same type as the receiver.
     std::function<bool(Type)> open = [&](Type type) {
@@ -149,7 +154,69 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
     return inference.fresh();
   }
   auto bound = checked.types->erasedType(std::move(descriptor));
-  if (!interfaceObligation(self, bound, node.span))
+  bool proven = false;
+  if (node.kind == Kind::Index) {
+    ReceiverPlan plan{inference.value(left), inference.value(left), {}};
+    while (checked.types->isView(plan.target)) {
+      ReceiverStep step;
+      step.source = plan.target;
+      step.target = checked.types->view(plan.target).payload;
+      plan.target = step.target;
+      plan.steps.push_back(std::move(step));
+    }
+    std::set<Type> visited;
+    for (unsigned depth = 0; depth < limits::typeDepth; ++depth) {
+      interfaces::Solver solver(*checked.types, *checked.interfaceData,
+                                diagnostics, interfaceAssumptions(),
+                                regionEnvironment());
+      if (solver.prove({self, bound}, node.span, false)) {
+        proven = true;
+        break;
+      }
+      if (!visited.insert(self).second) {
+        error("type", node.span, "cyclic index dereference");
+        return inference.fresh();
+      }
+      if (depth + 1 == limits::typeDepth) {
+        error("limit", node.span, "index dereference search limit exceeded");
+        return inference.fresh();
+      }
+      ReceiverStep step;
+      if (checked.types->isView(self)) {
+        step.source = self;
+        step.target = checked.types->view(self).payload;
+      } else {
+        auto projection = dereferenceStep(self, false, node.span);
+        if (!projection)
+          break;
+        step = std::move(*projection);
+      }
+      self = step.target;
+      plan.target = self;
+      plan.steps.push_back(std::move(step));
+      if (checked.types->isSlice(self) ||
+          (checked.types->isProduct(self) &&
+           checked.types->product(self).kind == AggregateKind::Array)) {
+        if (mutableIndex && !mutableReceiverPlan(plan, node.span))
+          return inference.fresh();
+        facts(node).receiverPlan = std::move(plan);
+        return std::nullopt;
+      }
+      if (right >= 0 && !definition.parameters.empty()) {
+        inferIndex();
+        auto next = checked.types->erased(bound);
+        next.arguments[0] = inference.value(right);
+        bound = checked.types->erasedType(std::move(next));
+      }
+    }
+    if (plan.steps.size() > dereferences) {
+      if (mutableIndex && !mutableReceiverPlan(plan, node.span))
+        return inference.fresh();
+      facts(node).receiverPlan = std::move(plan);
+      dereferences = 0;
+    }
+  }
+  if (!proven && !interfaceObligation(self, bound, node.span))
     return inference.fresh();
   auto &callee = module.functions[method->function];
   auto &environment = functionGenerics.at(&callee);
@@ -273,6 +340,9 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
 void Checker::requireMutablePlace(Node &node) {
   auto &checkedNode = facts(node);
   checkedNode.exclusivePlace = true;
+  if (node.kind == Kind::Index && checkedNode.receiverPlan &&
+      checkedNode.indexView == Type::Unknown)
+    mutableReceiverPlan(*checkedNode.receiverPlan, node.span);
   if (node.kind == Kind::Index && checkedNode.indexView != Type::Unknown &&
       checked.types->view(checkedNode.indexView).mode != ParameterMode::Mut) {
     auto prior = checked.types->view(checkedNode.indexView).payload;

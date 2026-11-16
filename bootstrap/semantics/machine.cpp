@@ -11,6 +11,8 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   auto storageKind = AggregateKind::Product;
   unsigned dereferences = 0;
   Type self = receiver >= 0 ? inference.value(receiver) : Type::Unknown;
+  if (receiver >= 0 && facts(call).receiverPlan)
+    self = facts(call).receiverPlan->target;
   while (checked.types->isView(self)) {
     self = checked.types->view(self).payload;
     ++dereferences;

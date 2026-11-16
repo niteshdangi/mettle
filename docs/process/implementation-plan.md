@@ -425,6 +425,22 @@ credible regression elsewhere. Verify clean installation and native compilation
 without Rust. Resolve the owner's license/distribution decisions before public
 publication; internal implementation does not require inventing those decisions.
 
+I14 continuation (2026-11-16): source freeze remains open. `9363a26f` has
+2013/2015 source run cases plus both OOM-killed iterator profiles passing on a
+single-worker rerun, and 857/857 fail cases. `4ef6d4c9` fixes zero-size allocator
+alignment; six allocator source/profile cases pass with the ASan/UBSan compiler,
+and the allocator fixture passes emitted AddressSanitizer. Follow-up repairs
+cover scoped callback regions/invocation modes, dereferenced slice operations
+and leaking/stale fixtures. Focused normal and ASan/UBSan compiler regressions,
+seven emitted AddressSanitizer cases and the emitted ThreadSanitizer wake/close
+race pass; raw evidence is under WSL `~/w/`. These are focused results, not the
+remaining CTest qualification. The interrupted CTest run predates these fixes.
+Next run `tools/bench_compare.py --compiler ~/w/mettle-current --output
+~/w/bench-current --pairs 2 --runs 3 --warmup 1 --scale-modules "" --keep-work`
+with the hash-verified Rust/Cargo 1.99.1 on PATH, then resume affected/unfinished
+sanitizer CTest, including `library.std.0 --timeout 10800`. WSL comparison results
+are engineering evidence; the registered runtime/compile/storage gates remain open.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

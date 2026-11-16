@@ -3,6 +3,8 @@ import core.future.{Context, Future, Poll, Waker}
 import std.task
 import std.thread
 
+// Raw cleanup copies become sole owners when their originals are forgotten.
+
 // These raw pointers remain valid on the executor thread until all tasks and
 // saved wakers have been dropped. The test never transfers the task itself.
 type Probe {
@@ -96,11 +98,13 @@ fn main(): i32 {
     if drops != 3 || ex.pending() != 0usize { return 11 }
 
     // A forgotten pending handle cannot remove the executor's registration.
-    {
+    let reclaimed = {
         let other = task.executor()
         let forgotten = other.spawn(Probe(core.ptr.from_mut(drops), core.ptr.from_mut(saved), 0, false))
+        let reclaimed = unsafe { core.ptr.`read`(core.ptr.from_ref(forgotten)) }
         core.mem.forget(take forgotten)
         if other.run_until_stalled() != 1usize || drops != 3 { return 12 }
+        reclaimed
     }
     if drops != 4 { return 13 }
     match mut saved {
@@ -108,15 +112,19 @@ fn main(): i32 {
         none => { return 14 }
     }
     saved = none
+    core.mem.drop(reclaimed)
 
     // A task which retains no waker is still owned by the executor.
-    {
+    let reclaimed = {
         let other = task.executor()
         let forgotten = other.spawn(Dormant(core.ptr.from_mut(drops)))
+        let reclaimed = unsafe { core.ptr.`read`(core.ptr.from_ref(forgotten)) }
         core.mem.forget(take forgotten)
         if other.run_until_stalled() != 1usize || drops != 4 { return 15 }
+        reclaimed
     }
     if drops != 5 { return 16 }
+    core.mem.drop(reclaimed)
 
     // Foreign wake calls can race cancellation, but cannot revive the task.
     let racing = ex.spawn(Probe(core.ptr.from_mut(drops), core.ptr.from_mut(saved), 0, false))

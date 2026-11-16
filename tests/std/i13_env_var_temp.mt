@@ -6,6 +6,7 @@ import std.ffi
 import std.io.Error
 import std.path.path_from_text
 import core.text.Text
+import core.iter.Iterator
 
 fn require_error<T: core.error.Error>() {}
 
@@ -63,13 +64,15 @@ fn run(): i32 throws Error {
     // vars lists the entry set_var created; current_dir follows set_current_dir.
     unsafe { try std.env.set_var(name, ffi.os_str_from_text("seen")) }
     var seen = false
-    let all = std.env.vars_os()
-    var i = 0usize
-    while i < all.len() {
-        if all[i].name.as_os_str().same(name) && all[i].value.as_os_str().same(ffi.os_str_from_text("seen")) {
+    var all = std.env.vars_os()
+    while true {
+        let (key, value) = match take all.next() {
+            present(entry) => entry,
+            none => { break }
+        }
+        if key.as_os_str().same(name) && value.as_os_str().same(ffi.os_str_from_text("seen")) {
             seen = true
         }
-        i += 1usize
     }
     if !seen { return 11 }
     unsafe { try std.env.remove_var(name) }

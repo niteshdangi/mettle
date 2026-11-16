@@ -599,7 +599,7 @@ extend<region s> Scope<region s> {
     }
 }
 
-pub fn scope<R, F: for<region s> fn(read Scope<region s> from s): R>(take f: F): R {
+pub fn scope<R, F: for<region s> take fn(read Scope<region s> from s): R>(take f: F): R {
     let state = Scope(mutex.new(alloc.vec.new<ptr<mut Header>>()), core.cell.Cell.new(Brand(0u8)))
     let guard = ScopeGuard(read state, false)
     f(read state)

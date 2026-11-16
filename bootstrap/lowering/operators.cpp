@@ -23,6 +23,9 @@ Builder::Value Builder::operatorExpression(const Node &node) {
           value.type, ir::Access::Read);
     }
     if (mode == ParameterMode::Read || mode == ParameterMode::Mut) {
+      if (index == 0 && facts.receiverPlan)
+        return receiverBorrow(source, *facts.receiverPlan, mode,
+                              facts.receiverReservation);
       const auto sourceType = module.facts(source).type;
       auto dereferences =
           index == 0 ? facts.dereferences

@@ -6,6 +6,8 @@ import core.future.{Context, Future, Poll, Waker}
 import std.task
 import std.thread
 
+// Raw cleanup copies become sole owners when their originals are forgotten.
+
 type Child<region r> {
     value: read i32 from r
     drops: read core.sync.atomic.AtomicUsize from r
@@ -38,8 +40,10 @@ extend<region r> Parent<region r> implements Future {
         let value = me.value
         let drops = me.drops
         let saved = me.saved
+        var reclaimed: task.JoinHandle<i32>? = none
         task.scope(fn(read s: task.Scope): Unit {
             let child = s.spawn(Child(value, drops, saved, true))
+            reclaimed = present(unsafe { core.ptr.`read`(core.ptr.from_ref(child)) })
             core.mem.forget(take child)
         })
         Poll.Pending
@@ -77,9 +81,11 @@ fn main(): i32 {
     })
     if result != 42 || drops.load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 1 }
 
-    task.scope(fn(read s: task.Scope): Unit {
+    let reclaimed = task.scope(fn(read s: task.Scope): task.JoinHandle<i32> {
         let forgotten = s.spawn(Child(read value, read drops, saved_ptr, true))
+        let reclaimed = unsafe { core.ptr.`read`(core.ptr.from_ref(forgotten)) }
         core.mem.forget(take forgotten)
+        reclaimed
     })
     if drops.load(core.sync.atomic.Ordering.SeqCst) != 2usize { return 2 }
     match mut saved {
@@ -87,6 +93,7 @@ fn main(): i32 {
         none => { return 3 }
     }
     saved = none
+    core.mem.drop(reclaimed)
 
     // Unwinding the parent still cancels a forgotten borrowing child.
     let count = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
@@ -95,8 +102,10 @@ fn main(): i32 {
         let borrowed_local = 8
         var no_waker: Waker? = none
         let ptr = core.ptr.from_mut(no_waker)
+        var reclaimed: task.JoinHandle<i32>? = none
         task.scope(fn(read s: task.Scope): Unit {
             let forgotten = s.spawn(Child(read borrowed_local, probe.get(), ptr, true))
+            reclaimed = present(unsafe { core.ptr.`read`(core.ptr.from_ref(forgotten)) })
             core.mem.forget(take forgotten)
             panic("scope parent panic")
         })

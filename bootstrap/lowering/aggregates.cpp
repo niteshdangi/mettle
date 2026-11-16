@@ -19,8 +19,14 @@ Place Builder::indexPlace(const Node &node, bool exclusive) {
   auto source = place(*node.children[0], false, exclusive);
   if (!live())
     return {-1, {}};
-  for (unsigned i = 0; i < module.facts(node).dereferences; ++i)
-    source.fields.push_back(Projection::dereference());
+  if (module.facts(node).receiverPlan)
+    source = receiverPlace(std::move(source), *module.facts(node).receiverPlan,
+                           node.span);
+  else
+    for (unsigned i = 0; i < module.facts(node).dereferences; ++i)
+      source.fields.push_back(Projection::dereference());
+  if (!live())
+    return {-1, {}};
   if (node.children[1]->kind == Kind::Range)
     return rangePlace(node, std::move(source), exclusive);
   auto index = use(expression(*node.children[1]));

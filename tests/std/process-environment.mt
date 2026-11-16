@@ -20,7 +20,7 @@ fn run(): i32 throws Error {
         success(text) => { if text.as_text() != "parent" { return 1 } },
         failure(_) => { return 2 }
     }
-    let snapshot = env.vars_os()
+    var snapshot = env.vars_os()
     let invalid = [255u8]
     unsafe { try env.set_var(name, ffi.os_str(invalid)) }
     match take capture env.`var`(name) {
@@ -33,13 +33,15 @@ fn run(): i32 throws Error {
         }
     }
     var found = false
-    var index = 0usize
-    while index < snapshot.len() {
-        if snapshot[index].name.as_os_str().same(name) {
-            if !snapshot[index].value.as_os_str().same(parent) { return 6 }
+    while true {
+        let (key, value) = match take snapshot.next() {
+            present(entry) => entry,
+            none => { break }
+        }
+        if key.as_os_str().same(name) {
+            if !value.as_os_str().same(parent) { return 6 }
             found = true
         }
-        index += 1usize
     }
     if !found { return 7 }
     unsafe { try env.set_var(name, parent) }

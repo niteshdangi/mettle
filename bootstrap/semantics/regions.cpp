@@ -3165,6 +3165,11 @@ Type RegionPass::expression(const Node &node) {
   case Kind::Field:
   case Kind::Index: {
     auto base = expression(*node.children[0]);
+    if (node.kind == Kind::Index && facts(node).receiverPlan &&
+        facts(node).indexView == Type::Unknown) {
+      auto location = backing(*node.children[0]);
+      base = receiver(base, location, *facts(node).receiverPlan, node.span);
+    }
     while (types.isView(base))
       base = types.view(base).payload;
     if (node.kind == Kind::Index && facts(node).indexView != Type::Unknown) {

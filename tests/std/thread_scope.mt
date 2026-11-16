@@ -10,7 +10,9 @@ type Tracker {
 fn main(): i32 {
   // scoped threads borrow locals and finish before the scope returns
   let data = 21
+  var callbacks = 0
   let total = thread.scope(fn(read s: thread.Scope): i32 {
+    callbacks += 1
     let a = s.spawn(fn(): i32 { data + 1 })
     let b = s.spawn(fn(): i32 { data * 2 })
     let x = capture a.join()
@@ -20,6 +22,9 @@ fn main(): i32 {
     xv + yv
   })
   if total != 64 { return 1 }
+  if callbacks != 1 { return 10 }
+  let token = heap 7
+  if thread.scope(take fn(read s: thread.Scope): i32 { token.into_inner() }) != 7 { return 11 }
 
   // an unjoined scoped thread is joined at scope exit
   let hits = core.sync.atomic.AtomicUsize.new(0usize)

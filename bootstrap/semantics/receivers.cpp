@@ -853,6 +853,12 @@ std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
           return std::nullopt;
       }
     }
+    if (checked.types->isSlice(plan.target) &&
+        call.children[0]->text == "len") {
+      if (!plan.steps.empty())
+        facts(call).receiverPlan = std::move(plan);
+      return std::nullopt;
+    }
     ReceiverStep step;
     if (checked.types->isView(plan.target)) {
       step.source = plan.target;

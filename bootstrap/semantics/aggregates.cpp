@@ -152,7 +152,9 @@ int Checker::aggregate(Node &n, bool reachable) {
         }
         return *result;
       }
-      if (sliced) {
+      if (facts(n).exclusivePlace && facts(n).receiverPlan)
+        mutableReceiverPlan(*facts(n).receiverPlan, n.span);
+      if (sliced && !facts(n).receiverPlan) {
         error("type", n.span,
               "range indexing requires an array, slice or a type "
               "implementing core.ops.IndexRange");
@@ -164,7 +166,11 @@ int Checker::aggregate(Node &n, bool reachable) {
       inference.equal(key, inference.fresh(Type::I32), n.children[1]->span,
                       true);
     int result = inference.fresh();
-    fieldRequests.push_back({&n, base, result});
+    fieldRequests.push_back(
+        {&n,
+         facts(n).receiverPlan ? inference.fresh(facts(n).receiverPlan->target)
+                               : base,
+         result});
     return result;
   }
   if (n.kind == Kind::Coalesce) {

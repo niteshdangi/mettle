@@ -6,6 +6,8 @@ import std.sync.barrier
 import std.task
 import std.thread
 
+// Raw cleanup copies become sole owners when their originals are forgotten.
+
 type ParentWake {
     entered: Shared<barrier.Barrier>
     release: Shared<barrier.Barrier>
@@ -44,9 +46,10 @@ fn main(): i32 {
     let parent_waker = task.waker_from_shared(read parent)
     var saved: Waker? = none
 
-    let worker = {
+    let (worker, reclaimed) = {
         var scope = task.async_scope(read anchor)
         let child = scope.spawn(Pending(read drops, core.ptr.from_mut(saved)))
+        let reclaimed = unsafe { core.ptr.`read`(core.ptr.from_ref(child)) }
         core.mem.forget(take child)
         {
             var pin_ = core.pin.Pin.new(mut scope)
@@ -65,7 +68,7 @@ fn main(): i32 {
             0
         })
         let _arrived = entered.get().wait()
-        worker
+        (worker, reclaimed)
     }
 
     // The wake callback has cloned the parent waker and is held outside the
@@ -76,5 +79,6 @@ fn main(): i32 {
         _ => { return 3 }
     }
     if drops.load(core.sync.atomic.Ordering.SeqCst) != 1usize { return 4 }
+    core.mem.drop(reclaimed)
     0
 }

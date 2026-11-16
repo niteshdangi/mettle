@@ -8,8 +8,11 @@ async fn borrowed(read value: i32): i32 {
 
 fn main(): i32 {
     let value = 42
-    let result = task.scope(fn(read s: task.Scope): i32 {
-        let child = s.spawn(borrowed(read value))
+    let source = read value
+    let token = heap 7
+    let result = task.scope(take fn(read s: task.Scope): i32 {
+        if token.into_inner() != 7 { return -2 }
+        let child = s.spawn(borrowed(source))
         match take capture child.join() {
             success(v) => v,
             failure(error) => -1

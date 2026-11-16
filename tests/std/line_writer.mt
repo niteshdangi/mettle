@@ -11,7 +11,10 @@ fn run(): i32 throws io.Error {
     try writer.flush()
     if writer.get_ref().as_slice() != "first line\nsecond".as_bytes() { return 3 }
     try writer.write_some(" tail".as_bytes())
-    let inner = try writer.into_inner()
+    let inner = match take capture writer.into_inner() {
+        success(inner) => inner,
+        failure(error) => throw error.into_error()
+    }
     if inner.as_slice() != "first line\nsecond tail".as_bytes() { return 4 }
     0
 }

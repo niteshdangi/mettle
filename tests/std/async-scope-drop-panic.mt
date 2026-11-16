@@ -2,6 +2,8 @@ import core.future.{Context, Future, Poll}
 import std.panic.CatchResult
 import std.task
 
+// Raw cleanup copies become sole owners when their originals are forgotten.
+
 type PanicsOnDrop {
     drop { panic("scope child destructor panic") }
 }
@@ -31,11 +33,16 @@ fn main(): i32 {
     let drops = core.sync.atomic.AtomicUsize.new(0usize)
     let counter = read drops
     let caught = std.panic.catch_panic(take fn(): Unit {
+        var reclaimed: (task.AsyncJoinHandle<Unit>, task.AsyncJoinHandle<Unit>)? = none
         {
             var scope = task.async_scope(counter)
             let panicker = scope.spawn(PanicsOnDrop())
-            core.mem.forget(take panicker)
             let sibling = scope.spawn(CountedPending(counter))
+            reclaimed = present((
+                unsafe { core.ptr.`read`(core.ptr.from_ref(panicker)) },
+                unsafe { core.ptr.`read`(core.ptr.from_ref(sibling)) }
+            ))
+            core.mem.forget(take panicker)
             core.mem.forget(take sibling)
             {
                 var pin_ = core.pin.Pin.new(mut scope)
