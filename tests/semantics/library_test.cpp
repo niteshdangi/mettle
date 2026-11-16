@@ -465,6 +465,12 @@ fn main(): i32 {
   truncated.pop_back();
   expect(!importLibraryDeclarations(truncated, types, decode),
          "truncated contract payload is rejected");
+  auto overflowing = declarations.contracts;
+  overflowing.front() |= 0x80;
+  overflowing.insert(overflowing.begin() + 1, 8, 0x80);
+  overflowing.insert(overflowing.begin() + 9, 0x02);
+  expect(!importLibraryDeclarations(overflowing, types, decode),
+         "overflowing LEB128 tag length is rejected");
   auto invalidReferences = decode;
   invalidReferences.type = {};
   expect(!importLibraryDeclarations(declarations.contracts, types,
@@ -480,9 +486,10 @@ fn main(): i32 {
          "header mounting rejects trailing bytes");
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
-      sizeof(std::uint64_t) +
-      std::string_view("mettle.checked-contracts.9").size();
-  std::fill_n(oversized.begin() + inventoryOffset, sizeof(std::uint64_t), 0xff);
+      1 + std::string_view("mettle.checked-contracts.12").size();
+  oversized[inventoryOffset] = 0xff;
+  oversized.insert(oversized.begin() + inventoryOffset + 1, 8, 0xff);
+  oversized.insert(oversized.begin() + inventoryOffset + 9, 0x01);
   expect(!importLibraryDeclarations(oversized, types, decode),
          "oversized function inventories fail before allocation");
   for (std::size_t i = 0; i < 48; ++i) {

@@ -37,7 +37,8 @@ public:
     if (!good())
       return;
     if constexpr (std::is_integral_v<T>) {
-      // LEB128; signed values are zigzag-encoded so small magnitudes stay short.
+      // LEB128; signed values are zigzag-encoded so small magnitudes stay
+      // short.
       constexpr bool isSigned = std::is_signed_v<T>;
       if (reading()) {
         std::uint64_t bits = 0;
@@ -48,6 +49,10 @@ public:
             return;
           }
           auto byte = input[offset++];
+          if (shift == 63 && byte > 1) {
+            fail("declaration integer exceeds its representation");
+            return;
+          }
           bits |= std::uint64_t(byte & 0x7f) << shift;
           if (!(byte & 0x80))
             break;
@@ -179,7 +184,7 @@ public:
     if (!good())
       return;
     if (reading()) {
-      if (count > (input.size() - offset) / 16) {
+      if (count > (input.size() - offset) / 2) {
         fail("declaration map exceeds its payload");
         return;
       }
@@ -204,7 +209,7 @@ public:
     if (!good())
       return;
     if (reading()) {
-      if (count > input.size() / 16) {
+      if (count > (input.size() - offset) / 2) {
         fail("hygienic declaration map exceeds its payload");
         return;
       }

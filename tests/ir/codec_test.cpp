@@ -702,6 +702,11 @@ void rawFieldCoverage() {
   Program empty;
   auto minimal = encodeProgram(empty, encode);
   require(bool(minimal), minimal.error.c_str());
+  bad = minimal.bytes;
+  bad[8] = 0x80;
+  bad.insert(bad.begin() + 9, 8, 0x80);
+  bad.insert(bad.begin() + 17, 0x02);
+  require(!decodeProgram(bad, decode), "overflowing LEB128 count accepted");
   // Integers are variable-length, so find the corruptible bytes by scanning.
   auto rejectedAt = [&](std::uint8_t value, const char *message) {
     for (std::size_t i = 0; i < minimal.bytes.size(); ++i) {

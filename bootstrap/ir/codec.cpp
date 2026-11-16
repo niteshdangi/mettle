@@ -7,6 +7,7 @@
 #include <set>
 #include <thread>
 #include <type_traits>
+#include <unordered_map>
 
 namespace mettle::ir {
 namespace {
@@ -173,19 +174,17 @@ template <class T, class U> struct IsPair<std::pair<T, U>> : std::true_type {};
 struct Symbols {
   std::map<std::pair<SymbolKind, std::uint32_t>, std::string> identities;
   std::map<std::pair<SymbolKind, std::string>, std::uint32_t> indices;
-  void bind(SymbolKind kind, std::uint32_t index, const std::string &name) {
+  void bind(SymbolKind kind, std::uint32_t index, std::string_view name) {
     // Repeated references dominate; probe before building a node.
     auto known = identities.find({kind, index});
-    auto named = indices.find({kind, name});
-    if (known != identities.end() && named != indices.end()) {
-      if (known->second != name || named->second != index)
+    if (known != identities.end()) {
+      if (known->second != name)
         reject("inconsistent or aliased IR logical symbol mapping");
       return;
     }
-    if (known != identities.end() || named != indices.end())
+    if (!indices.emplace(std::pair{kind, std::string(name)}, index).second)
       reject("inconsistent or aliased IR logical symbol mapping");
     identities.emplace(std::pair{kind, index}, name);
-    indices.emplace(std::pair{kind, name}, index);
   }
   void merge(const Symbols &other) {
     for (const auto &[key, name] : other.identities)
@@ -261,8 +260,19 @@ struct Writer : Fields<Writer> {
   const metadata::EncodeReferences &references;
   Symbols symbols;
   std::vector<std::uint8_t> bytes;
-  explicit Writer(const metadata::EncodeReferences &references)
-      : references(references) {}
+  struct TextHash {
+    using is_transparent = void;
+    std::size_t operator()(std::string_view text) const {
+      return std::hash<std::string_view>{}(text);
+    }
+  };
+  bool interned;
+  std::unordered_map<std::string, std::uint32_t, TextHash, std::equal_to<>>
+      textIndices;
+  std::vector<const std::string *> texts;
+  explicit Writer(const metadata::EncodeReferences &references,
+                  bool interned = false)
+      : references(references), interned(interned) {}
   void unsignedInteger(std::uint64_t number, unsigned width) {
     if (bytes.size() > limits::sourceBytes - 10)
       reject("IR archive exceeds compiler file size limit");
@@ -279,6 +289,17 @@ struct Writer : Fields<Writer> {
   }
   void boolean(bool v) { unsignedInteger(v, 1); }
   void text(const std::string &v) {
+    if (interned) {
+      auto [found, added] =
+          textIndices.try_emplace(v, static_cast<std::uint32_t>(texts.size()));
+      if (added) {
+        if (texts.size() >= limits::tokens)
+          reject("IR string table exceeds compiler count limit");
+        texts.push_back(&found->first);
+      }
+      unsignedInteger(found->second, 4);
+      return;
+    }
     if (v.size() > limits::sourceBytes ||
         bytes.size() > limits::sourceBytes - v.size() ||
         bytes.size() + v.size() > limits::sourceBytes - 4)
@@ -338,11 +359,19 @@ struct Reader : Fields<Reader> {
   Symbols symbols;
   std::span<const std::uint8_t> bytes;
   std::size_t position = 0;
+  bool interned;
+  std::vector<std::string_view> texts;
+  metadata::SourceReference sourceReference;
   Reader(std::span<const std::uint8_t> bytes,
-         const metadata::DecodeReferences &references)
-      : references(references), bytes(bytes) {
+         const metadata::DecodeReferences &references, bool interned = false)
+      : references(references), bytes(bytes), interned(interned) {
     if (bytes.size() > limits::sourceBytes)
       reject("IR archive exceeds compiler file size limit");
+    if (interned) {
+      auto size = count(limits::tokens);
+      for (std::uint32_t i = 0; i < size; ++i)
+        texts.push_back(rawText());
+    }
   }
   std::uint64_t unsignedInteger(unsigned width) {
     if (width == 1) {
@@ -355,6 +384,8 @@ struct Reader : Fields<Reader> {
       if (position >= bytes.size() || shift > 63)
         reject("truncated IR archive");
       auto byte = bytes[position++];
+      if (shift == 63 && byte > 1)
+        reject("IR integer exceeds its width");
       result |= std::uint64_t{byte & 0x7fu} << shift;
       if (!(byte & 0x80))
         break;
@@ -369,13 +400,24 @@ struct Reader : Fields<Reader> {
       reject("invalid IR boolean");
     v = bit != 0;
   }
-  void text(std::string &v) {
+  std::string_view rawText() {
     auto count = unsignedInteger(4);
     if (count > bytes.size() - position)
       reject("truncated IR string");
-    v.assign(reinterpret_cast<const char *>(bytes.data() + position), count);
+    std::string_view result(
+        reinterpret_cast<const char *>(bytes.data() + position), count);
     position += count;
+    return result;
   }
+  std::string_view text() {
+    if (!interned)
+      return rawText();
+    auto index = unsignedInteger(4);
+    if (index >= texts.size())
+      reject("invalid IR string table reference");
+    return texts[index];
+  }
+  void text(std::string &v) { v = text(); }
   std::uint32_t count(std::size_t limit) {
     auto count = unsignedInteger(4);
     if (count > limit || count > bytes.size() - position)
@@ -408,7 +450,7 @@ struct Reader : Fields<Reader> {
     v = *ref;
   }
   void source(Span &v) {
-    metadata::SourceReference source;
+    auto &source = sourceReference;
     text(source.revision);
     source.begin = static_cast<std::uint32_t>(unsignedInteger(4));
     source.end = static_cast<std::uint32_t>(unsignedInteger(4));
@@ -419,15 +461,14 @@ struct Reader : Fields<Reader> {
       reject("unmapped or invalid IR source reference");
     v = *ref;
   }
-  std::pair<std::string, std::uint32_t> identity(SymbolKind kind) {
-    std::string name;
-    text(name);
+  std::pair<std::string_view, std::uint32_t> identity(SymbolKind kind) {
+    auto name = text();
     auto ref = references.symbol ? references.symbol(kind, name) : std::nullopt;
     if (name.empty() || !ref ||
         *ref > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
       reject("unmapped or invalid IR logical symbol");
     symbols.bind(kind, *ref, name);
-    return {std::move(name), *ref};
+    return {name, *ref};
   }
   void symbol(int &id, SymbolKind kind) {
     bool present;
@@ -451,7 +492,7 @@ void decodeRecords(
   auto decode = [&](std::size_t i) {
     try {
       Reader record(bytes.subspan(extents[i].first, extents[i].second),
-                    references);
+                    references, true);
       record.value(items[i]);
       if (record.position != extents[i].second)
         reject("trailing data in IR record");
@@ -651,7 +692,7 @@ EncodeResult encodeProgram(const Program &program,
   try {
     Writer writer(references);
     writer.unsignedInteger(0x5249544d, 4);
-    writer.unsignedInteger(9, 4);
+    writer.unsignedInteger(10, 4);
     if ((!program.functionPackages.empty() &&
          program.functionPackages.size() != program.functions.size()) ||
         (!program.staticPackages.empty() &&
@@ -669,9 +710,17 @@ EncodeResult encodeProgram(const Program &program,
         context = items[i].name;
         // Each record carries its length so a reader can decode records on
         // several threads.
-        Writer record(references);
+        Writer record(references, true);
         record.value(items[i]);
-        writer.unsignedInteger(record.bytes.size(), 4);
+        Writer strings(references);
+        strings.count(record.texts.size(), limits::tokens);
+        for (const auto *text : record.texts)
+          strings.text(*text);
+        if (record.bytes.size() > limits::sourceBytes - strings.bytes.size())
+          reject("IR record exceeds compiler file size limit");
+        writer.unsignedInteger(strings.bytes.size() + record.bytes.size(), 4);
+        writer.bytes.insert(writer.bytes.end(), strings.bytes.begin(),
+                            strings.bytes.end());
         writer.bytes.insert(writer.bytes.end(), record.bytes.begin(),
                             record.bytes.end());
         writer.symbols.merge(record.symbols);
@@ -702,7 +751,7 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
   try {
     Reader reader(bytes, references);
     if (reader.unsignedInteger(4) != 0x5249544d ||
-        reader.unsignedInteger(4) != 9)
+        reader.unsignedInteger(4) != 10)
       reject("unsupported IR archive format or version");
     DecodeResult result;
     auto records = [&](auto &items, auto &packages, auto &names,
@@ -714,10 +763,10 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
       extents.reserve(count);
       for (std::uint32_t i = 0; i < count; ++i) {
         auto [name, destination] = reader.identity(kind);
-        if (!identities.insert(name).second ||
+        if (!identities.emplace(name).second ||
             !slots.insert(destination).second)
           reject("duplicate or aliased IR definition identity");
-        names.push_back(std::move(name));
+        names.emplace_back(name);
         destinations.push_back(destination);
         reader.text(packages.emplace_back());
         auto length = reader.unsignedInteger(4);
@@ -740,7 +789,7 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
     std::set<std::uint32_t> slots;
     for (std::uint32_t i = 0; i < count; ++i) {
       auto [name, slot] = reader.identity(SymbolKind::Closure);
-      if (!identities.insert(name).second || !slots.insert(slot).second)
+      if (!identities.emplace(name).second || !slots.insert(slot).second)
         reject("duplicate or aliased IR closure identity");
       int function;
       reader.symbol(function, SymbolKind::Function);

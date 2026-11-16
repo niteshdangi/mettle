@@ -487,6 +487,14 @@ warm semantic-edit pairs (after separate cache primes) reduced median type-graph
 import from 362 ms to 257 ms; whole-build medians were 2.94 s and 2.89 s, too
 noisy to establish an overall speedup. All eight measured executables passed.
 Transient instrumentation was removed; evidence is in `~/w/import-dense/`.
+IR format v10 batch: per-record string tables decoded as borrowed views, IR
+decode overlapped with declaration import, and LEB128 overflow rejected in both
+IR and declaration readers (declaration map bounds now match variable-length
+encoding). Largest library blob 249.3 MB to 206.4 MB; four alternating warm
+semantic-edit pairs: median 2.72 s to 2.42 s; alternating cold primes 33.8 s
+before and 33.4-34.3 s after (no cold regression). All measured executables
+passed; `ir.codec` and `compiler.library-declarations` pass. ASan/UBSan and
+broad suites not rerun for this batch. Evidence: `~/w/perf-import/`.
 Next: profile declaration import before choosing the next structural change.
 Lazy bodies, cross-program instantiations and parallel analyses/codegen remain
 unimplemented; source freeze and final qualification remain open.

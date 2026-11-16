@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <charconv>
+#include <future>
 #include <iostream>
 #include <limits>
 #include <set>
@@ -713,13 +714,17 @@ CheckedLibrary::import(const Module &module,
       return std::nullopt;
     return graph.roots[reference];
   };
+  // Decoders share only immutable tables; the future joins before they expire.
+  auto pendingIR = std::async(std::launch::async | std::launch::deferred, [&] {
+    return ir::decodeProgram(archive.ir, references);
+  });
   auto declarations =
       importLibraryDeclarations(archive.declarations, types, references);
   if (!declarations)
     return fail(declarations.error);
   if (declarations.declarations->closures.size() != closureCount)
     return fail("compiled closure declarations do not form the header prefix");
-  auto decoded = ir::decodeProgram(archive.ir, references);
+  auto decoded = pendingIR.get();
   if (!decoded)
     return fail(decoded.error);
   if (decoded.program.functions.size() < functions + defaults.size() ||
