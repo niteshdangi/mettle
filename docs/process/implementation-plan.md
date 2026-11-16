@@ -435,11 +435,21 @@ and leaking/stale fixtures. Focused normal and ASan/UBSan compiler regressions,
 seven emitted AddressSanitizer cases and the emitted ThreadSanitizer wake/close
 race pass; raw evidence is under WSL `~/w/`. These are focused results, not the
 remaining CTest qualification. The interrupted CTest run predates these fixes.
-Next run `tools/bench_compare.py --compiler ~/w/mettle-current --output
-~/w/bench-current --pairs 2 --runs 3 --warmup 1 --scale-modules "" --keep-work`
-with the hash-verified Rust/Cargo 1.99.1 on PATH, then resume affected/unfinished
-sanitizer CTest, including `library.std.0 --timeout 10800`. WSL comparison results
-are engineering evidence; the registered runtime/compile/storage gates remain open.
+`1f53e9aa` contains those follow-up repairs. The hash-verified Rust/Cargo 1.99.1
+comparison completed all six workloads with matching original and edited outputs
+(two pairs, three runtime runs, one warmup, no scaling families). Results and raw
+inputs remain in WSL `~/w/bench-current/`. Allocating workloads measured median
+cold builds of 66–68 s versus Rust's 0.26–0.31 s, with substantial runtime and
+retained-storage gaps too. These are WSL engineering measurements, not release
+qualification; performance repair and the registered gates remain open.
+Owner requested wrap-up before another sanitizer batch. The old CTest log has
+134/258 completed tests: 110 passed and 24 failed/timed out; the other 124 are
+unrun. Its failures need current-tree CTest confirmation despite the focused
+repairs passing. Next resume affected/unfinished sanitizer CTest from
+`~/mettle-i-asan/build`, preserving `~/w/asan/ctest.log`; apply the requested
+10800-second timeout only to `library.std.0`. Run the memory-heavy
+`source.run.15` and `.16` shards separately at one worker. No background test or
+benchmark remains running at this handoff.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

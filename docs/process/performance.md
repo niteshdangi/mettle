@@ -222,6 +222,8 @@ by the tool's `--help`. Workloads cover the P01-P06 subsets the compiler
 supports; P07-P12 are added when comparable. Programs return a 7-bit checksum
 as exit status; the harness requires equal status and stdout from both
 languages for the clean and the semantically edited build.
+Check-only measurements use a separate fresh cache/target directory on both
+sides. P05 uses fixed-key SipHash-1-3 builders and get-then-insert on both sides.
 
 Rust profile: `opt-level=3`, `debug=false`, `lto=false`, `codegen-units=16`,
 `panic=abort`, `overflow-checks=false`, `incremental=false`, edition 2024, host

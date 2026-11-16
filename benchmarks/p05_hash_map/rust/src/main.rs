@@ -1,15 +1,17 @@
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, DefaultHasher};
 
 fn seed() -> i64 { 12345i64 } // bench-edit-point
 
 fn main() {
-    let mut counts: HashMap<i32, i32> = HashMap::new();
+    let mut counts: HashMap<i32, i32, BuildHasherDefault<DefaultHasher>> = HashMap::default();
     let mut state = seed();
     let mut index = 0;
     while index < 2000000 {
         state = (state * 1103515245i64 + 12345i64) % 2147483648i64;
         let key = ((state >> 8i64) % 100003i64) as i32;
-        *counts.entry(key).or_insert(0) += 1;
+        let current = counts.get(&key).copied().unwrap_or(0);
+        counts.insert(key, current + 1);
         index += 1;
     }
     let mut checksum = 0i64;

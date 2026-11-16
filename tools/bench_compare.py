@@ -389,7 +389,8 @@ class Side:
 
     def check(self):
         if self.language == "mettle":
-            return self.runner.must([self.compiler, "check", self.entry])
+            return self.runner.must([self.compiler, "check", self.entry,
+                                     "--cache-dir", self.check_target])
         env = clean_environment(self.cargo_home, self.check_target)
         return self.runner.must(["cargo", "check", "--release", "--offline", "--quiet",
                                  "--manifest-path", self.tree / "Cargo.toml"], env=env)
