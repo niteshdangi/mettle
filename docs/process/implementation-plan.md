@@ -450,6 +450,15 @@ repairs passing. Next resume affected/unfinished sanitizer CTest from
 10800-second timeout only to `library.std.0`. Run the memory-heavy
 `source.run.15` and `.16` shards separately at one worker. No background test or
 benchmark remains running at this handoff.
+Root cause of the allocating-workload gaps (runtime 33–48x, 66 s cold builds, 8 MB
+binaries): every function is emitted as an outlined `<name>.body` plus `.unwind`
+pair run by the C++ trampoline `mettle_rt_run`, with all locals in a memory frame
+the optimizer cannot see through, so library `len`/`index`/`push` calls are never
+inlined or promoted to registers and every function prologue materializes the
+static addresses. The repair is to emit ordinary LLVM functions with
+`invoke`/landing-pad cleanup (personality in the runtime) so inlining, mem2reg
+and dead-function removal work; this is a backend redesign, not a library or
+analysis tweak, and gates the I14 performance milestone.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
