@@ -396,6 +396,16 @@ private:
   // Per method name: interface declarations whose hierarchy declares it.
   std::unordered_map<std::string, std::vector<bool>> methodInterfaces;
   const std::vector<bool> &interfacesDeclaring(const std::string &name);
+  struct ReceiverImplementationCandidates {
+    std::vector<std::size_t> inherent;
+    std::vector<std::size_t> interfaces;
+    std::size_t inherentIndexed = 0;
+    std::size_t interfacesIndexed = 0;
+  };
+  std::map<std::string, ReceiverImplementationCandidates, std::less<>>
+      receiverImplementationCandidates;
+  const ReceiverImplementationCandidates &
+  receiverCandidates(std::string_view name, bool includeInterfaces);
   std::unordered_map<const Module::Interface *, GenericEnvironment>
       interfaceGenerics;
   std::unordered_map<const Module::Associated *, GenericEnvironment>

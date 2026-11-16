@@ -295,6 +295,22 @@ void Checker::retainDeclarations() {
       contract.body = expression(source.body.get());
     for (const auto &parameter : source.parameters)
       contract.defaults.push_back(expression(parameter.defaultValue.get()));
+    // Importers read only signature slots unless they evaluate exported syntax;
+    // runtime bodies come from the archived IR.
+    if (!contract.body &&
+        std::none_of(contract.defaults.begin(), contract.defaults.end(),
+                     [](const auto &value) { return value; })) {
+      auto &facts = contract.facts;
+      auto keep = std::max<std::size_t>(source.parameters.size(),
+                                        facts.variadicCursor + 1);
+      keep = std::max<std::size_t>(keep, facts.constructorSelfSlot + 1);
+      for (const auto &[slot, parameter] : facts.parameterBindings)
+        keep = std::max<std::size_t>(keep, slot + 1);
+      for (const auto &[slot, views] : facts.parameterViewTypes)
+        keep = std::max<std::size_t>(keep, slot + 1);
+      if (keep < facts.locals.size())
+        facts.locals.resize(keep);
+    }
     result->functions.emplace(static_cast<std::uint32_t>(i),
                               std::move(contract));
   }

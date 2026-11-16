@@ -2041,6 +2041,7 @@ TypeGraphImport importTypeGraph(TypeStore &types,
     importRegions(candidate, tables, regions, universes);
     TypeStore decoded = std::move(candidate);
     auto localTypes = builtinTypes();
+    localTypes.reserve(localTypes.size() + tables.kinds.size());
     for (auto kind : tables.kinds)
       localTypes.push_back(decoded.declareImportedType(kind));
     reader.types = localTypes;
@@ -2048,8 +2049,12 @@ TypeGraphImport importTypeGraph(TypeStore &types,
     reader.universes = universes;
     reader.offset = bodyOffset;
     std::vector<ImportedTypeDefinition> definitions;
+    definitions.reserve(header.types);
     std::vector<std::optional<DefinitionIdentity>> logical;
+    logical.reserve(header.types);
     TypeGraphImport result;
+    result.definitions.reserve(header.types);
+    result.roots.reserve(header.roots);
     std::set<DefinitionIdentity> identities;
     for (std::uint32_t i = 0; i < header.types; ++i) {
       std::optional<DefinitionIdentity> identity;

@@ -644,12 +644,34 @@ rerun.
 Package emission remains serial on one LLVM context. Cross-program instance
 caching, parallel analyses/codegen, source freeze and final qualification
 remain open; I14 is not complete. Handoff: this work extends
-`35c64c07` on `main`; reusable evidence is in `~/w/perf-import/lazy-ir-pairs.txt`,
+`b67251e1` on `main`; reusable evidence is in `~/w/perf-import/lazy-ir-pairs.txt`,
 `~/w/perf-import/lazy-ir-final-pairs.txt`, `~/w/perf-import/lazy-ir-cold-base2.txt`
-and `~/w/perf-import/lazy-ir-cold-final.txt`. Next, profile the remaining warm
-preparation and declaration-check costs before selecting another optimization.
+and `~/w/perf-import/lazy-ir-cold-final.txt`. The type-graph follow-up is
+recorded below.
 The full run suite and ASan/UBSan qualification remain outstanding; the prior
 sanitizer tree `~/mettle-i-asan` is stale.
+
+A follow-up profile identified repeated vector growth in
+`metadata::importTypeGraph`; it now reserves from validated type, root and
+local-type counts without changing graph decoding or validation. Eight
+alternating WSL ext4 warm semantic-edit pairs against `b67251e1` measured a
+2.2115 s baseline median and a 2.0800 s candidate median (5.95% lower); all
+outputs ran successfully. The focused Release type-graph test and formatting
+check pass. This is engineering evidence for one warm workload, not a cold-build
+or Rust-parity result. Raw timings: `~/w/perf-import/reserve-pairs.txt`.
+
+Receiver lookup now lazily indexes inherent and interface implementation
+candidates by method name, preserving the existing applicability, visibility
+and ambiguity checks while avoiding repeated full scans. Three fresh-cache p04
+`check` runs measured 35.02 s baseline versus 32.37 s candidate median (7.6%
+lower), with unchanged peak RSS at about 2.72 GiB. Four warm pairs measured
+1.505 s versus 1.515 s median, so no warm-check improvement is established.
+The cold-check profile's `receiverCandidate` self share fell from 5.9% to 1.4%;
+solver applicability remains dominant. The two interface-ambiguity fixtures
+and argument-selected interface-method program pass. Evidence: `~/w/anal/check.raw`,
+`~/w/anal/check-receiver.raw`, and the three fresh-cache runs under
+`~/w/anal/check-{base,receiver}-{2,3}`. Next, investigate sharing pure solver
+results across the 505,896 solver instances in the cold-check workload.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

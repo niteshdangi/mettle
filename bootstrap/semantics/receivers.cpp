@@ -41,6 +41,37 @@ const std::vector<bool> &Checker::interfacesDeclaring(const std::string &name) {
   }
   return declaring;
 }
+const Checker::ReceiverImplementationCandidates &
+Checker::receiverCandidates(std::string_view name, bool includeInterfaces) {
+  const std::string methodName(name);
+  auto found = receiverImplementationCandidates.find(name);
+  if (found == receiverImplementationCandidates.end())
+    found =
+        receiverImplementationCandidates.try_emplace(std::string(name)).first;
+  auto &candidates = found->second;
+  const auto &implementations = checked.interfaceData->implementations;
+  while (candidates.inherentIndexed < implementations.size()) {
+    auto index = candidates.inherentIndexed++;
+    const auto &implementation = implementations[index];
+    if (implementation.interfaceType == Type::Unknown &&
+        implementation.inherent.contains(methodName))
+      candidates.inherent.push_back(index);
+  }
+  if (includeInterfaces) {
+    const auto &declaring = interfacesDeclaring(found->first);
+    while (candidates.interfacesIndexed < implementations.size()) {
+      auto index = candidates.interfacesIndexed++;
+      const auto &implementation = implementations[index];
+      if (!checked.types->isErased(implementation.interfaceType))
+        continue;
+      auto declaration =
+          checked.types->erased(implementation.interfaceType).declaration;
+      if (declaring[declaration])
+        candidates.interfaces.push_back(index);
+    }
+  }
+  return candidates;
+}
 static bool builtinPinMethod(std::string_view name) {
   static const std::set<std::string_view> methods{"as_ref",
                                                   "as_mut",
@@ -76,6 +107,8 @@ std::optional<std::size_t> Checker::receiverCandidate(
   if (pinned)
     self = checked.types->view(checked.types->product(receiver).components[0])
                .payload;
+  const std::string methodName(name);
+  const auto &indexed = receiverCandidates(name, false);
   auto accepts = [&](std::size_t index) {
     const auto &function = module.functions[index];
     bool expectsPinned =
@@ -89,7 +122,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
     auto owner = record.genericOrigin == Type::Unknown
                      ? record.name
                      : checked.types->product(record.genericOrigin).name;
-    if (auto found = names.find(owner + "." + std::string(name));
+    if (auto found = names.find(owner + "." + methodName);
         found != names.end() && accepts(found->second))
       inherent.push_back(found->second);
   }
@@ -111,11 +144,13 @@ std::optional<std::size_t> Checker::receiverCandidate(
             checked.types->callableType(checked.types->callable(actual))),
         checked.types->eraseRegions(expected));
   });
-  for (const auto &implementation : checked.interfaceData->implementations) {
-    if (protocol || implementation.interfaceType != Type::Unknown ||
+  for (auto implIndex : indexed.inherent) {
+    const auto &implementation =
+        checked.interfaceData->implementations[implIndex];
+    if (protocol ||
         (viewExtension && !checked.types->isView(implementation.target)))
       continue;
-    auto selected = implementation.inherent.find(std::string(name));
+    auto selected = implementation.inherent.find(methodName);
     if (selected == implementation.inherent.end() ||
         !accepts(static_cast<std::size_t>(selected->second.function)))
       continue;
@@ -298,12 +333,10 @@ std::optional<std::size_t> Checker::receiverCandidate(
     const auto selfHead = head(self);
     std::set<std::uint32_t> inferredConversions;
     std::map<std::uint32_t, bool> visibility;
-    const auto &declaring = interfacesDeclaring(std::string(name));
-    for (const auto &implementation : checked.interfaceData->implementations) {
-      if (!checked.types->isErased(implementation.interfaceType) ||
-          !declaring[checked.types->erased(implementation.interfaceType)
-                         .declaration])
-        continue;
+    const auto &interfaceCandidates = receiverCandidates(name, true).interfaces;
+    for (auto index : interfaceCandidates) {
+      const auto &implementation =
+          checked.interfaceData->implementations[index];
       const auto declaration =
           checked.types->erased(implementation.interfaceType).declaration;
       const auto &definition = checked.interfaceData->definitions[declaration];
