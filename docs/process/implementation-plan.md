@@ -501,8 +501,17 @@ Imported bodies are now moved into the lowered program and marked
 equality comparison (about 10% of the warm profile in copies and destructors).
 Eight alternating warm pairs: median 2.55-2.80 s to 2.35-2.65 s; executables
 passed; `mettle-ir-tests` and `mettle-library-declaration-tests` pass.
-Next: warm-profile leaders are `importTypeGraph` (11%), `resolution::load`
-(9%), declaration import and compiler-identity hashing (about 3%).
+Follow-up import change decodes the type-graph header, tables, definitions and
+roots once into the transactional staging store, and moves that store instead
+of copying it. `compiler.type-graph`, `compiler.library-declarations` and the
+checked-library identity case pass. Eight alternating warm semantic-edit pairs
+were 2.50 s before and 2.505 s after; no whole-build improvement is established.
+Profiles still place `importTypeGraph` at 12-14% inclusive; evidence is in
+`~/w/perf-import/`. A size-only skip for repeated `reserveCompiledSources`
+scans was discarded after eight pairs (2.41 s before, 2.395 s after; no
+measurable gain).
+Next: profile the remaining import costs (`resolution::load`, declaration
+import and IR decode) and retain only changes with focused correctness evidence.
 Lazy bodies, cross-program instantiations and parallel analyses/codegen remain
 unimplemented; source freeze and final qualification remain open.
 Handoff: HEAD is the tip of `niteshdangi-post-v1-completed-integration` and
