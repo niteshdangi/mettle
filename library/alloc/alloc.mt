@@ -59,7 +59,7 @@ extend Global implements core.default.Default { static fn default(): Global { Gl
 
 unsafe extend Global implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
-        if layout.size() == 0usize { return dangling_for<u8>() }
+        if layout.size() == 0usize { return layout.dangling_ptr().as_ptr() }
         let p = unsafe { mettle_rt_alloc(layout.size(), layout.align()) }
         if p == core.ptr.null_mut<u8>() { throw AllocError(layout.size(), layout.align()) }
         p
@@ -74,7 +74,7 @@ unsafe extend Global implements Allocator {
         }
         if new_size == 0usize {
             self.deallocate(p, old)
-            return dangling_for<u8>()
+            return new_layout.dangling_ptr().as_ptr()
         }
         let q = unsafe { mettle_rt_realloc(p, old.size(), old.align(), new_layout.size()) }
         if q == core.ptr.null_mut<u8>() { throw AllocError(new_size, old.align()) }
@@ -84,7 +84,7 @@ unsafe extend Global implements Allocator {
         let new_layout = try resized_layout(old, new_size)
         if new_size == 0usize {
             if old.size() != 0usize { self.deallocate(p, old) }
-            return dangling_for<u8>()
+            return new_layout.dangling_ptr().as_ptr()
         }
         if old.size() == 0usize {
             throw AllocError(new_size, old.align())

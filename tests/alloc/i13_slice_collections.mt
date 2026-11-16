@@ -92,9 +92,12 @@ fn main(): i32 {
     if boxed.get().len() != 5usize || boxed.get()[4usize] != 10 { return 24 }
     var to_leak = alloc.vec.new<i32>()
     to_leak.push(42)
+    let leaked_capacity = to_leak.capacity()
     let leaked = to_leak.leak()
     leaked[0usize] = 43
     if leaked[0usize] != 43 { return 25 }
+    let reclaimed = unsafe { alloc.vec.List<i32>.from_raw_parts(leaked.as_mut_ptr(), leaked.len(), leaked_capacity) }
+    core.mem.drop(reclaimed)
 
     var deque = alloc.vec_deque.new<i32>()
     deque.reserve(4usize)
