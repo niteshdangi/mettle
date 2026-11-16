@@ -459,6 +459,21 @@ static addresses. The repair is to emit ordinary LLVM functions with
 `invoke`/landing-pad cleanup (personality in the runtime) so inlining, mem2reg
 and dead-function removal work; this is a backend redesign, not a library or
 analysis tweak, and gates the I14 performance milestone.
+Status after `ee2323ca`/`1f160cce` (WSL, release compiler): the backend now emits
+`invoke`/landing-pad code (p04_struct_vec runtime 8.8 s to 0.34 s; Rust about
+0.2 s); executables instantiate only reachable library bodies and trust bodies
+verified at library build (small std-collections program, semantic edit, warm
+library: 8.4 s to 2.9 s; Rust about 0.5 s); a shipped library store
+(`mettle-shipped-store`, keyed to the installed compiler) cuts a fresh-cache
+p04 build from 66 s to about 10 s (Rust about 0.3 s). Profile of the 2.9 s
+rebuild: library archive import 26% (type-graph import, IR decode, store read),
+checker pass over imports 15%, loan analysis about 10%, specialization and
+LLVM codegen the rest. Remaining structural work, none of which may drop a
+check: decode only the archive sections a program touches (lazy function
+bodies); cache instantiations of library generics across programs; run
+per-function analyses and LLVM codegen on several cores; then rerun the full
+run suite and the ASan/UBSan CTest (library.std.0/.2/.3 open) on the final
+binary and record the Rust-parity gates.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
