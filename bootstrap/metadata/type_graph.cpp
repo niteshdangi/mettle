@@ -762,11 +762,16 @@ void validateCallable(const TypeStore &store, const CallableType &r,
     if (parameter.type == Type::Unknown || store.isConstant(parameter.type))
       reject("invalid callable parameter type");
 }
+std::size_t graphIndex(std::span<const Type> ids, Type type) {
+  if (ids.empty() || type.index() < ids.front().index())
+    reject("type reference is outside the decoded graph");
+  auto index = static_cast<std::size_t>(type.index() - ids.front().index());
+  if (index >= ids.size() || ids[index] != type)
+    reject("type reference is outside the decoded graph");
+  return index;
+}
 void validateGraph(const TypeStore &store, std::span<const Type> ids,
                    std::vector<ImportedTypeDefinition> &definitions) {
-  std::map<Type, std::size_t> indices;
-  for (std::size_t i = 0; i < ids.size(); ++i)
-    indices.emplace(ids[i], i);
   std::vector<std::vector<std::size_t>> valueEdges(ids.size()),
       originEdges(ids.size()), interfaceEdges(ids.size());
   auto validType = [&](Type type) {
@@ -830,7 +835,7 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
         if (origin != Type::Unknown) {
           if (store.product(origin).kind != r.kind)
             reject("product origin representation mismatch");
-          originEdges[i].push_back(indices.at(origin));
+          originEdges[i].push_back(graphIndex(ids, origin));
         }
       std::set<Type> parameters;
       for (auto parameter : r.genericParameters) {
@@ -849,7 +854,7 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
         if (!validType(field.type))
           reject("invalid product field type");
         if (store.isProduct(field.type) || store.isSlice(field.type))
-          valueEdges[i].push_back(indices.at(field.type));
+          valueEdges[i].push_back(graphIndex(ids, field.type));
       }
       for (auto pinned : r.layout.pinnedFields)
         if (pinned >= r.fields.size())
@@ -893,7 +898,7 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
         }
         valueEdges[i].clear();
         if (store.isProduct(r.components[0]) || store.isSlice(r.components[0]))
-          valueEdges[i].push_back(indices.at(r.components[0]));
+          valueEdges[i].push_back(graphIndex(ids, r.components[0]));
       } else if (r.arrayCount != Type::Unknown)
         reject("array count on non-array product");
       if (imported->closure) {
@@ -1145,7 +1150,7 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
       for (auto parent : erased->parentInterfaces) {
         if (!store.isErased(parent))
           reject("invalid erased parent interface");
-        interfaceEdges[i].push_back(indices.at(parent));
+        interfaceEdges[i].push_back(graphIndex(ids, parent));
       }
     } else if (auto view = std::get_if<ViewType>(&definition)) {
       if (!validType(view->payload) || (view->mode != ParameterMode::Read &&
@@ -1162,7 +1167,7 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
           slice->metadata != PointerMetadata::ElementCount)
         reject("invalid slice element");
       if (store.isProduct(slice->element) || store.isSlice(slice->element))
-        valueEdges[i].push_back(indices.at(slice->element));
+        valueEdges[i].push_back(graphIndex(ids, slice->element));
     }
   }
   acyclic(originEdges);
@@ -1175,7 +1180,7 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
       return true;
     if (store.isParameter(type))
       return !store.parameter(type).copyRequested;
-    return type.index() >= builtinTypeCount && drops[indices.at(type)];
+    return type.index() >= builtinTypeCount && drops[graphIndex(ids, type)];
   };
   for (auto i : order) {
     auto type = ids[i];
@@ -1208,7 +1213,7 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
       auto inner = element.index() >= builtinTypeCount &&
                            store.isProduct(element) &&
                            store.product(element).kind == AggregateKind::Array
-                       ? indices.at(element)
+                       ? graphIndex(ids, element)
                        : ids.size();
       auto expandedInner = inner == ids.size() ? 1 : expanded[inner];
       auto elementsInner = inner == ids.size() ? 1 : elements[inner];
@@ -1734,9 +1739,6 @@ std::string canonicalKey(const TypeStore &store,
 std::vector<bool>
 recursiveRegionals(const TypeStore &store, std::span<const Type> ids,
                    const std::vector<ImportedTypeDefinition> &definitions) {
-  std::map<Type, std::size_t> indices;
-  for (std::size_t i = 0; i < ids.size(); ++i)
-    indices.emplace(ids[i], i);
   std::vector<std::vector<std::size_t>> edges(ids.size()), reverse(ids.size());
   for (std::size_t i = 0; i < ids.size(); ++i) {
     if (nominal(definitions[i]))
@@ -1745,7 +1747,7 @@ recursiveRegionals(const TypeStore &store, std::span<const Type> ids,
     canonicalKey(store, definitions[i], &references);
     for (auto reference : references)
       if (reference.index() >= builtinTypeCount) {
-        auto target = indices.at(reference);
+        auto target = graphIndex(ids, reference);
         edges[i].push_back(target);
         reverse[target].push_back(i);
       }
@@ -1824,10 +1826,8 @@ public:
         canonicalTypes.try_emplace(
             canonicalKey(original, std::move(definition)), type);
     }
-    for (std::size_t i = 0; i < ids.size(); ++i)
-      indices.emplace(ids[i], i);
     for (const auto &[source, target] : existing.types) {
-      auto i = index(source);
+      auto i = graphIndex(ids, source);
       mapped[i] = target;
       state[i] = 2;
     }
@@ -1856,7 +1856,7 @@ public:
   Type build(Type source) {
     if (source.index() < builtinTypeCount)
       return source;
-    auto i = index(source);
+    auto i = graphIndex(ids, source);
     if (state[i] == 2)
       return mapped[i];
     if (state[i] == 1)
@@ -1897,12 +1897,10 @@ private:
   TypeStore &candidate;
   std::span<const Type> ids;
   std::vector<ImportedTypeDefinition> &definitions;
-  std::map<Type, std::size_t> indices;
   std::map<std::string, Type> canonicalTypes;
   std::vector<Type> mapped;
   std::vector<unsigned char> state, installed;
   unsigned depth = 0;
-  std::size_t index(Type type) const { return indices.at(type); }
   void remap(ImportedTypeDefinition &definition) {
     Remap mapper([&](Type type) { return build(type); });
     std::visit([&](auto &r) { mapper(r); }, definition);

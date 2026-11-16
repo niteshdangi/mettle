@@ -450,7 +450,7 @@ repairs passing. Next resume affected/unfinished sanitizer CTest from
 10800-second timeout only to `library.std.0`. Run the memory-heavy
 `source.run.15` and `.16` shards separately at one worker. No background test or
 benchmark remains running at this handoff.
-Root cause of the allocating-workload gaps (runtime 33–48x, 66 s cold builds, 8 MB
+Root cause of the allocating-workload gaps (runtime 33â€“48x, 66 s cold builds, 8 MB
 binaries): every function is emitted as an outlined `<name>.body` plus `.unwind`
 pair run by the C++ trampoline `mettle_rt_run`, with all locals in a memory frame
 the optimizer cannot see through, so library `len`/`index`/`push` calls are never
@@ -479,6 +479,17 @@ archive with a parallel block digest and decodes length-prefixed IR records on
 several threads (small rebuild 2.9 s to 2.7 s). Type-graph import (about 350 ms)
 and declaration import (about 140 ms) are now the largest serial pieces; lazy
 function-body decode needs stubs in `lower`, `prepare` and `specialize`.
+Import batch following `63f099aa`: replaced three archive-local type-ID tree
+maps with bounded indexing of the consecutively allocated decoded IDs, retaining
+graph validation, canonical identities and transactional publication.
+`compiler.type-graph` passes in Release and ASan/UBSan builds. Four alternating
+warm semantic-edit pairs (after separate cache primes) reduced median type-graph
+import from 362 ms to 257 ms; whole-build medians were 2.94 s and 2.89 s, too
+noisy to establish an overall speedup. All eight measured executables passed.
+Transient instrumentation was removed; evidence is in `~/w/import-dense/`.
+Next: profile declaration import before choosing the next structural change.
+Lazy bodies, cross-program instantiations and parallel analyses/codegen remain
+unimplemented; source freeze and final qualification remain open.
 Handoff: HEAD is the tip of `niteshdangi-post-v1-completed-integration` and
 `main`. Last full run suite (2015 units) passed before the compile-time
 changes; since then the 858-unit fail suite, a 204-unit run sample, the
