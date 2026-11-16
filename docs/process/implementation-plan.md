@@ -585,28 +585,71 @@ in place with rollback instead of copying `Diagnostics`, and moves generation
 tables instead of copying them twice. Six alternating warm pairs each:
 2.227 s to 2.124 s for the seal change, then 2.002 s to 1.961 s and 1110 to
 1083 MiB for the mount change; all outputs ran successfully.
-Known failure since `ee2323ca`: `packages.resolution` case
-`checked_alloc_std_reuse` misses the core/alloc/std object caches when a
-second program reaches more library code (async). Executable library
-partitions contain only reachable bodies and are keyed by their bitcode, so
-library objects are per-use-set, not reusable across programs. Owner decision
-needed: restore program-independent partitions (slower per build) or adopt the
-Rust model, where non-generic library code is one object keyed by the checked
-archive and programs emit only generic instances.
-Next: profile remaining warm import costs and design lazy IR bodies with
-archive validation and cross-record symbol checks preserved; investigate cold
-staging variance.
-Lazy bodies, cross-program instantiations and parallel analyses/codegen remain
-unimplemented; source freeze and final qualification remain open.
-Handoff: HEAD is the tip of `niteshdangi-post-v1-completed-integration` and
-`main`. Last full run suite (2015 units) passed before the compile-time
-changes; since then the 858-unit fail suite, a 204-unit run sample, the
-`compiler.`/`ir.` CTests and the cache cases pass. Not rerun on the final
-binary: the full run suite and the ASan/UBSan CTest (library.std.0/.2/.3 had
-open findings: intentional `forget` leaks in tests such as
-async-scope-wake-close-race, sources that no longer build, task_scope region
-errors, failing_allocator exit 16). WSL evidence: `~/w/`, sanitizer tree
-`~/mettle-i-asan`, benchmark report `build/i14-20261116-evidence/results.md`.
+Library objects are program-independent, as in Rust: each checked native
+package (core/alloc/std) compiles once per checked archive and profile into an
+object holding every non-generic body it owns, keyed by the checked-library
+key, its source paths and the compiler identity. A library-scope
+specialization supplies the bodies only on a store miss; generic instances
+and other unowned helpers stay private copies, so objects never collide with
+the program's own instances. Objects are emitted with function/data sections
+and executables link with `--gc-sections`/`-dead_strip`. This fixes
+`checked_alloc_std_reuse`: a second program reusing more library code (async)
+hits all three objects. The consumer now represents those bodies as ordinary
+external IR declarations using the same stable symbols as the package objects;
+implementation-only locals are not exposed. Hidden-variadic signatures and ABI
+functions without an external symbol fall back to the existing path.
+
+Release validation passes all eight focused package/cache cases:
+`checked_core_reuse`, `checked_alloc_std_reuse`,
+`checked_alloc_std_release_reuse`, `checked_native_macro_reuse`,
+`checked_library_diagnostics`, `cache_corruption_and_clean`,
+`object_cache_integrity` and `incremental_reuse`. The debug `async_spawn` and
+`async_executor` programs also pass. Broad suites and ASan/UBSan were not rerun.
+
+The latest WSL `sm.mt` experiment does not establish a performance win. Four
+alternating warm semantic-edit pairs measured 2.425 s before and 2.465 s after,
+with median peak RSS 1,110,464 and 1,114,662 KiB. Both builds hit their objects
+4/4 times for this unchanged reachable set. The executable grows from 454,504
+to 879,576 bytes; cold primes measured 37.14 s before and 47.24 s after.
+A separate one-pair, different-reachability probe missed the old core object
+and hit the new one (1.49 s vs 1.47 s), too little evidence for a speed claim;
+a core-only cold prime also regressed (18.48 s to 25.83 s). These are WSL
+engineering measurements, not release qualification.
+
+A 550-sample warm candidate profile attributed overlapping inclusive samples
+to `Compiler::prepare` (45.5%), `Checker::run` (16.9%),
+`CheckedLibrary::import` (13.5%), `resolution::load` (11.5%),
+`metadata::importTypeGraph` (10.0%), `ir::decodeProgram` (8.9%) and
+`backend::emitObject` (5.8%). This led to IR v11 lazy body loading: import
+preflights record extents, identities, headers, statics and trailing data;
+specialization decodes and validates a complete body before use, merging its
+symbol bindings against the archive and previously loaded bodies. Eager
+`decodeProgram` remains fully validating. The checked archive stays alive
+through compilation; library-object misses load every body they emit.
+
+Focused Release validation passes `mettle-ir-codec-tests`,
+`mettle-library-declaration-tests` and package case
+`checked_alloc_std_reuse`, including cross-consumer core/alloc/std object
+reuse, generic instances, constants and an async std body. Eight alternating
+warm semantic-edit pairs against the pre-lazy `mettle-pkgkey` binary measured
+2.665 s baseline versus 2.535 s candidate median, and 1,114,842 versus
+958,578 KiB median peak RSS. All eight outputs ran successfully. One cold
+prime per binary measured 55.73 s baseline versus 57.34 s candidate and
+2,805,304 versus 2,807,816 KiB peak RSS; this does not establish a cold-build
+improvement. The encoder writes function records directly to the archive
+buffer to avoid a full-record intermediate copy. These are WSL engineering
+measurements, not release qualification. Broad suites and ASan/UBSan were not
+rerun.
+
+Package emission remains serial on one LLVM context. Cross-program instance
+caching, parallel analyses/codegen, source freeze and final qualification
+remain open; I14 is not complete. Handoff: this work extends
+`35c64c07` on `main`; reusable evidence is in `~/w/perf-import/lazy-ir-pairs.txt`,
+`~/w/perf-import/lazy-ir-final-pairs.txt`, `~/w/perf-import/lazy-ir-cold-base2.txt`
+and `~/w/perf-import/lazy-ir-cold-final.txt`. Next, profile the remaining warm
+preparation and declaration-check costs before selecting another optimization.
+The full run suite and ASan/UBSan qualification remain outstanding; the prior
+sanitizer tree `~/mettle-i-asan` is stale.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

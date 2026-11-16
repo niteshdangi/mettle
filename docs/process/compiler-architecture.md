@@ -460,6 +460,15 @@ The checked-library coordinator connects these sections through lazy native
 providers and a post-resolution pipeline importer. Unused native roots are not
 prepared, and user roots retain shadowing priority. Imported declarations and
 bodies still pass ordinary specialization and concrete admission.
+Checked IR v11 records separate function headers from CFG bodies. Import
+preflights every record extent and definition identity, decodes all headers and
+statics, and rejects trailing data while leaving CFG bodies encoded. A body is
+decoded and fully validated before specialization; its symbol bindings are
+merged against the archive and previously loaded bodies. The checked archive
+owner remains live through compilation. Library-object misses load every body
+they emit, while object hits need not load bodies referenced as external
+declarations. The ordinary `decodeProgram` path remains eager and validates all
+bodies.
 Mounting archives checks their registered physical source paths against loaded
 sources; later source reads also reject an already-mounted path with the same
 module-identity diagnostic. Generated-source provenance is not a physical module

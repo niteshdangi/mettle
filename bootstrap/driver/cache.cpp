@@ -196,8 +196,7 @@ BuildInputs::key(const Options &options,
 std::optional<std::string> BuildInputs::packageObjectKey(
     const std::string &identity, const std::vector<std::string> &sources,
     const std::vector<std::pair<std::string, std::string>> &dependencies,
-    const std::set<std::string> &features, const Options &options,
-    const std::string &nativePartition) const {
+    const std::set<std::string> &features, const Options &options) const {
   if (!packageInputsSafe || identity.empty() || sources.empty())
     return std::nullopt;
   packages::Sha256 hash;
@@ -241,7 +240,6 @@ std::optional<std::string> BuildInputs::packageObjectKey(
     add("absent:" + path);
   for (const auto &[alias, dependency] : dependencies)
     add("dependency:" + alias + "=" + dependency);
-  add("native-partition:" + nativePartition);
   return "pkg-" + hash.finish();
 }
 } // namespace mettle::driver

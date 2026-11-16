@@ -239,10 +239,17 @@ ir::Value Builder::merge(Type type, const std::vector<Value> &values,
 ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
                   ImportedBodies *imported) {
   ir::Program result;
-  auto take = [&](ir::Function &function) {
+  auto append = [&](ir::Function function, bool libraryBody,
+                    std::optional<std::size_t> record) {
     result.libraryBodies.resize(result.functions.size());
-    result.libraryBodies.push_back(true);
+    result.libraryBodies.push_back(libraryBody);
+    result.lazyFunctionRecords.resize(result.functions.size());
+    result.lazyFunctionRecords.push_back(record);
     result.functions.push_back(std::move(function));
+  };
+  auto take = [&](ir::Function &function,
+                  std::optional<std::size_t> record = std::nullopt) {
+    append(std::move(function), true, record);
   };
   result.types = module.typeStore();
   for (std::size_t i = 0; i < module.syntax().functions.size(); ++i)
@@ -270,10 +277,13 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
                             "imported function has no verified symbolic body");
           return result;
         }
-        take(found->second);
+        auto record = imported->functionRecords.find(i);
+        take(found->second, record == imported->functionRecords.end()
+                                ? std::nullopt
+                                : std::optional(record->second));
       } else
-        result.functions.push_back(
-            Builder(module, imported).run(module.syntax().functions[i], i));
+        append(Builder(module, imported).run(module.syntax().functions[i], i),
+               false, std::nullopt);
     }
     for (std::size_t i = 0; i < module.syntax().functions.size(); ++i)
       for (std::size_t p = 0;
@@ -286,15 +296,21 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
                   "imported default has no verified symbolic helper");
               return result;
             }
-            take(imported->defaults.at({i, p}));
+            auto record = imported->defaultRecords.find({i, p});
+            take(imported->defaults.at({i, p}),
+                 record == imported->defaultRecords.end()
+                     ? std::nullopt
+                     : std::optional(record->second));
           } else
-            result.functions.push_back(
-                Builder(module, imported)
-                    .runDefault(module.syntax().functions[i], i, p));
+            append(Builder(module, imported)
+                       .runDefault(module.syntax().functions[i], i, p),
+                   false, std::nullopt);
         }
     if (imported) {
-      for (auto &function : imported->support)
-        take(function);
+      for (std::size_t i = 0; i < imported->support.size(); ++i)
+        take(imported->support[i], i < imported->supportRecords.size()
+                                       ? imported->supportRecords[i]
+                                       : std::nullopt);
       result.closureFunctions = imported->closureFunctions;
     }
     for (std::size_t i = 0; i < module.closures().size(); ++i) {
@@ -302,7 +318,7 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
         continue;
       result.closureFunctions.push_back(
           static_cast<int>(result.functions.size()));
-      result.functions.push_back(Builder(module, imported).runClosure(i));
+      append(Builder(module, imported).runClosure(i), false, std::nullopt);
     }
     callableContracts(result);
   } catch (const LoweringLimit &error) {

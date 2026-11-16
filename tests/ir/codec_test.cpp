@@ -461,11 +461,27 @@ void crossRecordSymbolAliases() {
   };
   require(bool(decodeProgram(encoded.bytes, decode)),
           "repeated cross-record symbols must decode");
+  auto lazy = decodeProgramLazy(encoded.bytes, decode);
+  require(bool(lazy), lazy.error.c_str());
+  require(lazy.program.functions[0].blocks.empty(),
+          "lazy import decoded a function body eagerly");
+  auto first = lazy.lazyFunctions->load(0, lazy.program.functions[0], decode);
+  require(bool(first) &&
+              first.function->blocks[0].instructions[0].callee == 100,
+          "lazy function body did not decode");
   auto resolve = decode.symbol;
   decode.symbol = [resolve](SymbolKind kind, std::string_view name) {
     auto index = resolve(kind, name);
     return index == 101 ? std::optional<std::uint32_t>{100} : index;
   };
+  lazy = decodeProgramLazy(encoded.bytes, decode);
+  require(bool(lazy), lazy.error.c_str());
+  first = lazy.lazyFunctions->load(0, lazy.program.functions[0], decode);
+  require(bool(first), "first lazy body failed before alias check");
+  auto aliased = lazy.lazyFunctions->load(2, lazy.program.functions[2], decode);
+  require(!aliased && aliased.error ==
+                          "inconsistent or aliased IR logical symbol mapping",
+          "lazy body symbol alias was not rejected");
   auto rejected = decodeProgram(encoded.bytes, decode);
   require(!rejected &&
               rejected.error ==

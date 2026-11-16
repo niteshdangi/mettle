@@ -4,6 +4,8 @@
 #include "driver/options.h"
 #include "ir/verified.h"
 #include "packages/store.h"
+#include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,14 +14,18 @@ namespace mettle::driver {
 class BuildInputs;
 struct PackageObject {
   std::string identity, source, key;
+  // Set for a reusable library object: the library program to lower on a miss.
+  std::function<const ir::VerifiedProgram *()> library{};
 };
-// Single hosted executable, debug/release without debug info, sanitizers,
-// harness or global assembly; only root/native-library ownership.
-std::optional<PackageObject> nativePackageObject(
+// One object per checked-library package for a single hosted executable
+// without debug info, sanitizers, harness or global assembly. Each holds every
+// non-generic body of its package, so its key is that package's archive key.
+std::vector<PackageObject> libraryObjects(
     const Options &options, const BuildInputs &inputs,
-    const ir::VerifiedProgram &program, const std::string &identity,
-    const std::vector<std::string> &sources, const std::string &checkedKey,
-    std::string &error, const Diagnostics &diagnostics);
+    const ir::Program &program,
+    const std::map<std::string, std::vector<std::string>> &packageSources,
+    const std::map<std::string, std::string> &packageKeys,
+    const std::function<const ir::VerifiedProgram *()> &library);
 bool outputOverwritesSource(const Options &options, const Source &source,
                             const Diagnostics &diagnostics);
 // Diagnostics supplies source texts/provenance for debug and panic locations.

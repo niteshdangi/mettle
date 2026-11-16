@@ -3,7 +3,9 @@
 #include "diagnostics/diagnostics.h"
 #include "ir/ir.h"
 #include "semantics/checked.h"
+#include <functional>
 #include <map>
+#include <string>
 
 namespace mettle::lowering {
 struct ImportedBodies {
@@ -11,6 +13,12 @@ struct ImportedBodies {
   std::map<std::pair<std::size_t, std::size_t>, ir::Function> defaults;
   std::vector<ir::Function> support;
   std::vector<int> closureFunctions;
+  std::map<std::size_t, std::size_t> functionRecords;
+  std::map<std::pair<std::size_t, std::size_t>, std::size_t> defaultRecords;
+  std::vector<std::optional<std::size_t>> supportRecords;
+  std::function<std::optional<ir::Function>(std::size_t, const ir::Function &,
+                                            std::string &)>
+      loadFunction;
 };
 // Moves the imported bodies into the program and marks them `libraryBodies`.
 ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,

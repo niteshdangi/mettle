@@ -618,12 +618,19 @@ CheckedLibrary::import(const Module &module,
   if (module.functions.size() < functions || module.statics.size() < statics ||
       module.interfaces.size() < interfaces)
     return fail("compiled library header was not mounted before its consumer");
-  SymbolTable symbols;
+  auto symbols = std::make_shared<SymbolTable>();
+  auto packageIndices =
+      std::make_shared<std::map<std::string, std::uint32_t>>();
   std::vector<std::string> functionSymbols(functions);
   std::size_t closureCount = 0;
   for (const auto &symbol : header.symbols) {
-    if (symbol.kind == metadata::SymbolKind::Package)
+    if (symbol.kind == metadata::SymbolKind::Package) {
+      auto destination = resolution.packageIndex(symbol.definition);
+      if (!destination)
+        return fail("compiled package identity is absent from the consumer");
+      packageIndices->emplace(symbol.definition, *destination);
       continue;
+    }
     auto index = symbol.index;
     switch (symbol.kind) {
     case metadata::SymbolKind::Function:
@@ -648,7 +655,7 @@ CheckedLibrary::import(const Module &module,
       break;
     }
     std::uint32_t existing = 0;
-    if (!symbols.emplace(symbol.kind, symbol.definition, index, &existing) &&
+    if (!symbols->emplace(symbol.kind, symbol.definition, index, &existing) &&
         existing != index)
       return fail("conflicting compiled declaration identities");
   }
@@ -676,25 +683,28 @@ CheckedLibrary::import(const Module &module,
     if (found == defaultDestinations.end())
       return fail("compiled default helper is absent from the mounted header");
     std::uint32_t existing = 0;
-    symbols.emplace(metadata::SymbolKind::Function,
-                    functionSymbols[function] +
-                        ":default:" + std::to_string(parameter),
-                    found->second, &existing);
+    symbols->emplace(metadata::SymbolKind::Function,
+                     functionSymbols[function] +
+                         ":default:" + std::to_string(parameter),
+                     found->second, &existing);
   }
   auto supportBase = module.functions.size() + defaultCount;
   auto prefix = supportPrefix(root, archiveKey);
-  // Raised from the IR decoder's threads.
-  std::atomic<std::int64_t> largestSupportOrdinal{-1};
+  auto largestSupportOrdinal = std::make_shared<std::atomic<std::int64_t>>(-1);
   metadata::DecodeReferences references;
   references.source = [&](const auto &source) {
     return archive.sources.resolve(source);
   };
   references.symbol =
-      [&](metadata::SymbolKind kind,
+      [symbols, packageIndices, prefix, supportBase, largestSupportOrdinal](
+          metadata::SymbolKind kind,
           std::string_view name) -> std::optional<std::uint32_t> {
-    if (kind == metadata::SymbolKind::Package)
-      return resolution.packageIndex(name);
-    if (auto found = symbols.find(kind, name))
+    if (kind == metadata::SymbolKind::Package) {
+      auto found = packageIndices->find(std::string(name));
+      return found == packageIndices->end() ? std::nullopt
+                                            : std::optional{found->second};
+    }
+    if (auto found = symbols->find(kind, name))
       return found;
     if (kind != metadata::SymbolKind::Function || !name.starts_with(prefix))
       return std::nullopt;
@@ -706,9 +716,9 @@ CheckedLibrary::import(const Module &module,
         ordinal >= limits::functions ||
         supportBase + ordinal >= limits::functions)
       return std::nullopt;
-    auto largest = largestSupportOrdinal.load();
+    auto largest = largestSupportOrdinal->load();
     while (ordinal > largest &&
-           !largestSupportOrdinal.compare_exchange_weak(largest, ordinal)) {
+           !largestSupportOrdinal->compare_exchange_weak(largest, ordinal)) {
     }
     return static_cast<std::uint32_t>(supportBase + ordinal);
   };
@@ -720,14 +730,15 @@ CheckedLibrary::import(const Module &module,
   auto graph = metadata::importTypeGraph(*types, archive.types, typeSymbols);
   if (!graph)
     return fail(graph.error);
-  references.type = [&](std::uint32_t reference) -> std::optional<Type> {
-    if (reference >= graph.roots.size())
+  auto roots = std::make_shared<std::vector<Type>>(std::move(graph.roots));
+  references.type = [roots](std::uint32_t reference) -> std::optional<Type> {
+    if (reference >= roots->size())
       return std::nullopt;
-    return graph.roots[reference];
+    return (*roots)[reference];
   };
   // Decoders share only immutable tables; the future joins before they expire.
   auto pendingIR = std::async(std::launch::async | std::launch::deferred, [&] {
-    return ir::decodeProgram(archive.ir, references);
+    return ir::decodeProgramLazy(archive.ir, references);
   });
   auto declarations =
       importLibraryDeclarations(archive.declarations, types, references);
@@ -743,10 +754,11 @@ CheckedLibrary::import(const Module &module,
     return fail("compiled IR definitions do not match the declaration header");
   auto supportCount =
       decoded.program.functions.size() - functions - defaults.size();
-  if (largestSupportOrdinal.load() >= static_cast<std::int64_t>(supportCount))
+  if (largestSupportOrdinal->load() >= static_cast<std::int64_t>(supportCount))
     return fail("compiled support identity exceeds its artifact-local table");
   auto bodies = std::make_shared<lowering::ImportedBodies>();
   std::vector<std::optional<ir::Function>> support(supportCount);
+  std::vector<std::optional<std::size_t>> supportRecords(supportCount);
   std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>>
       importedDefaults;
   for (auto entry : defaults)
@@ -761,6 +773,7 @@ CheckedLibrary::import(const Module &module,
         return fail("compiled function identity does not match its header");
       bodies->functions.emplace(destination,
                                 std::move(decoded.program.functions[i]));
+      bodies->functionRecords.emplace(destination, i);
     } else if (destination < supportBase) {
       auto found = importedDefaults.find(destination);
       if (found == importedDefaults.end())
@@ -768,10 +781,12 @@ CheckedLibrary::import(const Module &module,
       decoded.program.functions[i].name = decoded.functionIdentities[i];
       bodies->defaults.emplace(found->second,
                                std::move(decoded.program.functions[i]));
+      bodies->defaultRecords.emplace(found->second, i);
     } else if (destination - supportBase < supportCount) {
       decoded.program.functions[i].name = decoded.functionIdentities[i];
       support[destination - supportBase] =
           std::move(decoded.program.functions[i]);
+      supportRecords[destination - supportBase] = i;
     } else {
       return fail("compiled body destination exceeds its support table");
     }
@@ -784,6 +799,28 @@ CheckedLibrary::import(const Module &module,
       return fail("compiled support destinations contain a gap");
     bodies->support.push_back(std::move(*function));
   }
+  bodies->supportRecords = std::move(supportRecords);
+  if (!decoded.lazyFunctions)
+    return fail("compiled IR function body loader is absent");
+  auto lazyFunctions = decoded.lazyFunctions;
+  auto bodyReferences = references;
+  bodies->loadFunction =
+      [lazyFunctions, bodyReferences = std::move(bodyReferences),
+       largestSupportOrdinal, supportCount](
+          std::size_t record, const ir::Function &header,
+          std::string &error) mutable -> std::optional<ir::Function> {
+    auto decodedBody = lazyFunctions->load(record, header, bodyReferences);
+    if (!decodedBody) {
+      error = std::move(decodedBody.error);
+      return std::nullopt;
+    }
+    if (largestSupportOrdinal->load() >=
+        static_cast<std::int64_t>(supportCount)) {
+      error = "compiled support identity exceeds its artifact-local table";
+      return std::nullopt;
+    }
+    return std::move(decodedBody.function);
+  };
   bodies->closureFunctions.assign(closureCount, -1);
   for (auto [slot, function] : decoded.closureFunctions) {
     if (slot >= closureCount || bodies->closureFunctions[slot] != -1)
@@ -914,6 +951,18 @@ const std::map<std::string, Source> &CheckedLibraries::inputs() const {
 
 pipeline::PackageOwners CheckedLibraries::packageOwners() const {
   return selected ? selected->packageOwners() : pipeline::PackageOwners{};
+}
+
+std::map<std::string, std::string> CheckedLibraries::packageKeys() const {
+  std::map<std::string, std::string> keys;
+  for (const auto &unit : units) {
+    if (!selected)
+      return keys;
+    keys["native:" + unit->root] = unit->archiveKey;
+    if (unit.get() == selected)
+      break;
+  }
+  return keys;
 }
 
 std::map<std::string, std::vector<std::string>>

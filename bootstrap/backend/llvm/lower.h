@@ -11,6 +11,9 @@ struct CodegenPartition {
   // Empty selects the root unit; other identities select a dependency unit.
   std::string packageIdentity;
   bool emitEntry = true;
+  // A reusable library object: every body is lowered, the identity's own
+  // functions are exported and other unowned bodies are private copies.
+  bool library = false;
 };
 
 std::unique_ptr<llvm::Module>

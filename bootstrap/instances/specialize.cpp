@@ -120,11 +120,13 @@ struct LocatedLimit : std::length_error {
 class Planner {
 public:
   Planner(const ir::Program &source, Diagnostics &diagnostics,
-          const Hooks &hooks)
+          const Hooks &hooks, Scope scope)
       : source(source), diagnostics(diagnostics),
-        types(std::make_shared<TypeStore>(*source.types)), hooks(hooks) {
+        types(std::make_shared<TypeStore>(*source.types)), hooks(hooks),
+        library(scope == Scope::Library),
+        externalLibraryBodies(scope == Scope::ProgramWithLibraryObjects) {
     result.types = types;
-    result.requireEntry = source.requireEntry;
+    result.requireEntry = source.requireEntry && !library;
     result.statics = source.statics;
     result.staticPackages = source.staticPackages;
     result.libraries = source.libraries;
@@ -136,10 +138,13 @@ public:
         // An executable keeps its own functions and instantiates the library
         // bodies its entry, its exports and its statics reach.
         if (source.functions[i].genericParameters.empty() &&
-            !source.functions[i].declarationOnly &&
-            (!source.requireEntry || source.functions[i].name == "main" ||
-             source.functions[i].exportedDefinition ||
-             i >= source.libraryBodies.size() || !source.libraryBodies[i]))
+            !source.functions[i].declarationOnly && !externalLibraryBody(i) &&
+            (library
+                 ? packageOwned(source.functionPackages, i)
+                 : !source.requireEntry || source.functions[i].name == "main" ||
+                       source.functions[i].exportedDefinition ||
+                       i >= source.libraryBodies.size() ||
+                       !source.libraryBodies[i]))
           instance(i, {}, {});
       prepareDynamicDrops();
       std::function<void(StaticConstant &)> constant =
@@ -149,8 +154,10 @@ public:
             for (auto &field : value.fields)
               constant(field);
           };
-      for (auto &storage : result.statics)
-        if (storage.initializer) {
+      for (std::size_t i = 0; i < result.statics.size(); ++i)
+        if (auto &storage = result.statics[i];
+            storage.initializer &&
+            (!library || packageOwned(source.staticPackages, i))) {
           destructor(storage.type, storage.span);
           constant(*storage.initializer);
         }
@@ -174,7 +181,25 @@ private:
   Diagnostics &diagnostics;
   std::shared_ptr<TypeStore> types;
   const Hooks &hooks;
+  const bool library;
+  const bool externalLibraryBodies;
   ir::Program result;
+  static bool packageOwned(const std::vector<std::string> &packages,
+                           std::size_t index) {
+    return index < packages.size() && !packages[index].empty();
+  }
+  bool externalLibraryBody(std::size_t index) const {
+    if (!externalLibraryBodies || index >= source.libraryBodies.size() ||
+        !source.libraryBodies[index] ||
+        index >= source.functionPackages.size() ||
+        !source.functionPackages[index].starts_with("native:") ||
+        index >= source.functions.size())
+      return false;
+    const auto &function = source.functions[index];
+    return !function.declarationOnly && function.genericParameters.empty() &&
+           function.variadicCursor < 0 &&
+           (function.abi.empty() || !function.externalName.empty());
+  }
   using Key = std::pair<std::size_t, std::vector<Type>>;
   std::map<Key, int> instances;
   std::map<std::pair<Type, Type>, int> callableAdapters;
@@ -452,26 +477,36 @@ private:
     if (index >= source.functions.size())
       throw std::invalid_argument(
           "generic call refers to an invalid declaration");
-    const auto &declaration = source.functions[index];
-    if (declaration.declarationOnly)
-      throw std::invalid_argument(
-          "interface call has no uniquely selected concrete implementation");
-    if (declaration.genericParameters.size() != arguments.size())
-      throw std::invalid_argument(
-          "generic instance argument count does not match");
+    const auto &header = source.functions[index];
     Key key{index, arguments};
     if (auto found = instances.find(key); found != instances.end())
       return found->second;
+    if (arguments.empty() && externalLibraryBody(index)) {
+      auto id = static_cast<int>(result.functions.size());
+      instances.emplace(std::move(key), id);
+      auto symbol = header.externalName.empty()
+                        ? "mettle." + displayPath(header.name)
+                        : header.externalName;
+      result.functions.push_back(header.externalDeclaration(std::move(symbol)));
+      result.functionPackages.push_back(source.functionPackages[index]);
+      return id;
+    }
+    if (header.declarationOnly)
+      throw std::invalid_argument(
+          "interface call has no uniquely selected concrete implementation");
+    if (header.genericParameters.size() != arguments.size())
+      throw std::invalid_argument(
+          "generic instance argument count does not match");
     if (instanceDepth >= limits::typeDepth)
       throw LocatedLimit("generic specialization nesting limit exceeded "
                          "while instantiating '" +
-                             displayPath(declaration.name) + "'",
+                             displayPath(header.name) + "'",
                          span);
     for (auto argument : arguments)
       if (types->name(argument).size() > limits::typeNameBytes)
         throw LocatedLimit("generic specialization type grows beyond the "
                            "compiler size limit while instantiating '" +
-                               displayPath(declaration.name) + "'",
+                               displayPath(header.name) + "'",
                            span);
     struct Scope {
       unsigned &depth;
@@ -483,8 +518,25 @@ private:
     std::vector<TypeBinding> bindings;
     for (std::size_t i = 0; i < arguments.size(); ++i) {
       concrete(arguments[i], span);
-      bindings.push_back({declaration.genericParameters[i], arguments[i]});
+      bindings.push_back({header.genericParameters[i], arguments[i]});
     }
+    ir::Function loaded;
+    const ir::Function *body = &header;
+    if (index < source.lazyFunctionRecords.size() &&
+        source.lazyFunctionRecords[index]) {
+      if (!hooks.loadLibraryBody) {
+        diagnostics.error("metadata", span,
+                          "deferred checked-library body has no loader");
+        return -1;
+      }
+      auto decoded = hooks.loadLibraryBody(*source.lazyFunctionRecords[index],
+                                           header, diagnostics);
+      if (!decoded)
+        return -1;
+      loaded = std::move(*decoded);
+      body = &loaded;
+    }
+    const auto &declaration = *body;
     auto id = static_cast<int>(result.functions.size());
     const bool genericInstance = !arguments.empty();
     instances.emplace(std::move(key), id);
@@ -687,9 +739,9 @@ private:
 } // namespace
 std::optional<ir::Program> specialize(const ir::Program &declarations,
                                       Diagnostics &diagnostics,
-                                      const Hooks &hooks) {
+                                      const Hooks &hooks, Scope scope) {
   if (!diagnostics.empty())
     return std::nullopt;
-  return Planner(declarations, diagnostics, hooks).run();
+  return Planner(declarations, diagnostics, hooks, scope).run();
 }
 } // namespace mettle::instances

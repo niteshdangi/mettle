@@ -67,6 +67,7 @@ public:
   const std::map<std::string, Source> &inputs() const;
   pipeline::PackageOwners packageOwners() const;
   std::map<std::string, std::vector<std::string>> packageSources() const;
+  std::map<std::string, std::string> packageKeys() const;
 
 private:
   std::vector<std::unique_ptr<CheckedLibrary>> units;

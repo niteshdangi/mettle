@@ -46,12 +46,14 @@ private:
   friend class Compiler;
   PreparedProgram(ir::Program program,
                   std::shared_ptr<const interfaces::Database> database,
-                  analysis::LoanResults loans)
+                  analysis::LoanResults loans,
+                  std::shared_ptr<lowering::ImportedBodies> importedBodies)
       : declarations(std::move(program)), interfaceData(std::move(database)),
-        loans(std::move(loans)) {}
+        loans(std::move(loans)), importedBodies(std::move(importedBodies)) {}
   ir::Program declarations;
   std::shared_ptr<const interfaces::Database> interfaceData;
   analysis::LoanResults loans;
+  std::shared_ptr<lowering::ImportedBodies> importedBodies;
 };
 std::optional<PreparedProgram>
 prepare(Module module, Diagnostics &diagnostics, bool requireEntry = true,
@@ -60,8 +62,14 @@ prepare(Module module, Diagnostics &diagnostics, bool requireEntry = true,
         NumericEvaluator numericEvaluator = nullptr,
         const resolution::SourcePackages &sourcePackages = {},
         const LibraryImporter &importLibrary = {});
-std::optional<ir::VerifiedProgram> compile(PreparedProgram program,
+std::optional<ir::VerifiedProgram> compile(const PreparedProgram &program,
                                            Diagnostics &diagnostics);
+std::optional<ir::VerifiedProgram>
+compileWithLibraryObjects(const PreparedProgram &program,
+                          Diagnostics &diagnostics);
+// Every non-generic package-owned body, independent of the program's own code.
+std::optional<ir::VerifiedProgram>
+compileLibrary(const PreparedProgram &program, Diagnostics &diagnostics);
 std::optional<ir::VerifiedProgram> admit(ir::Program program,
                                          Diagnostics &diagnostics);
 std::optional<ir::VerifiedProgram> compile(const Source &source,

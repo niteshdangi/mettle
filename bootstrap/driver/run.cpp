@@ -1291,8 +1291,29 @@ int build(const Options &requested,
                                checkedCore ? checkedCore->importer()
                                            : pipeline::LibraryImporter{})
            : std::nullopt;
-  auto program = prepared ? pipeline::compile(std::move(*prepared), diagnostics)
-                          : std::nullopt;
+  std::optional<std::optional<ir::VerifiedProgram>> libraryProgram;
+  std::vector<PackageObject> nativeObjects;
+  if (prepared && checkedCore && checkedCore->active() && store) {
+    auto packageSources = checkedCore->packageSources();
+    auto packageKeys = checkedCore->packageKeys();
+    nativeObjects =
+        libraryObjects(options, inputs, prepared->program(), packageSources,
+                       packageKeys, [&]() -> const ir::VerifiedProgram * {
+                         if (!libraryProgram) {
+                           Diagnostics libraryDiagnostics;
+                           libraryProgram.emplace(pipeline::compileLibrary(
+                               *prepared, libraryDiagnostics));
+                           libraryDiagnostics.print(source, std::cerr);
+                         }
+                         return *libraryProgram ? &**libraryProgram : nullptr;
+                       });
+  }
+  auto program =
+      prepared
+          ? nativeObjects.empty()
+                ? pipeline::compile(*prepared, diagnostics)
+                : pipeline::compileWithLibraryObjects(*prepared, diagnostics)
+          : std::nullopt;
   if (!program) {
     if (failurePhases)
       for (const auto &diagnostic : diagnostics.items)
@@ -1425,19 +1446,9 @@ int build(const Options &requested,
   }
   if (!splitPackages)
     packageObjects.clear();
-  if (checkedCore && checkedCore->active() && store) {
-    for (const auto &[owner, sources] : checkedCore->packageSources()) {
-      std::string error;
-      if (auto object =
-              nativePackageObject(options, inputs, *program, owner, sources,
-                                  checkedCore->key(), error, diagnostics))
-        packageObjects.push_back(std::move(*object));
-      else if (!error.empty()) {
-        std::cerr << "mettle: error[backend]: " << error << '\n';
-        return 1;
-      }
-    }
-  }
+  packageObjects.insert(packageObjects.end(),
+                        std::make_move_iterator(nativeObjects.begin()),
+                        std::make_move_iterator(nativeObjects.end()));
   int status = emit(options, source, *program, diagnostics, packageObjects,
                     store ? &*store : nullptr);
   if (status == 0 && cacheKey && store) {

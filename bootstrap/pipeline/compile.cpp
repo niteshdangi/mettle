@@ -308,11 +308,13 @@ public:
     if (!diagnostics.empty())
       return std::nullopt;
     return PreparedProgram(std::move(program), std::move(database),
-                           std::move(loans));
+                           std::move(loans),
+                           library ? std::move(library->bodies) : nullptr);
   }
 
   static std::optional<ir::VerifiedProgram>
-  specialize(PreparedProgram prepared, Diagnostics &diagnostics) {
+  specialize(const PreparedProgram &prepared, Diagnostics &diagnostics,
+             instances::Scope scope) {
     if (!diagnostics.empty())
       return std::nullopt;
     auto &program = prepared.declarations;
@@ -347,6 +349,20 @@ public:
           interfaces::Solver solver(store, database, errors);
           return store.declaredRegions(solver.normalize(type, bindings, {}));
         };
+    if (prepared.importedBodies && prepared.importedBodies->loadFunction) {
+      auto importedBodies = prepared.importedBodies;
+      hooks.loadLibraryBody = [importedBodies](std::size_t record,
+                                               const ir::Function &header,
+                                               Diagnostics &errors) {
+        std::string error;
+        auto function = importedBodies->loadFunction(record, header, error);
+        if (!function)
+          errors.error("metadata", header.span,
+                       error.empty() ? "compiled library body failed to load"
+                                     : error);
+        return function;
+      };
+    }
     hooks.aggregateConstant = [&](ir::Instruction &constant, Type projection,
                                   TypeStore &store, Diagnostics &errors) {
       if (!store.isProjection(projection))
@@ -451,7 +467,7 @@ public:
       call.interfaceType = call.erasedDispatch ? interface : Type::Unknown;
       return true;
     };
-    auto concrete = instances::specialize(program, diagnostics, hooks);
+    auto concrete = instances::specialize(program, diagnostics, hooks, scope);
     if (!concrete)
       return std::nullopt;
     auto concreteTypes = std::make_shared<TypeStore>(*concrete->types);
@@ -477,9 +493,19 @@ prepare(Module module, Diagnostics &diagnostics, bool requireEntry,
                            std::move(target), observe, packageOwners,
                            numericEvaluator, sourcePackages, importLibrary);
 }
-std::optional<ir::VerifiedProgram> compile(PreparedProgram program,
+std::optional<ir::VerifiedProgram> compile(const PreparedProgram &program,
                                            Diagnostics &diagnostics) {
-  return Compiler::specialize(std::move(program), diagnostics);
+  return Compiler::specialize(program, diagnostics, instances::Scope::Program);
+}
+std::optional<ir::VerifiedProgram>
+compileWithLibraryObjects(const PreparedProgram &program,
+                          Diagnostics &diagnostics) {
+  return Compiler::specialize(program, diagnostics,
+                              instances::Scope::ProgramWithLibraryObjects);
+}
+std::optional<ir::VerifiedProgram>
+compileLibrary(const PreparedProgram &program, Diagnostics &diagnostics) {
+  return Compiler::specialize(program, diagnostics, instances::Scope::Library);
 }
 std::optional<ir::VerifiedProgram> admit(ir::Program program,
                                          Diagnostics &diagnostics) {

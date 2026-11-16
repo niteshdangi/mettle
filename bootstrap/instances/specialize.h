@@ -23,8 +23,16 @@ struct Hooks {
   std::function<Type(Type, std::span<const TypeBinding>, TypeStore &,
                      Diagnostics &)>
       normalizeRegionSignature{};
+  std::function<std::optional<ir::Function>(std::size_t, const ir::Function &,
+                                            Diagnostics &)>
+      loadLibraryBody{};
 };
+// `Program` instantiates what the program reaches; `Library` instantiates
+// every non-generic package-owned body and its statics, independent of any
+// consumer, so each package's code can be compiled once and reused.
+enum class Scope { Program, ProgramWithLibraryObjects, Library };
 std::optional<ir::Program> specialize(const ir::Program &declarations,
                                       Diagnostics &diagnostics,
-                                      const Hooks &hooks = {});
+                                      const Hooks &hooks = {},
+                                      Scope scope = Scope::Program);
 } // namespace mettle::instances

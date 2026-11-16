@@ -3,7 +3,6 @@
 #include "backend/llvm/object.h"
 #include "driver/cache.h"
 #include "packages/sha256.h"
-#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Verifier.h"
@@ -100,80 +99,60 @@ std::string artifactSuffix(const std::string &format,
 }
 } // namespace
 
-std::optional<PackageObject> nativePackageObject(
+std::vector<PackageObject> libraryObjects(
     const Options &options, const BuildInputs &inputs,
-    const ir::VerifiedProgram &program, const std::string &identity,
-    const std::vector<std::string> &sources, const std::string &checkedKey,
-    std::string &error, const Diagnostics &diagnostics) {
-  error.clear();
-  const auto &ir = program.program();
+    const ir::Program &program,
+    const std::map<std::string, std::vector<std::string>> &packageSources,
+    const std::map<std::string, std::string> &packageKeys,
+    const std::function<const ir::VerifiedProgram *()> &library) {
   if (options.command != "build" || options.emit != "executable" ||
       options.emits.size() > 1 || options.library ||
       (options.profile != "debug" && options.profile != "release") ||
       options.debugInfo || !options.sanitizers.empty() ||
       !options.harness.empty() || options.freestanding ||
-      options.packageContext || !ir.globalAssembly.empty() || sources.empty() ||
-      checkedKey.empty() || !inputs.packageObjectsSafe() ||
-      ir.functionPackages.size() != ir.functions.size() ||
-      ir.staticPackages.size() != ir.statics.size())
-    return std::nullopt;
-  auto owned = [](const std::string &owner) {
-    return owner.empty() || owner == "native:core" || owner == "native:alloc" ||
-           owner == "native:std";
+      options.packageContext || !program.globalAssembly.empty() ||
+      !inputs.packageObjectsSafe() ||
+      program.functionPackages.size() != program.functions.size() ||
+      program.staticPackages.size() != program.statics.size() ||
+      program.libraryBodies.size() < program.functions.size())
+    return {};
+  auto owned = [&](const std::string &owner) {
+    return owner.empty() || packageSources.contains(owner);
   };
-  if (!std::all_of(ir.functionPackages.begin(), ir.functionPackages.end(),
-                   owned) ||
-      !std::all_of(ir.staticPackages.begin(), ir.staticPackages.end(), owned) ||
-      (std::find(ir.functionPackages.begin(), ir.functionPackages.end(),
-                 identity) == ir.functionPackages.end() &&
-       std::find(ir.staticPackages.begin(), ir.staticPackages.end(),
-                 identity) == ir.staticPackages.end()))
-    return std::nullopt;
-  llvm::LLVMContext context;
-  mettle::backend::DebugInfoRequest sourceInfo{
-      diagnostics.registeredSources(), {}, [&diagnostics](Span span) {
-        return diagnostics.debugSpan(span);
-      }};
-  auto module = mettle::backend::lower(
-      program, context, options.checks.value_or(options.profile != "release"),
-      options.target, false, nullptr, false, false, {true, identity, false},
-      &sourceInfo);
-  module->setModuleIdentifier(identity);
-  module->setSourceFileName(sources.front());
-  std::string verification;
-  llvm::raw_string_ostream verificationStream(verification);
-  if (llvm::verifyModule(*module, &verificationStream)) {
-    error = "invalid " + identity + " object partition:\n" + verification;
-    return std::nullopt;
+  if (!std::all_of(program.functionPackages.begin(),
+                   program.functionPackages.end(), owned) ||
+      !std::all_of(program.staticPackages.begin(), program.staticPackages.end(),
+                   owned))
+    return {};
+  for (std::size_t i = 0; i < program.functionPackages.size(); ++i)
+    if (!program.functionPackages[i].empty()) {
+      const auto &function = program.functions[i];
+      if (!program.libraryBodies[i] || function.variadicCursor >= 0 ||
+          (!function.abi.empty() && function.externalName.empty()))
+        return {};
+    }
+  std::vector<PackageObject> objects;
+  // Objects reference each other's bodies, so all link together.
+  for (const auto &[identity, sources] : packageSources) {
+    auto key = packageKeys.find(identity);
+    if (!identity.starts_with("native:") || sources.empty() ||
+        key == packageKeys.end() || key->second.empty())
+      return {};
+    packages::Sha256 hash;
+    for (const auto &field : {std::string("mettle-library-object-1"),
+                              compilerIdentity(), identity, key->second}) {
+      hash.update(field);
+      hash.update(std::string_view("\0", 1));
+    }
+    // Panic locations embed the library's source paths.
+    for (const auto &path : sources) {
+      hash.update(path);
+      hash.update(std::string_view("\0", 1));
+    }
+    objects.push_back(
+        {identity, sources.front(), "pkg-" + hash.finish(), library});
   }
-  // Unreferenced consumer declarations must not change the core partition key.
-  for (auto it = module->begin(); it != module->end();) {
-    auto &function = *it++;
-    if (function.isDeclaration() && function.use_empty())
-      function.eraseFromParent();
-  }
-  for (auto it = module->global_begin(); it != module->global_end();) {
-    auto &global = *it++;
-    if (global.isDeclaration() && global.use_empty())
-      global.eraseFromParent();
-  }
-  auto byName = [](const auto &left, const auto &right) {
-    return left.getName() < right.getName();
-  };
-  module->getFunctionList().sort(byName);
-  // Bitcode is a faithful, much cheaper serialization than printed IR.
-  std::string partition;
-  llvm::raw_string_ostream stream(partition);
-  llvm::WriteBitcodeToFile(*module, stream);
-  stream.flush();
-  packages::Sha256 hash;
-  hash.update(partition);
-  auto key = inputs.packageObjectKey(identity, sources,
-                                     {{"checked:" + identity, checkedKey}}, {},
-                                     options, hash.finish());
-  if (!key)
-    return std::nullopt;
-  return PackageObject{identity, sources.front(), std::move(*key)};
+  return objects;
 }
 
 bool outputOverwritesSource(const Options &options, const Source &source,
@@ -410,9 +389,18 @@ static int emitOne(const Options &options, const Source &source,
                     << " (disabled)\n";
         }
         if (!reused) {
+          const auto *source = &program;
+          if (package.library && !(source = package.library())) {
+            std::cerr << "mettle: error[internal]: cannot specialize library "
+                         "package "
+                      << cacheIdentity << '\n';
+            return 1;
+          }
           auto dependency = mettle::backend::lower(
-              program, context, checked, options.target, options.freestanding,
-              nullptr, false, false, {true, package.identity}, &debugRequest);
+              *source, context, checked, options.target, options.freestanding,
+              nullptr, false, false,
+              {true, package.identity, false, bool(package.library)},
+              &debugRequest);
           dependency->setSourceFileName(package.source);
           dependency->setTargetTriple(
               llvm::Triple(llvm::Triple::normalize(options.target)));
@@ -531,6 +519,12 @@ static int emitOne(const Options &options, const Source &source,
         if (llvm::Triple(options.target).isOSLinux()) {
           arguments.push_back("-fuse-ld=lld");
           arguments.push_back("-pthread");
+        }
+        if (options.emit == "executable") {
+          if (target.isOSBinFormatELF())
+            arguments.push_back("-Wl,--gc-sections");
+          else if (target.isOSDarwin())
+            arguments.push_back("-Wl,-dead_strip");
         }
         if (options.sanitizers.contains("address")) {
           arguments.push_back("-fsanitize=address");

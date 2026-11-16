@@ -205,14 +205,15 @@ public:
             f.externalName.empty()
                 ? llvm::Function::Create(
                       signature,
-                      partition.split ? llvm::GlobalValue::ExternalLinkage
-                                      : llvm::GlobalValue::InternalLinkage,
+                      partition.split && !privateCopy(index)
+                          ? llvm::GlobalValue::ExternalLinkage
+                          : llvm::GlobalValue::InternalLinkage,
                       "mettle." + displayPath(f.name), *module)
                 : llvm::cast<llvm::Function>(
                       module->getOrInsertFunction(f.externalName, signature)
                           .getCallee());
       function->setUWTableKind(llvm::UWTableKind::Default);
-      if (partition.split && f.externalName.empty()) {
+      if (partition.split && f.externalName.empty() && !privateCopy(index)) {
         function->setVisibility(llvm::GlobalValue::HiddenVisibility);
         function->setDSOLocal(true);
       }
@@ -350,7 +351,13 @@ private:
     if (!partition.split)
       return true;
     return index < program.functionPackages.size() &&
-           program.functionPackages[index] == partition.packageIdentity;
+           (program.functionPackages[index] == partition.packageIdentity ||
+            privateCopy(index));
+  }
+
+  bool privateCopy(std::size_t index) const {
+    return partition.library && index < program.functionPackages.size() &&
+           program.functionPackages[index].empty();
   }
 
   bool ownsStatic(std::size_t index) const {
@@ -370,7 +377,7 @@ private:
     auto frame = std::make_unique<CleanupFrame>(
         lowering, program.functions[body],
         "mettle.coroutine." + program.functions[body].name);
-    if (partition.split)
+    if (partition.split && !partition.library)
       for (auto *callback : {frame->body(), frame->unwind()}) {
         callback->setLinkage(llvm::GlobalValue::ExternalLinkage);
         callback->setVisibility(llvm::GlobalValue::HiddenVisibility);
@@ -706,9 +713,9 @@ private:
     auto *initializer = llvm::ConstantStruct::get(callerType(), fields);
     auto &global = callerSites[initializer];
     if (!global) {
-      global = new llvm::GlobalVariable(
-          *module, callerType(), true, llvm::GlobalValue::PrivateLinkage,
-          initializer, "mettle.caller.location");
+      global = new llvm::GlobalVariable(*module, callerType(), true,
+                                        llvm::GlobalValue::PrivateLinkage,
+                                        initializer, "mettle.caller.location");
       global->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     }
     return global;
@@ -1803,9 +1810,9 @@ private:
     }
     if (operation == "hint.unreachable_unchecked") {
       builder.CreateUnreachable();
-      builder.SetInsertPoint(llvm::BasicBlock::Create(
-          context, "after.unreachable_unchecked",
-          builder.GetInsertBlock()->getParent()));
+      builder.SetInsertPoint(
+          llvm::BasicBlock::Create(context, "after.unreachable_unchecked",
+                                   builder.GetInsertBlock()->getParent()));
       return unit();
     }
     if (operation == "intrinsics.abort") {

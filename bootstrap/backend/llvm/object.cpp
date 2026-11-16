@@ -62,7 +62,9 @@ createMachine(const llvm::Triple &triple, bool optimize) {
   const auto *target = llvm::TargetRegistry::lookupTarget(triple, diagnostic);
   if (target == nullptr)
     return llvm::createStringError(llvm::inconvertibleErrorCode(), diagnostic);
-  const llvm::TargetOptions options;
+  llvm::TargetOptions options;
+  // Lets the linker drop unreferenced library bodies.
+  options.FunctionSections = options.DataSections = true;
   std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
       triple, "generic", "", options, llvm::Reloc::PIC_, std::nullopt,
       optimize ? llvm::CodeGenOptLevel::Aggressive

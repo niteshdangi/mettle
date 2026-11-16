@@ -5,6 +5,7 @@
 #include <bit>
 #include <limits>
 #include <map>
+#include <mutex>
 #include <set>
 #include <thread>
 #include <type_traits>
@@ -18,6 +19,23 @@ struct InvalidArchive {
 };
 [[noreturn]] void reject(std::string message) {
   throw InvalidArchive{std::move(message)};
+}
+template <class A, class F> void functionHeader(A &a, F &r) {
+  a(r.name, r.result, r.parameters);
+  a.sequence(r.locals, limits::locals);
+  a(r.values);
+  a.sequence(r.scopes, limits::tokens);
+  a(r.resultSources, r.resultContents, r.withinFlows, r.externalName,
+    r.twoPhaseReceiver, r.constructorSelfSlot, r.indirectContract,
+    r.callLocalParameters, r.genericParameters, r.declarationOnly,
+    r.genericResultSources, r.interfaceBounds, r.unpinBounds, r.sizedBounds,
+    r.regionSignature, r.interfaceResult, r.genericEqualities, r.unsafeFunction,
+    r.abi, r.foreignDeclaration, r.exportedDefinition, r.variadic,
+    r.floatingPolicy, r.variadicCursor, r.targetFeatures, r.nakedAssembly,
+    r.arrayLoops, r.coroutine, r.span, r.inlineHint, r.trackCaller);
+}
+template <class A, class F> void functionBody(A &a, F &r) {
+  a.sequence(r.blocks, limits::cfgBlocks);
 }
 template <class E> constexpr unsigned lastTag() {
   if constexpr (std::is_same_v<E, Access>)
@@ -100,20 +118,8 @@ template <class A, class T> void record(A &a, T &r) {
     a(r.reassociate, r.contract, r.noNaNs, r.noInfinities, r.noSignedZeros,
       r.reciprocal, r.approximateFunctions);
   } else if constexpr (std::is_same_v<R, Function>) {
-    a(r.name, r.result, r.parameters);
-    a.sequence(r.locals, limits::locals);
-    a.sequence(r.blocks, limits::cfgBlocks);
-    a(r.values);
-    a.sequence(r.scopes, limits::tokens);
-    a(r.resultSources, r.resultContents, r.withinFlows, r.externalName,
-      r.twoPhaseReceiver, r.constructorSelfSlot, r.indirectContract,
-      r.callLocalParameters, r.genericParameters, r.declarationOnly,
-      r.genericResultSources, r.interfaceBounds, r.unpinBounds, r.sizedBounds,
-      r.regionSignature, r.interfaceResult, r.genericEqualities,
-      r.unsafeFunction, r.abi, r.foreignDeclaration, r.exportedDefinition,
-      r.variadic, r.floatingPolicy, r.variadicCursor, r.targetFeatures,
-      r.nakedAssembly, r.arrayLoops, r.coroutine, r.span, r.inlineHint,
-      r.trackCaller);
+    functionHeader(a, r);
+    functionBody(a, r);
   } else if constexpr (std::is_same_v<R, StaticConstant>) {
     if (++a.constantDepth > limits::typeDepth)
       reject("static constant nesting exceeds compiler limit");
@@ -364,14 +370,19 @@ struct Reader : Fields<Reader> {
   std::vector<std::string_view> texts;
   metadata::SourceReference sourceReference;
   Reader(std::span<const std::uint8_t> bytes,
-         const metadata::DecodeReferences &references, bool interned = false)
+         const metadata::DecodeReferences &references, bool interned = false,
+         const std::vector<std::string_view> *inheritedTexts = nullptr)
       : references(references), bytes(bytes), interned(interned) {
     if (bytes.size() > limits::sourceBytes)
       reject("IR archive exceeds compiler file size limit");
     if (interned) {
-      auto size = count(limits::tokens);
-      for (std::uint32_t i = 0; i < size; ++i)
-        texts.push_back(rawText());
+      if (inheritedTexts) {
+        texts = *inheritedTexts;
+      } else {
+        auto size = count(limits::tokens);
+        for (std::uint32_t i = 0; i < size; ++i)
+          texts.push_back(rawText());
+      }
     }
   }
   std::uint64_t unsignedInteger(unsigned width) {
@@ -536,6 +547,66 @@ void decodeRecords(
   }
 }
 
+struct FunctionRecordExtent {
+  std::size_t recordOffset = 0;
+  std::size_t recordLength = 0;
+  std::size_t bodyLength = 0;
+};
+
+void checkFunctionHeader(const Function &function);
+
+void decodeFunctionHeaders(
+    std::vector<Function> &functions,
+    const std::vector<std::pair<std::size_t, std::size_t>> &extents,
+    std::span<const std::uint8_t> bytes,
+    const metadata::DecodeReferences &references, Symbols &symbols,
+    std::vector<FunctionRecordExtent> &bodyRecords) {
+  const std::size_t count = extents.size();
+  std::vector<std::string> failures(count);
+  std::vector<Symbols> bound(count);
+  bodyRecords.resize(count);
+  auto decode = [&](std::size_t i) {
+    try {
+      auto recordBytes = bytes.subspan(extents[i].first, extents[i].second);
+      Reader record(recordBytes, references, true);
+      auto headerLength = record.unsignedInteger(4);
+      auto bodyLength = record.unsignedInteger(4);
+      auto remaining = recordBytes.size() - record.position;
+      if (headerLength > remaining || bodyLength != remaining - headerLength)
+        reject("invalid IR function header or body extent");
+      auto headerBytes = recordBytes.subspan(record.position, headerLength);
+      Reader header(headerBytes, references, true, &record.texts);
+      functionHeader(header, functions[i]);
+      if (header.position != headerBytes.size())
+        reject("trailing data in IR function header");
+      checkFunctionHeader(functions[i]);
+      bodyRecords[i] = {extents[i].first, extents[i].second,
+                        static_cast<std::size_t>(bodyLength)};
+      bound[i] = std::move(header.symbols);
+    } catch (const InvalidArchive &error) {
+      failures[i] = error.message;
+    }
+  };
+  const std::size_t workers = std::max<std::size_t>(
+      1, std::min<std::size_t>(
+             {8, std::thread::hardware_concurrency(), count / 64 + 1}));
+  std::vector<std::thread> threads;
+  for (std::size_t w = 1; w < workers; ++w)
+    threads.emplace_back([&, w] {
+      for (std::size_t i = w; i < count; i += workers)
+        decode(i);
+    });
+  for (std::size_t i = 0; i < count; i += workers)
+    decode(i);
+  for (auto &thread : threads)
+    thread.join();
+  for (std::size_t i = 0; i < count; ++i) {
+    if (!failures[i].empty())
+      reject(failures[i]);
+    symbols.merge(bound[i]);
+  }
+}
+
 bool validIndex(int index, std::size_t size, bool optional = false) {
   return (optional && index == -1) ||
          (index >= 0 && static_cast<std::size_t>(index) < size);
@@ -547,15 +618,45 @@ void checkNumber(const NumericLiteral &literal, Type type,
        !integerLiteralFits(literal, type, pointerBits)))
     reject("invalid typed IR numeric literal");
 }
+void checkFunctionHeader(const Function &f) {
+  if (f.values < 0 || static_cast<std::size_t>(f.values) > limits::tokens ||
+      f.parameters > f.locals.size() || f.scopes.empty() ||
+      f.scopes.front().parent != -1)
+    reject("invalid IR function shape");
+  auto parameters = [&](const auto &entries) {
+    for (auto parameter : entries)
+      if (parameter >= f.parameters)
+        reject("invalid IR parameter reference");
+  };
+  parameters(f.resultSources);
+  parameters(f.resultContents);
+  parameters(f.callLocalParameters);
+  parameters(f.genericResultSources);
+  for (auto [source, target] : f.withinFlows)
+    if (source >= f.parameters || target >= f.parameters)
+      reject("invalid IR within-flow parameter reference");
+  if (!validIndex(f.constructorSelfSlot, f.locals.size(), true) ||
+      !validIndex(f.variadicCursor, f.locals.size(), true))
+    reject("invalid IR special local reference");
+  for (std::size_t i = 1; i < f.scopes.size(); ++i)
+    if (!validIndex(f.scopes[i].parent, i))
+      reject("invalid IR lexical scope parent");
+  for (const auto &local : f.locals)
+    if (local.scope < -2 ||
+        (local.scope >= 0 && !validIndex(local.scope, f.scopes.size())))
+      reject("invalid IR local scope reference");
+}
+void checkFunctionNumbers(const Function &function, unsigned pointerBits) {
+  for (const auto &block : function.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.numeric)
+        checkNumber(*instruction.numeric, instruction.result.type, pointerBits);
+}
 void checkNumbers(const Program &program) {
   auto pointerBits =
       program.target.pointerBits ? program.target.pointerBits : 64;
   for (const auto &function : program.functions)
-    for (const auto &block : function.blocks)
-      for (const auto &instruction : block.instructions)
-        if (instruction.numeric)
-          checkNumber(*instruction.numeric, instruction.result.type,
-                      pointerBits);
+    checkFunctionNumbers(function, pointerBits);
   auto constant = [&](auto &self, const StaticConstant &value) -> void {
     if (value.kind == StaticConstant::Kind::Scalar)
       checkNumber(value.scalar, value.type, pointerBits);
@@ -567,16 +668,14 @@ void checkNumbers(const Program &program) {
       constant(constant, *storage.initializer);
 }
 void checkFunction(const Function &f) {
+  checkFunctionHeader(f);
   std::size_t instructions = 0;
   for (const auto &block : f.blocks) {
     if (block.instructions.size() > limits::tokens - instructions)
       reject("IR function exceeds compiler instruction limit");
     instructions += block.instructions.size();
   }
-  if (f.values < 0 || static_cast<std::size_t>(f.values) > limits::tokens ||
-      static_cast<std::size_t>(f.values) != instructions ||
-      f.parameters > f.locals.size() || f.scopes.empty() ||
-      f.scopes.front().parent != -1)
+  if (static_cast<std::size_t>(f.values) != instructions)
     reject("invalid IR function shape");
   std::vector<bool> definitions(instructions);
   for (const auto &block : f.blocks)
@@ -586,9 +685,6 @@ void checkFunction(const Function &f) {
         reject("invalid or duplicate function-local IR value definition");
       definitions[id] = true;
     }
-  for (std::size_t i = 1; i < f.scopes.size(); ++i)
-    if (!validIndex(f.scopes[i].parent, i))
-      reject("invalid IR lexical scope parent");
   auto value = [&](Value v) {
     if (!validIndex(v.id, f.values, true))
       reject("invalid function-local IR value reference");
@@ -598,25 +694,6 @@ void checkFunction(const Function &f) {
         (p.root == -1 && !p.fields.empty()))
       reject("invalid function-local IR place reference");
   };
-  auto parameters = [&](const auto &entries) {
-    for (auto p : entries)
-      if (p >= f.parameters)
-        reject("invalid IR parameter reference");
-  };
-  parameters(f.resultSources);
-  parameters(f.resultContents);
-  parameters(f.callLocalParameters);
-  for (auto [source, target] : f.withinFlows)
-    if (source >= f.parameters || target >= f.parameters)
-      reject("invalid IR within-flow parameter reference");
-  parameters(f.genericResultSources);
-  if (!validIndex(f.constructorSelfSlot, f.locals.size(), true) ||
-      !validIndex(f.variadicCursor, f.locals.size(), true))
-    reject("invalid IR special local reference");
-  for (const auto &local : f.locals)
-    if (local.scope < -2 ||
-        (local.scope >= 0 && !validIndex(local.scope, f.scopes.size())))
-      reject("invalid IR local scope reference");
   for (const auto &block : f.blocks) {
     for (const auto &n : block.instructions) {
       value(n.result);
@@ -701,18 +778,113 @@ template <class A, class T> void tail(A &a, T &p) {
 }
 } // namespace
 
+struct LazyFunctionBodies::State {
+  std::span<const std::uint8_t> bytes;
+  std::vector<FunctionRecordExtent> records;
+  Symbols symbols;
+  TargetFacts target;
+  mutable std::mutex mutex;
+};
+
+FunctionDecodeResult
+LazyFunctionBodies::load(std::size_t recordIndex, const Function &header,
+                         const metadata::DecodeReferences &references) const {
+  try {
+    if (!state || recordIndex >= state->records.size())
+      reject("IR function body index is out of range");
+    const auto &extent = state->records[recordIndex];
+    auto recordBytes =
+        state->bytes.subspan(extent.recordOffset, extent.recordLength);
+    Reader record(recordBytes, references, true);
+    auto headerLength = record.unsignedInteger(4);
+    auto bodyLength = record.unsignedInteger(4);
+    auto remaining = recordBytes.size() - record.position;
+    if (headerLength > remaining || bodyLength != remaining - headerLength ||
+        bodyLength != extent.bodyLength)
+      reject("invalid IR function body extent");
+    auto bodyBytes =
+        recordBytes.subspan(record.position + headerLength, bodyLength);
+    Reader body(bodyBytes, references, true, &record.texts);
+    Function function = header;
+    functionBody(body, function);
+    if (body.position != bodyBytes.size())
+      reject("trailing data in IR function body");
+    checkFunction(function);
+    checkFunctionNumbers(
+        function, state->target.pointerBits ? state->target.pointerBits : 64);
+    {
+      std::lock_guard lock(state->mutex);
+      state->symbols.merge(body.symbols);
+    }
+    return {std::move(function), {}};
+  } catch (const InvalidArchive &error) {
+    return {std::nullopt, error.message};
+  }
+}
+
 EncodeResult encodeProgram(const Program &program,
                            const metadata::EncodeReferences &references) {
   std::string context;
   try {
     Writer writer(references);
     writer.unsignedInteger(0x5249544d, 4);
-    writer.unsignedInteger(10, 4);
+    writer.unsignedInteger(11, 4);
     if ((!program.functionPackages.empty() &&
          program.functionPackages.size() != program.functions.size()) ||
         (!program.staticPackages.empty() &&
          program.staticPackages.size() != program.statics.size()))
       reject("misaligned IR package ownership");
+    auto functionRecords = [&](const auto &items, const auto &packages) {
+      auto integerSize = [](std::uint64_t value) {
+        std::size_t size = 1;
+        while (value >= 0x80) {
+          value >>= 7;
+          ++size;
+        }
+        return size;
+      };
+      writer.count(items.size(), limits::functions);
+      std::set<std::string> identities;
+      for (std::size_t i = 0; i < items.size(); ++i) {
+        auto name = writer.identity(SymbolKind::Function,
+                                    static_cast<std::uint32_t>(i));
+        if (!identities.insert(name).second)
+          reject("duplicate IR definition identity");
+        writer.text(packages.empty() ? std::string{} : packages[i]);
+        context = items[i].name;
+        Writer record(references, true);
+        functionHeader(record, items[i]);
+        const auto headerSize = record.bytes.size();
+        functionBody(record, items[i]);
+        const auto bodySize = record.bytes.size() - headerSize;
+        Writer strings(references);
+        strings.count(record.texts.size(), limits::tokens);
+        for (const auto *text : record.texts)
+          strings.text(*text);
+        const auto lengthsSize =
+            integerSize(headerSize) + integerSize(bodySize);
+        if (strings.bytes.size() > limits::sourceBytes - lengthsSize ||
+            record.bytes.size() >
+                limits::sourceBytes - lengthsSize - strings.bytes.size())
+          reject("IR record exceeds compiler file size limit");
+        const auto payloadSize =
+            strings.bytes.size() + lengthsSize + record.bytes.size();
+        const auto recordSize = integerSize(payloadSize);
+        if (writer.bytes.size() > limits::sourceBytes - recordSize ||
+            payloadSize >
+                limits::sourceBytes - recordSize - writer.bytes.size())
+          reject("IR archive exceeds compiler file size limit");
+        writer.unsignedInteger(payloadSize, 4);
+        writer.bytes.insert(writer.bytes.end(), strings.bytes.begin(),
+                            strings.bytes.end());
+        writer.unsignedInteger(headerSize, 4);
+        writer.unsignedInteger(bodySize, 4);
+        writer.bytes.insert(writer.bytes.end(), record.bytes.begin(),
+                            record.bytes.end());
+        writer.symbols.merge(record.symbols);
+        context.clear();
+      }
+    };
     auto records = [&](const auto &items, const auto &packages,
                        SymbolKind kind) {
       writer.count(items.size(), limits::functions);
@@ -723,8 +895,6 @@ EncodeResult encodeProgram(const Program &program,
           reject("duplicate IR definition identity");
         writer.text(packages.empty() ? std::string{} : packages[i]);
         context = items[i].name;
-        // Each record carries its length so a reader can decode records on
-        // several threads.
         Writer record(references, true);
         record.value(items[i]);
         Writer strings(references);
@@ -744,7 +914,7 @@ EncodeResult encodeProgram(const Program &program,
     };
     for (const auto &function : program.functions)
       checkFunction(function);
-    records(program.functions, program.functionPackages, SymbolKind::Function);
+    functionRecords(program.functions, program.functionPackages);
     records(program.statics, program.staticPackages, SymbolKind::Static);
     writer.count(program.closureFunctions.size(), limits::functions);
     for (std::size_t i = 0; i < program.closureFunctions.size(); ++i) {
@@ -761,14 +931,40 @@ EncodeResult encodeProgram(const Program &program,
   }
 }
 
-DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
-                           const metadata::DecodeReferences &references) {
+DecodeResult decodeProgramLazy(std::span<const std::uint8_t> bytes,
+                               const metadata::DecodeReferences &references) {
   try {
     Reader reader(bytes, references);
     if (reader.unsignedInteger(4) != 0x5249544d ||
-        reader.unsignedInteger(4) != 10)
+        reader.unsignedInteger(4) != 11)
       reject("unsupported IR archive format or version");
     DecodeResult result;
+    std::vector<FunctionRecordExtent> functionRecords;
+    auto functions = [&](auto &items, auto &packages, auto &names,
+                         auto &destinations) {
+      auto count = reader.count(limits::functions);
+      std::set<std::string> identities;
+      std::set<std::uint32_t> slots;
+      std::vector<std::pair<std::size_t, std::size_t>> extents;
+      extents.reserve(count);
+      for (std::uint32_t i = 0; i < count; ++i) {
+        auto [name, destination] = reader.identity(SymbolKind::Function);
+        if (!identities.emplace(name).second ||
+            !slots.insert(destination).second)
+          reject("duplicate or aliased IR definition identity");
+        names.emplace_back(name);
+        destinations.push_back(destination);
+        reader.text(packages.emplace_back());
+        auto length = reader.unsignedInteger(4);
+        if (length > bytes.size() - reader.position)
+          reject("truncated IR record");
+        extents.emplace_back(reader.position, length);
+        reader.position += length;
+        items.emplace_back();
+      }
+      decodeFunctionHeaders(items, extents, bytes, references, reader.symbols,
+                            functionRecords);
+    };
     auto records = [&](auto &items, auto &packages, auto &names,
                        auto &destinations, SymbolKind kind) {
       auto count = reader.count(limits::functions);
@@ -794,9 +990,8 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
       decodeRecords(items, extents, bytes, references, reader.symbols);
     };
     auto &program = result.program;
-    records(program.functions, program.functionPackages,
-            result.functionIdentities, result.functionDestinations,
-            SymbolKind::Function);
+    functions(program.functions, program.functionPackages,
+              result.functionIdentities, result.functionDestinations);
     records(program.statics, program.staticPackages, result.staticIdentities,
             result.staticDestinations, SymbolKind::Static);
     auto count = reader.count(limits::functions);
@@ -815,14 +1010,43 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
     tail(reader, program);
     if (reader.position != bytes.size())
       reject("trailing data in IR archive");
-    for (const auto &function : program.functions)
-      checkFunction(function);
     checkNumbers(program);
+    auto state = std::make_shared<LazyFunctionBodies::State>();
+    state->bytes = bytes;
+    state->records = std::move(functionRecords);
+    state->symbols = std::move(reader.symbols);
+    state->target = program.target;
+    result.lazyFunctions = std::shared_ptr<LazyFunctionBodies>(
+        new LazyFunctionBodies(std::move(state)));
     return result;
   } catch (const InvalidArchive &error) {
     DecodeResult result;
     result.error = error.message;
     return result;
   }
+}
+
+DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
+                           const metadata::DecodeReferences &references) {
+  auto result = decodeProgramLazy(bytes, references);
+  if (!result)
+    return result;
+  for (std::size_t i = 0; i < result.program.functions.size(); ++i) {
+    auto decoded =
+        result.lazyFunctions->load(i, result.program.functions[i], references);
+    if (!decoded) {
+      result.error = std::move(decoded.error);
+      result.program.functions.clear();
+      result.program.functionPackages.clear();
+      result.program.statics.clear();
+      result.program.staticPackages.clear();
+      result.program.closureFunctions.clear();
+      result.lazyFunctions.reset();
+      return result;
+    }
+    result.program.functions[i] = std::move(*decoded.function);
+  }
+  result.lazyFunctions.reset();
+  return result;
 }
 } // namespace mettle::ir

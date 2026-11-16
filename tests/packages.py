@@ -866,6 +866,8 @@ def checked_alloc_std_reuse(profile="debug"):
         cold, program = explained(first, *arguments)
         assert exit_code(program) == 0
         assert f"checked library interface cache stored {root} " in cold, cold
+        if root == "std":
+            assert "library object cache hit alloc " in cold, cold
         warm, program = explained(second, *arguments)
         assert exit_code(program) == 0
         assert "cache miss" in last_cache_event(warm), warm

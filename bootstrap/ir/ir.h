@@ -6,7 +6,10 @@
 #include "types/type.h"
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <ostream>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace mettle::ir {
@@ -194,6 +197,42 @@ struct Function {
   // Optimization policy only; never changes source-level execution.
   InlineHint inlineHint = InlineHint::Default;
   bool trackCaller = false;
+  Function externalDeclaration(std::string symbol) const {
+    Function declaration;
+    declaration.name = name;
+    declaration.result = result;
+    declaration.parameters = parameters;
+    declaration.locals = locals;
+    declaration.locals.resize(parameters);
+    declaration.scopes = scopes;
+    declaration.resultSources = resultSources;
+    declaration.resultContents = resultContents;
+    declaration.withinFlows = withinFlows;
+    declaration.externalName = std::move(symbol);
+    declaration.twoPhaseReceiver = twoPhaseReceiver;
+    declaration.indirectContract = indirectContract;
+    declaration.callLocalParameters = callLocalParameters;
+    declaration.genericParameters = genericParameters;
+    declaration.genericResultSources = genericResultSources;
+    declaration.interfaceBounds = interfaceBounds;
+    declaration.unpinBounds = unpinBounds;
+    declaration.sizedBounds = sizedBounds;
+    declaration.regionSignature = regionSignature;
+    declaration.interfaceResult = interfaceResult;
+    declaration.genericEqualities = genericEqualities;
+    declaration.unsafeFunction = unsafeFunction;
+    declaration.abi = abi;
+    declaration.foreignDeclaration = foreignDeclaration;
+    declaration.variadic = variadic;
+    declaration.floatingPolicy = floatingPolicy;
+    declaration.variadicCursor = variadicCursor;
+    declaration.targetFeatures = targetFeatures;
+    declaration.coroutine = coroutine;
+    declaration.span = span;
+    declaration.inlineHint = inlineHint;
+    declaration.trackCaller = trackCaller;
+    return declaration;
+  }
   bool operator==(const Function &) const = default;
 };
 struct Program {
@@ -208,6 +247,8 @@ struct Program {
   // Optional package-instance ownership, aligned with `functions` and
   // `statics`; an empty entry means root-owned or owner-ambiguous.
   std::vector<std::string> functionPackages{};
+  // Archive record ordinals for imported functions whose CFGs are deferred.
+  std::vector<std::optional<std::size_t>> lazyFunctionRecords{};
   std::shared_ptr<const TypeStore> types = std::make_shared<const TypeStore>();
   std::vector<int> closureFunctions{};
   // Interface dispatch for an opaque or erased self type, selected when a
