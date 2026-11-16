@@ -33,8 +33,19 @@ struct Entry {
   bool text = false;
   std::string blob, payload;
   std::uint64_t size = 0;
+  // The blob's modification time when it was verified at publication; a blob
+  // that still has it and its size is not hashed again on every read.
+  std::uint64_t stamp = 0;
   bool executable = false;
 };
+
+std::uint64_t modificationStamp(const fs::path &file) {
+  struct stat status{};
+  if (stat(file.c_str(), &status) != 0)
+    return 0;
+  return static_cast<std::uint64_t>(status.st_mtim.tv_sec) * 1000000000u +
+         static_cast<std::uint64_t>(status.st_mtim.tv_nsec) + 1;
+}
 
 bool hexName(const std::string &name) {
   return name.size() >= 2 && std::all_of(name.begin(), name.end(), [](char c) {
@@ -61,6 +72,7 @@ std::optional<Entry> parseEntry(const std::string &content) {
       (mode != "x" && mode != "-"))
     return std::nullopt;
   entry.executable = mode == "x";
+  head >> entry.stamp;
   return entry;
 }
 
@@ -320,9 +332,11 @@ bool Store::put(const std::string &key, const fs::path &file, bool executable) {
       return false;
     }
   }
-  return publishLocked(entryPath(key), "file " + *blob + " " +
-                                           std::to_string(size) +
-                                           (executable ? " x\n" : " -\n"));
+  return publishLocked(entryPath(key),
+                       "file " + *blob + " " + std::to_string(size) +
+                           (executable ? " x " : " - ") +
+                           std::to_string(modificationStamp(blobPath(*blob))) +
+                           "\n");
 }
 
 bool Store::putData(const std::string &key, std::string_view bytes) {
@@ -392,10 +406,14 @@ Store::Data Store::localData(const std::string &key,
   std::ifstream stream(blob, std::ios::binary);
   std::string bytes(static_cast<std::size_t>(entry->size), '\0');
   stream.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-  packages::Sha256 hash;
-  hash.update(bytes);
+  const bool trusted =
+      entry->stamp != 0 && entry->stamp == modificationStamp(blob);
   if (!stream || stream.peek() != std::char_traits<char>::eof() ||
-      hash.finish() != entry->blob) {
+      (!trusted && [&] {
+        packages::Sha256 hash;
+        hash.update(bytes);
+        return hash.finish() != entry->blob;
+      }())) {
     fs::remove(blob, error);
     fs::remove(path, error);
     return {Lookup::Corrupt, {}};
@@ -488,9 +506,12 @@ bool Store::putMany(const std::vector<Artifact> &artifacts) {
         return false;
       }
     }
-    if (!publishLocked(entryPath(item.artifact->key),
-                       "file " + item.blob + " " + std::to_string(item.size) +
-                           (item.artifact->executable ? " x\n" : " -\n"))) {
+    if (!publishLocked(
+            entryPath(item.artifact->key),
+            "file " + item.blob + " " + std::to_string(item.size) +
+                (item.artifact->executable ? " x " : " - ") +
+                std::to_string(modificationStamp(blobPath(item.blob))) +
+                "\n")) {
       discardTemporaries();
       return false;
     }
@@ -532,7 +553,14 @@ Store::Lookup Store::localMaterialize(const std::string &key,
     return Lookup::Miss;
   }
   std::uint64_t size = 0;
-  auto actual = hashFile(blob, size);
+  std::optional<std::string> actual;
+  if (entry->stamp != 0 && entry->stamp == modificationStamp(blob) &&
+      sizeOf(blob) == entry->size) {
+    actual = entry->blob;
+    size = entry->size;
+  } else {
+    actual = hashFile(blob, size);
+  }
   if (!actual || *actual != entry->blob || size != entry->size) {
     fs::remove(blob, error);
     fs::remove(path, error);
