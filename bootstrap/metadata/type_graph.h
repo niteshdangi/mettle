@@ -4,10 +4,16 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace mettle::metadata {
+enum class ValidationMode { Eager, OnDemand };
+class InvalidMetadata final : public std::runtime_error {
+public:
+  using std::runtime_error::runtime_error;
+};
 struct DefinitionIdentity {
   std::string package;
   std::string definition;
@@ -39,11 +45,15 @@ struct TypeGraphImport {
   explicit operator bool() const { return error.empty(); }
 };
 // Archive references are local to this payload, never cross-build identities.
-TypeGraphExport exportTypeGraph(const TypeStore &types,
-                                std::span<const Type> roots,
-                                const TypeGraphSymbols &symbols);
-// Only a fully validated candidate replaces types; callbacks do not mutate it.
-TypeGraphImport importTypeGraph(TypeStore &types,
-                                std::span<const std::uint8_t> bytes,
-                                const TypeGraphSymbols &symbols);
+TypeGraphExport
+exportTypeGraph(const TypeStore &types, std::span<const Type> roots,
+                const TypeGraphSymbols &symbols,
+                ValidationMode validation = ValidationMode::Eager);
+// Demand-loaded records retain their immutable resolver and validate before
+// use.
+TypeGraphImport
+importTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
+                const TypeGraphSymbols &symbols,
+                ValidationMode validation = ValidationMode::Eager,
+                std::shared_ptr<const TypeGraphSymbols> retainedSymbols = {});
 } // namespace mettle::metadata

@@ -1,17 +1,20 @@
 #pragma once
 
+#include "types/records.h"
 #include "types/regions.h"
 #include <array>
 #include <compare>
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <span>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -132,40 +135,84 @@ struct FloatingPolicy {
   bool operator==(const FloatingPolicy &) const = default;
 };
 enum class ParameterMode { Value, Take, Read, Mut };
-struct CallableParameter {
+struct OwnedTypeStorage {
+  using String = std::string;
+  using Features = std::set<std::string>;
+  template <class T> using Sequence = std::vector<T>;
+};
+template <class T> class BorrowedTypeSequence {
+public:
+  using value_type = T;
+  BorrowedTypeSequence() = default;
+  template <std::size_t Extent>
+  BorrowedTypeSequence(std::span<T, Extent> values) : values(values) {}
+  T *begin() { return values.data(); }
+  const T *begin() const { return values.data(); }
+  T *end() {
+    return values.empty() ? values.data() : values.data() + values.size();
+  }
+  const T *end() const {
+    return values.empty() ? values.data() : values.data() + values.size();
+  }
+  T *data() { return values.data(); }
+  const T *data() const { return values.data(); }
+  std::size_t size() const { return values.size(); }
+  bool empty() const { return values.empty(); }
+  T &operator[](std::size_t i) { return values[i]; }
+  const T &operator[](std::size_t i) const { return values[i]; }
+  T &front() { return values.front(); }
+  const T &front() const { return values.front(); }
+  T &back() { return values.back(); }
+  const T &back() const { return values.back(); }
+  operator std::span<T>() { return values; }
+  operator std::span<const T>() const { return values; }
+
+private:
+  std::span<T> values;
+};
+struct BorrowedTypeStorage {
+  using String = std::string_view;
+  using Features = BorrowedTypeSequence<std::string_view>;
+  template <class T> using Sequence = BorrowedTypeSequence<T>;
+};
+template <class Storage> struct BasicCallableParameter {
   Type type;
   ParameterMode mode = ParameterMode::Value;
-  std::string name{};
-  bool operator==(const CallableParameter &) const = default;
+  typename Storage::String name{};
+  bool operator==(const BasicCallableParameter &) const = default;
 };
-struct CallableType {
-  std::vector<CallableParameter> parameters;
+using CallableParameter = BasicCallableParameter<OwnedTypeStorage>;
+template <class Storage> struct BasicCallableType {
+  typename Storage::template Sequence<BasicCallableParameter<Storage>>
+      parameters;
   Type result = Type::Unit;
   Type error = Type::Unknown;
   Type abiResult = Type::Unit;
-  std::vector<std::size_t> resultSources{};
+  typename Storage::template Sequence<std::size_t> resultSources{};
   ParameterMode mode = ParameterMode::Read;
-  std::vector<std::string> regions{};
+  typename Storage::template Sequence<typename Storage::String> regions{};
   Type environment = Type::Unknown;
   int function = -1;
-  std::string name{};
-  std::vector<RegionId> regionParameters{};
-  std::vector<RegionId> parameterRegions{};
+  typename Storage::String name{};
+  typename Storage::template Sequence<RegionId> regionParameters{};
+  typename Storage::template Sequence<RegionId> parameterRegions{};
   RegionUniverse regionUniverse = 0;
-  std::vector<RegionRequirement> regionRequirements{};
+  typename Storage::template Sequence<RegionRequirement> regionRequirements{};
   bool resultFromEnvironment = false;
   // Hidden environment passing is separate from the source call capability.
   ParameterMode environmentMode = ParameterMode::Read;
   bool unsafeCall = false;
-  std::string abi{};
+  typename Storage::String abi{};
   bool variadic = false;
-  std::set<std::string> targetFeatures{};
+  typename Storage::Features targetFeatures{};
 };
+using CallableType = BasicCallableType<OwnedTypeStorage>;
 
-struct TypeField {
-  std::string name;
+template <class Storage> struct BasicTypeField {
+  typename Storage::String name;
   Type type;
 };
+using TypeField = BasicTypeField<OwnedTypeStorage>;
 enum class AggregateKind {
   Product,
   Enumeration,
@@ -198,110 +245,119 @@ enum class NativeCleanup { None, RefRelease, RefMutRelease, VaListEnd };
 constexpr std::uint32_t cellPayloadField(AggregateKind kind) {
   return kind == AggregateKind::RefCell ? 1u : 0u;
 }
-struct VariantType {
-  std::string name;
-  std::vector<std::uint32_t> fields;
+template <class Storage> struct BasicVariantType {
+  typename Storage::String name;
+  typename Storage::template Sequence<std::uint32_t> fields;
 };
+using VariantType = BasicVariantType<OwnedTypeStorage>;
 enum class LayoutKind { Native, C, Transparent, Integer };
-struct ProductLayout {
+template <class Storage> struct BasicProductLayout {
   LayoutKind kind = LayoutKind::Native;
   std::uint64_t alignment = 0, packing = 0;
   bool unionType = false;
   Type tag = Type::I32;
-  std::vector<std::uint32_t> pinnedFields{};
-  std::vector<NumericLiteral> discriminants{};
+  typename Storage::template Sequence<std::uint32_t> pinnedFields{};
+  typename Storage::template Sequence<NumericLiteral> discriminants{};
   int unpin = -1;
-  std::vector<std::pair<std::uint32_t, unsigned>> unpinConditions{};
+  typename Storage::template Sequence<std::pair<std::uint32_t, unsigned>>
+      unpinConditions{};
   bool conditionalUnpin = false;
 };
+using ProductLayout = BasicProductLayout<OwnedTypeStorage>;
 inline constexpr std::uint32_t unknownPackage = UINT32_MAX;
-struct ProductType {
-  std::string name;
-  std::vector<TypeField> fields;
+struct NativeVectorShape {
+  Type element;
+  unsigned lanes, alignment;
+};
+template <class Storage> struct BasicProductType {
+  typename Storage::String name;
+  typename Storage::template Sequence<BasicTypeField<Storage>> fields;
   bool copyRequested;
   // A generic Copy product is Copy only when the type arguments at
   // `copyConditions` are; the other parameters never reach a non-Copy field.
   bool conditionalCopy = false;
-  std::vector<std::size_t> copyConditions{};
+  typename Storage::template Sequence<std::size_t> copyConditions{};
   bool hasDestructor = false;
   int destructor = -1;
   AggregateKind kind = AggregateKind::Product;
-  std::vector<VariantType> variants{};
-  std::vector<Type> components{};
+  typename Storage::template Sequence<BasicVariantType<Storage>> variants{};
+  typename Storage::template Sequence<Type> components{};
   int callable = -1;
-  std::vector<Type> genericParameters{};
+  typename Storage::template Sequence<Type> genericParameters{};
   Type genericOrigin = Type::Unknown;
-  std::vector<Type> genericArguments{};
+  typename Storage::template Sequence<Type> genericArguments{};
   Type arrayCount = Type::Unknown;
-  std::vector<Type> opaqueBounds{};
+  typename Storage::template Sequence<Type> opaqueBounds{};
   std::uint32_t package = unknownPackage;
   Type regionOrigin = Type::Unknown;
-  std::vector<RegionId> regionArguments{};
+  typename Storage::template Sequence<RegionId> regionArguments{};
   Type regionPattern = Type::Unknown;
-  ProductLayout layout{};
+  BasicProductLayout<Storage> layout{};
   NativeCleanup nativeCleanup = NativeCleanup::None;
-  struct VectorShape {
-    Type element;
-    unsigned lanes, alignment;
-  };
+  using VectorShape = NativeVectorShape;
   std::optional<VectorShape> vector{};
   bool normalizedFields = false;
 };
+using ProductType = BasicProductType<OwnedTypeStorage>;
 enum class TypeParameterKind { Type, Constant, Value, Expression, Projection };
-struct TypeParameter {
-  std::string name;
+template <class Storage> struct BasicTypeParameter {
+  typename Storage::String name;
   bool copyRequested = false;
   bool sized = true;
   TypeParameterKind kind = TypeParameterKind::Type;
   Type valueType = Type::Unknown;
   // Projection ordinals are identities, not scalar constant payloads.
   std::int64_t value = 0;
-  std::string operation{};
-  std::vector<Type> operands{};
+  typename Storage::String operation{};
+  typename Storage::template Sequence<Type> operands{};
   Type callableConstraint = Type::Unknown;
   // Access parameters of the callable bound without a declared source region.
-  std::vector<std::size_t> callableLocalParameters{};
-  std::vector<RegionId> regionArguments{};
+  typename Storage::template Sequence<std::size_t> callableLocalParameters{};
+  typename Storage::template Sequence<RegionId> regionArguments{};
   bool unpin = false;
   bool thin = false;
   NumericLiteral numeric{};
   Type erasedCallableConstraint = Type::Unknown;
 };
+using TypeParameter = BasicTypeParameter<OwnedTypeStorage>;
 struct TypeBinding {
   Type parameter, argument;
   bool operator==(const TypeBinding &) const = default;
 };
-struct ErasedType {
-  std::string name;
+template <class Storage> struct BasicErasedType {
+  typename Storage::String name;
   std::uint32_t declaration = 0;
-  std::vector<Type> arguments{};
-  std::vector<TypeBinding> associated{};
-  std::vector<CallableType> methods{};
-  std::vector<Type> methodTypes{};
-  std::vector<Type> methodOwners{};
-  std::vector<std::size_t> methodSlots{};
-  std::vector<Type> parentInterfaces{};
-  std::vector<RegionId> regionArguments{};
-  std::vector<RegionId> regionParameters{};
+  typename Storage::template Sequence<Type> arguments{};
+  typename Storage::template Sequence<TypeBinding> associated{};
+  typename Storage::template Sequence<BasicCallableType<Storage>> methods{};
+  typename Storage::template Sequence<Type> methodTypes{};
+  typename Storage::template Sequence<Type> methodOwners{};
+  typename Storage::template Sequence<std::size_t> methodSlots{};
+  typename Storage::template Sequence<Type> parentInterfaces{};
+  typename Storage::template Sequence<RegionId> regionArguments{};
+  typename Storage::template Sequence<RegionId> regionParameters{};
   RegionUniverse regionUniverse = 0;
-  std::vector<RegionRequirement> regionRequirements{};
+  typename Storage::template Sequence<RegionRequirement> regionRequirements{};
   // Lifetime bound of an owned erased payload (`heap any I from r`): every
   // borrow held by the hidden value outlives it. Unspecified outside the
   // region pass and for erased types reached through a view.
   RegionId bound = RegionId::Unspecified;
 };
-struct ViewType {
+using ErasedType = BasicErasedType<OwnedTypeStorage>;
+template <class Storage> struct BasicViewType {
   Type payload;
   ParameterMode mode;
-  std::string name;
+  typename Storage::String name;
   RegionId region = RegionId::Unspecified;
 };
+using ViewType = BasicViewType<OwnedTypeStorage>;
 enum class PointerMetadata { None, ElementCount, Witness, Dependent };
-struct SliceType {
+template <class Storage> struct BasicSliceType {
   Type element;
-  std::string name;
+  typename Storage::String name;
   PointerMetadata metadata = PointerMetadata::ElementCount;
 };
+using SliceType = BasicSliceType<OwnedTypeStorage>;
 enum class ImportedTypeKind {
   Product,
   View,
@@ -311,25 +367,80 @@ enum class ImportedTypeKind {
   Callable,
   Erased
 };
-struct ImportedProduct {
-  ProductType descriptor;
-  std::optional<CallableType> closure;
-  std::vector<Type> coroutineInterior;
+template <class Storage> struct BasicImportedProduct {
+  BasicProductType<Storage> descriptor;
+  std::optional<BasicCallableType<Storage>> closure;
+  typename Storage::template Sequence<Type> coroutineInterior;
 };
-struct ImportedPointer {
-  ViewType descriptor;
+using ImportedProduct = BasicImportedProduct<OwnedTypeStorage>;
+template <class Storage> struct BasicImportedPointer {
+  BasicViewType<Storage> descriptor;
 };
+using ImportedPointer = BasicImportedPointer<OwnedTypeStorage>;
 using ImportedTypeDefinition =
     std::variant<ImportedProduct, ViewType, ImportedPointer, SliceType,
                  TypeParameter, CallableType, ErasedType>;
+using BorrowedTypeDefinition =
+    std::variant<const BasicImportedProduct<BorrowedTypeStorage> *,
+                 const BasicViewType<BorrowedTypeStorage> *,
+                 const BasicImportedPointer<BorrowedTypeStorage> *,
+                 const BasicSliceType<BorrowedTypeStorage> *,
+                 const BasicTypeParameter<BorrowedTypeStorage> *,
+                 const BasicCallableType<BorrowedTypeStorage> *,
+                 const BasicErasedType<BorrowedTypeStorage> *>;
+struct ImportedProductView {
+  const ProductType &descriptor;
+  const CallableType *closure;
+  std::span<const Type> coroutineInterior;
+};
+struct ImportedPointerView {
+  const ViewType &descriptor;
+};
+using ImportedTypeDefinitionView =
+    std::variant<ImportedProductView, const ViewType *, ImportedPointerView,
+                 const SliceType *, const TypeParameter *, const CallableType *,
+                 const ErasedType *>;
+struct ImportedSymbolRemap {
+  std::span<const std::uint32_t> functions, closures, interfaces, packages;
+};
+struct ImportedTypeIndex {
+  std::span<const Type> key{}, coroutineInterior{};
+  Type genericOrigin = Type::Unknown, regionOrigin = Type::Unknown;
+  Type payload = Type::Unknown, valueType = Type::Unknown;
+  RegionId region = RegionId::Unspecified;
+  ParameterMode mode = ParameterMode::Value;
+  TypeParameterKind parameterKind = TypeParameterKind::Type;
+  std::array<std::uint64_t, 2> magnitude{};
+  std::uint32_t declaration = 0;
+  bool closure = false;
+};
 class TypeStore {
 public:
+  class DefinitionSnapshot;
   // Shells belong only to a transactional staging store until graph validation.
   Type declareImportedType(ImportedTypeKind kind);
   void defineImportedType(Type type, ImportedTypeDefinition definition);
+  using ImportedDefinitionLoader =
+      std::function<ImportedTypeDefinition(std::size_t)>;
+  using BorrowedDefinitionLoader =
+      std::function<BorrowedTypeDefinition(std::size_t)>;
+  void deferImportedDefinitions(
+      std::span<const Type> ids, std::span<const ImportedTypeIndex> index,
+      std::shared_ptr<const ImportedDefinitionLoader> loader,
+      std::shared_ptr<const BorrowedDefinitionLoader> borrowed = {});
+  void remapImportedSymbols(std::span<const Type> types,
+                            const ImportedSymbolRemap &symbols);
   ImportedTypeDefinition importedDefinition(Type type) const;
+  // Borrows records until mutation detaches or replaces their storage.
+  ImportedTypeDefinitionView importedDefinitionView(Type type) const;
   ImportedTypeKind importedKind(Type type) const;
   std::vector<Type> storedTypes() const;
+  Type typeAt(std::size_t index) const;
+  std::size_t storedTypeCount() const { return entries.size(); }
+  std::shared_ptr<const DefinitionSnapshot> snapshotDefinitions() const;
+  bool sharesDefinition(Type type, const DefinitionSnapshot &other) const;
+  std::vector<Type> referencedTypes(Type type) const;
+  void shareInterning();
   Type declareProduct(std::string name, bool copyRequested,
                       AggregateKind kind = AggregateKind::Product);
   Type vectorType(std::string name, Type element, unsigned lanes,
@@ -365,6 +476,7 @@ public:
   RegionStore &regions() { return regionStore; }
   const RegionStore &regions() const { return regionStore; }
   const ViewType &view(Type type) const;
+  std::optional<RegionId> unitViewRegion(Type type) const;
   Type sliceType(Type element);
   bool isSlice(Type type) const;
   const SliceType &slice(Type type) const;
@@ -398,6 +510,30 @@ public:
   // Runtime provenance also includes borrows hidden by an erased payload.
   bool containsViews(Type type, bool includeErasedPayloads = false) const;
   const ProductType &product(Type type) const;
+  template <class Visitor>
+  decltype(auto) inspectProduct(Type type, Visitor &&visitor) const {
+    return inspectRecord<BasicImportedProduct<BorrowedTypeStorage>>(
+        type, products, std::forward<Visitor>(visitor));
+  }
+  template <class Visitor>
+  decltype(auto) inspectView(Type type, Visitor &&visitor) const {
+    if (isPointer(type))
+      return inspectRecord<BasicImportedPointer<BorrowedTypeStorage>>(
+          type, views, std::forward<Visitor>(visitor));
+    return inspectRecord<BasicViewType<BorrowedTypeStorage>>(
+        type, views, std::forward<Visitor>(visitor));
+  }
+  template <class Visitor>
+  decltype(auto) inspectParameter(Type type, Visitor &&visitor) const {
+    return inspectRecord<BasicTypeParameter<BorrowedTypeStorage>>(
+        type, parameters, std::forward<Visitor>(visitor));
+  }
+  template <class Visitor>
+  decltype(auto) inspectErased(Type type, Visitor &&visitor) const {
+    return inspectRecord<BasicErasedType<BorrowedTypeStorage>>(
+        type, erasedTypes, std::forward<Visitor>(visitor));
+  }
+  std::shared_ptr<const ProductType> retainProduct(Type type) const;
   std::optional<Type> findProduct(std::string_view name) const;
   std::string_view name(Type type) const;
   bool isCopy(Type type) const;
@@ -440,6 +576,7 @@ public:
   std::optional<NumericLiteral> scalarConstantValue(Type type) const;
   bool isParameter(Type type) const;
   bool isConstant(Type type) const;
+  bool isConstParameter(Type type) const;
   bool isSized(Type type, std::span<const Type> assumptions = {}) const;
   bool isThin(Type type) const;
   PointerMetadata pointerMetadata(Type type) const;
@@ -452,7 +589,7 @@ public:
   void constrainParameter(Type type, bool copyRequested, bool sized);
   void setGenericParameters(Type type, std::vector<Type> parameters);
   Type instantiateProduct(Type origin, std::vector<Type> arguments);
-  void refreshProductInstances();
+  void refreshProductInstances(std::span<const Type> origins);
   Type arrayType(Type payload, Type count);
   Type substitute(Type type, std::span<const TypeBinding> bindings);
   Type substituteRegions(Type type, std::span<const RegionBinding> bindings);
@@ -467,12 +604,33 @@ public:
   void setErasedParents(Type type, std::vector<Type> parents);
   bool isErased(Type type) const;
   const ErasedType &erased(Type type) const;
+  std::uint32_t erasedDeclaration(Type type) const;
   Type opaqueType(std::string name, Type hidden, std::vector<Type> bounds,
                   bool copyRequested = false);
   bool isOpaque(Type type) const;
   void setOpaqueBounds(Type type, std::vector<Type> bounds);
 
 private:
+  template <class Borrowed, class Owned, class Visitor>
+  decltype(auto) inspectRecord(Type type, const TypeRecords<Owned> &records,
+                               Visitor &&visitor) const {
+    if (auto definition = borrowedDefinition(type))
+      if (auto record = std::get_if<const Borrowed *>(&*definition)) {
+        const std::shared_ptr<const Borrowed> retained(borrowedDefinitions,
+                                                       *record);
+        if constexpr (requires { retained->descriptor; })
+          return visitor(retained->descriptor);
+        else
+          return visitor(*retained);
+      }
+    const auto record =
+        records.retain(entries.at(type.index() - builtinTypeCount).index);
+    return visitor(*record);
+  }
+  std::optional<BorrowedTypeDefinition> borrowedDefinition(Type type) const;
+  std::pair<TypeParameterKind, Type> parameterCategory(Type type) const;
+  std::shared_ptr<const BorrowedDefinitionLoader> borrowedDefinitions;
+  std::size_t borrowedDefinitionCount = 0;
   mutable CoroutineLayout coroutineLayouts;
   std::unordered_map<std::uint32_t, std::vector<Type>> coroutineInteriors;
   using RegionalSubstitution =
@@ -496,19 +654,18 @@ private:
     std::size_t index;
   };
   std::vector<Entry> entries;
-  std::vector<ProductType> products;
-  std::vector<ViewType> views;
-  std::vector<SliceType> slices;
+  TypeRecords<ProductType> products;
+  TypeRecords<ViewType> views;
+  TypeRecords<SliceType> slices;
   RegionStore regionStore;
-  std::vector<CallableType> callables;
-  std::vector<TypeParameter> parameters;
-  std::vector<ErasedType> erasedTypes;
+  TypeRecords<CallableType> callables;
+  TypeRecords<TypeParameter> parameters;
+  TypeRecords<ErasedType> erasedTypes;
   unsigned instanceDepth = 0;
   // Interning indices. Entries are indexed lazily by fields that are fixed
   // when an entry is created; every candidate is still checked against the
   // full identity predicate, so an index only narrows the search.
-  struct Lookup {
-    std::size_t synced = 0;
+  struct LookupData {
     std::map<Type, std::vector<std::uint32_t>> genericInstances;
     std::map<Type, std::vector<std::uint32_t>> regionInstances;
     std::map<std::vector<Type>, std::vector<std::uint32_t>> aggregates;
@@ -521,9 +678,43 @@ private:
     std::map<std::pair<Type, std::array<std::uint64_t, 2>>,
              std::vector<std::uint32_t>>
         constants;
+  };
+  struct Lookup {
+    std::size_t synced = 0;
+    std::shared_ptr<const LookupData> base;
+    LookupData local;
   } lookup;
   void syncLookup();
   static std::vector<Type> callableKey(const CallableType &descriptor);
+  template <class Match>
+  std::optional<Type> findIndexed(
+      const std::array<const std::vector<std::uint32_t> *, 2> &candidates,
+      Match &&match) const {
+    std::optional<Type> result;
+    for (const auto *part : candidates)
+      if (auto found = findIndexed(part, match);
+          found && (!result || found->index() < result->index()))
+        result = found;
+    return result;
+  }
+  template <class Key>
+  std::array<const std::vector<std::uint32_t> *, 2>
+  candidates(const std::map<Key, std::vector<std::uint32_t>> LookupData::*table,
+             const Key &key) const {
+    return {lookup.base ? found(lookup.base.get()->*table, key) : nullptr,
+            found(lookup.local.*table, key)};
+  }
+  template <class Key>
+  std::optional<std::uint32_t>
+  interned(const std::map<Key, std::uint32_t> LookupData::*table,
+           const Key &key) const {
+    const auto *local = found(lookup.local.*table, key);
+    const auto *base =
+        lookup.base ? found(lookup.base.get()->*table, key) : nullptr;
+    if (base && (!local || *base < *local))
+      return *base;
+    return local ? std::optional(*local) : std::nullopt;
+  }
   template <class Match>
   std::optional<Type> findIndexed(const std::vector<std::uint32_t> *candidates,
                                   Match &&match) const {
@@ -541,6 +732,17 @@ private:
     auto entry = map.find(key);
     return entry == map.end() ? nullptr : &entry->second;
   }
+};
+class TypeStore::DefinitionSnapshot {
+  friend class TypeStore;
+  std::vector<Entry> entries;
+  TypeRecords<ProductType> products;
+  TypeRecords<ViewType> views;
+  TypeRecords<SliceType> slices;
+  TypeRecords<CallableType> callables;
+  TypeRecords<TypeParameter> parameters;
+  TypeRecords<ErasedType> erasedTypes;
+  std::unordered_map<std::uint32_t, std::vector<Type>> coroutineInteriors;
 };
 std::string_view typeName(Type type);
 // Source spelling (`heap`, `pinned shared`, ...) of an allocation-library

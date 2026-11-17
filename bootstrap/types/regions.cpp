@@ -5,9 +5,19 @@
 #include <utility>
 
 namespace mettle {
-RegionStore::RegionStore()
-    : regions{{RegionKind::Unspecified, 0, 0, {}, {}},
-              {RegionKind::Static, 0, 0, "static", {}}} {}
+RegionStore::RegionStore() {
+  regions.push_back({RegionKind::Unspecified, 0, 0, {}, {}});
+  regions.push_back({RegionKind::Static, 0, 0, "static", {}});
+}
+
+void RegionStore::shareInterning() {
+  if (sharedIntersections)
+    return;
+  sharedIntersections =
+      std::make_shared<const std::map<std::vector<RegionId>, RegionId>>(
+          std::move(intersections));
+  intersections = {};
+}
 
 RegionScope RegionStore::binder(RegionUniverse parent, bool higherRanked) {
   if (parent >= parents.size())
@@ -67,6 +77,10 @@ RegionId RegionStore::intersection(std::vector<RegionId> sources) {
     return unspecified && !specified ? RegionId::Unspecified : RegionId::Static;
   if (flattened.size() == 1)
     return flattened.front();
+  if (sharedIntersections)
+    if (auto existing = sharedIntersections->find(flattened);
+        existing != sharedIntersections->end())
+      return existing->second;
   if (auto existing = intersections.find(flattened);
       existing != intersections.end())
     return existing->second;

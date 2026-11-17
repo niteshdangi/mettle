@@ -4,9 +4,14 @@
 #include <bit>
 #include <limits>
 #include <map>
+#include <memory_resource>
+#include <mutex>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 #include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace mettle::metadata {
 namespace {
@@ -46,31 +51,45 @@ template <class E> constexpr unsigned lastTag() {
 template <class A> void record(A &a, NumericLiteral &r) {
   a(r.magnitude[0], r.magnitude[1], r.floating, r.negative, r.floatingBits);
 }
-template <class A> void record(A &a, CallableParameter &r) {
-  a(r.type, r.mode, r.name);
+template <class A, class Storage>
+void record(A &a, BasicCallableParameter<Storage> &r) {
+  a(r.type, r.mode);
+  a.name(r.name);
 }
 template <class A> void record(A &a, RegionRequirement &r) {
   a(r.longer, r.shorter);
 }
-template <class A> void record(A &a, CallableType &r) {
-  a(r.parameters, r.result, r.error, r.abiResult, r.resultSources, r.mode,
-    r.regions, r.environment);
+template <class A, class Storage>
+void record(A &a, BasicCallableType<Storage> &r) {
+  a(r.parameters, r.result, r.error, r.abiResult, r.resultSources, r.mode);
+  a.names(r.regions);
+  a(r.environment);
   a.closure(r.function);
-  a(r.name, r.regionParameters, r.parameterRegions);
+  a.name(r.name);
+  a(r.regionParameters, r.parameterRegions);
   a.universe(r.regionUniverse);
   a(r.regionRequirements, r.resultFromEnvironment, r.environmentMode,
-    r.unsafeCall, r.abi, r.variadic, r.targetFeatures);
+    r.unsafeCall, r.abi, r.variadic);
+  a.features(r.targetFeatures);
 }
-template <class A> void record(A &a, TypeField &r) { a(r.name, r.type); }
-template <class A> void record(A &a, VariantType &r) { a(r.name, r.fields); }
-template <class A> void record(A &a, ProductLayout &r) {
+template <class A, class Storage>
+void record(A &a, BasicTypeField<Storage> &r) {
+  a(r.name, r.type);
+}
+template <class A, class Storage>
+void record(A &a, BasicVariantType<Storage> &r) {
+  a(r.name, r.fields);
+}
+template <class A, class Storage>
+void record(A &a, BasicProductLayout<Storage> &r) {
   a(r.kind, r.alignment, r.packing, r.unionType, r.tag, r.pinnedFields,
     r.discriminants, r.unpin, r.unpinConditions, r.conditionalUnpin);
 }
 template <class A> void record(A &a, ProductType::VectorShape &r) {
   a(r.element, r.lanes, r.alignment);
 }
-template <class A> void record(A &a, ProductType &r) {
+template <class A, class Storage>
+void record(A &a, BasicProductType<Storage> &r) {
   a(r.name, r.fields, r.copyRequested, r.conditionalCopy, r.copyConditions,
     r.hasDestructor);
   a.function(r.destructor);
@@ -80,7 +99,8 @@ template <class A> void record(A &a, ProductType &r) {
   a(r.regionOrigin, r.regionArguments, r.regionPattern, r.layout,
     r.nativeCleanup, r.vector, r.normalizedFields);
 }
-template <class A> void record(A &a, TypeParameter &r) {
+template <class A, class Storage>
+void record(A &a, BasicTypeParameter<Storage> &r) {
   a(r.name, r.copyRequested, r.sized, r.thin, r.kind, r.valueType, r.value,
     r.operation, r.operands, r.callableConstraint, r.callableLocalParameters,
     r.regionArguments, r.unpin, r.numeric, r.erasedCallableConstraint);
@@ -88,7 +108,8 @@ template <class A> void record(A &a, TypeParameter &r) {
 template <class A> void record(A &a, TypeBinding &r) {
   a(r.parameter, r.argument);
 }
-template <class A> void record(A &a, ErasedType &r) {
+template <class A, class Storage>
+void record(A &a, BasicErasedType<Storage> &r) {
   a(r.name);
   a.interface(r.declaration);
   a(r.arguments, r.associated, r.methods, r.methodTypes, r.methodOwners,
@@ -96,16 +117,21 @@ template <class A> void record(A &a, ErasedType &r) {
   a.universe(r.regionUniverse);
   a(r.regionRequirements, r.bound);
 }
-template <class A> void record(A &a, ViewType &r) {
+template <class A, class Storage> void record(A &a, BasicViewType<Storage> &r) {
   a(r.payload, r.mode, r.name, r.region);
 }
-template <class A> void record(A &a, SliceType &r) {
+template <class A, class Storage>
+void record(A &a, BasicSliceType<Storage> &r) {
   a(r.element, r.name, r.metadata);
 }
-template <class A> void record(A &a, ImportedProduct &r) {
+template <class A, class Storage>
+void record(A &a, BasicImportedProduct<Storage> &r) {
   a(r.descriptor, r.closure, r.coroutineInterior);
 }
-template <class A> void record(A &a, ImportedPointer &r) { a(r.descriptor); }
+template <class A, class Storage>
+void record(A &a, BasicImportedPointer<Storage> &r) {
+  a(r.descriptor);
+}
 template <class A> void record(A &a, DefinitionIdentity &r) {
   a(r.package, r.definition, r.parameterOrdinal);
 }
@@ -113,6 +139,15 @@ template <class A> void record(A &a, DefinitionIdentity &r) {
 template <class Derived> struct Fields {
   template <class... T> void operator()(T &...values) {
     (static_cast<Derived *>(this)->value(values), ...);
+  }
+  template <class T> void name(T &value) {
+    static_cast<Derived *>(this)->value(value);
+  }
+  template <class T> void names(T &value) {
+    static_cast<Derived *>(this)->value(value);
+  }
+  template <class T> void features(T &value) {
+    static_cast<Derived *>(this)->value(value);
   }
 };
 struct Graph {
@@ -202,11 +237,18 @@ struct Writer : Fields<Writer> {
   const TypeGraphSymbols &symbols;
   std::vector<std::uint8_t> bytes;
   bool localReferences = false;
+  bool discardBytes = false;
+  std::uint64_t *fingerprint = nullptr;
   std::vector<Type> *typeReferences = nullptr;
   const std::function<Type(Type)> *typeMapper = nullptr;
+  bool omitCallableNames = false;
   Writer(Graph &graph, const TypeGraphSymbols &symbols)
       : graph(graph), symbols(symbols) {}
   void byte(std::uint8_t b) {
+    if (fingerprint)
+      *fingerprint = (*fingerprint ^ b) * 1099511628211ull;
+    if (discardBytes)
+      return;
     if (bytes.size() >= limits::sourceBytes)
       reject("type graph exceeds source byte limit");
     bytes.push_back(b);
@@ -231,14 +273,12 @@ struct Writer : Fields<Writer> {
     else
       record(*this, n);
   }
+  template <class T> void value(const T &n) { value(const_cast<T &>(n)); }
   void value(Type &type) {
-    if (typeMapper)
-      type = (*typeMapper)(type);
-    if (typeReferences) {
-      typeReferences->push_back(type);
-      u32(0);
-    } else
-      u32(localReferences ? type.index() : graph.type(type));
+    auto mapped = typeMapper ? (*typeMapper)(type) : type;
+    if (typeReferences)
+      typeReferences->push_back(mapped);
+    u32(localReferences ? mapped.index() : graph.type(mapped));
   }
   void value(RegionId &region) {
     u32(localReferences ? region.index() : graph.region(region));
@@ -247,6 +287,10 @@ struct Writer : Fields<Writer> {
     u32(localReferences ? universe : graph.universe(universe));
   }
   void value(std::string &text) {
+    std::string_view view = text;
+    value(view);
+  }
+  void value(std::string_view text) {
     if (text.size() > limits::sourceBytes)
       reject("type graph string exceeds source byte limit");
     u32(static_cast<std::uint32_t>(text.size()));
@@ -259,6 +303,27 @@ struct Writer : Fields<Writer> {
     u32(static_cast<std::uint32_t>(items.size()));
     for (auto &item : items)
       value(item);
+  }
+  template <class T> void value(std::span<T> items) {
+    if (items.size() > limits::sourceBytes)
+      reject("type graph sequence exceeds source byte limit");
+    u32(static_cast<std::uint32_t>(items.size()));
+    for (const auto &item : items)
+      value(item);
+  }
+  template <class T> void value(BorrowedTypeSequence<T> items) {
+    value(std::span<T>(items));
+  }
+  template <class T> void name(T &text) {
+    if (omitCallableNames)
+      u32(0);
+    else
+      value(text);
+  }
+  template <class T> void names(T &items) {
+    u32(static_cast<std::uint32_t>(items.size()));
+    for (auto &item : items)
+      name(item);
   }
   template <class T> void value(std::optional<T> &item) {
     byte(item.has_value() ? 1 : 0);
@@ -303,20 +368,35 @@ struct Writer : Fields<Writer> {
 struct Header {
   unsigned pointerBits = 0;
   std::uint32_t types = 0, regions = 0, universes = 0, binders = 0, roots = 0;
+  bool indexed = false;
 };
+template <class T> std::size_t minimumValueBytes();
 struct Reader : Fields<Reader> {
   std::span<const std::uint8_t> bytes;
   std::size_t offset = 0;
   const TypeGraphSymbols &symbols;
   const Header &header;
-  bool scanning = true;
   std::span<const Type> types;
   std::span<const RegionId> regions;
   std::span<const RegionUniverse> universes;
+  static constexpr auto symbolKinds =
+      static_cast<std::size_t>(SymbolKind::Static) + 1;
+  using ResolvedSymbols = std::array<std::vector<std::uint32_t>, symbolKinds>;
+  std::array<std::vector<std::string_view>, symbolKinds> pendingSymbols;
+  const ResolvedSymbols *resolvedSymbols = nullptr;
+  std::array<std::size_t, symbolKinds> symbolOffsets{};
   Reader(std::span<const std::uint8_t> bytes, const TypeGraphSymbols &symbols,
          const Header &header)
       : bytes(bytes), symbols(symbols), header(header) {}
   std::size_t remaining() const { return bytes.size() - offset; }
+  std::span<const std::uint8_t> block() {
+    auto size = u32();
+    if (size > remaining())
+      reject("truncated indexed type record");
+    auto result = bytes.subspan(offset, size);
+    offset += size;
+    return result;
+  }
   std::uint8_t byte() {
     if (!remaining())
       reject("truncated type graph");
@@ -372,52 +452,44 @@ struct Reader : Fields<Reader> {
     auto ref = u32();
     if (ref >= primitiveCount && ref - primitiveCount >= header.types)
       reject("dangling type graph reference");
-    if (!scanning)
-      type = types[ref];
+    type = types[ref];
   }
   void value(RegionId &region) {
     auto ref = u32();
     if (ref >= 2 && ref - 2 >= header.regions)
       reject("dangling type graph region reference");
-    if (!scanning)
-      region = regions[ref];
+    region = regions[ref];
   }
   void universe(RegionUniverse &universe) {
     auto ref = u32();
     if (ref >= header.universes)
       reject("dangling type graph universe reference");
-    if (!scanning)
-      universe = universes[ref];
+    universe = universes[ref];
   }
   void value(std::string &text) {
     auto count = u32();
     if (count > remaining())
       reject("truncated type graph string");
-    if (!scanning)
-      text.assign(reinterpret_cast<const char *>(bytes.data() + offset), count);
+    text.assign(reinterpret_cast<const char *>(bytes.data() + offset), count);
     offset += count;
   }
   template <class T> void value(std::vector<T> &items) {
     auto count = u32();
-    if (count > remaining())
+    if (count > remaining() / minimumValueBytes<T>())
       reject("invalid type graph sequence length");
-    if (scanning) {
-      for (std::uint32_t i = 0; i < count; ++i) {
-        T item{};
-        value(item);
-      }
-    } else {
-      items.resize(count);
-      for (auto &item : items)
-        value(item);
+    items.clear();
+    items.reserve(count);
+    for (std::uint32_t i = 0; i < count; ++i) {
+      T item{};
+      value(item);
+      items.push_back(std::move(item));
     }
   }
   template <class T> void value(std::optional<T> &item) {
     if (flag()) {
       T temporary{};
       value(temporary);
-      if (!scanning)
-        item = std::move(temporary);
+      item = std::move(temporary);
     } else
       item.reset();
   }
@@ -431,21 +503,46 @@ struct Reader : Fields<Reader> {
     for (std::uint32_t i = 0; i < count; ++i) {
       std::string text;
       value(text);
-      if (!scanning && !items.insert(std::move(text)).second)
+      if (!items.insert(std::move(text)).second)
         reject("duplicate type graph target feature");
     }
   }
   std::uint32_t symbol(SymbolKind kind) {
-    std::string logical;
-    value(logical);
-    if (scanning)
-      return 0;
-    if (logical.empty() || !symbols.resolve)
+    const auto count = u32();
+    if (count > remaining())
+      reject("truncated type graph symbol");
+    const std::string_view logical(
+        reinterpret_cast<const char *>(bytes.data() + offset), count);
+    offset += count;
+    if (logical.empty() || (!resolvedSymbols && !symbols.resolve))
       reject("missing logical symbol resolver");
-    auto index = symbols.resolve(kind, logical);
-    if (!index)
-      reject("unresolved imported symbol: " + logical);
-    return *index;
+    const auto table = static_cast<std::size_t>(kind);
+    if (resolvedSymbols)
+      return resolvedSymbols->at(table).at(symbolOffsets[table]++);
+    auto &pending = pendingSymbols[table];
+    const auto index = static_cast<std::uint32_t>(pending.size());
+    pending.push_back(logical);
+    return index;
+  }
+  ResolvedSymbols resolveSymbols() const {
+    ResolvedSymbols result;
+    for (std::size_t i = 0; i < symbolKinds; ++i) {
+      const auto kind = static_cast<SymbolKind>(i);
+      result[i].reserve(pendingSymbols[i].size());
+      for (auto name : pendingSymbols[i]) {
+        const auto index = symbols.resolve(kind, name);
+        if (!index)
+          reject("unresolved imported symbol: " + std::string(name));
+        if ((kind == SymbolKind::Function || kind == SymbolKind::Closure) &&
+            *index >
+                static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
+          reject("imported symbol index is not representable");
+        if (kind == SymbolKind::Package && *index == unknownPackage)
+          reject("resolved package has invalid identity");
+        result[i].push_back(*index);
+      }
+    }
+    return result;
   }
   void function(int &index, SymbolKind kind = SymbolKind::Function) {
     if (!flag()) {
@@ -466,11 +563,107 @@ struct Reader : Fields<Reader> {
       index = unknownPackage;
     else {
       index = symbol(SymbolKind::Package);
-      if (!scanning && index == unknownPackage)
+      if (index == unknownPackage)
         reject("resolved package has invalid identity");
     }
   }
 };
+using CompactProduct = BasicImportedProduct<BorrowedTypeStorage>;
+using CompactPointer = BasicImportedPointer<BorrowedTypeStorage>;
+using CompactParameter = BasicTypeParameter<BorrowedTypeStorage>;
+using CompactCallable = BasicCallableType<BorrowedTypeStorage>;
+using CompactView = BasicViewType<BorrowedTypeStorage>;
+using CompactSlice = BasicSliceType<BorrowedTypeStorage>;
+using CompactErased = BasicErasedType<BorrowedTypeStorage>;
+using CompactDefinition =
+    std::variant<CompactProduct, CompactView, CompactPointer, CompactSlice,
+                 CompactParameter, CompactCallable, CompactErased>;
+using CompactDefinitionView =
+    std::variant<CompactProduct *, CompactView *, CompactPointer *,
+                 CompactSlice *, CompactParameter *, CompactCallable *,
+                 CompactErased *>;
+
+class CompactArena {
+public:
+  ~CompactArena() {
+    for (auto &destroy : destructors)
+      destroy();
+  }
+  template <class T> std::span<T> allocate(std::size_t count) {
+    static_assert(std::is_nothrow_default_constructible_v<T>);
+    if (!count)
+      return {};
+    std::pmr::polymorphic_allocator<T> allocator(&memory);
+    auto *items = allocator.allocate(count);
+    if constexpr (!std::is_trivially_destructible_v<T>)
+      destructors.emplace_back(
+          [items, count] { std::destroy_n(items, count); });
+    std::uninitialized_value_construct_n(items, count);
+    return {items, count};
+  }
+
+private:
+  std::pmr::monotonic_buffer_resource memory;
+  std::vector<std::function<void()>> destructors;
+};
+
+struct CompactReader : Reader {
+  using Reader::value;
+  std::shared_ptr<CompactArena> arena;
+  CompactReader(std::span<const std::uint8_t> bytes,
+                const TypeGraphSymbols &symbols, const Header &header,
+                std::shared_ptr<CompactArena> arena = {})
+      : Reader(bytes, symbols, header),
+        arena(arena ? std::move(arena) : std::make_shared<CompactArena>()) {}
+  template <class... T> void operator()(T &...values) { (value(values), ...); }
+  template <class T> void value(T &item) {
+    if constexpr (std::is_arithmetic_v<T> || std::is_enum_v<T>)
+      Reader::value(item);
+    else
+      record(*this, item);
+  }
+  void value(std::string_view &text) {
+    const auto count = u32();
+    if (count > remaining())
+      reject("truncated type graph string");
+    text = {reinterpret_cast<const char *>(bytes.data() + offset), count};
+    offset += count;
+  }
+  template <class T> void value(std::span<T> &items) {
+    const auto count = u32();
+    if (count > remaining() / minimumValueBytes<T>())
+      reject("invalid type graph sequence length");
+    auto decoded = arena->allocate<T>(count);
+    for (auto &item : decoded)
+      value(item);
+    items = decoded;
+  }
+  template <class T> void value(BorrowedTypeSequence<T> &items) {
+    std::span<T> decoded;
+    value(decoded);
+    items = decoded;
+  }
+  template <class T> void value(std::optional<T> &item) {
+    if (flag()) {
+      item.emplace();
+      value(*item);
+    } else
+      item.reset();
+  }
+  template <class T, class U> void value(std::pair<T, U> &item) {
+    (*this)(item.first, item.second);
+  }
+  template <class T> void name(T &item) { value(item); }
+  template <class T> void names(T &items) { value(items); }
+  void features(BorrowedTypeSequence<std::string_view> &items) {
+    value(items);
+    std::set<std::string_view> unique;
+    for (auto feature : items)
+      if (!unique.insert(feature).second)
+        reject("duplicate type graph target feature");
+  }
+};
+
 ImportedTypeDefinition definitionFor(ImportedTypeKind kind) {
   switch (kind) {
   case ImportedTypeKind::Product:
@@ -490,8 +683,250 @@ ImportedTypeDefinition definitionFor(ImportedTypeKind kind) {
   }
   reject("invalid imported type kind");
 }
-bool nominal(const ImportedTypeDefinition &definition) {
-  if (auto product = std::get_if<ImportedProduct>(&definition)) {
+CompactDefinition compactDefinitionFor(ImportedTypeKind kind) {
+  switch (kind) {
+  case ImportedTypeKind::Product:
+    return CompactProduct{};
+  case ImportedTypeKind::View:
+    return CompactView{};
+  case ImportedTypeKind::Pointer:
+    return CompactPointer{};
+  case ImportedTypeKind::Slice:
+    return CompactSlice{};
+  case ImportedTypeKind::Parameter:
+    return CompactParameter{};
+  case ImportedTypeKind::Callable:
+    return CompactCallable{};
+  case ImportedTypeKind::Erased:
+    return CompactErased{};
+  }
+  reject("invalid imported type kind");
+}
+struct MinimumRecordSize : Fields<MinimumRecordSize> {
+  std::size_t bytes = 0;
+  template <class T> void value(T &value) {
+    if constexpr (std::is_same_v<T, bool> || std::is_enum_v<T>)
+      ++bytes;
+    else if constexpr (std::is_integral_v<T>)
+      bytes += 8;
+    else
+      record(*this, value);
+  }
+  void value(Type &) { bytes += 4; }
+  void value(RegionId &) { bytes += 4; }
+  void value(std::string &) { bytes += 4; }
+  void value(std::string_view &) { bytes += 4; }
+  template <class T> void value(std::vector<T> &) { bytes += 4; }
+  template <class T> void value(std::span<T> &) { bytes += 4; }
+  template <class T> void value(BorrowedTypeSequence<T> &) { bytes += 4; }
+  template <class T> void value(std::optional<T> &) { ++bytes; }
+  template <class T, class U> void value(std::pair<T, U> &value) {
+    (*this)(value.first, value.second);
+  }
+  void value(std::set<std::string> &) { bytes += 4; }
+  void function(int &) { ++bytes; }
+  void closure(int &) { ++bytes; }
+  void interface(std::uint32_t &) { bytes += 4; }
+  void package(std::uint32_t &) { ++bytes; }
+  void universe(RegionUniverse &) { bytes += 4; }
+};
+
+template <class T> std::size_t minimumValueBytes() {
+  static const auto bytes = [] {
+    T value{};
+    MinimumRecordSize size;
+    size.value(value);
+    return size.bytes;
+  }();
+  return bytes;
+}
+
+std::size_t minimumDefinitionBytes(ImportedTypeKind kind) {
+  static const auto sizes = [] {
+    std::array<std::size_t,
+               static_cast<std::size_t>(ImportedTypeKind::Erased) + 1>
+        result{};
+    for (std::size_t i = 0; i < result.size(); ++i) {
+      auto definition = definitionFor(static_cast<ImportedTypeKind>(i));
+      MinimumRecordSize size;
+      std::visit([&](auto &value) { record(size, value); }, definition);
+      result[i] = size.bytes + 1;
+    }
+    return result;
+  }();
+  return sizes[static_cast<std::size_t>(kind)];
+}
+template <class T>
+const T *definitionRecord(const ImportedTypeDefinition &definition) {
+  return std::get_if<T>(&definition);
+}
+template <class T>
+auto definitionRecord(const ImportedTypeDefinitionView &definition) {
+  if constexpr (std::is_same_v<T, ImportedProduct>)
+    return std::get_if<ImportedProductView>(&definition);
+  else if constexpr (std::is_same_v<T, ImportedPointer>)
+    return std::get_if<ImportedPointerView>(&definition);
+  else {
+    auto record = std::get_if<const T *>(&definition);
+    return record ? *record : nullptr;
+  }
+}
+template <class T, class Definition>
+auto compactRecord(const Definition &definition) {
+  using Record = std::conditional_t<
+      std::is_same_v<T, ImportedProduct>, CompactProduct,
+      std::conditional_t<
+          std::is_same_v<T, ImportedPointer>, CompactPointer,
+          std::conditional_t<
+              std::is_same_v<T, TypeParameter>, CompactParameter,
+              std::conditional_t<
+                  std::is_same_v<T, CallableType>, CompactCallable,
+                  std::conditional_t<
+                      std::is_same_v<T, ErasedType>, CompactErased,
+                      std::conditional_t<std::is_same_v<T, ViewType>,
+                                         CompactView, CompactSlice>>>>>>;
+  if constexpr (std::is_same_v<Definition, CompactDefinition>)
+    return std::get_if<Record>(&definition);
+  else {
+    auto found = std::get_if<Record *>(&definition);
+    return found ? *found : nullptr;
+  }
+}
+template <class T> auto definitionRecord(const CompactDefinition &definition) {
+  return compactRecord<T>(definition);
+}
+template <class T>
+auto definitionRecord(const CompactDefinitionView &definition) {
+  return compactRecord<T>(definition);
+}
+template <class Visitor>
+decltype(auto) visitDefinition(Visitor &&visitor,
+                               const ImportedTypeDefinition &definition) {
+  return std::visit(std::forward<Visitor>(visitor), definition);
+}
+template <class Visitor>
+decltype(auto) visitDefinition(Visitor &&visitor,
+                               const CompactDefinition &definition) {
+  return std::visit(std::forward<Visitor>(visitor), definition);
+}
+template <class Visitor>
+decltype(auto) visitDefinition(Visitor &&visitor,
+                               const CompactDefinitionView &definition) {
+  return std::visit(
+      [&](auto record) -> decltype(auto) { return visitor(*record); },
+      definition);
+}
+template <class Visitor>
+decltype(auto) visitDefinition(Visitor &&visitor,
+                               const ImportedTypeDefinitionView &definition) {
+  return std::visit(
+      [&](const auto &record) -> decltype(auto) {
+        if constexpr (std::is_pointer_v<std::decay_t<decltype(record)>>)
+          return visitor(*record);
+        else
+          return visitor(record);
+      },
+      definition);
+}
+class DecodedDefinitions {
+public:
+  DecodedDefinitions(const TypeStore &store, std::span<const Type> ids)
+      : store(store), ids(ids) {}
+  std::size_t size() const { return ids.size(); }
+  ImportedTypeDefinitionView operator[](std::size_t index) const {
+    return store.importedDefinitionView(ids[index]);
+  }
+
+private:
+  const TypeStore &store;
+  std::span<const Type> ids;
+};
+class CompactTypes {
+public:
+  const TypeStore &types;
+  std::span<const CompactDefinitionView> definitions;
+  std::function<void(Type)> demand{};
+  void requireDefinition(Type type) const {
+    if (demand)
+      demand(type);
+  }
+  bool contains(Type type) const { return types.contains(type); }
+  bool isProduct(Type type) const { return holds<CompactProduct>(type); }
+  bool isView(Type type) const { return holds<CompactView>(type); }
+  bool isPointer(Type type) const { return holds<CompactPointer>(type); }
+  bool isSlice(Type type) const { return holds<CompactSlice>(type); }
+  bool isErased(Type type) const { return holds<CompactErased>(type); }
+  bool isFunctionPointer(Type type) const {
+    return holds<CompactCallable>(type);
+  }
+  bool isParameter(Type type) const {
+    return holds<CompactParameter>(type) &&
+           (parameter(type).kind == TypeParameterKind::Type ||
+            (parameter(type).kind == TypeParameterKind::Projection &&
+             parameter(type).valueType == Type::Unknown));
+  }
+  bool isConstant(Type type) const {
+    return holds<CompactParameter>(type) && !isParameter(type);
+  }
+  const BasicProductType<BorrowedTypeStorage> &product(Type type) const {
+    return get<CompactProduct>(type).descriptor;
+  }
+  const CompactParameter &parameter(Type type) const {
+    return get<CompactParameter>(type);
+  }
+  const CompactView &view(Type type) const { return get<CompactView>(type); }
+  const CompactView &pointer(Type type) const {
+    return get<CompactPointer>(type).descriptor;
+  }
+  const CompactSlice &slice(Type type) const { return get<CompactSlice>(type); }
+  bool isCallable(Type type) const {
+    return isFunctionPointer(type) ||
+           (isParameter(type) &&
+            parameter(type).callableConstraint != Type::Unknown) ||
+           (isProduct(type) && get<CompactProduct>(type).closure.has_value());
+  }
+  const CompactCallable &callable(Type type) const {
+    if (isParameter(type))
+      return callable(parameter(type).callableConstraint);
+    if (isProduct(type))
+      return *get<CompactProduct>(type).closure;
+    return get<CompactCallable>(type);
+  }
+  std::optional<NumericLiteral> scalarConstantValue(Type type) const {
+    if (isConstant(type) && parameter(type).kind == TypeParameterKind::Value)
+      return parameter(type).numeric;
+    return std::nullopt;
+  }
+  unsigned targetPointerBits() const { return types.targetPointerBits(); }
+  VaListAbi vaListAbi() const { return types.vaListAbi(); }
+  const RegionStore &regions() const { return types.regions(); }
+  std::string_view name(Type type) const {
+    if (type.index() < builtinTypeCount)
+      return typeName(type);
+    requireDefinition(type);
+    return std::visit(
+        [](const auto *record) -> std::string_view {
+          if constexpr (requires { record->descriptor; })
+            return record->descriptor.name;
+          else
+            return record->name;
+        },
+        definitions[type.index() - builtinTypeCount]);
+  }
+
+private:
+  template <class T> bool holds(Type type) const {
+    return type.index() >= builtinTypeCount && contains(type) &&
+           std::holds_alternative<T *>(
+               definitions[type.index() - builtinTypeCount]);
+  }
+  template <class T> const T &get(Type type) const {
+    requireDefinition(type);
+    return *std::get<T *>(definitions[type.index() - builtinTypeCount]);
+  }
+};
+template <class Definition> bool nominal(const Definition &definition) {
+  if (auto product = definitionRecord<ImportedProduct>(definition)) {
     const auto &r = product->descriptor;
     return r.genericOrigin == Type::Unknown &&
            r.regionOrigin == Type::Unknown &&
@@ -500,7 +935,7 @@ bool nominal(const ImportedTypeDefinition &definition) {
             r.kind == AggregateKind::Opaque ||
             r.kind == AggregateKind::NativeVector);
   }
-  if (auto parameter = std::get_if<TypeParameter>(&definition))
+  if (auto parameter = definitionRecord<TypeParameter>(definition))
     return parameter->kind == TypeParameterKind::Type ||
            parameter->kind == TypeParameterKind::Constant;
   return false;
@@ -532,14 +967,11 @@ template <class A> void record(A &a, WireRegion &r) {
     auto count = a.u32();
     if (count > a.remaining() / 4)
       reject("invalid intersection source count");
-    if (!a.scanning)
-      r.sources.reserve(count);
     for (std::uint32_t i = 0; i < count; ++i) {
       auto ref = a.u32();
       if (ref >= 2 && ref - 2 >= a.header.regions)
         reject("dangling intersection source");
-      if (!a.scanning)
-        r.sources.push_back(ref);
+      r.sources.push_back(ref);
     }
     if (r.kind < RegionKind::Bound ||
         (r.kind != RegionKind::Intersection &&
@@ -553,14 +985,17 @@ template <class A> void record(A &a, WireRegion &r) {
 constexpr std::array<std::uint8_t, 8> magic{'M', 'T', 'T', 'Y',
                                             'R', 'E', 'G', 0};
 constexpr std::uint32_t version = 3;
+constexpr std::uint32_t indexedVersion = 4;
 void readHeader(Reader &reader, Header &header, unsigned pointerBits) {
   if (reader.bytes.size() > limits::sourceBytes)
     reject("type graph exceeds source byte limit");
   for (auto expected : magic)
     if (reader.byte() != expected)
       reject("invalid type graph magic");
-  if (reader.u32() != version)
+  auto revision = reader.u32();
+  if (revision != version && revision != indexedVersion)
     reject("incompatible type graph version");
+  header.indexed = revision == indexedVersion;
   header.pointerBits = reader.u32();
   if (header.pointerBits != pointerBits)
     reject("incompatible type graph target pointer width");
@@ -588,28 +1023,24 @@ void readTables(Reader &reader, Tables &tables) {
   for (std::uint32_t i = 0; i < reader.header.types; ++i) {
     ImportedTypeKind kind{};
     reader(kind);
-    if (!reader.scanning)
-      tables.kinds.push_back(kind);
+    tables.kinds.push_back(kind);
   }
   for (std::uint32_t i = 0; i < reader.header.universes; ++i) {
     auto parent = reader.u32();
     if (i ? parent >= i : parent != 0)
       reject("cyclic or dangling region universe ancestry");
-    if (!reader.scanning)
-      tables.parents.push_back(parent);
+    tables.parents.push_back(parent);
   }
   for (std::uint32_t i = 0; i < reader.header.binders; ++i) {
     auto universe = reader.u32();
     if (universe >= reader.header.universes)
       reject("dangling region binder universe");
-    if (!reader.scanning)
-      tables.binders.push_back(universe);
+    tables.binders.push_back(universe);
   }
   for (std::uint32_t i = 0; i < reader.header.regions; ++i) {
     WireRegion region;
     record(reader, region);
-    if (!reader.scanning)
-      tables.regions.push_back(std::move(region));
+    tables.regions.push_back(std::move(region));
   }
 }
 std::vector<Type> builtinTypes() {
@@ -680,6 +1111,7 @@ template <class Derived> struct SemanticWalk : Fields<Derived> {
       record(*static_cast<Derived *>(this), item);
   }
   void value(std::string &) {}
+  void value(std::string_view &) {}
   void value(std::set<std::string> &) {}
   void value(RegionId &) {}
   void universe(RegionUniverse &) {}
@@ -688,6 +1120,10 @@ template <class Derived> struct SemanticWalk : Fields<Derived> {
   void interface(std::uint32_t &) {}
   void package(std::uint32_t &) {}
   template <class T> void value(std::vector<T> &items) {
+    for (auto &item : items)
+      static_cast<Derived *>(this)->value(item);
+  }
+  template <class T> void value(std::span<T> &items) {
     for (auto &item : items)
       static_cast<Derived *>(this)->value(item);
   }
@@ -700,7 +1136,8 @@ template <class Derived> struct SemanticWalk : Fields<Derived> {
   }
 };
 std::vector<std::size_t>
-acyclic(const std::vector<std::vector<std::size_t>> &edges) {
+acyclic(const std::vector<std::vector<std::size_t>> &edges,
+        bool probe = false) {
   std::vector<unsigned char> state(edges.size());
   std::vector<unsigned> depths(edges.size(), 1);
   std::vector<std::size_t> order;
@@ -718,18 +1155,27 @@ acyclic(const std::vector<std::vector<std::size_t>> &edges) {
       if (frame.next == edges[frame.node].size()) {
         for (auto child : edges[frame.node])
           depths[frame.node] = std::max(depths[frame.node], depths[child] + 1);
-        if (depths[frame.node] > limits::typeDepth)
+        if (depths[frame.node] > limits::typeDepth) {
+          if (probe)
+            return {};
           reject("imported type nesting exceeds compiler depth limit");
+        }
         state[frame.node] = 2;
         order.push_back(frame.node);
         stack.pop_back();
       } else {
         auto next = edges[frame.node][frame.next++];
-        if (state[next] == 1)
+        if (state[next] == 1) {
+          if (probe)
+            return {};
           reject("cyclic type graph");
+        }
         if (!state[next]) {
-          if (stack.size() >= limits::typeDepth)
+          if (stack.size() >= limits::typeDepth) {
+            if (probe)
+              return {};
             reject("imported type nesting exceeds compiler depth limit");
+          }
           state[next] = 1;
           stack.push_back({next});
         }
@@ -738,8 +1184,16 @@ acyclic(const std::vector<std::vector<std::size_t>> &edges) {
   }
   return order;
 }
-void validateCallable(const TypeStore &store, const CallableType &r,
-                      bool pointer) {
+std::size_t graphIndex(std::span<const Type> ids, Type type) {
+  if (ids.empty() || type.index() < ids.front().index())
+    reject("type reference is outside the decoded graph");
+  auto index = static_cast<std::size_t>(type.index() - ids.front().index());
+  if (index >= ids.size() || ids[index] != type)
+    reject("type reference is outside the decoded graph");
+  return index;
+}
+template <class Store, class Callable>
+void validateCallable(const Store &store, const Callable &r, bool pointer) {
   if (pointer && (r.environment != Type::Unknown || r.function != -1))
     reject("function pointer has a closure environment or function identity");
   if (pointer && (r.result == Type::Unknown || r.abiResult == Type::Unknown))
@@ -762,27 +1216,48 @@ void validateCallable(const TypeStore &store, const CallableType &r,
     if (parameter.type == Type::Unknown || store.isConstant(parameter.type))
       reject("invalid callable parameter type");
 }
-std::size_t graphIndex(std::span<const Type> ids, Type type) {
-  if (ids.empty() || type.index() < ids.front().index())
-    reject("type reference is outside the decoded graph");
-  auto index = static_cast<std::size_t>(type.index() - ids.front().index());
-  if (index >= ids.size() || ids[index] != type)
-    reject("type reference is outside the decoded graph");
-  return index;
-}
-void validateGraph(const TypeStore &store, std::span<const Type> ids,
-                   std::vector<ImportedTypeDefinition> &definitions) {
-  std::vector<std::vector<std::size_t>> valueEdges(ids.size()),
-      originEdges(ids.size()), interfaceEdges(ids.size());
+template <class Store, class Definitions>
+void validateGraph(const Store &store, std::span<const Type> ids,
+                   const Definitions &definitions,
+                   std::vector<std::size_t> *selected = nullptr) {
+  auto count = selected ? 0 : ids.size();
+  std::vector<std::vector<std::size_t>> valueEdges(count), originEdges(count),
+      interfaceEdges(count);
+  std::unordered_map<std::size_t, std::size_t> positions;
+  std::vector<std::size_t> ordinals;
+  auto position = [&](std::size_t index) {
+    if (!selected)
+      return index;
+    auto [found, added] = positions.emplace(index, ordinals.size());
+    if (added) {
+      ordinals.push_back(index);
+      valueEdges.emplace_back();
+      originEdges.emplace_back();
+      interfaceEdges.emplace_back();
+    }
+    return found->second;
+  };
+  auto node = [&](Type type) {
+    if constexpr (requires { store.requireDefinition(type); })
+      store.requireDefinition(type);
+    return position(graphIndex(ids, type));
+  };
+  auto edge = [&](auto &edges, std::size_t from, Type type) {
+    auto target = node(type);
+    edges[from].push_back(target);
+  };
   auto validType = [&](Type type) {
     return type != Type::Unknown && !store.isConstant(type);
   };
   auto scalar = [](Type type) {
     return isInteger(type) || type == Type::Bool || type == Type::Char;
   };
-  for (std::size_t i = 0; i < definitions.size(); ++i) {
-    auto &definition = definitions[i];
-    if (auto imported = std::get_if<ImportedProduct>(&definition)) {
+  for (std::size_t next = 0;
+       next < (selected ? selected->size() : definitions.size()); ++next) {
+    auto i = selected ? (*selected)[next] : next;
+    auto slot = position(i);
+    const auto &definition = definitions[i];
+    if (auto imported = definitionRecord<ImportedProduct>(definition)) {
       const auto &r = imported->descriptor;
       if (r.hasDestructor != (r.destructor >= 0))
         reject("inconsistent product destructor");
@@ -835,7 +1310,7 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
         if (origin != Type::Unknown) {
           if (store.product(origin).kind != r.kind)
             reject("product origin representation mismatch");
-          originEdges[i].push_back(graphIndex(ids, origin));
+          edge(originEdges, slot, origin);
         }
       std::set<Type> parameters;
       for (auto parameter : r.genericParameters) {
@@ -854,7 +1329,7 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
         if (!validType(field.type))
           reject("invalid product field type");
         if (store.isProduct(field.type) || store.isSlice(field.type))
-          valueEdges[i].push_back(graphIndex(ids, field.type));
+          edge(valueEdges, slot, field.type);
       }
       for (auto pinned : r.layout.pinnedFields)
         if (pinned >= r.fields.size())
@@ -896,9 +1371,9 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
           if (literal && (literal->negative || literal->magnitude[1]))
             reject("invalid array count");
         }
-        valueEdges[i].clear();
+        valueEdges[slot].clear();
         if (store.isProduct(r.components[0]) || store.isSlice(r.components[0]))
-          valueEdges[i].push_back(graphIndex(ids, r.components[0]));
+          edge(valueEdges, slot, r.components[0]);
       } else if (r.arrayCount != Type::Unknown)
         reject("array count on non-array product");
       if (imported->closure) {
@@ -1041,7 +1516,7 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
           break;
         }
       }
-    } else if (auto parameter = std::get_if<TypeParameter>(&definition)) {
+    } else if (auto parameter = definitionRecord<TypeParameter>(definition)) {
       const auto &r = *parameter;
       if ((r.kind == TypeParameterKind::Type &&
            (r.valueType != Type::Unknown || !r.operands.empty())) ||
@@ -1053,16 +1528,16 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
              r.numeric.magnitude == std::array<std::uint64_t, 2>{}) ||
             !integerLiteralFits(r.numeric, r.valueType,
                                 store.targetPointerBits()))))
-        reject("invalid type or constant parameter '" + r.name + "' (kind " +
-               std::to_string(static_cast<unsigned>(r.kind)) + ", value type " +
-               std::string(store.name(r.valueType)) + ", operands " +
-               std::to_string(r.operands.size()) + ")");
+        reject("invalid type or constant parameter '" + std::string(r.name) +
+               "' (kind " + std::to_string(static_cast<unsigned>(r.kind)) +
+               ", value type " + std::string(store.name(r.valueType)) +
+               ", operands " + std::to_string(r.operands.size()) + ")");
       if (r.thin && (r.kind != TypeParameterKind::Type &&
                      (r.kind != TypeParameterKind::Projection ||
                       r.valueType != Type::Unknown)))
         reject("invalid Thin type parameter constraint");
       if (r.kind == TypeParameterKind::Expression) {
-        static const std::set<std::string> operations{
+        static const std::set<std::string, std::less<>> operations{
             "+",  "-",  "*",  "/", "%",  "&", "|",  "^",  "<<",
             ">>", "==", "!=", "<", "<=", ">", ">=", "&&", "||"};
         if (!scalar(r.valueType) || r.operands.size() != 2 ||
@@ -1111,9 +1586,9 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
         for (auto local : r.callableLocalParameters)
           if (local >= store.callable(r.callableConstraint).parameters.size())
             reject("dangling callable constraint parameter");
-    } else if (auto callable = std::get_if<CallableType>(&definition))
+    } else if (auto callable = definitionRecord<CallableType>(definition))
       validateCallable(store, *callable, true);
-    else if (auto erased = std::get_if<ErasedType>(&definition)) {
+    else if (auto erased = definitionRecord<ErasedType>(definition)) {
       for (const auto &method : erased->methods)
         validateCallable(store, method, false);
       if ((!erased->methodTypes.empty() &&
@@ -1150,56 +1625,58 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
       for (auto parent : erased->parentInterfaces) {
         if (!store.isErased(parent))
           reject("invalid erased parent interface");
-        interfaceEdges[i].push_back(graphIndex(ids, parent));
+        edge(interfaceEdges, slot, parent);
       }
-    } else if (auto view = std::get_if<ViewType>(&definition)) {
+    } else if (auto view = definitionRecord<ViewType>(definition)) {
       if (!validType(view->payload) || (view->mode != ParameterMode::Read &&
                                         view->mode != ParameterMode::Mut))
         reject("invalid view type");
-    } else if (auto pointer = std::get_if<ImportedPointer>(&definition)) {
+    } else if (auto pointer = definitionRecord<ImportedPointer>(definition)) {
       if (!validType(pointer->descriptor.payload) ||
           pointer->descriptor.region != RegionId::Unspecified ||
           (pointer->descriptor.mode != ParameterMode::Read &&
            pointer->descriptor.mode != ParameterMode::Mut))
         reject("invalid pointer type");
-    } else if (auto slice = std::get_if<SliceType>(&definition)) {
+    } else if (auto slice = definitionRecord<SliceType>(definition)) {
       if (!validType(slice->element) ||
           slice->metadata != PointerMetadata::ElementCount)
         reject("invalid slice element");
       if (store.isProduct(slice->element) || store.isSlice(slice->element))
-        valueEdges[i].push_back(graphIndex(ids, slice->element));
+        edge(valueEdges, slot, slice->element);
     }
   }
   acyclic(originEdges);
   acyclic(interfaceEdges);
   auto order = acyclic(valueEdges);
-  std::vector<bool> drops(ids.size());
-  std::vector<std::uint64_t> expanded(ids.size(), 1), elements(ids.size(), 1);
+  std::vector<bool> drops(valueEdges.size());
+  std::vector<std::uint64_t> expanded(valueEdges.size(), 1),
+      elements(valueEdges.size(), 1);
   auto drop = [&](Type type) {
     if (store.isErased(type))
       return true;
     if (store.isParameter(type))
       return !store.parameter(type).copyRequested;
-    return type.index() >= builtinTypeCount && drops[graphIndex(ids, type)];
+    return (store.isProduct(type) || store.isSlice(type)) && drops[node(type)];
   };
-  for (auto i : order) {
+  for (auto slot : order) {
+    auto i = selected ? ordinals[slot] : slot;
     auto type = ids[i];
     if (store.isSlice(type))
-      drops[i] = drop(store.slice(type).element);
+      drops[slot] = drop(store.slice(type).element);
     else if (store.isErased(type) || store.isParameter(type))
-      drops[i] = drop(type);
+      drops[slot] = drop(type);
     else if (store.isProduct(type)) {
       const auto &r = store.product(type);
       bool suppress = r.kind == AggregateKind::Uninit ||
                       r.kind == AggregateKind::ManualDrop ||
                       r.kind == AggregateKind::Atomic;
-      drops[i] = !suppress &&
-                 (r.hasDestructor || r.nativeCleanup != NativeCleanup::None ||
-                  r.kind == AggregateKind::VarArgs ||
-                  r.kind == AggregateKind::Coroutine);
+      drops[slot] = !suppress && (r.hasDestructor ||
+                                  r.nativeCleanup != NativeCleanup::None ||
+                                  r.kind == AggregateKind::VarArgs ||
+                                  r.kind == AggregateKind::Coroutine);
       if (!suppress)
         for (const auto &field : r.fields)
-          drops[i] = drops[i] || drop(field.type);
+          drops[slot] = drops[slot] || drop(field.type);
       if (r.kind != AggregateKind::Array)
         continue;
       auto element = r.components[0];
@@ -1213,20 +1690,21 @@ void validateGraph(const TypeStore &store, std::span<const Type> ids,
       auto inner = element.index() >= builtinTypeCount &&
                            store.isProduct(element) &&
                            store.product(element).kind == AggregateKind::Array
-                       ? graphIndex(ids, element)
-                       : ids.size();
-      auto expandedInner = inner == ids.size() ? 1 : expanded[inner];
-      auto elementsInner = inner == ids.size() ? 1 : elements[inner];
+                       ? node(element)
+                       : valueEdges.size();
+      auto expandedInner = inner == valueEdges.size() ? 1 : expanded[inner];
+      auto elementsInner = inner == valueEdges.size() ? 1 : elements[inner];
       auto product = [](std::uint64_t count, std::uint64_t inner,
                         std::uint64_t limit) {
         return count > limit / inner ? limit + 1 : count * inner;
       };
-      expanded[i] = product(std::max<std::uint64_t>(1, length.value_or(1)),
-                            expandedInner, TypeStore::expandedArrayTotal);
-      elements[i] = product(std::max<std::uint64_t>(1, length.value_or(1)),
-                            elementsInner, TypeStore::droppableArrayElements);
+      expanded[slot] = product(std::max<std::uint64_t>(1, length.value_or(1)),
+                               expandedInner, TypeStore::expandedArrayTotal);
+      elements[slot] =
+          product(std::max<std::uint64_t>(1, length.value_or(1)), elementsInner,
+                  TypeStore::droppableArrayElements);
       if (r.arrayCount != Type::Unknown)
-        drops[i] = drops[i] || drop(element);
+        drops[slot] = drops[slot] || drop(element);
       if (!length)
         continue;
       bool compact =
@@ -1649,21 +2127,25 @@ void remapRegionGraph(TypeStore &candidate, const TypeStore &decoded,
   for (auto &definition : definitions)
     std::visit([&](auto &r) { mapper(r); }, definition);
 }
-std::string canonicalKey(const TypeStore &store,
-                         ImportedTypeDefinition definition,
+template <class Definition>
+std::string canonicalKey(Graph &graph, const Definition &definition,
                          std::vector<Type> *references = nullptr,
-                         const std::function<Type(Type)> *mapper = nullptr) {
-  Graph graph(store);
+                         const std::function<Type(Type)> *mapper = nullptr,
+                         std::uint64_t *fingerprint = nullptr) {
   TypeGraphSymbols symbols;
   Writer key(graph, symbols);
   key.localReferences = true;
   key.typeReferences = references;
+  key.discardBytes = references != nullptr;
   key.typeMapper = mapper;
+  key.fingerprint = fingerprint;
   key.byte(static_cast<std::uint8_t>(definition.index()));
-  std::visit(
-      [&](auto &r) {
+  visitDefinition(
+      [&](const auto &r) {
         using T = std::decay_t<decltype(r)>;
-        if constexpr (std::is_same_v<T, ImportedProduct>) {
+        if constexpr (std::is_same_v<T, ImportedProduct> ||
+                      std::is_same_v<T, ImportedProductView> ||
+                      std::is_same_v<T, CompactProduct>) {
           auto &p = r.descriptor;
           if (p.regionOrigin != Type::Unknown) {
             key.byte(0);
@@ -1687,7 +2169,8 @@ std::string canonicalKey(const TypeStore &store,
                 key.u64(p.fields.size());
             }
           }
-        } else if constexpr (std::is_same_v<T, TypeParameter>) {
+        } else if constexpr (std::is_same_v<T, TypeParameter> ||
+                             std::is_same_v<T, CompactParameter>) {
           key(r.kind);
           switch (r.kind) {
           case TypeParameterKind::Value:
@@ -1703,55 +2186,87 @@ std::string canonicalKey(const TypeStore &store,
           default:
             reject("generic definition has no structural identity");
           }
-        } else if constexpr (std::is_same_v<T, CallableType>) {
-          r.name.clear();
-          for (auto &parameter : r.parameters)
-            parameter.name.clear();
-          for (auto &region : r.regions)
-            region.clear();
+        } else if constexpr (std::is_same_v<T, CallableType> ||
+                             std::is_same_v<T, CompactCallable>) {
+          key.omitCallableNames = true;
           key(r);
-        } else if constexpr (std::is_same_v<T, ErasedType>) {
+          key.omitCallableNames = false;
+        } else if constexpr (std::is_same_v<T, ErasedType> ||
+                             std::is_same_v<T, CompactErased>) {
           key(r.declaration, r.arguments);
+          std::vector<TypeBinding> associated(r.associated.begin(),
+                                              r.associated.end());
           if (mapper)
-            for (auto &binding : r.associated) {
+            for (auto &binding : associated) {
               binding.parameter = (*mapper)(binding.parameter);
               binding.argument = (*mapper)(binding.argument);
             }
-          std::sort(r.associated.begin(), r.associated.end(),
+          std::sort(associated.begin(), associated.end(),
                     [](const auto &a, const auto &b) {
                       return a.parameter < b.parameter;
                     });
           key.typeMapper = nullptr;
-          key(r.associated);
+          key(associated);
           key.typeMapper = mapper;
           key(r.regionArguments, r.regionParameters, r.regionRequirements,
               r.bound, r.regionUniverse);
-        } else if constexpr (std::is_same_v<T, ViewType>)
+        } else if constexpr (std::is_same_v<T, ViewType> ||
+                             std::is_same_v<T, CompactView>)
           key(r.payload, r.mode, r.region);
-        else if constexpr (std::is_same_v<T, ImportedPointer>)
+        else if constexpr (std::is_same_v<T, ImportedPointer> ||
+                           std::is_same_v<T, ImportedPointerView> ||
+                           std::is_same_v<T, CompactPointer>)
           key(r.descriptor.payload, r.descriptor.mode);
         else
           key(r.element);
       },
       definition);
+  if (key.discardBytes)
+    return {};
   return {reinterpret_cast<const char *>(key.bytes.data()), key.bytes.size()};
 }
+template <class Definitions>
 std::vector<bool>
 recursiveRegionals(const TypeStore &store, std::span<const Type> ids,
-                   const std::vector<ImportedTypeDefinition> &definitions) {
-  std::vector<std::vector<std::size_t>> edges(ids.size()), reverse(ids.size());
+                   const Definitions &definitions, bool *uniqueKeys = nullptr) {
+  Graph graph(store);
+  std::unordered_multimap<std::uint64_t, std::size_t> keys;
+  if (uniqueKeys) {
+    *uniqueKeys = true;
+    keys.reserve(ids.size());
+  }
+  std::vector<std::vector<std::size_t>> edges(ids.size());
   for (std::size_t i = 0; i < ids.size(); ++i) {
     if (nominal(definitions[i]))
       continue;
     std::vector<Type> references;
-    canonicalKey(store, definitions[i], &references);
+    std::uint64_t fingerprint = 14695981039346656037ull;
+    canonicalKey(graph, definitions[i], &references, nullptr,
+                 uniqueKeys ? &fingerprint : nullptr);
+    if (uniqueKeys) {
+      auto [first, last] = keys.equal_range(fingerprint);
+      if (first != last) {
+        auto key = canonicalKey(graph, definitions[i]);
+        for (auto entry = first; entry != last; ++entry)
+          if (canonicalKey(graph, definitions[entry->second]) == key) {
+            *uniqueKeys = false;
+            return {};
+          }
+      }
+      keys.emplace(fingerprint, i);
+    }
     for (auto reference : references)
       if (reference.index() >= builtinTypeCount) {
         auto target = graphIndex(ids, reference);
         edges[i].push_back(target);
-        reverse[target].push_back(i);
       }
   }
+  if (acyclic(edges, true).size() == edges.size())
+    return std::vector<bool>(ids.size());
+  std::vector<std::vector<std::size_t>> reverse(ids.size());
+  for (std::size_t i = 0; i < edges.size(); ++i)
+    for (auto target : edges[i])
+      reverse[target].push_back(i);
   struct Frame {
     std::size_t node, next = 0;
   };
@@ -1800,12 +2315,14 @@ recursiveRegionals(const TypeStore &store, std::span<const Type> ids,
                      edges[*root].end();
     if (!cycle)
       continue;
-    for (auto node : component)
-      if (auto product = std::get_if<ImportedProduct>(&definitions[node]);
+    for (auto node : component) {
+      const auto &definition = definitions[node];
+      if (auto product = definitionRecord<ImportedProduct>(definition);
           product && product->descriptor.regionOrigin != Type::Unknown) {
         recursive[node] = true;
         edges[node].clear();
       }
+    }
   }
   acyclic(edges);
   return recursive;
@@ -1817,14 +2334,17 @@ public:
                   std::vector<ImportedTypeDefinition> &definitions,
                   const std::vector<std::optional<DefinitionIdentity>> &logical,
                   const ExistingGraph &existing)
-      : original(original), candidate(candidate), ids(ids),
-        definitions(definitions), mapped(ids.size()), state(ids.size()),
-        installed(ids.size()) {
-    for (auto type : original.storedTypes()) {
+      : original(original), candidate(candidate), canonicalGraph(candidate),
+        ids(ids), definitions(definitions), mapped(ids.size()),
+        state(ids.size()), installed(ids.size()) {
+    Graph originalGraph(original);
+    auto stored = original.storedTypes();
+    canonicalTypes.reserve(ids.size() + stored.size());
+    for (auto type : stored) {
       auto definition = original.importedDefinition(type);
       if (!nominal(definition))
         canonicalTypes.try_emplace(
-            canonicalKey(original, std::move(definition)), type);
+            canonicalKey(originalGraph, std::move(definition)), type);
     }
     for (const auto &[source, target] : existing.types) {
       auto i = graphIndex(ids, source);
@@ -1865,7 +2385,7 @@ public:
       reject("imported type nesting exceeds compiler depth limit");
     state[i] = 1;
     std::function<Type(Type)> mapper = [&](Type type) { return build(type); };
-    auto key = canonicalKey(candidate, definitions[i], nullptr, &mapper);
+    auto key = canonicalKey(canonicalGraph, definitions[i], nullptr, &mapper);
     if (auto existing = canonicalTypes.find(key);
         existing != canonicalTypes.end())
       mapped[i] = existing->second;
@@ -1904,9 +2424,10 @@ public:
 private:
   const TypeStore &original;
   TypeStore &candidate;
+  Graph canonicalGraph;
   std::span<const Type> ids;
   std::vector<ImportedTypeDefinition> &definitions;
-  std::map<std::string, Type> canonicalTypes;
+  std::unordered_map<std::string, Type> canonicalTypes;
   std::vector<Type> mapped;
   std::vector<unsigned char> state, installed;
   unsigned depth = 0;
@@ -1932,9 +2453,93 @@ private:
 };
 } // namespace
 
+namespace {
+ImportedTypeDefinition identityDefinition(const ImportedTypeDefinition &value) {
+  return std::visit(
+      [](const auto &source) -> ImportedTypeDefinition {
+        using T = std::decay_t<decltype(source)>;
+        if constexpr (std::is_same_v<T, ImportedProduct>) {
+          ImportedProduct result{};
+          auto &target = result.descriptor;
+          const auto &record = source.descriptor;
+          target.kind = record.kind;
+          target.components = record.components;
+          target.genericOrigin = record.genericOrigin;
+          target.genericArguments = record.genericArguments;
+          target.regionOrigin = record.regionOrigin;
+          target.regionArguments = record.regionArguments;
+          target.normalizedFields = record.normalizedFields;
+          target.arrayCount = record.arrayCount;
+          if (record.regionOrigin != Type::Unknown ||
+              (record.genericOrigin != Type::Unknown &&
+               record.kind == AggregateKind::Opaque)) {
+            target.fields = record.fields;
+            target.opaqueBounds = record.opaqueBounds;
+          } else if (record.kind == AggregateKind::Array &&
+                     record.arrayCount == Type::Unknown)
+            target.fields.resize(record.fields.size());
+          if (source.closure)
+            result.closure.emplace();
+          result.coroutineInterior = source.coroutineInterior;
+          return result;
+        } else if constexpr (std::is_same_v<T, TypeParameter>) {
+          TypeParameter result;
+          result.kind = source.kind;
+          result.valueType = source.valueType;
+          result.numeric = source.numeric;
+          result.operands = source.operands;
+          result.operation = source.operation;
+          result.value = source.value;
+          result.copyRequested = source.copyRequested;
+          result.sized = source.sized;
+          result.thin = source.thin;
+          result.regionArguments = source.regionArguments;
+          return result;
+        } else {
+          auto result = source;
+          if constexpr (std::is_same_v<T, ImportedPointer>)
+            result.descriptor.name.clear();
+          else
+            result.name.clear();
+          if constexpr (std::is_same_v<T, ErasedType>) {
+            result.methods.clear();
+            result.methodTypes.clear();
+            result.methodOwners.clear();
+            result.methodSlots.clear();
+            result.parentInterfaces.clear();
+          } else if constexpr (std::is_same_v<T, CallableType>) {
+            for (auto &parameter : result.parameters)
+              parameter.name.clear();
+            for (auto &region : result.regions)
+              region.clear();
+          }
+          return result;
+        }
+      },
+      value);
+}
+
+template <class Decoder, class Definition>
+std::span<const std::uint8_t> framedDefinition(Decoder &reader,
+                                               Definition &definition) {
+  auto payload = reader.block();
+  auto end = reader.offset;
+  auto bytes = reader.bytes;
+  reader.bytes = payload;
+  reader.offset = 0;
+  std::visit([&](auto &record) { reader(record); }, definition);
+  if (reader.remaining())
+    reject("trailing bytes in an indexed type record");
+  reader.bytes = bytes;
+  reader.offset = end;
+  return payload;
+}
+} // namespace
+
 TypeGraphExport exportTypeGraph(const TypeStore &types,
                                 std::span<const Type> roots,
-                                const TypeGraphSymbols &symbols) {
+                                const TypeGraphSymbols &symbols,
+                                ValidationMode validation) {
   try {
     if (roots.size() > limits::sourceBytes / 4)
       reject("type graph root table exceeds source byte limit");
@@ -1959,7 +2564,20 @@ TypeGraphExport exportTypeGraph(const TypeStore &types,
           reject("duplicate logical definition identity");
       }
       body(identity);
-      std::visit([&](auto &r) { body(r); }, definition);
+      if (validation == ValidationMode::OnDemand) {
+        auto writeRecord = [&](const ImportedTypeDefinition &record) {
+          Writer framed(graph, symbols);
+          std::visit([&](const auto &value) { framed(value); }, record);
+          if (framed.bytes.size() > limits::sourceBytes)
+            reject("indexed type record exceeds source byte limit");
+          body.u32(static_cast<std::uint32_t>(framed.bytes.size()));
+          body.bytes.insert(body.bytes.end(), framed.bytes.begin(),
+                            framed.bytes.end());
+        };
+        writeRecord(identityDefinition(definition));
+        writeRecord(definition);
+      } else
+        std::visit([&](auto &r) { body(r); }, definition);
     }
     std::vector<WireRegion> regionRecords;
     for (std::size_t i = 0; i < graph.regionList.size(); ++i) {
@@ -1978,7 +2596,7 @@ TypeGraphExport exportTypeGraph(const TypeStore &types,
     Writer out(graph, symbols);
     for (auto byte : magic)
       out.byte(byte);
-    out.u32(version);
+    out.u32(validation == ValidationMode::OnDemand ? indexedVersion : version);
     out.u32(types.targetPointerBits());
     out.u32(static_cast<std::uint32_t>(graph.typeList.size()));
     out.u32(static_cast<std::uint32_t>(graph.regionList.size()));
@@ -2005,51 +2623,37 @@ TypeGraphExport exportTypeGraph(const TypeStore &types,
   }
 }
 
-TypeGraphImport importTypeGraph(TypeStore &types,
-                                std::span<const std::uint8_t> bytes,
-                                const TypeGraphSymbols &symbols) {
+static TypeGraphImport importTypeGraphEager(TypeStore &types,
+                                            std::span<const std::uint8_t> bytes,
+                                            const TypeGraphSymbols &symbols) {
   try {
     Header header;
-    Reader scan(bytes, symbols, header);
-    readHeader(scan, header, types.targetPointerBits());
-    auto tablesOffset = scan.offset;
-    Tables ignored;
-    readTables(scan, ignored);
-    auto bodyOffset = scan.offset;
-    for (std::uint32_t i = 0; i < header.types; ++i) {
-      std::optional<DefinitionIdentity> identity;
-      scan(identity);
-      auto kind = static_cast<ImportedTypeKind>(bytes[tablesOffset + i]);
-      auto definition = definitionFor(kind);
-      std::visit([&](auto &r) { scan(r); }, definition);
-    }
-    for (std::uint32_t i = 0; i < header.roots; ++i) {
-      Type root;
-      scan(root);
-    }
-    if (scan.remaining())
-      reject("trailing bytes in type graph");
-
     Reader reader(bytes, symbols, header);
-    reader.scanning = false;
-    reader.offset = tablesOffset;
+    readHeader(reader, header, types.targetPointerBits());
     Tables tables;
     readTables(reader, tables);
+    auto minimumBytes = static_cast<std::size_t>(header.roots) * 4;
+    if (minimumBytes > reader.remaining())
+      reject("truncated type graph roots");
+    for (auto kind : tables.kinds) {
+      const auto required = minimumDefinitionBytes(kind);
+      if (required > reader.remaining() - minimumBytes)
+        reject("truncated type graph definitions");
+      minimumBytes += required;
+    }
     TypeStore candidate = types;
     std::vector<RegionId> regions;
     std::vector<RegionUniverse> universes;
     importRegions(candidate, tables, regions, universes);
-    TypeStore decoded = std::move(candidate);
     auto localTypes = builtinTypes();
     localTypes.reserve(localTypes.size() + tables.kinds.size());
+    const bool fresh = types.storedTypeCount() == 0;
     for (auto kind : tables.kinds)
-      localTypes.push_back(decoded.declareImportedType(kind));
+      localTypes.push_back(candidate.declareImportedType(kind));
     reader.types = localTypes;
     reader.regions = regions;
     reader.universes = universes;
-    reader.offset = bodyOffset;
-    std::vector<ImportedTypeDefinition> definitions;
-    definitions.reserve(header.types);
+    auto decodedIds = std::span(localTypes).subspan(primitiveCount);
     std::vector<std::optional<DefinitionIdentity>> logical;
     logical.reserve(header.types);
     TypeGraphImport result;
@@ -2060,7 +2664,11 @@ TypeGraphImport importTypeGraph(TypeStore &types,
       std::optional<DefinitionIdentity> identity;
       reader(identity);
       auto definition = definitionFor(tables.kinds[i]);
-      std::visit([&](auto &r) { reader(r); }, definition);
+      if (header.indexed) {
+        reader.block();
+        framedDefinition(reader, definition);
+      } else
+        std::visit([&](auto &r) { reader(r); }, definition);
       if (nominal(definition) != identity.has_value())
         reject("missing or unexpected logical definition identity");
       if (identity) {
@@ -2070,13 +2678,42 @@ TypeGraphImport importTypeGraph(TypeStore &types,
           reject("duplicate logical definition identity");
       }
       logical.push_back(std::move(identity));
-      definitions.push_back(std::move(definition));
+      candidate.defineImportedType(decodedIds[i], std::move(definition));
     }
-    for (std::size_t i = 0; i < definitions.size(); ++i)
-      decoded.defineImportedType(localTypes[primitiveCount + i],
-                                 definitions[i]);
-    auto decodedIds = std::span(localTypes).subspan(primitiveCount);
-    validateGraph(decoded, decodedIds, definitions);
+    DecodedDefinitions staged(candidate, decodedIds);
+    for (std::uint32_t i = 0; i < header.roots; ++i) {
+      Type root;
+      reader(root);
+      result.roots.push_back(root);
+    }
+    if (reader.remaining())
+      reject("trailing bytes in type graph");
+    const auto resolvedSymbols = reader.resolveSymbols();
+    auto symbolsOf = [&](SymbolKind kind) -> std::span<const std::uint32_t> {
+      return resolvedSymbols[static_cast<std::size_t>(kind)];
+    };
+    candidate.remapImportedSymbols(
+        decodedIds,
+        {symbolsOf(SymbolKind::Function), symbolsOf(SymbolKind::Closure),
+         symbolsOf(SymbolKind::Interface), symbolsOf(SymbolKind::Package)});
+    validateGraph(candidate, decodedIds, staged);
+    bool uniqueKeys = false;
+    if (fresh && !symbols.lookupDefinition)
+      recursiveRegionals(candidate, decodedIds, staged, &uniqueKeys);
+    if (uniqueKeys) {
+      // Unique raw keys in the acyclic identity graph need no remapping.
+      for (std::size_t i = 0; i < staged.size(); ++i) {
+        if (logical[i])
+          result.definitions.push_back({*logical[i], decodedIds[i]});
+      }
+      types = std::move(candidate);
+      return result;
+    }
+    std::vector<ImportedTypeDefinition> definitions;
+    definitions.reserve(staged.size());
+    for (std::size_t i = 0; i < staged.size(); ++i)
+      definitions.push_back(candidate.importedDefinition(decodedIds[i]));
+    TypeStore decoded = std::move(candidate);
     auto existing = matchExisting(decoded, types, decodedIds, logical, symbols);
     candidate = types;
     remapRegionGraph(candidate, decoded, tables, regions, universes, existing,
@@ -2088,15 +2725,378 @@ TypeGraphImport importTypeGraph(TypeStore &types,
       if (logical[i])
         result.definitions.push_back(
             {*logical[i], canonical.build(decodedIds[i])});
-    for (std::uint32_t i = 0; i < header.roots; ++i) {
-      Type root;
-      reader(root);
-      result.roots.push_back(canonical.build(root));
-    }
+    for (auto &root : result.roots)
+      root = canonical.build(root);
     types = std::move(candidate);
     return result;
   } catch (const InvalidGraph &error) {
     return {{}, {}, error.message};
   }
+}
+
+namespace {
+struct DeferredTypeGraph {
+  struct Record {
+    std::size_t offset = 0, length = 0;
+    std::array<std::size_t, Reader::symbolKinds> symbols{};
+  };
+  Header header;
+  std::vector<std::uint8_t> bytes;
+  std::vector<ImportedTypeKind> kinds;
+  std::vector<Type> types;
+  std::vector<RegionId> regions;
+  std::vector<RegionUniverse> universes;
+  Reader::ResolvedSymbols symbols;
+  std::vector<Record> records;
+  std::shared_ptr<const CompactArena> arena;
+  mutable std::vector<CompactDefinitionView> definitions;
+  std::shared_ptr<const TypeGraphSymbols> retainedSymbols;
+  std::shared_ptr<const TypeStore> validationTypes;
+  std::vector<CompactDefinitionView> identities;
+  mutable std::vector<bool> loaded, validated;
+  mutable std::vector<Reader::ResolvedSymbols> recordSymbols;
+  std::shared_ptr<CompactArena> demandedArena;
+  mutable std::mutex validationMutex;
+
+  void validate(std::size_t index) const;
+
+  ImportedTypeDefinition materialize(std::size_t index) const {
+    validate(index);
+    const auto &slice = records.at(index);
+    TypeGraphSymbols noCallbacks;
+    Reader reader(std::span(bytes).subspan(slice.offset, slice.length),
+                  noCallbacks, header);
+    reader.types = types;
+    reader.regions = regions;
+    reader.universes = universes;
+    reader.resolvedSymbols =
+        retainedSymbols ? &recordSymbols.at(index) : &symbols;
+    if (!retainedSymbols)
+      reader.symbolOffsets = slice.symbols;
+    auto definition = definitionFor(kinds.at(index));
+    try {
+      std::visit([&](auto &record) { reader(record); }, definition);
+      if (reader.remaining())
+        reject("trailing bytes in a deferred type record");
+    } catch (const InvalidGraph &error) {
+      throw std::logic_error("validated type record changed: " + error.message);
+    }
+    return definition;
+  }
+};
+
+void remapCompactSymbols(std::span<CompactDefinitionView> definitions,
+                         const Reader::ResolvedSymbols &symbols) {
+  auto function = [&](int &value, SymbolKind kind) {
+    if (value >= 0)
+      value = static_cast<int>(symbols[static_cast<std::size_t>(kind)].at(
+          static_cast<std::size_t>(value)));
+  };
+  for (auto &definition : definitions)
+    std::visit(
+        [&](auto *value) {
+          auto &record = *value;
+          using T = std::decay_t<decltype(record)>;
+          if constexpr (std::is_same_v<T, CompactProduct>) {
+            function(record.descriptor.destructor, SymbolKind::Function);
+            auto &package = record.descriptor.package;
+            if (package != unknownPackage)
+              package =
+                  symbols[static_cast<std::size_t>(SymbolKind::Package)].at(
+                      package);
+            if (record.closure)
+              function(record.closure->function, SymbolKind::Closure);
+          } else if constexpr (std::is_same_v<T, CompactCallable>)
+            function(record.function, SymbolKind::Closure);
+          else if constexpr (std::is_same_v<T, CompactErased>) {
+            record.declaration =
+                symbols[static_cast<std::size_t>(SymbolKind::Interface)].at(
+                    record.declaration);
+            for (auto &method : record.methods)
+              function(method.function, SymbolKind::Closure);
+          }
+        },
+        definition);
+}
+
+ImportedTypeIndex compactIndex(const CompactDefinitionView &definition,
+                               CompactArena &arena) {
+  ImportedTypeIndex result;
+  visitDefinition(
+      [&](const auto &record) {
+        using T = std::decay_t<decltype(record)>;
+        if constexpr (std::is_same_v<T, CompactProduct>) {
+          result.genericOrigin = record.descriptor.genericOrigin;
+          result.regionOrigin = record.descriptor.regionOrigin;
+          result.key = record.descriptor.components;
+          result.closure = record.closure.has_value();
+          result.coroutineInterior = record.coroutineInterior;
+        } else if constexpr (std::is_same_v<T, CompactView>) {
+          result.payload = record.payload;
+          result.mode = record.mode;
+          result.region = record.region;
+        } else if constexpr (std::is_same_v<T, CompactPointer>) {
+          result.payload = record.descriptor.payload;
+          result.mode = record.descriptor.mode;
+        } else if constexpr (std::is_same_v<T, CompactSlice>)
+          result.payload = record.element;
+        else if constexpr (std::is_same_v<T, CompactParameter>) {
+          result.parameterKind = record.kind;
+          result.valueType = record.valueType;
+          result.magnitude = record.numeric.magnitude;
+          result.key = record.operands;
+        } else if constexpr (std::is_same_v<T, CompactCallable>) {
+          auto key = arena.allocate<Type>(record.parameters.size() + 2);
+          key[0] = record.result;
+          key[1] = record.error;
+          for (std::size_t i = 0; i < record.parameters.size(); ++i)
+            key[i + 2] = record.parameters[i].type;
+          result.key = key;
+        } else
+          result.declaration = record.declaration;
+      },
+      definition);
+  return result;
+}
+
+void DeferredTypeGraph::validate(std::size_t index) const {
+  if (!retainedSymbols)
+    return;
+  std::lock_guard lock(validationMutex);
+  if (validated.at(index))
+    return;
+  try {
+    std::vector<bool> seen(records.size());
+    std::vector<std::size_t> pending;
+    Graph graph(*validationTypes);
+    auto require = [&](Type type) {
+      if (type.index() < builtinTypeCount)
+        return;
+      auto current = static_cast<std::size_t>(type.index() - builtinTypeCount);
+      if (!seen[current]) {
+        seen[current] = true;
+        pending.push_back(current);
+      }
+      if (!loaded[current]) {
+        const auto &slice = records[current];
+        CompactReader reader(
+            std::span(bytes).subspan(slice.offset, slice.length),
+            *retainedSymbols, header, demandedArena);
+        reader.types = types;
+        reader.regions = regions;
+        reader.universes = universes;
+        auto definition = compactDefinitionFor(kinds[current]);
+        std::visit([&](auto &value) { reader(value); }, definition);
+        if (reader.remaining())
+          reject("trailing bytes in a demanded type record");
+        auto value = std::visit(
+            [&](auto &record) -> CompactDefinitionView {
+              using T = std::decay_t<decltype(record)>;
+              auto storage = reader.arena->allocate<T>(1);
+              storage.front() = std::move(record);
+              return &storage.front();
+            },
+            definition);
+        auto resolved = reader.resolveSymbols();
+        std::array<CompactDefinitionView, 1> remapped{value};
+        remapCompactSymbols(remapped, resolved);
+        const auto &identity = identities[current];
+        auto expected = compactIndex(identity, *reader.arena);
+        auto actual = compactIndex(value, *reader.arena);
+        auto equal = [](auto left, auto right) {
+          return std::equal(left.begin(), left.end(), right.begin(),
+                            right.end());
+        };
+        if (nominal(identity) != nominal(value) ||
+            (!nominal(identity) &&
+             canonicalKey(graph, identity) != canonicalKey(graph, value)) ||
+            !equal(expected.key, actual.key) ||
+            !equal(expected.coroutineInterior, actual.coroutineInterior) ||
+            expected.genericOrigin != actual.genericOrigin ||
+            expected.regionOrigin != actual.regionOrigin ||
+            expected.payload != actual.payload ||
+            expected.valueType != actual.valueType ||
+            expected.region != actual.region || expected.mode != actual.mode ||
+            expected.parameterKind != actual.parameterKind ||
+            expected.magnitude != actual.magnitude ||
+            expected.declaration != actual.declaration ||
+            expected.closure != actual.closure)
+          reject("type record does not match its identity index");
+        recordSymbols[current] = std::move(resolved);
+        definitions[current] = value;
+        loaded[current] = true;
+      }
+    };
+    require(types[primitiveCount + index]);
+    validateGraph(CompactTypes{*validationTypes, definitions, require},
+                  std::span(types).subspan(primitiveCount), definitions,
+                  &pending);
+    for (auto current : pending)
+      validated[current] = true;
+  } catch (const InvalidGraph &error) {
+    throw InvalidMetadata("invalid demanded type record: " + error.message);
+  }
+}
+
+TypeGraphImport importCompactTypeGraph(
+    TypeStore &types, std::span<const std::uint8_t> bytes,
+    const TypeGraphSymbols &symbols, ValidationMode validation,
+    std::shared_ptr<const TypeGraphSymbols> retainedSymbols) {
+  try {
+    auto deferred = std::make_shared<DeferredTypeGraph>();
+    auto &header = deferred->header;
+    CompactReader reader(bytes, symbols, header);
+    readHeader(reader, header, types.targetPointerBits());
+    const bool demand =
+        header.indexed && validation == ValidationMode::OnDemand;
+    Tables tables;
+    readTables(reader, tables);
+    auto minimumBytes = static_cast<std::size_t>(header.roots) * 4;
+    if (minimumBytes > reader.remaining())
+      reject("truncated type graph roots");
+    for (auto kind : tables.kinds) {
+      auto required = minimumDefinitionBytes(kind);
+      if (required > reader.remaining() - minimumBytes)
+        reject("truncated type graph definitions");
+      minimumBytes += required;
+    }
+    deferred->bytes.assign(bytes.begin(), bytes.end());
+    reader.bytes = deferred->bytes;
+    TypeStore candidate = types;
+    importRegions(candidate, tables, deferred->regions, deferred->universes);
+    deferred->types = builtinTypes();
+    deferred->types.reserve(primitiveCount + tables.kinds.size());
+    for (auto kind : tables.kinds)
+      deferred->types.push_back(candidate.declareImportedType(kind));
+    reader.types = deferred->types;
+    reader.regions = deferred->regions;
+    reader.universes = deferred->universes;
+    auto ids = std::span(deferred->types).subspan(primitiveCount);
+    std::vector<CompactDefinitionView> definitions;
+    definitions.reserve(header.types);
+    deferred->records.reserve(header.types);
+    TypeGraphImport result;
+    std::set<DefinitionIdentity> identities;
+    for (std::uint32_t i = 0; i < header.types; ++i) {
+      std::optional<DefinitionIdentity> identity;
+      reader(identity);
+      DeferredTypeGraph::Record slice;
+      slice.offset = reader.offset;
+      for (std::size_t k = 0; k < Reader::symbolKinds; ++k)
+        slice.symbols[k] = reader.pendingSymbols[k].size();
+      auto definition = compactDefinitionFor(tables.kinds[i]);
+      if (header.indexed) {
+        std::span<const std::uint8_t> payload;
+        if (demand) {
+          framedDefinition(reader, definition);
+          payload = reader.block();
+        } else {
+          reader.block();
+          payload = framedDefinition(reader, definition);
+        }
+        slice.offset =
+            static_cast<std::size_t>(payload.data() - reader.bytes.data());
+        slice.length = payload.size();
+      } else {
+        std::visit([&](auto &record) { reader(record); }, definition);
+        slice.length = reader.offset - slice.offset;
+      }
+      deferred->records.push_back(slice);
+      if (nominal(definition) != identity.has_value())
+        reject("missing or unexpected logical definition identity");
+      if (identity) {
+        validIdentity(*identity,
+                      std::holds_alternative<CompactParameter>(definition));
+        if (!identities.insert(*identity).second)
+          reject("duplicate logical definition identity");
+        result.definitions.push_back({std::move(*identity), ids[i]});
+      }
+      definitions.push_back(std::visit(
+          [&](auto &record) -> CompactDefinitionView {
+            using T = std::decay_t<decltype(record)>;
+            auto storage = reader.arena->allocate<T>(1);
+            storage.front() = std::move(record);
+            return &storage.front();
+          },
+          definition));
+    }
+    result.roots.reserve(header.roots);
+    for (std::uint32_t i = 0; i < header.roots; ++i) {
+      Type root;
+      reader(root);
+      result.roots.push_back(root);
+    }
+    if (reader.remaining())
+      reject("trailing bytes in type graph");
+    deferred->symbols = reader.resolveSymbols();
+    remapCompactSymbols(definitions, deferred->symbols);
+    if (!demand)
+      validateGraph(CompactTypes{candidate, definitions}, ids, definitions);
+    bool uniqueKeys = false;
+    recursiveRegionals(candidate, ids, definitions, &uniqueKeys);
+    if (!uniqueKeys) {
+      if (demand)
+        return importTypeGraphEager(types, bytes, symbols);
+      TypeGraphSymbols resolved = symbols;
+      resolved.resolve =
+          [&, offsets = std::array<std::size_t, Reader::symbolKinds>{}](
+              SymbolKind kind,
+              std::string_view) mutable -> std::optional<std::uint32_t> {
+        auto k = static_cast<std::size_t>(kind);
+        return deferred->symbols[k].at(offsets[k]++);
+      };
+      return importTypeGraphEager(types, bytes, resolved);
+    }
+    std::vector<ImportedTypeIndex> index;
+    index.reserve(definitions.size());
+    for (const auto &definition : definitions)
+      index.push_back(compactIndex(definition, *reader.arena));
+    deferred->arena = std::move(reader.arena);
+    deferred->definitions = std::move(definitions);
+    deferred->kinds = std::move(tables.kinds);
+    if (demand) {
+      deferred->retainedSymbols = std::move(retainedSymbols);
+      deferred->validationTypes = std::make_shared<const TypeStore>(candidate);
+      deferred->identities = deferred->definitions;
+      deferred->loaded.resize(header.types);
+      deferred->validated.resize(header.types);
+      deferred->recordSymbols.resize(header.types);
+      deferred->demandedArena = std::make_shared<CompactArena>();
+    }
+    auto loader = std::make_shared<const TypeStore::ImportedDefinitionLoader>(
+        [deferred](std::size_t i) { return deferred->materialize(i); });
+    auto borrowed = std::make_shared<const TypeStore::BorrowedDefinitionLoader>(
+        [deferred](std::size_t i) {
+          deferred->validate(i);
+          return std::visit(
+              [](const auto *record) -> BorrowedTypeDefinition {
+                return record;
+              },
+              deferred->definitions.at(i));
+        });
+    candidate.deferImportedDefinitions(ids, index, std::move(loader),
+                                       std::move(borrowed));
+    types = std::move(candidate);
+    return result;
+  } catch (const InvalidGraph &error) {
+    return {{}, {}, error.message};
+  }
+}
+} // namespace
+
+TypeGraphImport
+importTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
+                const TypeGraphSymbols &symbols, ValidationMode validation,
+                std::shared_ptr<const TypeGraphSymbols> retainedSymbols) {
+  if (validation == ValidationMode::OnDemand &&
+      (!retainedSymbols || retainedSymbols.get() != &symbols ||
+       types.storedTypeCount() || symbols.lookupDefinition))
+    return {{},
+            {},
+            "demand-loaded types require a fresh graph and an owned resolver"};
+  if (!types.storedTypeCount() && !symbols.lookupDefinition)
+    return importCompactTypeGraph(types, bytes, symbols, validation,
+                                  std::move(retainedSymbols));
+  return importTypeGraphEager(types, bytes, symbols);
 }
 } // namespace mettle::metadata

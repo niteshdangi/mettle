@@ -37,8 +37,10 @@ std::vector<Type> TypeStore::callableKey(const CallableType &descriptor) {
 Type TypeStore::callableType(CallableType descriptor) {
   syncLookup();
   if (auto existing = findIndexed(
-          found(lookup.callables, callableKey(descriptor)), [&](std::size_t i) {
-            return sameSignature(callables[entries[i].index], descriptor);
+          candidates(&LookupData::callables, callableKey(descriptor)),
+          [&](std::size_t i) {
+            return sameSignature(std::as_const(callables)[entries[i].index],
+                                 descriptor);
           }))
     return *existing;
   if (entries.size() >= std::numeric_limits<std::uint32_t>::max() - builtins)

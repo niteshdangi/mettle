@@ -53,11 +53,12 @@ Type TypeStore::constant(Type valueType, NumericLiteral value) {
         "required scalar constant is outside its type range");
   syncLookup();
   if (auto existing = findIndexed(
-          found(lookup.constants, std::pair{valueType, value.magnitude}),
+          candidates(&LookupData::constants,
+                     std::pair{valueType, value.magnitude}),
           [&](std::size_t i) {
             if (entries[i].kind != EntryKind::Parameter)
               return false;
-            const auto &record = parameters[entries[i].index];
+            const auto &record = std::as_const(parameters)[entries[i].index];
             return record.kind == TypeParameterKind::Value &&
                    record.valueType == valueType && record.numeric == value;
           }))
@@ -107,11 +108,11 @@ Type TypeStore::constantExpression(std::string operation,
                     std::move(value));
   }
   syncLookup();
-  if (auto existing =
-          findIndexed(found(lookup.operands, operands), [&](std::size_t i) {
+  if (auto existing = findIndexed(
+          candidates(&LookupData::operands, operands), [&](std::size_t i) {
             if (entries[i].kind != EntryKind::Parameter)
               return false;
-            const auto &record = parameters[entries[i].index];
+            const auto &record = std::as_const(parameters)[entries[i].index];
             return record.kind == TypeParameterKind::Expression &&
                    record.operation == operation && record.operands == operands;
           }))
@@ -126,24 +127,37 @@ Type TypeStore::constantExpression(std::string operation,
   record.operands = std::move(operands);
   return result;
 }
+std::pair<TypeParameterKind, Type>
+TypeStore::parameterCategory(Type type) const {
+  return inspectParameter(type, [](const auto &record) {
+    return std::pair{record.kind, record.valueType};
+  });
+}
 bool TypeStore::isParameter(Type type) const {
-  return type.index() >= builtins && contains(type) &&
-         entries[type.index() - builtins].kind == EntryKind::Parameter &&
-         (parameter(type).kind == TypeParameterKind::Type ||
-          (parameter(type).kind == TypeParameterKind::Projection &&
-           parameter(type).valueType == Type::Unknown));
+  if (type.index() < builtins || !contains(type) ||
+      entries[type.index() - builtins].kind != EntryKind::Parameter)
+    return false;
+  const auto [kind, value] = parameterCategory(type);
+  return kind == TypeParameterKind::Type ||
+         (kind == TypeParameterKind::Projection && value == Type::Unknown);
 }
 bool TypeStore::isConstant(Type type) const {
+  if (type.index() < builtins || !contains(type) ||
+      entries[type.index() - builtins].kind != EntryKind::Parameter)
+    return false;
+  const auto [kind, value] = parameterCategory(type);
+  return kind != TypeParameterKind::Type &&
+         (kind != TypeParameterKind::Projection || value != Type::Unknown);
+}
+bool TypeStore::isConstParameter(Type type) const {
   return type.index() >= builtins && contains(type) &&
          entries[type.index() - builtins].kind == EntryKind::Parameter &&
-         parameter(type).kind != TypeParameterKind::Type &&
-         (parameter(type).kind != TypeParameterKind::Projection ||
-          parameter(type).valueType != Type::Unknown);
+         parameterCategory(type).first == TypeParameterKind::Constant;
 }
 bool TypeStore::isProjection(Type type) const {
   return type.index() >= builtins && contains(type) &&
          entries[type.index() - builtins].kind == EntryKind::Parameter &&
-         parameter(type).kind == TypeParameterKind::Projection;
+         parameterCategory(type).first == TypeParameterKind::Projection;
 }
 Type TypeStore::projection(Type subject, Type interfaceType,
                            std::size_t associated, std::vector<Type> arguments,
@@ -152,11 +166,11 @@ Type TypeStore::projection(Type subject, Type interfaceType,
   arguments.insert(arguments.begin(), interfaceType);
   arguments.insert(arguments.begin(), subject);
   syncLookup();
-  if (auto existing =
-          findIndexed(found(lookup.operands, arguments), [&](std::size_t i) {
+  if (auto existing = findIndexed(
+          candidates(&LookupData::operands, arguments), [&](std::size_t i) {
             if (entries[i].kind != EntryKind::Parameter)
               return false;
-            const auto &record = parameters[entries[i].index];
+            const auto &record = std::as_const(parameters)[entries[i].index];
             return record.kind == TypeParameterKind::Projection &&
                    record.operands == arguments &&
                    record.value == static_cast<std::int64_t>(associated) &&
@@ -222,29 +236,30 @@ bool TypeStore::isSized(Type type, std::span<const Type> assumptions) const {
     if (isSlice(current) || isErased(current))
       return false;
     if (isParameter(current))
-      return parameter(current).sized ||
+      return inspectParameter(
+                 current, [](const auto &record) { return record.sized; }) ||
              std::find(assumptions.begin(), assumptions.end(), current) !=
                  assumptions.end();
     if (!isProduct(current))
       return contains(current);
-    const auto &record = product(current);
-    // Opaque declarations promise Sized before hidden storage is finalized.
-    if (record.kind == AggregateKind::Opaque && record.fields.size() == 1 &&
-        record.fields[0].type == Type::Unknown)
-      return true;
     if (auto found = known.find(current); found != known.end())
       return found->second;
-    if (!active.insert(current).second)
-      return false;
-    bool sized = true;
-    if (record.kind == AggregateKind::Array && !record.components.empty())
-      sized = visit(record.components[0]);
-    else
-      for (const auto &field : record.fields)
-        sized &= visit(field.type);
-    active.erase(current);
-    known[current] = sized;
-    return sized;
+    return inspectProduct(current, [&](const auto &record) {
+      if (record.kind == AggregateKind::Opaque && record.fields.size() == 1 &&
+          record.fields[0].type == Type::Unknown)
+        return true;
+      if (!active.insert(current).second)
+        return false;
+      bool sized = true;
+      if (record.kind == AggregateKind::Array && !record.components.empty())
+        sized = visit(record.components[0]);
+      else
+        for (const auto &field : record.fields)
+          sized &= visit(field.type);
+      active.erase(current);
+      known[current] = sized;
+      return sized;
+    });
   };
   return visit(type);
 }
@@ -256,19 +271,24 @@ bool TypeStore::isSymbolic(Type type) const {
     if (isParameter(current))
       return true;
     if (isConstant(current))
-      return !scalarConstantValue(current);
+      return inspectParameter(current, [](const auto &record) {
+        return record.kind != TypeParameterKind::Value;
+      });
     if (isView(current) || isPointer(current))
-      return symbolic(view(current).payload);
+      return inspectView(
+          current, [&](const auto &view) { return symbolic(view.payload); });
     if (isSlice(current))
       return symbolic(slice(current).element);
     if (isErased(current)) {
-      const auto &descriptor = erased(current);
-      for (auto argument : descriptor.arguments)
-        if (symbolic(argument))
-          return true;
-      for (const auto &binding : descriptor.associated)
-        if (symbolic(binding.argument))
-          return true;
+      return inspectErased(current, [&](const auto &descriptor) {
+        for (auto argument : descriptor.arguments)
+          if (symbolic(argument))
+            return true;
+        for (const auto &binding : descriptor.associated)
+          if (symbolic(binding.argument))
+            return true;
+        return false;
+      });
     }
     if (isFunctionPointer(current)) {
       const auto &descriptor = callable(current);
@@ -278,21 +298,23 @@ bool TypeStore::isSymbolic(Type type) const {
       return symbolic(descriptor.result) || symbolic(descriptor.error);
     }
     if (isProduct(current)) {
-      const auto &record = product(current);
-      if (record.kind == AggregateKind::Array && !record.components.empty() &&
-          symbolic(record.components[0]))
-        return true;
-      for (auto argument : record.genericArguments)
-        if (symbolic(argument))
+      return inspectProduct(current, [&](const auto &record) {
+        if (record.kind == AggregateKind::Array && !record.components.empty() &&
+            symbolic(record.components[0]))
           return true;
-      if (record.arrayCount != Type::Unknown && symbolic(record.arrayCount))
-        return true;
-      for (auto bound : record.opaqueBounds)
-        if (symbolic(bound))
+        for (auto argument : record.genericArguments)
+          if (symbolic(argument))
+            return true;
+        if (record.arrayCount != Type::Unknown && symbolic(record.arrayCount))
           return true;
-      for (const auto &field : record.fields)
-        if (symbolic(field.type))
-          return true;
+        for (auto bound : record.opaqueBounds)
+          if (symbolic(bound))
+            return true;
+        for (const auto &field : record.fields)
+          if (symbolic(field.type))
+            return true;
+        return false;
+      });
     }
     return false;
   };
@@ -366,15 +388,17 @@ Type TypeStore::instantiateProduct(Type origin, std::vector<Type> arguments) {
   if (product(origin).genericParameters.size() != arguments.size())
     throw std::invalid_argument("generic type argument count does not match");
   syncLookup();
-  if (auto existing = findIndexed(
-          found(lookup.genericInstances, origin), [&](std::size_t i) {
-            if (entries[i].kind != EntryKind::Product)
-              return false;
-            const auto &record = products[entries[i].index];
-            return record.regionOrigin == Type::Unknown &&
-                   record.genericOrigin == origin &&
-                   record.genericArguments == arguments;
-          }))
+  if (auto existing =
+          findIndexed(candidates(&LookupData::genericInstances, origin),
+                      [&](std::size_t i) {
+                        if (entries[i].kind != EntryKind::Product)
+                          return false;
+                        const auto &record =
+                            std::as_const(products)[entries[i].index];
+                        return record.regionOrigin == Type::Unknown &&
+                               record.genericOrigin == origin &&
+                               record.genericArguments == arguments;
+                      }))
     return *existing;
   // Interning below can reallocate the product table, so keep a copy.
   const auto source = product(origin);
@@ -404,7 +428,8 @@ Type TypeStore::instantiateProduct(Type origin, std::vector<Type> arguments) {
   products[index].hasDestructor = source.hasDestructor;
   products[index].destructor = source.destructor;
   if (source.callable >= 0) {
-    auto descriptor = callables.at(static_cast<std::size_t>(source.callable));
+    auto descriptor =
+        std::as_const(callables).at(static_cast<std::size_t>(source.callable));
     for (auto &parameter : descriptor.parameters)
       parameter.type = substitute(parameter.type, bindings);
     descriptor.result = substitute(descriptor.result, bindings);
@@ -416,12 +441,22 @@ Type TypeStore::instantiateProduct(Type origin, std::vector<Type> arguments) {
   }
   return result;
 }
-void TypeStore::refreshProductInstances() {
-  for (std::size_t i = 0; i < entries.size(); ++i) {
-    if (entries[i].kind != EntryKind::Product)
-      continue;
+void TypeStore::refreshProductInstances(std::span<const Type> origins) {
+  if (origins.empty())
+    return;
+  syncLookup();
+  std::vector<std::uint32_t> instances;
+  for (auto origin : origins)
+    for (const auto *matches :
+         candidates(&LookupData::genericInstances, origin))
+      if (matches)
+        instances.insert(instances.end(), matches->begin(), matches->end());
+  std::sort(instances.begin(), instances.end());
+  instances.erase(std::unique(instances.begin(), instances.end()),
+                  instances.end());
+  for (auto i : instances) {
     auto index = entries[i].index;
-    auto instance = products[index];
+    auto instance = std::as_const(products)[index];
     if (instance.genericOrigin == Type::Unknown ||
         instance.kind == AggregateKind::Opaque)
       continue;
@@ -443,7 +478,8 @@ void TypeStore::refreshProductInstances() {
     products[index].hasDestructor = source.hasDestructor;
     products[index].destructor = source.destructor;
     if (source.callable >= 0) {
-      auto descriptor = callables.at(static_cast<std::size_t>(source.callable));
+      auto descriptor = std::as_const(callables).at(
+          static_cast<std::size_t>(source.callable));
       for (auto &parameter : descriptor.parameters)
         parameter.type = substitute(parameter.type, bindings);
       descriptor.result = substitute(descriptor.result, bindings);
@@ -524,11 +560,11 @@ Type TypeStore::arrayType(Type payload, Type count) {
   }
   syncLookup();
   const std::vector<Type> component{payload};
-  if (auto existing =
-          findIndexed(found(lookup.aggregates, component), [&](std::size_t i) {
+  if (auto existing = findIndexed(
+          candidates(&LookupData::aggregates, component), [&](std::size_t i) {
             if (entries[i].kind != EntryKind::Product)
               return false;
-            const auto &record = products[entries[i].index];
+            const auto &record = std::as_const(products)[entries[i].index];
             return record.kind == AggregateKind::Array &&
                    record.components == component && record.arrayCount == count;
           }))
@@ -543,6 +579,8 @@ Type TypeStore::arrayType(Type payload, Type count) {
   return result;
 }
 Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
+  if (bindings.empty())
+    return type;
   for (const auto &binding : bindings)
     if (type == binding.parameter)
       return binding.argument;
@@ -712,10 +750,11 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
       return type;
     syncLookup();
     if (auto existing = findIndexed(
-            found(lookup.genericInstances, origin), [&](std::size_t i) {
+            candidates(&LookupData::genericInstances, origin),
+            [&](std::size_t i) {
               if (entries[i].kind != EntryKind::Product)
                 return false;
-              const auto &prior = products[entries[i].index];
+              const auto &prior = std::as_const(products)[entries[i].index];
               if (prior.kind != AggregateKind::Opaque ||
                   prior.genericOrigin != origin ||
                   prior.genericArguments != record.genericArguments ||
@@ -776,7 +815,7 @@ Type TypeStore::substitute(Type type, std::span<const TypeBinding> bindings) {
       products[index].regionOrigin = origin;
       products[index].normalizedFields = record.normalizedFields;
       syncLookup();
-      lookup.regionInstances[origin].push_back(
+      lookup.local.regionInstances[origin].push_back(
           static_cast<std::uint32_t>(result.index() - builtins));
       products[index].genericArguments = std::move(record.genericArguments);
       for (auto &field : record.fields)

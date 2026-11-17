@@ -1,8 +1,10 @@
 #pragma once
 
+#include "types/records.h"
 #include <compare>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -65,6 +67,7 @@ public:
   RegionId inference(RegionScope scope);
   RegionId local(RegionScope scope);
   RegionId intersection(std::vector<RegionId> sources);
+  void shareInterning();
   const Region &get(RegionId region) const;
   bool contains(RegionId region) const;
   bool visible(RegionId region, RegionUniverse universe) const;
@@ -75,8 +78,11 @@ public:
 
 private:
   RegionId add(RegionKind kind, RegionScope scope, std::string name = {});
-  std::vector<Region> regions;
+  friend class TypeProjection;
+  TypeRecords<Region> regions;
   std::map<std::vector<RegionId>, RegionId> intersections;
+  std::shared_ptr<const std::map<std::vector<RegionId>, RegionId>>
+      sharedIntersections;
   std::vector<RegionUniverse> parents{0};
   RegionBinder nextBinder = 1;
 };

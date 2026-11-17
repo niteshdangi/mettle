@@ -1,9 +1,13 @@
 #include "metadata/type_graph.h"
+#include "types/machine.h"
+#include "types/project.h"
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <iostream>
 #include <map>
 #include <string>
+#include <thread>
 
 using namespace mettle;
 using namespace mettle::metadata;
@@ -49,6 +53,182 @@ void put32(std::vector<std::uint8_t> &bytes, std::size_t offset,
 }
 } // namespace
 int main() {
+  {
+    TypeStore producer;
+    auto payload = producer.declareProduct("Payload", true);
+    producer.defineProduct(payload, {{"value", Type::I32}});
+    auto unused = producer.declareProduct("Unused", true);
+    producer.defineProduct(unused, {{"invalid", Type::Unknown}});
+    auto holder = producer.declareProduct("Holder", true);
+    producer.defineProduct(holder, {{"payload", payload}});
+    TypeGraphSymbols symbols;
+    symbols.definition = [&producer](Type type) {
+      return std::optional(DefinitionIdentity{
+          "demand", std::string(producer.name(type)), std::nullopt});
+    };
+    auto encoded = exportTypeGraph(producer, std::array{holder, unused},
+                                   symbols, ValidationMode::OnDemand);
+    expect(bool(encoded), "indexed type graph did not export");
+    TypeStore eager;
+    expect(!importTypeGraph(eager, encoded.bytes, {}),
+           "eager import accepted an invalid unused type");
+    auto retained = std::make_shared<const TypeGraphSymbols>();
+    TypeStore consumer;
+    auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
+                                    ValidationMode::OnDemand, retained);
+    expect(bool(imported), imported.error);
+    encoded.bytes.clear();
+    retained.reset();
+    expect(consumer.isCopy(imported.roots[0]) &&
+               consumer.product(imported.roots[0]).fields.size() == 1,
+           "demanded type dependencies lost validation or retained bytes");
+    bool rejected = false;
+    try {
+      (void)consumer.product(imported.roots[1]);
+    } catch (const InvalidMetadata &) {
+      rejected = true;
+    }
+    expect(rejected, "invalid demanded type was published before validation");
+    auto changed = consumer;
+    changed.defineProduct(imported.roots[0], {{"changed", Type::Bool}});
+    expect(consumer.product(imported.roots[0]).fields[0].name == "payload",
+           "demand-loaded type mutation changed its retained snapshot");
+  }
+  {
+    TypeRecords<std::string> records;
+    std::atomic<unsigned> loaded = 0;
+    auto loader = std::make_shared<const TypeRecords<std::string>::Loader>(
+        [&](std::size_t value) {
+          ++loaded;
+          return std::to_string(value);
+        });
+    for (std::size_t i = 0; i < 2; ++i) {
+      records.push_uninitialized();
+      records.defer(i, i + 7, loader);
+    }
+    auto consumer = records;
+    expect(loaded == 0, "copying deferred records materialized them");
+    std::vector<std::jthread> readers;
+    for (unsigned i = 0; i < 8; ++i)
+      readers.emplace_back([&, i] {
+        const auto &table = i < 4 ? records : consumer;
+        expect(table[i % 2] == std::to_string(i % 2 + 7),
+               "concurrent deferred record materialization lost a value");
+      });
+    readers.clear();
+    expect(loaded == 2, "shared deferred records were decoded repeatedly");
+    auto retained = records.retain(0);
+    consumer.edit(0) = "consumer";
+    records.clear();
+    expect(*retained == "7" && std::as_const(consumer)[0] == "consumer",
+           "deferred record mutation changed a retained snapshot");
+  }
+  {
+    std::size_t loaded = 0;
+    TypeStore types;
+    auto product = types.declareImportedType(ImportedTypeKind::Product);
+    struct BorrowedProduct {
+      std::array<BasicTypeField<BorrowedTypeStorage>, 1> fields{
+          BasicTypeField<BorrowedTypeStorage>{"value", Type::I32}};
+      BasicImportedProduct<BorrowedTypeStorage> record;
+    };
+    auto borrowed = std::make_shared<BorrowedProduct>();
+    borrowed->record.descriptor.name = "Borrowed";
+    borrowed->record.descriptor.copyRequested = true;
+    borrowed->record.descriptor.fields = std::span(borrowed->fields);
+    ImportedProduct owned;
+    owned.descriptor.name = "Borrowed";
+    owned.descriptor.copyRequested = true;
+    owned.descriptor.fields = {{"value", Type::I32}};
+    auto loader = std::make_shared<const TypeStore::ImportedDefinitionLoader>(
+        [owned, &loaded](std::size_t) -> ImportedTypeDefinition {
+          ++loaded;
+          return owned;
+        });
+    auto views = std::make_shared<const TypeStore::BorrowedDefinitionLoader>(
+        [borrowed](std::size_t) -> BorrowedTypeDefinition {
+          return &borrowed->record;
+        });
+    types.deferImportedDefinitions(
+        std::array{product}, std::array{ImportedTypeIndex{}}, loader, views);
+    expect(types.isCopy(product) && types.isSized(product) &&
+               !containsVarArgs(types, product) && loaded == 0,
+           "read-only type proofs must not expand owned imported records");
+    auto changed = types;
+    changed.defineProduct(product, {{"value", changed.sliceType(Type::I32)}});
+    expect(!changed.isSized(product) && types.isSized(product) && loaded == 1,
+           "borrowed proofs detach and follow the current definition");
+    expect(changed.inspectProduct(
+               product,
+               [&](const auto &record) {
+                 const auto original = record.fields.front().type;
+                 changed.defineProduct(product, {{"value", Type::Bool}});
+                 return record.fields.front().type == original;
+               }) &&
+               changed.isSized(product),
+           "inspection pins the definition across consumer mutation");
+  }
+  {
+    TypeStore prefix;
+    auto node = prefix.declareProduct("Node", true);
+    prefix.defineProduct(
+        node, {{"next", prefix.pointerType(node, ParameterMode::Read)}});
+    prefix.shareInterning();
+    TypeStore source = prefix;
+    source.declareProduct("Discarded", false);
+    for (unsigned i = 0; i < 8; ++i)
+      source.regions().binder(0, true);
+    auto owner = source.regions().binder(0, true);
+    auto a = source.regions().bound(owner, "a");
+    auto b = source.regions().rigid(owner, "b");
+    auto lifetime = source.regions().intersection({a, b});
+    auto view = source.viewType(node, ParameterMode::Read, lifetime);
+    TypeProjection projection(source, &prefix);
+    auto projected = projection.type(view);
+    const auto &store = *projection.store();
+    expect(
+        store.view(projected).payload == node &&
+            &store.product(node) == &prefix.product(node) &&
+            store.storedTypes().size() == prefix.storedTypes().size() + 1,
+        "projection retains only live consumer types over the shared prefix");
+    const auto &region = store.regions().get(store.view(projected).region);
+    expect(
+        region.kind == RegionKind::Intersection && region.sources.size() == 2 &&
+            store.regions().get(region.sources[0]).binder ==
+                store.regions().get(region.sources[1]).binder &&
+            store.regions().get(region.sources[0]).universe ==
+                store.regions().get(region.sources[1]).universe &&
+            store.regions().universeCount() ==
+                prefix.regions().universeCount() + 1,
+        "projection preserves shared binders without retaining dead universes");
+  }
+  {
+    TypeStore types;
+    auto four = types.structural(AggregateKind::Array, {Type::I32}, 4);
+    auto pointer = types.pointerType(four, ParameterMode::Read);
+    types.shareInterning();
+    TypeStore consumer = types;
+    consumer.refreshProductInstances({});
+    expect(consumer.structural(AggregateKind::Array, {Type::I32}, 4) == four &&
+               &consumer.product(four) == &types.product(four),
+           "read-only interning and refresh preserve shared type storage");
+    auto five = consumer.structural(AggregateKind::Array, {Type::I32}, 5);
+    expect(consumer.structural(AggregateKind::Array, {Type::I32}, 4) == four &&
+               five != four &&
+               consumer.structural(AggregateKind::Array, {Type::I32}, 5) ==
+                   five &&
+               consumer.pointerType(four, ParameterMode::Read) == pointer,
+           "consumer interning searches both shared and private candidates");
+    auto definition = consumer.importedDefinition(four);
+    auto &array = std::get<ImportedProduct>(definition).descriptor;
+    array.components = {Type::I64};
+    for (auto &field : array.fields)
+      field.type = Type::I64;
+    consumer.defineImportedType(four, std::move(definition));
+    expect(consumer.structural(AggregateKind::Array, {Type::I32}, 4) != four &&
+               types.structural(AggregateKind::Array, {Type::I32}, 4) == four,
+           "changed interning keys invalidate only the consumer index");
+  }
   {
     TypeStore producer;
     auto parameter = producer.declareParameter("T", false);
@@ -118,7 +298,7 @@ int main() {
                types.isCopy(array) && types.isCopy(later),
            "structural Copy follows strengthened payload bounds");
   }
-  std::vector<std::uint8_t> bytes;
+  std::vector<std::uint8_t> bytes, indexedBytes;
   std::map<DefinitionIdentity, Type> importedNames;
   {
     TypeStore producer;
@@ -292,6 +472,58 @@ int main() {
     auto encoded = exportTypeGraph(producer, roots, symbols);
     expect(static_cast<bool>(encoded), encoded.error);
     bytes = std::move(encoded.bytes);
+    auto indexed =
+        exportTypeGraph(producer, roots, symbols, ValidationMode::OnDemand);
+    expect(bool(indexed), indexed.error);
+    indexedBytes = std::move(indexed.bytes);
+  }
+  for (auto mode : {ValidationMode::Eager, ValidationMode::OnDemand}) {
+    TypeStore fresh;
+    auto temporary = mode == ValidationMode::Eager ? bytes : indexedBytes;
+    auto symbols = std::make_shared<const TypeGraphSymbols>(symbolMaps(100));
+    auto imported = importTypeGraph(fresh, temporary, *symbols, mode, symbols);
+    expect(static_cast<bool>(imported), imported.error);
+    temporary.clear();
+    temporary.shrink_to_fit();
+    const auto &roots = imported.roots;
+    expect(fresh.isParameter(roots[1]) && fresh.isConstParameter(roots[2]) &&
+               fresh.isProjection(roots[8]) &&
+               fresh.erasedDeclaration(roots[7]) == 107 &&
+               !containsVarArgs(fresh, roots[4]),
+           "borrowed admission facts outlive the caller's wire buffer");
+    auto changed = fresh;
+    auto definition = changed.importedDefinition(roots[8]);
+    std::get<TypeParameter>(definition).valueType = Type::I32;
+    changed.defineImportedType(roots[8], std::move(definition));
+    expect(changed.isConstant(roots[8]) && !changed.isParameter(roots[8]) &&
+               fresh.isParameter(roots[8]),
+           "borrowed classification follows detached definition changes");
+    expect(fresh.arrayType(Type::I32, fresh.constant(Type::Usize, 65)) ==
+                   roots[4] &&
+               fresh.callableType(fresh.callable(roots[6])) == roots[6] &&
+               fresh.erasedType(fresh.erased(roots[7])) == roots[7] &&
+               fresh.callable(roots[9]).function == 117,
+           "fresh imports preserve canonical factories and remapped closures");
+  }
+  for (auto mode : {ValidationMode::Eager, ValidationMode::OnDemand}) {
+    TypeStore producer;
+    ViewType view{Type::I32, ParameterMode::Read, "view"};
+    auto first = producer.declareImportedType(ImportedTypeKind::View);
+    auto second = producer.declareImportedType(ImportedTypeKind::View);
+    producer.defineImportedType(first, view);
+    producer.defineImportedType(second, view);
+    auto symbols = std::make_shared<const TypeGraphSymbols>(symbolMaps());
+    auto encoded =
+        exportTypeGraph(producer, std::array{first, second}, *symbols, mode);
+    expect(static_cast<bool>(encoded), encoded.error);
+    TypeStore fresh;
+    auto imported =
+        importTypeGraph(fresh, encoded.bytes, *symbols, mode, symbols);
+    expect(static_cast<bool>(imported), imported.error);
+    expect(imported.roots[0] == imported.roots[1] &&
+               fresh.viewType(Type::I32, ParameterMode::Read) ==
+                   imported.roots[0],
+           "fresh imports still merge duplicate structural identities");
   }
   TypeStore consumer;
   consumer.declareProduct("unrelated", false);

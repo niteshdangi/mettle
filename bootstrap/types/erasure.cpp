@@ -8,10 +8,11 @@ Type TypeStore::erasedType(ErasedType descriptor) {
       [](const auto &a, const auto &b) { return a.parameter < b.parameter; });
   syncLookup();
   if (auto existing = findIndexed(
-          found(lookup.erased, descriptor.declaration), [&](std::size_t i) {
+          candidates(&LookupData::erased, descriptor.declaration),
+          [&](std::size_t i) {
             if (entries[i].kind != EntryKind::Erased)
               return false;
-            const auto &prior = erasedTypes[entries[i].index];
+            const auto &prior = std::as_const(erasedTypes)[entries[i].index];
             if (prior.declaration != descriptor.declaration ||
                 prior.arguments != descriptor.arguments ||
                 prior.regionArguments != descriptor.regionArguments ||
@@ -82,7 +83,9 @@ Type TypeStore::opaqueType(std::string name, Type hidden,
   return result;
 }
 bool TypeStore::isOpaque(Type type) const {
-  return isProduct(type) && product(type).kind == AggregateKind::Opaque;
+  return isProduct(type) && inspectProduct(type, [](const auto &record) {
+           return record.kind == AggregateKind::Opaque;
+         });
 }
 void TypeStore::setOpaqueBounds(Type type, std::vector<Type> bounds) {
   products.at(entries.at(type.index() - builtinTypeCount).index).opaqueBounds =

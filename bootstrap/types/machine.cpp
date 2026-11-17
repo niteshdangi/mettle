@@ -49,19 +49,21 @@ bool containsVarArgs(const TypeStore &types, Type type) {
     if (!visited.insert(current).second)
       return false;
     if (types.isView(current) || types.isPointer(current))
-      return visit(types.view(current).payload);
+      return types.inspectView(
+          current, [&](const auto &view) { return visit(view.payload); });
     if (!types.isProduct(current))
       return false;
-    if (types.product(current).kind == AggregateKind::VarArgs)
-      return true;
-    // Array elements share one type.
-    if (types.product(current).kind == AggregateKind::Array &&
-        !types.product(current).components.empty())
-      return visit(types.product(current).components[0]);
-    for (const auto &field : types.product(current).fields)
-      if (visit(field.type))
+    auto product = [&](const auto &record) {
+      if (record.kind == AggregateKind::VarArgs)
         return true;
-    return false;
+      if (record.kind == AggregateKind::Array && !record.components.empty())
+        return visit(record.components[0]);
+      for (const auto &field : record.fields)
+        if (visit(field.type))
+          return true;
+      return false;
+    };
+    return types.inspectProduct(current, product);
   };
   return visit(type);
 }
