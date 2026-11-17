@@ -3,6 +3,7 @@
 #include "analysis/loans.h"
 #include "analysis/origins.h"
 #include "analysis/value_ownership.h"
+#include "consteval/evaluate.h"
 #include "instances/specialize.h"
 #include "ir/dominance.h"
 #include "lowering/scalar.h"
@@ -10,7 +11,9 @@
 #include "semantics/check.h"
 #include "semantics/inference.h"
 #include "syntax/parser.h"
+#include "types/machine.h"
 #include <algorithm>
+#include <array>
 #include <iostream>
 #include <stdexcept>
 
@@ -82,6 +85,38 @@ void inferenceWakeupCases() {
               types.product(types.product(resolved).components.front())
                       .components.front() == Type::I32,
           "defaulted numeric inference did not resolve its aggregate owners");
+}
+void constantValueSnapshotCases() {
+  using mettle::evaluation::Value;
+  Value scalar;
+  scalar.kind = Value::Kind::Integer;
+  scalar.type = Type::I32;
+  scalar.number = mettle::integerLiteral(7);
+  Value array;
+  array.kind = Value::Kind::Array;
+  array.elements.assign(3, scalar);
+  Value outer;
+  outer.kind = Value::Kind::Tuple;
+  outer.elements = {array, array};
+  auto copy = outer;
+  copy.elements[0].elements[1].number = mettle::integerLiteral(11);
+  require(outer.elements[0].elements[1].number == mettle::integerLiteral(7) &&
+              copy.elements[0].elements[1].number ==
+                  mettle::integerLiteral(11) &&
+              copy.elements[1].elements[1].number == mettle::integerLiteral(7),
+          "constant aggregate mutation changed another value snapshot");
+  mettle::TypeStore types;
+  for (auto operation :
+       {"numeric.wrapping_missing", "numeric.strict_checked_add",
+        "missing.checked_add", "numeric.checked_add.extra"})
+    require(!mettle::machineSignature(types, operation,
+                                      std::array{Type::I32, Type::I32}),
+            "unknown primitive operation acquired a valid signature");
+  auto optional = mettle::machineSignature(types, "numeric.checked_add",
+                                           std::array{Type::I32, Type::I32});
+  require(optional && optional->value == Type::I32 &&
+              optional->shape == mettle::MachineSignature::Shape::Optional,
+          "checked primitive lost its optional result contract");
 }
 void emptySpecializationCases() {
   Program program;
@@ -1469,6 +1504,7 @@ int main() {
     dominanceCases();
     emptySpecializationCases();
     inferenceWakeupCases();
+    constantValueSnapshotCases();
     coherenceCandidateCases();
     verifierCases();
     functionAddressCases();

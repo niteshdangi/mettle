@@ -253,6 +253,7 @@ int Checker::genericCustomConstruction(Node &call, bool reachable, Type origin,
   for (auto argument : ownerPattern)
     requestedArguments.push_back(
         checked.types->substitute(argument, knownOwner));
+  std::optional<std::vector<interfaces::Obligation>> assumptions;
   for (const auto &candidate : constructors.at(origin)) {
     auto &function = module.functions[candidate.function];
     if (!constructorShapeMatches(function, call))
@@ -273,9 +274,11 @@ int Checker::genericCustomConstruction(Node &call, bool reachable, Type origin,
         checked.types->product(candidate.applicability.target).genericArguments;
     if (targetArguments.size() != requestedArguments.size())
       continue;
-    interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                              diagnostics, interfaceAssumptions(),
-                              regionEnvironment());
+    if (!assumptions)
+      assumptions = interfaceAssumptions();
+    interfaces::Solver solver(
+        std::span<const interfaces::Obligation>(*assumptions), *checked.types,
+        *checked.interfaceData, diagnostics, regionEnvironment());
     if (caller)
       solver.setEqualities(caller->equalities);
     auto incorporate = [&](const std::vector<TypeBinding> &newBindings) {

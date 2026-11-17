@@ -4,44 +4,343 @@
 #include <algorithm>
 #include <functional>
 #include <set>
+#include <unordered_map>
 
 namespace mettle {
+MachineMethod machineMethod(std::string_view name) {
+  static const std::unordered_map<std::string_view, MachineMethod> methods{
+      {"abort", MachineMethod::Abort},
+      {"abs", MachineMethod::Abs},
+      {"abs_diff", MachineMethod::AbsDiff},
+      {"acos", MachineMethod::Acos},
+      {"acosh", MachineMethod::Acosh},
+      {"add", MachineMethod::Add},
+      {"addr", MachineMethod::Addr},
+      {"addr_of", MachineMethod::AddrOf},
+      {"addr_of_mut", MachineMethod::AddrOfMut},
+      {"align_of", MachineMethod::AlignOf},
+      {"align_of_val", MachineMethod::AlignOfVal},
+      {"align_of_val_raw", MachineMethod::AlignOfValRaw},
+      {"arg", MachineMethod::Arg},
+      {"as_array", MachineMethod::AsArray},
+      {"as_mut", MachineMethod::AsMut},
+      {"as_mut_array", MachineMethod::AsMutArray},
+      {"as_mut_ptr", MachineMethod::AsMutPtr},
+      {"as_mut_unchecked", MachineMethod::AsMutUnchecked},
+      {"as_ptr", MachineMethod::AsPtr},
+      {"as_ref", MachineMethod::AsRef},
+      {"as_ref_unchecked", MachineMethod::AsRefUnchecked},
+      {"asin", MachineMethod::Asin},
+      {"asinh", MachineMethod::Asinh},
+      {"assert_unchecked", MachineMethod::AssertUnchecked},
+      {"assume_init", MachineMethod::AssumeInit},
+      {"assume_init_drop", MachineMethod::AssumeInitDrop},
+      {"assume_init_mut", MachineMethod::AssumeInitMut},
+      {"assume_init_read", MachineMethod::AssumeInitRead},
+      {"assume_init_ref", MachineMethod::AssumeInitRef},
+      {"atan", MachineMethod::Atan},
+      {"atan2", MachineMethod::Atan2},
+      {"atanh", MachineMethod::Atanh},
+      {"bit_width", MachineMethod::BitWidth},
+      {"black_box", MachineMethod::BlackBox},
+      {"borrow", MachineMethod::Borrow},
+      {"borrow_mut", MachineMethod::BorrowMut},
+      {"borrowing_sub", MachineMethod::BorrowingSub},
+      {"byte_offset_from", MachineMethod::ByteOffsetFrom},
+      {"byte_offset_from_unsigned", MachineMethod::ByteOffsetFromUnsigned},
+      {"caller_location", MachineMethod::CallerLocation},
+      {"carrying_add", MachineMethod::CarryingAdd},
+      {"carrying_mul", MachineMethod::CarryingMul},
+      {"carrying_mul_add", MachineMethod::CarryingMulAdd},
+      {"cast", MachineMethod::Cast},
+      {"cast_const", MachineMethod::CastConst},
+      {"cast_mut", MachineMethod::CastMut},
+      {"cast_signed", MachineMethod::CastSigned},
+      {"cast_unsigned", MachineMethod::CastUnsigned},
+      {"cbrt", MachineMethod::Cbrt},
+      {"ceil", MachineMethod::Ceil},
+      {"checked_cast", MachineMethod::CheckedCast},
+      {"checked_ilog", MachineMethod::CheckedIlog},
+      {"checked_ilog10", MachineMethod::CheckedIlog10},
+      {"checked_ilog2", MachineMethod::CheckedIlog2},
+      {"checked_isqrt", MachineMethod::CheckedIsqrt},
+      {"checked_next_multiple_of", MachineMethod::CheckedNextMultipleOf},
+      {"checked_next_power_of_two", MachineMethod::CheckedNextPowerOfTwo},
+      {"checked_pow", MachineMethod::CheckedPow},
+      {"checked_signed_diff", MachineMethod::CheckedSignedDiff},
+      {"clamp", MachineMethod::Clamp},
+      {"clone", MachineMethod::Clone},
+      {"cold_path", MachineMethod::ColdPath},
+      {"compare_exchange", MachineMethod::CompareExchange},
+      {"compare_exchange_weak", MachineMethod::CompareExchangeWeak},
+      {"compiler_fence", MachineMethod::CompilerFence},
+      {"context", MachineMethod::Context},
+      {"copy", MachineMethod::Copy},
+      {"copy_nonoverlapping", MachineMethod::CopyNonoverlapping},
+      {"copysign", MachineMethod::Copysign},
+      {"cos", MachineMethod::Cos},
+      {"cosh", MachineMethod::Cosh},
+      {"count_ones", MachineMethod::CountOnes},
+      {"count_zeros", MachineMethod::CountZeros},
+      {"div", MachineMethod::Div},
+      {"div_ceil", MachineMethod::DivCeil},
+      {"div_euclid", MachineMethod::DivEuclid},
+      {"drop", MachineMethod::Drop},
+      {"drop_in_place", MachineMethod::DropInPlace},
+      {"end", MachineMethod::End},
+      {"eq_ignore_ascii_case", MachineMethod::EqIgnoreAsciiCase},
+      {"exp", MachineMethod::Exp},
+      {"exp2", MachineMethod::Exp2},
+      {"exp_m1", MachineMethod::ExpM1},
+      {"expose_provenance", MachineMethod::ExposeProvenance},
+      {"fence", MachineMethod::Fence},
+      {"fetch_add", MachineMethod::FetchAdd},
+      {"fetch_and", MachineMethod::FetchAnd},
+      {"fetch_byte_add", MachineMethod::FetchByteAdd},
+      {"fetch_byte_sub", MachineMethod::FetchByteSub},
+      {"fetch_max", MachineMethod::FetchMax},
+      {"fetch_min", MachineMethod::FetchMin},
+      {"fetch_nand", MachineMethod::FetchNand},
+      {"fetch_not", MachineMethod::FetchNot},
+      {"fetch_or", MachineMethod::FetchOr},
+      {"fetch_ptr_add", MachineMethod::FetchPtrAdd},
+      {"fetch_ptr_sub", MachineMethod::FetchPtrSub},
+      {"fetch_sub", MachineMethod::FetchSub},
+      {"fetch_xor", MachineMethod::FetchXor},
+      {"floor", MachineMethod::Floor},
+      {"fn_addr", MachineMethod::FnAddr},
+      {"fn_addr_eq", MachineMethod::FnAddrEq},
+      {"forget", MachineMethod::Forget},
+      {"fract", MachineMethod::Fract},
+      {"from_be", MachineMethod::FromBe},
+      {"from_be_bytes", MachineMethod::FromBeBytes},
+      {"from_bits", MachineMethod::FromBits},
+      {"from_le", MachineMethod::FromLe},
+      {"from_le_bytes", MachineMethod::FromLeBytes},
+      {"from_mut", MachineMethod::FromMut},
+      {"from_ne_bytes", MachineMethod::FromNeBytes},
+      {"from_ref", MachineMethod::FromRef},
+      {"get", MachineMethod::Get},
+      {"get_mut", MachineMethod::GetMut},
+      {"get_ref", MachineMethod::GetRef},
+      {"get_unchecked_mut", MachineMethod::GetUncheckedMut},
+      {"highest_one", MachineMethod::HighestOne},
+      {"hypot", MachineMethod::Hypot},
+      {"ilog", MachineMethod::Ilog},
+      {"ilog10", MachineMethod::Ilog10},
+      {"ilog2", MachineMethod::Ilog2},
+      {"inline", MachineMethod::Inline},
+      {"into_inner", MachineMethod::IntoInner},
+      {"into_inner_unchecked", MachineMethod::IntoInnerUnchecked},
+      {"is_ascii", MachineMethod::IsAscii},
+      {"is_ascii_alphabetic", MachineMethod::IsAsciiAlphabetic},
+      {"is_ascii_alphanumeric", MachineMethod::IsAsciiAlphanumeric},
+      {"is_ascii_control", MachineMethod::IsAsciiControl},
+      {"is_ascii_digit", MachineMethod::IsAsciiDigit},
+      {"is_ascii_graphic", MachineMethod::IsAsciiGraphic},
+      {"is_ascii_hexdigit", MachineMethod::IsAsciiHexdigit},
+      {"is_ascii_lowercase", MachineMethod::IsAsciiLowercase},
+      {"is_ascii_punctuation", MachineMethod::IsAsciiPunctuation},
+      {"is_ascii_uppercase", MachineMethod::IsAsciiUppercase},
+      {"is_ascii_whitespace", MachineMethod::IsAsciiWhitespace},
+      {"is_finite", MachineMethod::IsFinite},
+      {"is_infinite", MachineMethod::IsInfinite},
+      {"is_multiple_of", MachineMethod::IsMultipleOf},
+      {"is_nan", MachineMethod::IsNan},
+      {"is_negative", MachineMethod::IsNegative},
+      {"is_normal", MachineMethod::IsNormal},
+      {"is_null", MachineMethod::IsNull},
+      {"is_positive", MachineMethod::IsPositive},
+      {"is_power_of_two", MachineMethod::IsPowerOfTwo},
+      {"is_sign_negative", MachineMethod::IsSignNegative},
+      {"is_sign_positive", MachineMethod::IsSignPositive},
+      {"is_subnormal", MachineMethod::IsSubnormal},
+      {"isolate_highest_one", MachineMethod::IsolateHighestOne},
+      {"isolate_lowest_one", MachineMethod::IsolateLowestOne},
+      {"isqrt", MachineMethod::Isqrt},
+      {"leading_ones", MachineMethod::LeadingOnes},
+      {"leading_zeros", MachineMethod::LeadingZeros},
+      {"ln", MachineMethod::Ln},
+      {"ln_1p", MachineMethod::Ln1p},
+      {"load", MachineMethod::Load},
+      {"log", MachineMethod::Log},
+      {"log10", MachineMethod::Log10},
+      {"log2", MachineMethod::Log2},
+      {"lowest_one", MachineMethod::LowestOne},
+      {"make_ascii_lowercase", MachineMethod::MakeAsciiLowercase},
+      {"make_ascii_uppercase", MachineMethod::MakeAsciiUppercase},
+      {"max", MachineMethod::Max},
+      {"midpoint", MachineMethod::Midpoint},
+      {"min", MachineMethod::Min},
+      {"mul", MachineMethod::Mul},
+      {"mul_add", MachineMethod::MulAdd},
+      {"needs_drop", MachineMethod::NeedsDrop},
+      {"neg", MachineMethod::Neg},
+      {"new", MachineMethod::New},
+      {"new_unchecked", MachineMethod::NewUnchecked},
+      {"next_arg", MachineMethod::NextArg},
+      {"next_down", MachineMethod::NextDown},
+      {"next_multiple_of", MachineMethod::NextMultipleOf},
+      {"next_power_of_two", MachineMethod::NextPowerOfTwo},
+      {"next_up", MachineMethod::NextUp},
+      {"null", MachineMethod::Null},
+      {"null_mut", MachineMethod::NullMut},
+      {"offset", MachineMethod::Offset},
+      {"offset_from", MachineMethod::OffsetFrom},
+      {"offset_from_unsigned", MachineMethod::OffsetFromUnsigned},
+      {"offset_of", MachineMethod::OffsetOf},
+      {"overflowing_pow", MachineMethod::OverflowingPow},
+      {"panic_fmt", MachineMethod::PanicFmt},
+      {"panic_message", MachineMethod::PanicMessage},
+      {"pow", MachineMethod::Pow},
+      {"powf", MachineMethod::Powf},
+      {"powi", MachineMethod::Powi},
+      {"project_unchecked", MachineMethod::ProjectUnchecked},
+      {"raw_get", MachineMethod::RawGet},
+      {"read", MachineMethod::Read},
+      {"read_unaligned", MachineMethod::ReadUnaligned},
+      {"read_volatile", MachineMethod::ReadVolatile},
+      {"recip", MachineMethod::Recip},
+      {"rem", MachineMethod::Rem},
+      {"rem_euclid", MachineMethod::RemEuclid},
+      {"replace", MachineMethod::Replace},
+      {"resume", MachineMethod::Resume},
+      {"reverse_bits", MachineMethod::ReverseBits},
+      {"rotate_left", MachineMethod::RotateLeft},
+      {"rotate_right", MachineMethod::RotateRight},
+      {"round", MachineMethod::Round},
+      {"round_ties_even", MachineMethod::RoundTiesEven},
+      {"saturating_pow", MachineMethod::SaturatingPow},
+      {"select_unpredictable", MachineMethod::SelectUnpredictable},
+      {"set", MachineMethod::Set},
+      {"shl", MachineMethod::Shl},
+      {"shr", MachineMethod::Shr},
+      {"signum", MachineMethod::Signum},
+      {"sin", MachineMethod::Sin},
+      {"sin_cos", MachineMethod::SinCos},
+      {"sinh", MachineMethod::Sinh},
+      {"size_of", MachineMethod::SizeOf},
+      {"size_of_val", MachineMethod::SizeOfVal},
+      {"size_of_val_raw", MachineMethod::SizeOfValRaw},
+      {"slice_from_raw_parts", MachineMethod::SliceFromRawParts},
+      {"slice_from_raw_parts_mut", MachineMethod::SliceFromRawPartsMut},
+      {"spin_loop", MachineMethod::SpinLoop},
+      {"split_token_unchecked", MachineMethod::SplitTokenUnchecked},
+      {"sqrt", MachineMethod::Sqrt},
+      {"start", MachineMethod::Start},
+      {"store", MachineMethod::Store},
+      {"strict_pow", MachineMethod::StrictPow},
+      {"sub", MachineMethod::Sub},
+      {"suspend", MachineMethod::Suspend},
+      {"swap", MachineMethod::Swap},
+      {"swap_bytes", MachineMethod::SwapBytes},
+      {"swap_nonoverlapping", MachineMethod::SwapNonoverlapping},
+      {"take", MachineMethod::Take},
+      {"tan", MachineMethod::Tan},
+      {"tanh", MachineMethod::Tanh},
+      {"to_ascii_lowercase", MachineMethod::ToAsciiLowercase},
+      {"to_ascii_uppercase", MachineMethod::ToAsciiUppercase},
+      {"to_be", MachineMethod::ToBe},
+      {"to_be_bytes", MachineMethod::ToBeBytes},
+      {"to_bits", MachineMethod::ToBits},
+      {"to_degrees", MachineMethod::ToDegrees},
+      {"to_int_unchecked", MachineMethod::ToIntUnchecked},
+      {"to_le", MachineMethod::ToLe},
+      {"to_le_bytes", MachineMethod::ToLeBytes},
+      {"to_ne_bytes", MachineMethod::ToNeBytes},
+      {"to_radians", MachineMethod::ToRadians},
+      {"trailing_ones", MachineMethod::TrailingOnes},
+      {"trailing_zeros", MachineMethod::TrailingZeros},
+      {"transmute", MachineMethod::Transmute},
+      {"transmute_copy", MachineMethod::TransmuteCopy},
+      {"trunc", MachineMethod::Trunc},
+      {"try_borrow", MachineMethod::TryBorrow},
+      {"try_borrow_mut", MachineMethod::TryBorrowMut},
+      {"try_borrow_unguarded", MachineMethod::TryBorrowUnguarded},
+      {"type_id", MachineMethod::TypeId},
+      {"type_name", MachineMethod::TypeName},
+      {"unbounded_shl", MachineMethod::UnboundedShl},
+      {"unbounded_shr", MachineMethod::UnboundedShr},
+      {"unchecked_shl", MachineMethod::UncheckedShl},
+      {"unchecked_shr", MachineMethod::UncheckedShr},
+      {"uninit", MachineMethod::Uninit},
+      {"unreachable_unchecked", MachineMethod::UnreachableUnchecked},
+      {"unsigned_abs", MachineMethod::UnsignedAbs},
+      {"variant_ordinal", MachineMethod::VariantOrdinal},
+      {"with_addr", MachineMethod::WithAddr},
+      {"with_exposed_provenance", MachineMethod::WithExposedProvenance},
+      {"without_provenance", MachineMethod::WithoutProvenance},
+      {"wrapping_pow", MachineMethod::WrappingPow},
+      {"write", MachineMethod::Write},
+      {"write_bytes", MachineMethod::WriteBytes},
+      {"write_unaligned", MachineMethod::WriteUnaligned},
+      {"write_volatile", MachineMethod::WriteVolatile},
+      {"zeroed", MachineMethod::Zeroed},
+  };
+  auto found = methods.find(name);
+  return found == methods.end() ? MachineMethod::Unknown : found->second;
+}
+MachineOperation decodeMachineOperation(std::string_view operation) {
+  auto separator = operation.find('.');
+  if (separator == std::string_view::npos)
+    return {MachineFamily::None, machineMethod(operation)};
+  static const std::unordered_map<std::string_view, MachineFamily> families{
+      {"atomic", MachineFamily::Atomic},
+      {"cell", MachineFamily::Cell},
+      {"coroutine", MachineFamily::Coroutine},
+      {"hint", MachineFamily::Hint},
+      {"intrinsics", MachineFamily::Intrinsics},
+      {"mem", MachineFamily::Mem},
+      {"numeric", MachineFamily::Numeric},
+      {"pin", MachineFamily::Pin},
+      {"ptr", MachineFamily::Ptr},
+      {"storage", MachineFamily::Storage},
+      {"va", MachineFamily::Va},
+  };
+  auto found = families.find(operation.substr(0, separator));
+  return {found == families.end() ? MachineFamily::Unknown : found->second,
+          machineMethod(operation.substr(separator + 1))};
+}
 bool constantFloatMethod(std::string_view name) {
-  constexpr std::string_view names[]{"abs",
-                                     "ceil",
-                                     "clamp",
-                                     "copysign",
-                                     "floor",
-                                     "fract",
-                                     "from_be_bytes",
-                                     "from_bits",
-                                     "from_le_bytes",
-                                     "from_ne_bytes",
-                                     "is_finite",
-                                     "is_infinite",
-                                     "is_nan",
-                                     "is_normal",
-                                     "is_sign_negative",
-                                     "is_sign_positive",
-                                     "is_subnormal",
-                                     "max",
-                                     "midpoint",
-                                     "min",
-                                     "mul_add",
-                                     "next_down",
-                                     "next_up",
-                                     "recip",
-                                     "round",
-                                     "round_ties_even",
-                                     "signum",
-                                     "to_be_bytes",
-                                     "to_bits",
-                                     "to_degrees",
-                                     "to_le_bytes",
-                                     "to_ne_bytes",
-                                     "to_radians",
-                                     "trunc"};
-  return std::find(std::begin(names), std::end(names), name) != std::end(names);
+  switch (machineMethod(name)) {
+  case MachineMethod::Abs:
+  case MachineMethod::Ceil:
+  case MachineMethod::Clamp:
+  case MachineMethod::Copysign:
+  case MachineMethod::Floor:
+  case MachineMethod::Fract:
+  case MachineMethod::FromBeBytes:
+  case MachineMethod::FromBits:
+  case MachineMethod::FromLeBytes:
+  case MachineMethod::FromNeBytes:
+  case MachineMethod::IsFinite:
+  case MachineMethod::IsInfinite:
+  case MachineMethod::IsNan:
+  case MachineMethod::IsNormal:
+  case MachineMethod::IsSignNegative:
+  case MachineMethod::IsSignPositive:
+  case MachineMethod::IsSubnormal:
+  case MachineMethod::Max:
+  case MachineMethod::Midpoint:
+  case MachineMethod::Min:
+  case MachineMethod::MulAdd:
+  case MachineMethod::NextDown:
+  case MachineMethod::NextUp:
+  case MachineMethod::Recip:
+  case MachineMethod::Round:
+  case MachineMethod::RoundTiesEven:
+  case MachineMethod::Signum:
+  case MachineMethod::ToBeBytes:
+  case MachineMethod::ToBits:
+  case MachineMethod::ToDegrees:
+  case MachineMethod::ToLeBytes:
+  case MachineMethod::ToNeBytes:
+  case MachineMethod::ToRadians:
+  case MachineMethod::Trunc:
+    return true;
+  default:
+    return false;
+  }
 }
 bool containsVarArgs(const TypeStore &types, Type type) {
   std::set<Type> visited;
@@ -87,28 +386,33 @@ std::optional<MachineSignature>
 machineSignature(const TypeStore &types, std::string_view operation,
                  std::span<const Type> operands, Type argument,
                  std::span<const Type> unpinProofs) {
+  const auto operationCode = decodeMachineOperation(operation);
   using Shape = MachineSignature::Shape;
   auto signature = [](Type value, Shape shape = Shape::Value,
                       bool unsafeCall = false) {
     return std::optional<MachineSignature>{{value, shape, unsafeCall}};
   };
-  if (operation.starts_with("va.")) {
+  if ((operationCode.family == MachineFamily::Va)) {
     auto cursor = [&](Type type) {
       return types.isProduct(type) &&
              types.product(type).kind == AggregateKind::VarArgs;
     };
-    if (operation == "va.start")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Va, MachineMethod::Start})
       return operands.empty() && cursor(argument) ? signature(argument)
                                                   : std::nullopt;
     if (operands.size() != 1)
       return std::nullopt;
-    if (operation == "va.end")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Va, MachineMethod::End})
       return cursor(operands[0]) ? signature(Type::Unit) : std::nullopt;
     if (!types.isView(operands[0]) || !cursor(types.view(operands[0]).payload))
       return std::nullopt;
-    if (operation == "va.copy")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Va, MachineMethod::Copy})
       return signature(types.view(operands[0]).payload);
-    if (operation == "va.next_arg") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Va, MachineMethod::NextArg}) {
       bool eligible = argument == Type::I32 || argument == Type::U32 ||
                       argument == Type::I64 || argument == Type::U64 ||
                       argument == Type::I128 || argument == Type::U128 ||
@@ -121,7 +425,8 @@ machineSignature(const TypeStore &types, std::string_view operation,
                  ? signature(argument, Shape::Value, true)
                  : std::nullopt;
     }
-    if (operation != "va.arg" ||
+    if (operationCode !=
+            MachineOperation{MachineFamily::Va, MachineMethod::Arg} ||
         types.view(operands[0]).mode != ParameterMode::Mut)
       return std::nullopt;
     std::set<Type> active;
@@ -180,11 +485,11 @@ machineSignature(const TypeStore &types, std::string_view operation,
            std::find(unpinProofs.begin(), unpinProofs.end(), type) !=
                unpinProofs.end();
   };
-  if (operation.starts_with("cell.")) {
+  if ((operationCode.family == MachineFamily::Cell)) {
     if (!types.isProduct(argument))
       return std::nullopt;
     const auto &cell = types.product(argument);
-    auto method = operation.substr(5);
+    auto methodCode = operationCode.method;
     bool guarded =
         cell.kind == AggregateKind::Ref || cell.kind == AggregateKind::RefMut;
     if (guarded) {
@@ -193,7 +498,7 @@ machineSignature(const TypeStore &types, std::string_view operation,
         return std::nullopt;
       auto owner = types.view(cell.components[0]).payload;
       auto payload = types.product(owner).components[0];
-      if (method == "project_unchecked")
+      if (methodCode == MachineMethod::ProjectUnchecked)
         return operands.size() == 2 && types.isPointer(operands[1]) &&
                        types.pointer(operands[1]).mode ==
                            (cell.kind == AggregateKind::Ref
@@ -207,14 +512,15 @@ machineSignature(const TypeStore &types, std::string_view operation,
                    : std::nullopt;
       if (operands.size() != 1)
         return std::nullopt;
-      if (method == "get_ref")
+      if (methodCode == MachineMethod::GetRef)
         return signature(payload, Shape::ViewRead);
-      if (method == "get_mut" && cell.kind == AggregateKind::RefMut &&
+      if (methodCode == MachineMethod::GetMut &&
+          cell.kind == AggregateKind::RefMut &&
           types.view(operands[0]).mode == ParameterMode::Mut)
         return signature(payload, Shape::ViewMut);
-      if (method == "clone" && cell.kind == AggregateKind::Ref)
+      if (methodCode == MachineMethod::Clone && cell.kind == AggregateKind::Ref)
         return signature(owner, Shape::Ref);
-      if (method == "split_token_unchecked")
+      if (methodCode == MachineMethod::SplitTokenUnchecked)
         return signature(
             owner, cell.kind == AggregateKind::Ref ? Shape::Ref : Shape::RefMut,
             true);
@@ -223,12 +529,12 @@ machineSignature(const TypeStore &types, std::string_view operation,
     if (cell.kind != AggregateKind::Cell && cell.kind != AggregateKind::RefCell)
       return std::nullopt;
     auto payload = cell.components[0];
-    if (method == "new")
+    if (methodCode == MachineMethod::New)
       return operands.size() == 1 && operands[0] == payload &&
                      types.isSized(payload)
                  ? signature(argument)
                  : std::nullopt;
-    if (method == "into_inner")
+    if (methodCode == MachineMethod::IntoInner)
       return operands.size() == 1 && operands[0] == argument &&
                      types.isSized(payload)
                  ? signature(payload)
@@ -236,41 +542,44 @@ machineSignature(const TypeStore &types, std::string_view operation,
     if (operands.empty() || !types.isView(operands[0]) ||
         types.view(operands[0]).payload != argument)
       return std::nullopt;
-    if (method == "get_mut")
+    if (methodCode == MachineMethod::GetMut)
       return operands.size() == 1 &&
                      types.view(operands[0]).mode == ParameterMode::Mut
                  ? signature(payload, Shape::ViewMut)
                  : std::nullopt;
-    if (method == "as_ptr")
+    if (methodCode == MachineMethod::AsPtr)
       return operands.size() == 1 ? signature(payload, Shape::PointerMut)
                                   : std::nullopt;
-    if (method == "get")
+    if (methodCode == MachineMethod::Get)
       return cell.kind == AggregateKind::Cell && operands.size() == 1 &&
                      types.isCopy(payload)
                  ? signature(payload)
                  : std::nullopt;
-    if (method == "replace" || method == "set")
+    if (methodCode == MachineMethod::Replace ||
+        methodCode == MachineMethod::Set)
       return operands.size() == 2 && operands[1] == payload &&
                      types.isSized(payload) &&
-                     (method != "set" || cell.kind == AggregateKind::Cell)
-                 ? signature(method == "set" ? Type::Unit : payload)
+                     (methodCode != MachineMethod::Set ||
+                      cell.kind == AggregateKind::Cell)
+                 ? signature(methodCode == MachineMethod::Set ? Type::Unit
+                                                              : payload)
                  : std::nullopt;
-    if (method == "swap")
+    if (methodCode == MachineMethod::Swap)
       return operands.size() == 2 && types.isSized(payload) &&
                      types.isView(operands[1]) &&
                      types.view(operands[1]).payload == argument
                  ? signature(Type::Unit)
                  : std::nullopt;
     if (cell.kind == AggregateKind::RefCell && operands.size() == 1) {
-      if (method == "borrow")
+      if (methodCode == MachineMethod::Borrow)
         return signature(argument, Shape::Ref);
-      if (method == "borrow_mut")
+      if (methodCode == MachineMethod::BorrowMut)
         return signature(argument, Shape::RefMut);
-      if (method == "try_borrow")
+      if (methodCode == MachineMethod::TryBorrow)
         return signature(argument, Shape::TryRef);
-      if (method == "try_borrow_mut")
+      if (methodCode == MachineMethod::TryBorrowMut)
         return signature(argument, Shape::TryRefMut);
-      if (method == "try_borrow_unguarded")
+      if (methodCode == MachineMethod::TryBorrowUnguarded)
         return signature(payload, Shape::UnguardedRef, true);
     }
     return std::nullopt;
@@ -309,57 +618,76 @@ machineSignature(const TypeStore &types, std::string_view operation,
                                                   : argument,
                      Shape::Value, true);
   }
-  if (operation == "mem.forget")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Mem, MachineMethod::Forget})
     return operands.size() == 1 ? signature(Type::Unit) : std::nullopt;
-  if (operation == "mem.drop")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Mem, MachineMethod::Drop})
     return operands.size() == 1 && types.isSized(operands[0])
                ? signature(Type::Unit)
                : std::nullopt;
-  if (operation == "intrinsics.offset_of")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Intrinsics, MachineMethod::OffsetOf})
     return operands.empty() && types.isProduct(argument)
                ? signature(Type::Usize)
                : std::nullopt;
-  if (operation == "hint.black_box")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Hint, MachineMethod::BlackBox})
     return operands.size() == 1 && operands[0] == argument ? signature(argument)
                                                            : std::nullopt;
-  if (operation == "hint.spin_loop" || operation == "hint.cold_path")
+  if (operationCode ==
+          MachineOperation{MachineFamily::Hint, MachineMethod::SpinLoop} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Hint, MachineMethod::ColdPath})
     return operands.empty() ? signature(Type::Unit) : std::nullopt;
-  if (operation == "hint.assert_unchecked")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Hint, MachineMethod::AssertUnchecked})
     return operands.size() == 1 && operands[0] == Type::Bool
                ? signature(Type::Unit, Shape::Value, true)
                : std::nullopt;
-  if (operation == "hint.select_unpredictable")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Hint, MachineMethod::SelectUnpredictable})
     return operands.size() == 3 && operands[0] == Type::Bool &&
                    operands[1] == argument && operands[2] == argument &&
                    types.isSized(argument)
                ? signature(argument)
                : std::nullopt;
-  if (operation == "hint.unreachable_unchecked")
+  if (operationCode == MachineOperation{MachineFamily::Hint,
+                                        MachineMethod::UnreachableUnchecked})
     return operands.empty() ? signature(Type::Never, Shape::Value, true)
                             : std::nullopt;
   for (auto operand : operands)
     if (containsVarArgs(types, operand))
       return std::nullopt;
-  if ((operation == "mem.zeroed" || operation == "mem.transmute" ||
-       operation == "mem.transmute_copy") &&
+  if ((operationCode ==
+           MachineOperation{MachineFamily::Mem, MachineMethod::Zeroed} ||
+       operationCode ==
+           MachineOperation{MachineFamily::Mem, MachineMethod::Transmute} ||
+       operationCode == MachineOperation{MachineFamily::Mem,
+                                         MachineMethod::TransmuteCopy}) &&
       containsVarArgs(types, argument))
     return std::nullopt;
-  if (operation == "intrinsics.abort")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Intrinsics, MachineMethod::Abort})
     return operands.empty() ? signature(Type::Never) : std::nullopt;
-  if (operation.starts_with("coroutine.")) {
+  if ((operationCode.family == MachineFamily::Coroutine)) {
     bool state = types.isProduct(argument) &&
                  types.product(argument).kind == AggregateKind::Coroutine;
-    if (operation == "coroutine.suspend")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Coroutine, MachineMethod::Suspend})
       return operands.empty() ? signature(Type::Unit) : std::nullopt;
-    if (operation == "coroutine.context")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Coroutine, MachineMethod::Context})
       return operands.empty() ? signature(Type::U8, Shape::PointerMut)
                               : std::nullopt;
-    if (operation == "coroutine.start")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Coroutine, MachineMethod::Start})
       return state && operands.size() == 1 &&
                      operands[0] == types.product(argument).components[1]
                  ? signature(argument, Shape::Value, true)
                  : std::nullopt;
-    if (operation == "coroutine.resume")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Coroutine, MachineMethod::Resume})
       return state && operands.size() == 2 && types.isView(operands[0]) &&
                      types.view(operands[0]).mode == ParameterMode::Mut &&
                      types.isPointer(operands[1]) &&
@@ -370,7 +698,8 @@ machineSignature(const TypeStore &types, std::string_view operation,
                  : std::nullopt;
     return std::nullopt;
   }
-  if (operation == "intrinsics.panic_fmt") {
+  if (operationCode ==
+      MachineOperation{MachineFamily::Intrinsics, MachineMethod::PanicFmt}) {
     auto bytePointer = [&](Type type, ParameterMode mode) {
       return types.isPointer(type) && types.pointer(type).payload == Type::U8 &&
              types.pointer(type).mode == mode;
@@ -408,7 +737,8 @@ machineSignature(const TypeStore &types, std::string_view operation,
       return std::nullopt;
     return signature(Type::Never, Shape::Value, true);
   }
-  if (operation == "intrinsics.panic_message")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Intrinsics, MachineMethod::PanicMessage})
     return operands.size() == 1 && types.isView(operands[0]) &&
                    types.view(operands[0]).mode == ParameterMode::Read &&
                    types.isSlice(types.view(operands[0]).payload) &&
@@ -421,17 +751,22 @@ machineSignature(const TypeStore &types, std::string_view operation,
            types.view(type).payload == argument && types.contains(argument) &&
            types.isSized(argument);
   };
-  if (operation == "mem.replace")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Mem, MachineMethod::Replace})
     return operands.size() == 2 && exclusive(operands[0]) &&
                    operands[1] == argument
                ? signature(argument)
                : std::nullopt;
-  if (operation == "mem.swap")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Mem, MachineMethod::Swap})
     return operands.size() == 2 && exclusive(operands[0]) &&
                    operands[1] == operands[0]
                ? signature(Type::Unit)
                : std::nullopt;
-  if (operation == "mem.size_of_val" || operation == "mem.align_of_val")
+  if (operationCode ==
+          MachineOperation{MachineFamily::Mem, MachineMethod::SizeOfVal} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Mem, MachineMethod::AlignOfVal})
     return operands.size() == 1 && types.isView(operands[0]) &&
                    types.view(operands[0]).mode == ParameterMode::Read &&
                    types.view(operands[0]).payload == argument &&
@@ -440,7 +775,10 @@ machineSignature(const TypeStore &types, std::string_view operation,
                     types.pointerMetadata(argument) != PointerMetadata::None)
                ? signature(Type::Usize)
                : std::nullopt;
-  if (operation == "mem.size_of_val_raw" || operation == "mem.align_of_val_raw")
+  if (operationCode ==
+          MachineOperation{MachineFamily::Mem, MachineMethod::SizeOfValRaw} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Mem, MachineMethod::AlignOfValRaw})
     return operands.size() == 1 && types.isPointer(operands[0]) &&
                    types.pointer(operands[0]).payload == argument &&
                    types.contains(argument) &&
@@ -448,12 +786,14 @@ machineSignature(const TypeStore &types, std::string_view operation,
                     types.pointerMetadata(argument) != PointerMetadata::None)
                ? signature(Type::Usize, Shape::Value, true)
                : std::nullopt;
-  if (operation == "mem.zeroed")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Mem, MachineMethod::Zeroed})
     return operands.empty() && types.contains(argument) &&
                    types.isSized(argument)
                ? signature(argument, Shape::Value, true)
                : std::nullopt;
-  if (operation == "mem.transmute") {
+  if (operationCode ==
+      MachineOperation{MachineFamily::Mem, MachineMethod::Transmute}) {
     if (operands.size() != 1 || !types.contains(argument) ||
         !types.isSized(argument) || !types.isSized(operands[0]))
       return std::nullopt;
@@ -485,17 +825,19 @@ machineSignature(const TypeStore &types, std::string_view operation,
                ? signature(argument, Shape::Value, true)
                : std::nullopt;
   }
-  if (operation.starts_with("atomic.")) {
+  if ((operationCode.family == MachineFamily::Atomic)) {
     auto ordering = [&](Type type) {
       return types.isProduct(type) &&
              types.product(type).kind == AggregateKind::Ordering;
     };
     auto method = operation.substr(7);
-    if (method == "fence" || method == "compiler_fence")
+    auto methodCode = operationCode.method;
+    if (methodCode == MachineMethod::Fence ||
+        methodCode == MachineMethod::CompilerFence)
       return operands.size() == 1 && ordering(operands[0])
                  ? signature(Type::Unit)
                  : std::nullopt;
-    if (method == "new")
+    if (methodCode == MachineMethod::New)
       return types.isProduct(argument) &&
                      types.product(argument).kind == AggregateKind::Atomic &&
                      operands.size() == 1 &&
@@ -503,8 +845,10 @@ machineSignature(const TypeStore &types, std::string_view operation,
                  ? signature(argument)
                  : std::nullopt;
     bool raw = method.starts_with("raw_");
-    if (raw)
+    if (raw) {
       method.remove_prefix(4);
+      methodCode = machineMethod(method);
+    }
     if (operands.empty())
       return std::nullopt;
     Type payload = Type::Unknown, wrapper = Type::Unknown;
@@ -522,98 +866,118 @@ machineSignature(const TypeStore &types, std::string_view operation,
         isInteger(payload) || payload == Type::Bool || types.isPointer(payload);
     if (!scalar || (isInteger(payload) && integerWidth(payload) > 64))
       return std::nullopt;
-    if (method == "into_inner")
+    if (methodCode == MachineMethod::IntoInner)
       return !raw && operands.size() == 1 && operands[0] == wrapper
                  ? signature(payload)
                  : std::nullopt;
-    if (method == "as_ptr")
+    if (methodCode == MachineMethod::AsPtr)
       return !raw && operands.size() == 1
                  ? signature(payload, Shape::PointerMut)
                  : std::nullopt;
-    if (method == "get_mut")
+    if (methodCode == MachineMethod::GetMut)
       return !raw && operands.size() == 1 && types.isView(operands[0]) &&
                      types.view(operands[0]).mode == ParameterMode::Mut
                  ? signature(payload, Shape::ViewMut)
                  : std::nullopt;
     if (!raw && !types.isView(operands[0]))
       return std::nullopt;
-    if (raw && method != "load" &&
+    if (raw && methodCode != MachineMethod::Load &&
         types.pointer(operands[0]).mode != ParameterMode::Mut)
       return std::nullopt;
-    if (method == "load")
+    if (methodCode == MachineMethod::Load)
       return operands.size() == 2 && ordering(operands[1])
                  ? signature(payload, Shape::Value, raw)
                  : std::nullopt;
-    if (method == "store")
+    if (methodCode == MachineMethod::Store)
       return operands.size() == 3 && operands[1] == payload &&
                      ordering(operands[2])
                  ? signature(Type::Unit, Shape::Value, raw)
                  : std::nullopt;
-    if (method == "compare_exchange" || method == "compare_exchange_weak")
+    if (methodCode == MachineMethod::CompareExchange ||
+        methodCode == MachineMethod::CompareExchangeWeak)
       return operands.size() == 5 && operands[1] == payload &&
                      operands[2] == payload && ordering(operands[3]) &&
                      ordering(operands[4])
                  ? signature(payload, Shape::Outcome, raw)
                  : std::nullopt;
-    if (method == "fetch_not")
+    if (methodCode == MachineMethod::FetchNot)
       return !raw && payload == Type::Bool && operands.size() == 2 &&
                      ordering(operands[1])
                  ? signature(payload)
                  : std::nullopt;
-    bool pointerMask = types.isPointer(payload) &&
-                       (method == "fetch_and" || method == "fetch_or" ||
-                        method == "fetch_xor");
-    if (method == "swap" || method == "fetch_and" || method == "fetch_or" ||
-        method == "fetch_xor" || method == "fetch_nand" ||
-        ((method == "fetch_add" || method == "fetch_sub" ||
-          method == "fetch_min" || method == "fetch_max") &&
+    bool pointerMask =
+        types.isPointer(payload) && (methodCode == MachineMethod::FetchAnd ||
+                                     methodCode == MachineMethod::FetchOr ||
+                                     methodCode == MachineMethod::FetchXor);
+    if (methodCode == MachineMethod::Swap ||
+        methodCode == MachineMethod::FetchAnd ||
+        methodCode == MachineMethod::FetchOr ||
+        methodCode == MachineMethod::FetchXor ||
+        methodCode == MachineMethod::FetchNand ||
+        ((methodCode == MachineMethod::FetchAdd ||
+          methodCode == MachineMethod::FetchSub ||
+          methodCode == MachineMethod::FetchMin ||
+          methodCode == MachineMethod::FetchMax) &&
          isInteger(payload)))
       return operands.size() == 3 &&
                      operands[1] == (pointerMask ? Type::Usize : payload) &&
                      ordering(operands[2])
                  ? signature(payload, Shape::Value, raw)
                  : std::nullopt;
-    if (method == "fetch_ptr_add" || method == "fetch_ptr_sub" ||
-        method == "fetch_byte_add" || method == "fetch_byte_sub")
+    if (methodCode == MachineMethod::FetchPtrAdd ||
+        methodCode == MachineMethod::FetchPtrSub ||
+        methodCode == MachineMethod::FetchByteAdd ||
+        methodCode == MachineMethod::FetchByteSub)
       return types.isPointer(payload) && operands.size() == 3 &&
                      operands[1] == Type::Usize && ordering(operands[2])
                  ? signature(payload, Shape::Value, raw)
                  : std::nullopt;
     return std::nullopt;
   }
-  if (operation == "pin.inline")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Pin, MachineMethod::Inline})
     return operands.size() == 1 && types.isSized(operands[0])
                ? signature(operands[0], Shape::PinMut)
                : std::nullopt;
-  if (operation == "pin.new" || operation == "pin.new_unchecked")
+  if (operationCode ==
+          MachineOperation{MachineFamily::Pin, MachineMethod::New} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Pin, MachineMethod::NewUnchecked})
     return operands.size() == 1 && types.isView(operands[0]) &&
-                   (operation == "pin.new_unchecked" ||
+                   (operationCode ==
+                        MachineOperation{MachineFamily::Pin,
+                                         MachineMethod::NewUnchecked} ||
                     unpin(types.view(operands[0]).payload))
                ? signature(types.view(operands[0]).payload,
                            types.view(operands[0]).mode == ParameterMode::Mut
                                ? Shape::PinMut
                                : Shape::PinRead,
-                           operation == "pin.new_unchecked")
+                           operationCode ==
+                               MachineOperation{MachineFamily::Pin,
+                                                MachineMethod::NewUnchecked})
                : std::nullopt;
-  if (operation.starts_with("pin.")) {
+  if ((operationCode.family == MachineFamily::Pin)) {
     auto method = operation.substr(4);
+    auto methodCode = operationCode.method;
     if (!types.isProduct(argument) ||
         types.product(argument).kind != AggregateKind::Pin)
       return std::nullopt;
     auto view = types.product(argument).components[0];
     auto payload = types.view(view).payload;
-    if (method == "into_inner" || method == "into_inner_unchecked")
+    if (methodCode == MachineMethod::IntoInner ||
+        methodCode == MachineMethod::IntoInnerUnchecked)
       return operands.size() == 1 && operands[0] == argument &&
-                     (method == "into_inner_unchecked" || unpin(payload))
+                     (methodCode == MachineMethod::IntoInnerUnchecked ||
+                      unpin(payload))
                  ? signature(view, Shape::Value,
-                             method == "into_inner_unchecked")
+                             methodCode == MachineMethod::IntoInnerUnchecked)
                  : std::nullopt;
     if (operands.size() != 1 || !types.isView(operands[0]) ||
         types.view(operands[0]).payload != argument)
       return std::nullopt;
-    if (method == "as_ref")
+    if (methodCode == MachineMethod::AsRef)
       return signature(payload, Shape::PinRead);
-    if (method == "get_ref")
+    if (methodCode == MachineMethod::GetRef)
       return signature(payload, Shape::ViewRead);
     bool exclusive = types.view(view).mode == ParameterMode::Mut &&
                      types.view(operands[0]).mode == ParameterMode::Mut;
@@ -640,17 +1004,19 @@ machineSignature(const TypeStore &types, std::string_view operation,
                            record.layout.unionType);
         }
     }
-    if (method == "as_mut")
+    if (methodCode == MachineMethod::AsMut)
       return exclusive ? signature(payload, Shape::PinMut) : std::nullopt;
-    if (method == "get_mut" || method == "get_unchecked_mut")
-      return exclusive && (method == "get_unchecked_mut" || unpin(payload))
+    if (methodCode == MachineMethod::GetMut ||
+        methodCode == MachineMethod::GetUncheckedMut)
+      return exclusive && (methodCode == MachineMethod::GetUncheckedMut ||
+                           unpin(payload))
                  ? signature(payload, Shape::ViewMut,
-                             method == "get_unchecked_mut")
+                             methodCode == MachineMethod::GetUncheckedMut)
                  : std::nullopt;
     return std::nullopt;
   }
-  if (operation.starts_with("storage.")) {
-    auto method = operation.substr(8);
+  if ((operationCode.family == MachineFamily::Storage)) {
+    auto methodCode = operationCode.method;
     if (!types.isProduct(argument))
       return std::nullopt;
     const auto &storage = types.product(argument);
@@ -659,103 +1025,126 @@ machineSignature(const TypeStore &types, std::string_view operation,
         storage.kind != AggregateKind::UnsafeCell)
       return std::nullopt;
     auto payload = storage.components[0];
-    if (method == "raw_get")
+    if (methodCode == MachineMethod::RawGet)
       return storage.kind == AggregateKind::UnsafeCell &&
                      operands.size() == 1 && types.isPointer(operands[0]) &&
                      types.pointer(operands[0]).payload == argument
                  ? signature(payload, Shape::PointerMut)
                  : std::nullopt;
-    if (method == "from_mut")
+    if (methodCode == MachineMethod::FromMut)
       return storage.kind == AggregateKind::UnsafeCell &&
                      operands.size() == 1 && types.isView(operands[0]) &&
                      types.view(operands[0]).mode == ParameterMode::Mut &&
                      types.view(operands[0]).payload == payload
                  ? signature(argument, Shape::ViewMut)
                  : std::nullopt;
-    if (method == "new")
+    if (methodCode == MachineMethod::New)
       return operands.size() == 1 && operands[0] == payload &&
                      types.isSized(payload)
                  ? signature(argument)
                  : std::nullopt;
-    if (method == "uninit" || method == "zeroed")
+    if (methodCode == MachineMethod::Uninit ||
+        methodCode == MachineMethod::Zeroed)
       return operands.empty() && storage.kind == AggregateKind::Uninit
                  ? signature(argument)
                  : std::nullopt;
-    if (method == "assume_init" || method == "into_inner")
+    if (methodCode == MachineMethod::AssumeInit ||
+        methodCode == MachineMethod::IntoInner)
       return operands.size() == 1 && operands[0] == argument &&
-                     (method == "into_inner"
+                     (methodCode == MachineMethod::IntoInner
                           ? storage.kind != AggregateKind::Uninit
                           : storage.kind == AggregateKind::Uninit)
-                 ? signature(payload, Shape::Value, method == "assume_init")
+                 ? signature(payload, Shape::Value,
+                             methodCode == MachineMethod::AssumeInit)
                  : std::nullopt;
     if (operands.empty() || !types.isView(operands[0]) ||
         types.view(operands[0]).payload != argument)
       return std::nullopt;
     bool exclusive = types.view(operands[0]).mode == ParameterMode::Mut;
-    if (method == "drop" || method == "assume_init_drop")
-      return storage.kind == (method == "drop" ? AggregateKind::ManualDrop
-                                               : AggregateKind::Uninit) &&
+    if (methodCode == MachineMethod::Drop ||
+        methodCode == MachineMethod::AssumeInitDrop)
+      return storage.kind == (methodCode == MachineMethod::Drop
+                                  ? AggregateKind::ManualDrop
+                                  : AggregateKind::Uninit) &&
                      exclusive && operands.size() == 1
                  ? signature(Type::Unit, Shape::Value, true)
                  : std::nullopt;
-    if (method == "take" || method == "assume_init_read")
+    if (methodCode == MachineMethod::Take ||
+        methodCode == MachineMethod::AssumeInitRead)
       return operands.size() == 1 &&
-                     (method == "take"
+                     (methodCode == MachineMethod::Take
                           ? storage.kind == AggregateKind::ManualDrop &&
                                 exclusive
                           : storage.kind == AggregateKind::Uninit)
                  ? signature(payload, Shape::Value, true)
                  : std::nullopt;
-    if (method == "write")
+    if (methodCode == MachineMethod::Write)
       return storage.kind == AggregateKind::Uninit && operands.size() == 2 &&
                      exclusive && operands[1] == payload
                  ? signature(payload, Shape::ViewMut)
                  : std::nullopt;
-    if (method == "as_ptr")
+    if (methodCode == MachineMethod::AsPtr)
       return operands.size() == 1 ? signature(payload, Shape::PointerRead)
                                   : std::nullopt;
-    if (method == "as_mut_ptr" || method == "get")
+    if (methodCode == MachineMethod::AsMutPtr ||
+        methodCode == MachineMethod::Get)
       return operands.size() == 1 &&
-                     (method == "get"
+                     (methodCode == MachineMethod::Get
                           ? storage.kind == AggregateKind::UnsafeCell
                           : exclusive)
                  ? signature(payload, Shape::PointerMut)
                  : std::nullopt;
-    if (method == "get_ref" || method == "assume_init_ref")
+    if (methodCode == MachineMethod::GetRef ||
+        methodCode == MachineMethod::AssumeInitRef)
       return operands.size() == 1 &&
-                     (method == "get_ref"
+                     (methodCode == MachineMethod::GetRef
                           ? storage.kind != AggregateKind::Uninit
                           : storage.kind == AggregateKind::Uninit)
                  ? signature(payload, Shape::ViewRead,
-                             method == "assume_init_ref" ||
+                             methodCode == MachineMethod::AssumeInitRef ||
                                  storage.kind == AggregateKind::UnsafeCell)
                  : std::nullopt;
-    if (method == "get_mut" || method == "assume_init_mut")
+    if (methodCode == MachineMethod::GetMut ||
+        methodCode == MachineMethod::AssumeInitMut)
       return operands.size() == 1 && exclusive &&
-                     (method == "get_mut"
+                     (methodCode == MachineMethod::GetMut
                           ? storage.kind != AggregateKind::Uninit
                           : storage.kind == AggregateKind::Uninit)
                  ? signature(payload, Shape::ViewMut,
-                             method == "assume_init_mut")
+                             methodCode == MachineMethod::AssumeInitMut)
                  : std::nullopt;
     return std::nullopt;
   }
-  if (operation == "size_of" || operation == "align_of" ||
-      operation == "needs_drop" || operation == "type_id") {
+  if (operationCode ==
+          MachineOperation{MachineFamily::None, MachineMethod::SizeOf} ||
+      operationCode ==
+          MachineOperation{MachineFamily::None, MachineMethod::AlignOf} ||
+      operationCode ==
+          MachineOperation{MachineFamily::None, MachineMethod::NeedsDrop} ||
+      operationCode ==
+          MachineOperation{MachineFamily::None, MachineMethod::TypeId}) {
     if (!operands.empty() || !types.contains(argument) ||
-        (operation != "type_id" && !types.isSized(argument)))
+        (operationCode !=
+             MachineOperation{MachineFamily::None, MachineMethod::TypeId} &&
+         !types.isSized(argument)))
       return std::nullopt;
-    return signature(operation == "needs_drop" ? Type::Bool
-                     : operation == "type_id"  ? Type::U64
-                                               : Type::Usize);
+    return signature(operationCode == MachineOperation{MachineFamily::None,
+                                                       MachineMethod::NeedsDrop}
+                         ? Type::Bool
+                     : operationCode == MachineOperation{MachineFamily::None,
+                                                         MachineMethod::TypeId}
+                         ? Type::U64
+                         : Type::Usize);
   }
-  if (operation == "intrinsics.type_name") {
+  if (operationCode ==
+      MachineOperation{MachineFamily::Intrinsics, MachineMethod::TypeName}) {
     auto text = types.findProduct("core::text::Text");
     return operands.empty() && types.contains(argument) && text
                ? signature(*text, Shape::ViewReadStatic)
                : std::nullopt;
   }
-  if (operation == "intrinsics.caller_location") {
+  if (operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                        MachineMethod::CallerLocation}) {
     if (!operands.empty() || !types.isProduct(argument))
       return std::nullopt;
     const auto &record = types.product(argument);
@@ -773,21 +1162,24 @@ machineSignature(const TypeStore &types, std::string_view operation,
                ? signature(argument)
                : std::nullopt;
   }
-  if (operation == "intrinsics.variant_ordinal")
+  if (operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                        MachineMethod::VariantOrdinal})
     return operands.size() == 1 && types.isView(operands[0]) &&
                    types.view(operands[0]).mode == ParameterMode::Read &&
                    types.view(operands[0]).payload == argument &&
                    types.isSized(argument)
                ? signature(Type::Usize)
                : std::nullopt;
-  if (operation == "intrinsics.fn_addr")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Intrinsics, MachineMethod::FnAddr})
     return operands.size() == 1 && (types.isFunctionPointer(operands[0]) ||
                                     (types.isParameter(operands[0]) &&
                                      types.parameter(operands[0]).kind ==
                                          TypeParameterKind::Type))
                ? signature(Type::Usize)
                : std::nullopt;
-  if (operation == "ptr.fn_addr_eq") {
+  if (operationCode ==
+      MachineOperation{MachineFamily::Ptr, MachineMethod::FnAddrEq}) {
     auto callable = [&](Type type) {
       return types.isFunctionPointer(type) ||
              (types.isParameter(type) &&
@@ -798,15 +1190,18 @@ machineSignature(const TypeStore &types, std::string_view operation,
                ? signature(Type::Bool)
                : std::nullopt;
   }
-  if (operation == "mem.transmute_copy")
+  if (operationCode ==
+      MachineOperation{MachineFamily::Mem, MachineMethod::TransmuteCopy})
     return operands.size() == 1 && types.isView(operands[0]) &&
                    types.view(operands[0]).mode == ParameterMode::Read &&
                    types.isSized(types.view(operands[0]).payload) &&
                    types.isSized(argument)
                ? signature(argument, Shape::Value, true)
                : std::nullopt;
-  if (operation == "ptr.slice_from_raw_parts" ||
-      operation == "ptr.slice_from_raw_parts_mut") {
+  if (operationCode == MachineOperation{MachineFamily::Ptr,
+                                        MachineMethod::SliceFromRawParts} ||
+      operationCode == MachineOperation{MachineFamily::Ptr,
+                                        MachineMethod::SliceFromRawPartsMut}) {
     bool exclusive = operation.ends_with("_mut");
     return operands.size() == 2 && types.isPointer(operands[0]) &&
                    (!exclusive ||
@@ -819,35 +1214,59 @@ machineSignature(const TypeStore &types, std::string_view operation,
                            exclusive ? Shape::PointerMut : Shape::PointerRead)
                : std::nullopt;
   }
-  if (operation == "ptr.null" || operation == "ptr.null_mut" ||
-      operation == "ptr.without_provenance" ||
-      operation == "ptr.with_exposed_provenance") {
-    bool address = operation != "ptr.null" && operation != "ptr.null_mut";
+  if (operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::Null} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::NullMut} ||
+      operationCode == MachineOperation{MachineFamily::Ptr,
+                                        MachineMethod::WithoutProvenance} ||
+      operationCode == MachineOperation{MachineFamily::Ptr,
+                                        MachineMethod::WithExposedProvenance}) {
+    bool address = operationCode != MachineOperation{MachineFamily::Ptr,
+                                                     MachineMethod::Null} &&
+                   operationCode != MachineOperation{MachineFamily::Ptr,
+                                                     MachineMethod::NullMut};
     if (!types.contains(argument) ||
-        (!(operation == "ptr.null" || operation == "ptr.null_mut") &&
+        (!(operationCode ==
+               MachineOperation{MachineFamily::Ptr, MachineMethod::Null} ||
+           operationCode ==
+               MachineOperation{MachineFamily::Ptr, MachineMethod::NullMut}) &&
          !types.isSized(argument)) ||
-        ((operation == "ptr.null" || operation == "ptr.null_mut") &&
+        ((operationCode ==
+              MachineOperation{MachineFamily::Ptr, MachineMethod::Null} ||
+          operationCode ==
+              MachineOperation{MachineFamily::Ptr, MachineMethod::NullMut}) &&
          !types.isThin(argument)) ||
         operands.size() != (address ? 1u : 0u) ||
         (address && operands[0] != Type::Usize))
       return std::nullopt;
-    return signature(argument, operation == "ptr.null_mut"
-                                   ? Shape::PointerMut
-                                   : Shape::PointerRead);
+    return signature(argument,
+                     operationCode == MachineOperation{MachineFamily::Ptr,
+                                                       MachineMethod::NullMut}
+                         ? Shape::PointerMut
+                         : Shape::PointerRead);
   }
-  if (operation == "ptr.from_ref" || operation == "ptr.from_mut") {
+  if (operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::FromRef} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::FromMut}) {
     if (operands.size() != 1 || !types.isView(operands[0]) ||
-        (operation == "ptr.from_mut" &&
+        (operationCode ==
+             MachineOperation{MachineFamily::Ptr, MachineMethod::FromMut} &&
          types.view(operands[0]).mode != ParameterMode::Mut))
       return std::nullopt;
     return signature(types.view(operands[0]).payload,
-                     operation == "ptr.from_mut" ? Shape::PointerMut
-                                                 : Shape::PointerRead);
+                     operationCode == MachineOperation{MachineFamily::Ptr,
+                                                       MachineMethod::FromMut}
+                         ? Shape::PointerMut
+                         : Shape::PointerRead);
   }
-  if (operation.starts_with("numeric.")) {
+  if ((operationCode.family == MachineFamily::Numeric)) {
     auto method = operation.substr(8);
-    bool fromBytes = method == "from_be_bytes" || method == "from_le_bytes" ||
-                     method == "from_ne_bytes";
+    auto methodCode = operationCode.method;
+    bool fromBytes = methodCode == MachineMethod::FromBeBytes ||
+                     methodCode == MachineMethod::FromLeBytes ||
+                     methodCode == MachineMethod::FromNeBytes;
     if (fromBytes) {
       if (operands.size() != 1 || !isNumeric(argument) ||
           !types.isProduct(operands[0]) ||
@@ -866,8 +1285,8 @@ machineSignature(const TypeStore &types, std::string_view operation,
     }
     if (operands.empty())
       return std::nullopt;
-    bool makeAscii =
-        method == "make_ascii_lowercase" || method == "make_ascii_uppercase";
+    bool makeAscii = methodCode == MachineMethod::MakeAsciiLowercase ||
+                     methodCode == MachineMethod::MakeAsciiUppercase;
     auto self = operands[0];
     if (types.isView(self)) {
       if (!makeAscii || types.view(self).mode != ParameterMode::Mut ||
@@ -876,20 +1295,21 @@ machineSignature(const TypeStore &types, std::string_view operation,
       self = types.view(self).payload;
     } else if (!isNumeric(self))
       return std::nullopt;
-    if (method == "checked_cast")
+    if (methodCode == MachineMethod::CheckedCast)
       return operands.size() == 1 && isInteger(argument)
                  ? signature(argument, Shape::Optional)
                  : std::nullopt;
-    if (method == "to_int_unchecked")
+    if (methodCode == MachineMethod::ToIntUnchecked)
       return operands.size() == 1 && isFloating(self) && isInteger(argument)
                  ? signature(argument, Shape::Value, true)
                  : std::nullopt;
-    bool toBytes = method == "to_be_bytes" || method == "to_le_bytes" ||
-                   method == "to_ne_bytes";
-    if (argument != Type::Unknown && method != "from_bits" && !toBytes &&
-        method != "sin_cos" && self != argument)
+    bool toBytes = methodCode == MachineMethod::ToBeBytes ||
+                   methodCode == MachineMethod::ToLeBytes ||
+                   methodCode == MachineMethod::ToNeBytes;
+    if (argument != Type::Unknown && methodCode != MachineMethod::FromBits &&
+        !toBytes && methodCode != MachineMethod::SinCos && self != argument)
       return std::nullopt;
-    if (method == "sin_cos")
+    if (methodCode == MachineMethod::SinCos)
       return operands.size() == 1 && isFloating(self) &&
                      types.isProduct(argument) &&
                      types.product(argument).kind == AggregateKind::Tuple &&
@@ -897,19 +1317,20 @@ machineSignature(const TypeStore &types, std::string_view operation,
                          std::vector<Type>{self, self}
                  ? signature(argument)
                  : std::nullopt;
-    if (method == "to_bits") {
+    if (methodCode == MachineMethod::ToBits) {
       if (operands.size() != 1 || !isFloating(self))
         return std::nullopt;
       return signature(self == Type::F32 ? Type::U32 : Type::U64);
     }
-    if (method == "from_bits") {
+    if (methodCode == MachineMethod::FromBits) {
       if (operands.size() != 1 || !isFloating(argument) ||
           self != (argument == Type::F32 ? Type::U32 : Type::U64))
         return std::nullopt;
       return signature(argument);
     }
-    if (method == "to_be_bytes" || method == "to_le_bytes" ||
-        method == "to_ne_bytes") {
+    if (methodCode == MachineMethod::ToBeBytes ||
+        methodCode == MachineMethod::ToLeBytes ||
+        methodCode == MachineMethod::ToNeBytes) {
       if (operands.size() != 1 || !types.isProduct(argument) ||
           types.product(argument).kind != AggregateKind::Array ||
           types.product(argument).components.empty() ||
@@ -924,40 +1345,71 @@ machineSignature(const TypeStore &types, std::string_view operation,
                  ? signature(argument)
                  : std::nullopt;
     }
-    if (method == "to_be" || method == "to_le" || method == "from_be" ||
-        method == "from_le")
+    if (methodCode == MachineMethod::ToBe ||
+        methodCode == MachineMethod::ToLe ||
+        methodCode == MachineMethod::FromBe ||
+        methodCode == MachineMethod::FromLe)
       return operands.size() == 1 && isInteger(self) ? signature(self)
                                                      : std::nullopt;
     if (isFloating(self)) {
-      bool predicate = method == "is_nan" || method == "is_infinite" ||
-                       method == "is_finite" || method == "is_sign_negative" ||
-                       method == "is_sign_positive" ||
-                       method == "is_subnormal" || method == "is_normal";
-      bool unary = predicate || method == "abs" || method == "sqrt" ||
-                   method == "floor" || method == "ceil" || method == "trunc" ||
-                   method == "round" || method == "round_ties_even" ||
-                   method == "sin" || method == "cos" || method == "tan" ||
-                   method == "asin" || method == "acos" || method == "atan" ||
-                   method == "sinh" || method == "cosh" || method == "tanh" ||
-                   method == "asinh" || method == "acosh" ||
-                   method == "atanh" || method == "exp" || method == "exp2" ||
-                   method == "exp_m1" || method == "ln" || method == "ln_1p" ||
-                   method == "log2" || method == "log10" || method == "cbrt" ||
-                   method == "fract" || method == "recip" ||
-                   method == "signum" || method == "to_degrees" ||
-                   method == "to_radians" || method == "next_up" ||
-                   method == "next_down";
-      bool clamp = method == "clamp";
-      bool binary = method == "copysign" || method == "atan2" ||
-                    method == "log" || method == "powf" || method == "hypot" ||
-                    method == "div_euclid" || method == "rem_euclid" ||
-                    method == "midpoint" || method == "min" || method == "max";
-      auto count = method == "mul_add" ? 3u
-                   : method == "powi"  ? 2u
-                   : clamp             ? 3u
-                   : binary            ? 2u
-                                       : 1u;
-      bool powi = method == "powi";
+      bool predicate = methodCode == MachineMethod::IsNan ||
+                       methodCode == MachineMethod::IsInfinite ||
+                       methodCode == MachineMethod::IsFinite ||
+                       methodCode == MachineMethod::IsSignNegative ||
+                       methodCode == MachineMethod::IsSignPositive ||
+                       methodCode == MachineMethod::IsSubnormal ||
+                       methodCode == MachineMethod::IsNormal;
+      bool unary = predicate || methodCode == MachineMethod::Abs ||
+                   methodCode == MachineMethod::Sqrt ||
+                   methodCode == MachineMethod::Floor ||
+                   methodCode == MachineMethod::Ceil ||
+                   methodCode == MachineMethod::Trunc ||
+                   methodCode == MachineMethod::Round ||
+                   methodCode == MachineMethod::RoundTiesEven ||
+                   methodCode == MachineMethod::Sin ||
+                   methodCode == MachineMethod::Cos ||
+                   methodCode == MachineMethod::Tan ||
+                   methodCode == MachineMethod::Asin ||
+                   methodCode == MachineMethod::Acos ||
+                   methodCode == MachineMethod::Atan ||
+                   methodCode == MachineMethod::Sinh ||
+                   methodCode == MachineMethod::Cosh ||
+                   methodCode == MachineMethod::Tanh ||
+                   methodCode == MachineMethod::Asinh ||
+                   methodCode == MachineMethod::Acosh ||
+                   methodCode == MachineMethod::Atanh ||
+                   methodCode == MachineMethod::Exp ||
+                   methodCode == MachineMethod::Exp2 ||
+                   methodCode == MachineMethod::ExpM1 ||
+                   methodCode == MachineMethod::Ln ||
+                   methodCode == MachineMethod::Ln1p ||
+                   methodCode == MachineMethod::Log2 ||
+                   methodCode == MachineMethod::Log10 ||
+                   methodCode == MachineMethod::Cbrt ||
+                   methodCode == MachineMethod::Fract ||
+                   methodCode == MachineMethod::Recip ||
+                   methodCode == MachineMethod::Signum ||
+                   methodCode == MachineMethod::ToDegrees ||
+                   methodCode == MachineMethod::ToRadians ||
+                   methodCode == MachineMethod::NextUp ||
+                   methodCode == MachineMethod::NextDown;
+      bool clamp = methodCode == MachineMethod::Clamp;
+      bool binary = methodCode == MachineMethod::Copysign ||
+                    methodCode == MachineMethod::Atan2 ||
+                    methodCode == MachineMethod::Log ||
+                    methodCode == MachineMethod::Powf ||
+                    methodCode == MachineMethod::Hypot ||
+                    methodCode == MachineMethod::DivEuclid ||
+                    methodCode == MachineMethod::RemEuclid ||
+                    methodCode == MachineMethod::Midpoint ||
+                    methodCode == MachineMethod::Min ||
+                    methodCode == MachineMethod::Max;
+      auto count = methodCode == MachineMethod::MulAdd ? 3u
+                   : methodCode == MachineMethod::Powi ? 2u
+                   : clamp                             ? 3u
+                   : binary                            ? 2u
+                                                       : 1u;
+      bool powi = methodCode == MachineMethod::Powi;
       if ((!unary && count == 1) || operands.size() != count ||
           (powi ? operands[1] != Type::I32
                 : !std::all_of(operands.begin(), operands.end(),
@@ -965,17 +1417,23 @@ machineSignature(const TypeStore &types, std::string_view operation,
         return std::nullopt;
       return signature(predicate ? Type::Bool : self);
     }
-    if (method == "count_ones" || method == "count_zeros" ||
-        method == "leading_zeros" || method == "trailing_zeros" ||
-        method == "leading_ones" || method == "trailing_ones" ||
-        method == "swap_bytes" || method == "reverse_bits") {
+    if (methodCode == MachineMethod::CountOnes ||
+        methodCode == MachineMethod::CountZeros ||
+        methodCode == MachineMethod::LeadingZeros ||
+        methodCode == MachineMethod::TrailingZeros ||
+        methodCode == MachineMethod::LeadingOnes ||
+        methodCode == MachineMethod::TrailingOnes ||
+        methodCode == MachineMethod::SwapBytes ||
+        methodCode == MachineMethod::ReverseBits) {
       if (operands.size() != 1)
         return std::nullopt;
-      return signature(method == "swap_bytes" || method == "reverse_bits"
+      return signature(methodCode == MachineMethod::SwapBytes ||
+                               methodCode == MachineMethod::ReverseBits
                            ? self
                            : Type::U32);
     }
-    if (method == "rotate_left" || method == "rotate_right") {
+    if (methodCode == MachineMethod::RotateLeft ||
+        methodCode == MachineMethod::RotateRight) {
       if (operands.size() != 2 || operands[1] != Type::U32)
         return std::nullopt;
       return signature(self);
@@ -1008,78 +1466,95 @@ machineSignature(const TypeStore &types, std::string_view operation,
         return Type::I128;
       return Type::Isize;
     };
-    if (method == "is_positive" || method == "is_negative" ||
-        method == "signum")
+    if (methodCode == MachineMethod::IsPositive ||
+        methodCode == MachineMethod::IsNegative ||
+        methodCode == MachineMethod::Signum)
       return operands.size() == 1 && isSignedInteger(self)
-                 ? signature(method == "signum" ? self : Type::Bool)
+                 ? signature(methodCode == MachineMethod::Signum ? self
+                                                                 : Type::Bool)
                  : std::nullopt;
-    if (method == "is_power_of_two")
+    if (methodCode == MachineMethod::IsPowerOfTwo)
       return operands.size() == 1 && !isSignedInteger(self)
                  ? signature(Type::Bool)
                  : std::nullopt;
-    if (method == "bit_width")
+    if (methodCode == MachineMethod::BitWidth)
       return operands.size() == 1 && !isSignedInteger(self)
                  ? signature(Type::U32)
                  : std::nullopt;
-    if (method == "highest_one" || method == "lowest_one")
+    if (methodCode == MachineMethod::HighestOne ||
+        methodCode == MachineMethod::LowestOne)
       return operands.size() == 1 ? signature(Type::U32, Shape::Optional)
                                   : std::nullopt;
-    if (method == "isolate_highest_one" || method == "isolate_lowest_one")
+    if (methodCode == MachineMethod::IsolateHighestOne ||
+        methodCode == MachineMethod::IsolateLowestOne)
       return operands.size() == 1 ? signature(self) : std::nullopt;
-    if (method == "carrying_add" || method == "borrowing_sub")
+    if (methodCode == MachineMethod::CarryingAdd ||
+        methodCode == MachineMethod::BorrowingSub)
       return operands.size() == 3 && !isSignedInteger(self) &&
                      operands[1] == self && operands[2] == Type::Bool
                  ? signature(self, Shape::Overflow)
                  : std::nullopt;
-    if (method == "carrying_mul" || method == "carrying_mul_add")
-      return operands.size() == (method == "carrying_mul" ? 3u : 4u) &&
+    if (methodCode == MachineMethod::CarryingMul ||
+        methodCode == MachineMethod::CarryingMulAdd)
+      return operands.size() ==
+                         (methodCode == MachineMethod::CarryingMul ? 3u : 4u) &&
                      !isSignedInteger(self) &&
                      std::all_of(operands.begin(), operands.end(),
                                  [&](Type type) { return type == self; })
                  ? signature(self, Shape::Pair)
                  : std::nullopt;
-    if (method == "checked_signed_diff")
+    if (methodCode == MachineMethod::CheckedSignedDiff)
       return operands.size() == 2 && !isSignedInteger(self) &&
                      operands[1] == self
                  ? signature(signedType(), Shape::Optional)
                  : std::nullopt;
-    if (method == "ilog2" || method == "ilog10" || method == "checked_ilog2" ||
-        method == "checked_ilog10")
+    if (methodCode == MachineMethod::Ilog2 ||
+        methodCode == MachineMethod::Ilog10 ||
+        methodCode == MachineMethod::CheckedIlog2 ||
+        methodCode == MachineMethod::CheckedIlog10)
       return operands.size() == 1
                  ? signature(Type::U32, method.starts_with("checked_")
                                             ? Shape::Optional
                                             : Shape::Value)
                  : std::nullopt;
-    if (method == "ilog" || method == "checked_ilog")
+    if (methodCode == MachineMethod::Ilog ||
+        methodCode == MachineMethod::CheckedIlog)
       return operands.size() == 2 && operands[1] == self
                  ? signature(Type::U32, method.starts_with("checked_")
                                             ? Shape::Optional
                                             : Shape::Value)
                  : std::nullopt;
-    if (method == "isqrt" || method == "checked_isqrt")
+    if (methodCode == MachineMethod::Isqrt ||
+        methodCode == MachineMethod::CheckedIsqrt)
       return operands.size() == 1
                  ? signature(self, method.starts_with("checked_")
                                        ? Shape::Optional
                                        : Shape::Value)
                  : std::nullopt;
-    if (method == "next_power_of_two" || method == "checked_next_power_of_two")
+    if (methodCode == MachineMethod::NextPowerOfTwo ||
+        methodCode == MachineMethod::CheckedNextPowerOfTwo)
       return operands.size() == 1 && !isSignedInteger(self)
                  ? signature(self, method.starts_with("checked_")
                                        ? Shape::Optional
                                        : Shape::Value)
                  : std::nullopt;
-    if (method == "div_ceil" || method == "next_multiple_of" ||
-        method == "checked_next_multiple_of" || method == "is_multiple_of")
+    if (methodCode == MachineMethod::DivCeil ||
+        methodCode == MachineMethod::NextMultipleOf ||
+        methodCode == MachineMethod::CheckedNextMultipleOf ||
+        methodCode == MachineMethod::IsMultipleOf)
       return operands.size() == 2 && operands[1] == self &&
                      !isSignedInteger(self)
-                 ? signature(method == "is_multiple_of" ? Type::Bool : self,
+                 ? signature(methodCode == MachineMethod::IsMultipleOf
+                                 ? Type::Bool
+                                 : self,
                              method.starts_with("checked_") ? Shape::Optional
                                                             : Shape::Value)
                  : std::nullopt;
-    if (method == "midpoint")
+    if (methodCode == MachineMethod::Midpoint)
       return operands.size() == 2 && operands[1] == self ? signature(self)
                                                          : std::nullopt;
-    if (method == "unbounded_shl" || method == "unbounded_shr")
+    if (methodCode == MachineMethod::UnboundedShl ||
+        methodCode == MachineMethod::UnboundedShr)
       return operands.size() == 2 && operands[1] == Type::U32 ? signature(self)
                                                               : std::nullopt;
     if (method.starts_with("unchecked_")) {
@@ -1094,22 +1569,32 @@ machineSignature(const TypeStore &types, std::string_view operation,
                  ? signature(self, Shape::Value, true)
                  : std::nullopt;
     }
-    if (method == "cast_signed" || method == "cast_unsigned")
+    if (methodCode == MachineMethod::CastSigned ||
+        methodCode == MachineMethod::CastUnsigned)
       return operands.size() == 1 &&
-                     ((method == "cast_signed" && !isSignedInteger(self)) ||
-                      (method == "cast_unsigned" && isSignedInteger(self)))
-                 ? signature(method == "cast_signed" ? signedType()
-                                                     : unsignedType())
+                     ((methodCode == MachineMethod::CastSigned &&
+                       !isSignedInteger(self)) ||
+                      (methodCode == MachineMethod::CastUnsigned &&
+                       isSignedInteger(self)))
+                 ? signature(methodCode == MachineMethod::CastSigned
+                                 ? signedType()
+                                 : unsignedType())
                  : std::nullopt;
-    if (method == "is_ascii" || method == "is_ascii_alphabetic" ||
-        method == "is_ascii_alphanumeric" || method == "is_ascii_control" ||
-        method == "is_ascii_digit" || method == "is_ascii_graphic" ||
-        method == "is_ascii_hexdigit" || method == "is_ascii_lowercase" ||
-        method == "is_ascii_punctuation" || method == "is_ascii_uppercase" ||
-        method == "is_ascii_whitespace")
+    if (methodCode == MachineMethod::IsAscii ||
+        methodCode == MachineMethod::IsAsciiAlphabetic ||
+        methodCode == MachineMethod::IsAsciiAlphanumeric ||
+        methodCode == MachineMethod::IsAsciiControl ||
+        methodCode == MachineMethod::IsAsciiDigit ||
+        methodCode == MachineMethod::IsAsciiGraphic ||
+        methodCode == MachineMethod::IsAsciiHexdigit ||
+        methodCode == MachineMethod::IsAsciiLowercase ||
+        methodCode == MachineMethod::IsAsciiPunctuation ||
+        methodCode == MachineMethod::IsAsciiUppercase ||
+        methodCode == MachineMethod::IsAsciiWhitespace)
       return self == Type::U8 && operands.size() == 1 ? signature(Type::Bool)
                                                       : std::nullopt;
-    if (method == "to_ascii_lowercase" || method == "to_ascii_uppercase")
+    if (methodCode == MachineMethod::ToAsciiLowercase ||
+        methodCode == MachineMethod::ToAsciiUppercase)
       return self == Type::U8 && operands.size() == 1 ? signature(Type::U8)
                                                       : std::nullopt;
     if (makeAscii)
@@ -1118,24 +1603,28 @@ machineSignature(const TypeStore &types, std::string_view operation,
                      types.view(operands[0]).mode == ParameterMode::Mut
                  ? signature(Type::Unit)
                  : std::nullopt;
-    if (method == "eq_ignore_ascii_case")
+    if (methodCode == MachineMethod::EqIgnoreAsciiCase)
       return self == Type::U8 && operands.size() == 2 && operands[1] == Type::U8
                  ? signature(Type::Bool)
                  : std::nullopt;
-    if (method == "unsigned_abs")
+    if (methodCode == MachineMethod::UnsignedAbs)
       return operands.size() == 1 && isSignedInteger(self)
                  ? signature(unsignedType())
                  : std::nullopt;
-    if (method == "abs_diff")
+    if (methodCode == MachineMethod::AbsDiff)
       return operands.size() == 2 && operands[1] == self
                  ? signature(unsignedType())
                  : std::nullopt;
-    if (method == "pow" || method == "checked_pow" ||
-        method == "wrapping_pow" || method == "overflowing_pow" ||
-        method == "saturating_pow" || method == "strict_pow") {
-      auto shape = method == "checked_pow"       ? Shape::Optional
-                   : method == "overflowing_pow" ? Shape::Overflow
-                                                 : Shape::Value;
+    if (methodCode == MachineMethod::Pow ||
+        methodCode == MachineMethod::CheckedPow ||
+        methodCode == MachineMethod::WrappingPow ||
+        methodCode == MachineMethod::OverflowingPow ||
+        methodCode == MachineMethod::SaturatingPow ||
+        methodCode == MachineMethod::StrictPow) {
+      auto shape = methodCode == MachineMethod::CheckedPow ? Shape::Optional
+                   : methodCode == MachineMethod::OverflowingPow
+                       ? Shape::Overflow
+                       : Shape::Value;
       return operands.size() == 2 && operands[1] == Type::U32
                  ? signature(self, shape)
                  : std::nullopt;
@@ -1160,14 +1649,19 @@ machineSignature(const TypeStore &types, std::string_view operation,
     } else if (method.starts_with("saturating_"))
       method.remove_prefix(11);
     else if (!strict && !method.ends_with("_signed") &&
-             !method.ends_with("_unsigned") && method != "div_euclid" &&
-             method != "rem_euclid" && method != "abs")
+             !method.ends_with("_unsigned") &&
+             methodCode != MachineMethod::DivEuclid &&
+             methodCode != MachineMethod::RemEuclid &&
+             methodCode != MachineMethod::Abs)
       return std::nullopt;
+    methodCode = machineMethod(method);
     bool mixedSigned = method.ends_with("_signed");
     bool mixedUnsigned = method.ends_with("_unsigned");
     if (mixedSigned || mixedUnsigned) {
       method.remove_suffix(mixedSigned ? 7 : 9);
-      bool validOperation = method == "add" || method == "sub";
+      methodCode = machineMethod(method);
+      bool validOperation =
+          methodCode == MachineMethod::Add || methodCode == MachineMethod::Sub;
       bool validSign =
           mixedSigned ? !isSignedInteger(self) : isSignedInteger(self);
       auto expected = mixedSigned ? signedType() : unsignedType();
@@ -1176,37 +1670,44 @@ machineSignature(const TypeStore &types, std::string_view operation,
                  ? signature(self, shape)
                  : std::nullopt;
     }
-    bool unary = method == "neg" || method == "abs";
-    bool shift = method == "shl" || method == "shr";
-    if (method != "add" && method != "sub" && method != "mul" &&
-        method != "div" && method != "rem" && !unary && !shift &&
-        method != "div_euclid" && method != "rem_euclid")
+    bool unary =
+        methodCode == MachineMethod::Neg || methodCode == MachineMethod::Abs;
+    bool shift =
+        methodCode == MachineMethod::Shl || methodCode == MachineMethod::Shr;
+    if (methodCode != MachineMethod::Add && methodCode != MachineMethod::Sub &&
+        methodCode != MachineMethod::Mul && methodCode != MachineMethod::Div &&
+        methodCode != MachineMethod::Rem && !unary && !shift &&
+        methodCode != MachineMethod::DivEuclid &&
+        methodCode != MachineMethod::RemEuclid)
       return std::nullopt;
-    if (method == "abs" && !isSignedInteger(self))
+    if (methodCode == MachineMethod::Abs && !isSignedInteger(self))
       return std::nullopt;
     if (operands.size() != (unary ? 1u : 2u) ||
         (!unary && operands[1] != (shift ? Type::U32 : self)))
       return std::nullopt;
     if (operation.starts_with("numeric.saturating_") &&
-        (shift || method == "rem"))
+        (shift || methodCode == MachineMethod::Rem))
       return std::nullopt;
     if (operation.starts_with("numeric.saturating_") &&
-        (method == "div_euclid" || method == "rem_euclid"))
+        (methodCode == MachineMethod::DivEuclid ||
+         methodCode == MachineMethod::RemEuclid))
       return std::nullopt;
     return signature(self, shape);
   }
-  if (!operation.starts_with("ptr.") || operands.empty() ||
+  if (!(operationCode.family == MachineFamily::Ptr) || operands.empty() ||
       !types.isPointer(operands[0]))
     return std::nullopt;
   auto pointer = operands[0];
   auto descriptor = types.pointer(pointer);
   auto method = operation.substr(4);
-  if (method == "as_array" || method == "as_mut_array") {
+  auto methodCode = operationCode.method;
+  if (methodCode == MachineMethod::AsArray ||
+      methodCode == MachineMethod::AsMutArray) {
     if (operands.size() != 1 || !types.isSlice(descriptor.payload) ||
         !types.isPointer(argument))
       return std::nullopt;
     auto target = types.pointer(argument);
-    bool exclusive = method == "as_mut_array";
+    bool exclusive = methodCode == MachineMethod::AsMutArray;
     if (target.mode != (exclusive ? ParameterMode::Mut : ParameterMode::Read) ||
         (exclusive && descriptor.mode != ParameterMode::Mut) ||
         !types.isProduct(target.payload))
@@ -1217,9 +1718,12 @@ machineSignature(const TypeStore &types, std::string_view operation,
       return std::nullopt;
     return signature(argument, Shape::Optional);
   }
-  if (method == "as_ref" || method == "as_mut" ||
-      method == "as_ref_unchecked" || method == "as_mut_unchecked") {
-    bool exclusive = method == "as_mut" || method == "as_mut_unchecked";
+  if (methodCode == MachineMethod::AsRef ||
+      methodCode == MachineMethod::AsMut ||
+      methodCode == MachineMethod::AsRefUnchecked ||
+      methodCode == MachineMethod::AsMutUnchecked) {
+    bool exclusive = methodCode == MachineMethod::AsMut ||
+                     methodCode == MachineMethod::AsMutUnchecked;
     if (operands.size() != 1 || !types.isView(argument) ||
         types.view(argument).payload != descriptor.payload ||
         types.view(argument).mode !=
@@ -1230,10 +1734,12 @@ machineSignature(const TypeStore &types, std::string_view operation,
         argument,
         method.ends_with("_unchecked") ? Shape::Value : Shape::Optional, true);
   }
-  if (method == "copy" || method == "copy_nonoverlapping" || method == "swap" ||
-      method == "swap_nonoverlapping") {
+  if (methodCode == MachineMethod::Copy ||
+      methodCode == MachineMethod::CopyNonoverlapping ||
+      methodCode == MachineMethod::Swap ||
+      methodCode == MachineMethod::SwapNonoverlapping) {
     bool swap = method.starts_with("swap");
-    auto count = method == "swap" ? 2u : 3u;
+    auto count = methodCode == MachineMethod::Swap ? 2u : 3u;
     return operands.size() == count && types.isSized(descriptor.payload) &&
                    (!swap || descriptor.mode == ParameterMode::Mut) &&
                    types.isPointer(operands[1]) &&
@@ -1243,20 +1749,22 @@ machineSignature(const TypeStore &types, std::string_view operation,
                ? signature(Type::Unit, Shape::Value, true)
                : std::nullopt;
   }
-  if (method == "write_bytes")
+  if (methodCode == MachineMethod::WriteBytes)
     return operands.size() == 3 && descriptor.mode == ParameterMode::Mut &&
                    types.isSized(descriptor.payload) &&
                    operands[1] == Type::U8 && operands[2] == Type::Usize
                ? signature(Type::Unit, Shape::Value, true)
                : std::nullopt;
-  if (method == "replace")
+  if (methodCode == MachineMethod::Replace)
     return operands.size() == 2 && descriptor.mode == ParameterMode::Mut &&
                    types.isSized(descriptor.payload) &&
                    operands[1] == descriptor.payload
                ? signature(descriptor.payload, Shape::Value, true)
                : std::nullopt;
-  if (method == "offset_from" || method == "offset_from_unsigned" ||
-      method == "byte_offset_from" || method == "byte_offset_from_unsigned")
+  if (methodCode == MachineMethod::OffsetFrom ||
+      methodCode == MachineMethod::OffsetFromUnsigned ||
+      methodCode == MachineMethod::ByteOffsetFrom ||
+      methodCode == MachineMethod::ByteOffsetFromUnsigned)
     return operands.size() == 2 && types.isPointer(operands[1]) &&
                    types.pointer(operands[1]).payload == descriptor.payload &&
                    (method.starts_with("byte_") ||
@@ -1265,7 +1773,7 @@ machineSignature(const TypeStore &types, std::string_view operation,
                                                          : Type::Isize,
                            Shape::Value, true)
                : std::nullopt;
-  if (method == "drop_in_place")
+  if (methodCode == MachineMethod::DropInPlace)
     return operands.size() == 1 && descriptor.mode == ParameterMode::Mut &&
                    (types.isSized(descriptor.payload) ||
                     (types.isParameter(descriptor.payload) &&
@@ -1275,35 +1783,43 @@ machineSignature(const TypeStore &types, std::string_view operation,
                     types.isErased(descriptor.payload))
                ? signature(Type::Unit, Shape::Value, true)
                : std::nullopt;
-  if (method == "is_null" || method == "addr" ||
-      method == "expose_provenance") {
+  if (methodCode == MachineMethod::IsNull ||
+      methodCode == MachineMethod::Addr ||
+      methodCode == MachineMethod::ExposeProvenance) {
     if (operands.size() != 1)
       return std::nullopt;
-    return signature(method == "is_null" ? Type::Bool : Type::Usize);
+    return signature(methodCode == MachineMethod::IsNull ? Type::Bool
+                                                         : Type::Usize);
   }
-  if (method == "cast" || method == "cast_mut" || method == "cast_const") {
-    if (operands.size() != 1 || (method == "cast" && !types.isSized(argument)))
+  if (methodCode == MachineMethod::Cast ||
+      methodCode == MachineMethod::CastMut ||
+      methodCode == MachineMethod::CastConst) {
+    if (operands.size() != 1 ||
+        (methodCode == MachineMethod::Cast && !types.isSized(argument)))
       return std::nullopt;
-    return signature(
-        method == "cast" ? argument : descriptor.payload,
-        method == "cast_mut" ||
-                (method == "cast" && descriptor.mode == ParameterMode::Mut)
-            ? Shape::PointerMut
-            : Shape::PointerRead);
+    return signature(methodCode == MachineMethod::Cast ? argument
+                                                       : descriptor.payload,
+                     methodCode == MachineMethod::CastMut ||
+                             (methodCode == MachineMethod::Cast &&
+                              descriptor.mode == ParameterMode::Mut)
+                         ? Shape::PointerMut
+                         : Shape::PointerRead);
   }
-  if (method == "with_addr") {
+  if (methodCode == MachineMethod::WithAddr) {
     if (operands.size() != 2 || operands[1] != Type::Usize)
       return std::nullopt;
     return signature(pointer);
   }
-  if (method == "read" || method == "read_volatile" ||
-      method == "read_unaligned") {
+  if (methodCode == MachineMethod::Read ||
+      methodCode == MachineMethod::ReadVolatile ||
+      methodCode == MachineMethod::ReadUnaligned) {
     if (operands.size() != 1 || !types.isSized(descriptor.payload))
       return std::nullopt;
     return signature(descriptor.payload, Shape::Value, true);
   }
-  if (method == "write" || method == "write_volatile" ||
-      method == "write_unaligned") {
+  if (methodCode == MachineMethod::Write ||
+      methodCode == MachineMethod::WriteVolatile ||
+      methodCode == MachineMethod::WriteUnaligned) {
     if (operands.size() != 2 || descriptor.mode != ParameterMode::Mut ||
         operands[1] != descriptor.payload || !types.isSized(descriptor.payload))
       return std::nullopt;
@@ -1315,10 +1831,13 @@ machineSignature(const TypeStore &types, std::string_view operation,
   bool bytes = method.starts_with("byte_");
   if (bytes)
     method.remove_prefix(5);
-  if (method != "add" && method != "sub" && method != "offset")
+  methodCode = machineMethod(method);
+  if (methodCode != MachineMethod::Add && methodCode != MachineMethod::Sub &&
+      methodCode != MachineMethod::Offset)
     return std::nullopt;
   if (operands.size() != 2 || (!bytes && !types.isSized(descriptor.payload)) ||
-      operands[1] != (method == "offset" ? Type::Isize : Type::Usize))
+      operands[1] !=
+          (methodCode == MachineMethod::Offset ? Type::Isize : Type::Usize))
     return std::nullopt;
   return signature(pointer, Shape::Value, !wrapping);
 }

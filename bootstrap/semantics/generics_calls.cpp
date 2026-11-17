@@ -98,6 +98,8 @@ std::optional<int> Checker::genericCall(
     }
     return Type::Unknown;
   };
+  std::optional<std::vector<interfaces::Obligation>> callerAssumptions;
+  std::optional<std::vector<interfaces::Obligation>> calleeAssumptions;
   bool named = false, misbound = false;
   for (std::size_t i = 1; i < n.children.size(); ++i) {
     auto &argument = *n.children[i];
@@ -177,16 +179,20 @@ std::optional<int> Checker::genericCall(
       auto partial = partialArgument(partialArgument, argument);
       if (partial != Type::Unknown) {
         genericEnvironment = &environment;
-        auto queries = interfaceAssumptions();
+        if (!calleeAssumptions)
+          calleeAssumptions = interfaceAssumptions();
         genericEnvironment = caller;
         std::vector<TypeBinding> knownBindings;
         for (const auto &binding : bindings)
           if (binding.argument != Type::Unknown)
             knownBindings.push_back(binding);
-        interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                                  diagnostics, interfaceAssumptions(),
-                                  regionEnvironment());
-        for (const auto &query : queries) {
+        if (!callerAssumptions)
+          callerAssumptions = interfaceAssumptions();
+        interfaces::Solver solver(
+            std::span<const interfaces::Obligation>(*callerAssumptions),
+            *checked.types, *checked.interfaceData, diagnostics,
+            regionEnvironment());
+        for (const auto &query : *calleeAssumptions) {
           if (query.subject != signature[target])
             continue;
           auto required =

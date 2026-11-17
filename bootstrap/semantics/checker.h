@@ -544,13 +544,19 @@ private:
   std::optional<std::size_t> receiverCandidate(
       Type self, ParameterMode mode, std::string_view name, const Node &call,
       const std::function<const std::vector<Type> *()> &arguments = {},
-      bool viewExtension = false);
-  bool argumentsFit(std::size_t function, Type &interfaceType, Type self,
-                    std::span<const Type> arguments, Span span,
-                    RegionEnvironment &candidateRegions,
-                    std::span<const Type> inferredParameters = {});
-  std::optional<ReceiverStep> dereferenceStep(Type source, bool exclusive,
-                                              Span span);
+      bool viewExtension = false,
+      std::optional<std::vector<interfaces::Obligation>> *assumptions =
+          nullptr);
+  bool
+  argumentsFit(std::size_t function, Type &interfaceType, Type self,
+               std::span<const Type> arguments, Span span,
+               RegionEnvironment &candidateRegions,
+               std::optional<std::vector<interfaces::Obligation>> &assumptions,
+               std::span<const Type> inferredParameters = {});
+  std::optional<ReceiverStep> dereferenceStep(
+      Type source, bool exclusive, Span span,
+      std::optional<std::vector<interfaces::Obligation>> *assumptions =
+          nullptr);
   bool mutableReceiverPlan(ReceiverPlan &plan, Span span, bool report = true);
   std::optional<ReceiverPlan> receiverConversion(Type source, Type target,
                                                  ParameterMode mode, Span span,

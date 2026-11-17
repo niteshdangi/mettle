@@ -199,8 +199,11 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     } else
       return std::nullopt;
   }
-  if (operation == "intrinsics.addr_of" ||
-      operation == "intrinsics.addr_of_mut") {
+  const auto operationCode = decodeMachineOperation(operation);
+  if (operationCode ==
+          MachineOperation{MachineFamily::Intrinsics, MachineMethod::AddrOf} ||
+      operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                        MachineMethod::AddrOfMut}) {
     if (call.children.size() != 2 || !callee.genericArguments.empty()) {
       error("type", call.span, "raw address requires one place argument");
       return inference.fresh();
@@ -212,7 +215,8 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
             (part->kind == Kind::Unary && part->text == "*")) &&
            !part->children.empty()) {
       if (part->kind == Kind::Unary) {
-        // Its operand is loaded as an ordinary value, so inner derefs stay unsafe.
+        // Its operand is loaded as an ordinary value, so inner derefs stay
+        // unsafe.
         rawAddressDereferences.insert(part);
         break;
       }
@@ -226,7 +230,9 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     }
     auto variable = node(value, reachable);
     fields(false);
-    bool exclusive = operation == "intrinsics.addr_of_mut";
+    bool exclusive =
+        operationCode ==
+        MachineOperation{MachineFamily::Intrinsics, MachineMethod::AddrOfMut};
     if (exclusive)
       requireMutablePlace(value);
     facts(call).machineOperation = operation;
@@ -236,15 +242,24 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
         inference.value(variable),
         exclusive ? ParameterMode::Mut : ParameterMode::Read));
   }
-  if (operation == "coroutine.suspend" || operation == "coroutine.context") {
+  if (operationCode ==
+          MachineOperation{MachineFamily::Coroutine, MachineMethod::Suspend} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Coroutine, MachineMethod::Context}) {
     auto found = closureFunctions.find(current);
     if (found == closureFunctions.end() ||
         checked.closureBodies[found->second]->syntax->text != "coroutine")
       error("effects", call.span, "suspension outside an async body");
   }
-  bool pointerView = operation == "ptr.as_ref" || operation == "ptr.as_mut" ||
-                     operation == "ptr.as_ref_unchecked" ||
-                     operation == "ptr.as_mut_unchecked";
+  bool pointerView =
+      operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::AsRef} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::AsMut} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::AsRefUnchecked} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::AsMutUnchecked};
   if (pointerView) {
     auto region = RegionId::Unspecified;
     if (!callee.genericArguments.empty()) {
@@ -260,13 +275,20 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     if (checked.types->isPointer(self))
       argument = checked.types->viewType(
           checked.types->pointer(self).payload,
-          operation == "ptr.as_mut" || operation == "ptr.as_mut_unchecked"
+          operationCode == MachineOperation{MachineFamily::Ptr,
+                                            MachineMethod::AsMut} ||
+                  operationCode ==
+                      MachineOperation{MachineFamily::Ptr,
+                                       MachineMethod::AsMutUnchecked}
               ? ParameterMode::Mut
               : ParameterMode::Read,
           region);
   }
   bool pointerArray =
-      operation == "ptr.as_array" || operation == "ptr.as_mut_array";
+      operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::AsArray} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::AsMutArray};
   if (pointerArray) {
     if (callee.genericArguments.size() != 1 ||
         !callee.genericArguments[0].region.empty()) {
@@ -293,12 +315,14 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
         argument = checked.types->pointerType(
             checked.types->arrayType(
                 checked.types->slice(pointer.payload).element, count),
-            operation == "ptr.as_mut_array" ? ParameterMode::Mut
-                                            : ParameterMode::Read);
+            operationCode == MachineOperation{MachineFamily::Ptr,
+                                              MachineMethod::AsMutArray}
+                ? ParameterMode::Mut
+                : ParameterMode::Read);
     }
   }
   if (!pointerView && !pointerArray && !callee.genericArguments.empty() &&
-      !operation.starts_with("atomic.") &&
+      !(operationCode.family == MachineFamily::Atomic) &&
       storageKind == AggregateKind::Product) {
     if (callee.genericArguments.size() != 1 ||
         !callee.genericArguments[0].type) {
@@ -313,10 +337,15 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       checked.types->isPointer(expectedTypes.at(&call)))
     argument = checked.types->pointer(expectedTypes.at(&call)).payload;
   if (argument == Type::Unknown && expectedTypes.contains(&call) &&
-      (operation == "mem.transmute" || operation == "mem.transmute_copy" ||
-       operation == "mem.zeroed"))
+      (operationCode ==
+           MachineOperation{MachineFamily::Mem, MachineMethod::Transmute} ||
+       operationCode ==
+           MachineOperation{MachineFamily::Mem, MachineMethod::TransmuteCopy} ||
+       operationCode ==
+           MachineOperation{MachineFamily::Mem, MachineMethod::Zeroed}))
     argument = expectedTypes.at(&call);
-  if (operation == "intrinsics.offset_of") {
+  if (operationCode ==
+      MachineOperation{MachineFamily::Intrinsics, MachineMethod::OffsetOf}) {
     if (call.children.size() != 2 || !checked.types->isProduct(argument)) {
       error("type", call.span,
             "offset_of requires a product type and field path");
@@ -367,7 +396,8 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     facts(call).argumentOrder = std::move(indices);
     return inference.fresh(Type::Usize);
   }
-  if (operation == "numeric.to_int_unchecked") {
+  if (operationCode ==
+      MachineOperation{MachineFamily::Numeric, MachineMethod::ToIntUnchecked}) {
     if (argument == Type::Unknown && expectedTypes.contains(&call))
       argument = expectedTypes.at(&call);
     if (checked.types->isParameter(argument)) {
@@ -385,33 +415,35 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   std::vector<ParameterMode> borrowed;
   if (receiver >= 0) {
     auto mode = ParameterMode::Value;
-    if (operation == "numeric.make_ascii_lowercase" ||
-        operation == "numeric.make_ascii_uppercase") {
+    if (operationCode == MachineOperation{MachineFamily::Numeric,
+                                          MachineMethod::MakeAsciiLowercase} ||
+        operationCode == MachineOperation{MachineFamily::Numeric,
+                                          MachineMethod::MakeAsciiUppercase}) {
       mode = ParameterMode::Mut;
       requireMutablePlace(*callee.children[0]);
     }
-    if (operation.starts_with("va.")) {
+    if ((operationCode.family == MachineFamily::Va)) {
       mode = callee.text == "end"    ? ParameterMode::Take
              : callee.text == "copy" ? ParameterMode::Read
                                      : ParameterMode::Mut;
       if (mode == ParameterMode::Mut)
         requireMutablePlace(*callee.children[0]);
     }
-    if (operation.starts_with("cell.")) {
+    if ((operationCode.family == MachineFamily::Cell)) {
       mode = callee.text == "into_inner" ? ParameterMode::Take
              : callee.text == "get_mut"  ? ParameterMode::Mut
                                          : ParameterMode::Read;
       if (mode == ParameterMode::Mut)
         requireMutablePlace(*callee.children[0]);
     }
-    if (operation.starts_with("atomic.")) {
+    if ((operationCode.family == MachineFamily::Atomic)) {
       mode = callee.text == "into_inner" ? ParameterMode::Take
              : callee.text == "get_mut"  ? ParameterMode::Mut
                                          : ParameterMode::Read;
       if (mode == ParameterMode::Mut)
         requireMutablePlace(*callee.children[0]);
     }
-    if (operation.starts_with("pin.")) {
+    if ((operationCode.family == MachineFamily::Pin)) {
       mode =
           callee.text == "into_inner" || callee.text == "into_inner_unchecked"
               ? ParameterMode::Take
@@ -453,10 +485,20 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
                            : self);
     borrowed.push_back(mode);
   }
+  auto atomicMethod = operationCode.family == MachineFamily::Atomic
+                          ? std::string_view(operation).substr(7)
+                          : std::string_view{};
+  if (atomicMethod.starts_with("raw_"))
+    atomicMethod.remove_prefix(4);
+  auto atomicCode = operationCode.family == MachineFamily::Atomic
+                        ? machineMethod(atomicMethod)
+                        : MachineMethod::Unknown;
   auto operandErrors = diagnostics.count();
   for (std::size_t i = 1; i < call.children.size(); ++i) {
     auto &value = *call.children[i];
-    if (operation == "intrinsics.panic_fmt" && i == 1) {
+    if (operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                          MachineMethod::PanicFmt} &&
+        i == 1) {
       auto *recipe = &value;
       while ((recipe->kind == Kind::Group || recipe->kind == Kind::Block) &&
              recipe->children.size() == 1 &&
@@ -469,37 +511,36 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
             "primitive operations use positional arguments");
     Type expected = Type::Unknown;
     auto method = std::string_view(operation);
-    if (operation.starts_with("atomic.")) {
-      auto atomicMethod = method.substr(7);
-      bool raw = atomicMethod.starts_with("raw_");
-      if (raw)
-        atomicMethod.remove_prefix(4);
+    if ((operationCode.family == MachineFamily::Atomic)) {
       Type payload =
           receiver >= 0 ? checked.types->product(self).components[0]
-          : operation == "atomic.new"
+          : operationCode ==
+                  MachineOperation{MachineFamily::Atomic, MachineMethod::New}
               ? checked.types->product(argument).components[0]
           : !operands.empty() && checked.types->isPointer(operands[0])
               ? checked.types->pointer(operands[0]).payload
               : Type::Unknown;
       auto position = operands.size();
-      bool order = atomicMethod == "fence" ||
-                   atomicMethod == "compiler_fence" ||
-                   ((atomicMethod == "load" || atomicMethod == "fetch_not") &&
+      bool order = atomicCode == MachineMethod::Fence ||
+                   atomicCode == MachineMethod::CompilerFence ||
+                   ((atomicCode == MachineMethod::Load ||
+                     atomicCode == MachineMethod::FetchNot) &&
                     position == 1) ||
-                   ((atomicMethod == "compare_exchange" ||
-                     atomicMethod == "compare_exchange_weak")
+                   ((atomicCode == MachineMethod::CompareExchange ||
+                     atomicCode == MachineMethod::CompareExchangeWeak)
                         ? position >= 3
                         : position == 2);
       if (order)
         expected = checked.types->structural(AggregateKind::Ordering, {});
-      else if (operation == "atomic.new")
+      else if (operationCode ==
+               MachineOperation{MachineFamily::Atomic, MachineMethod::New})
         expected = payload;
-      else if (position == 1 &&
-               (atomicMethod.starts_with("fetch_ptr_") ||
-                atomicMethod.starts_with("fetch_byte_") ||
-                (checked.types->isPointer(payload) &&
-                 (atomicMethod == "fetch_and" || atomicMethod == "fetch_or" ||
-                  atomicMethod == "fetch_xor"))))
+      else if (position == 1 && (atomicMethod.starts_with("fetch_ptr_") ||
+                                 atomicMethod.starts_with("fetch_byte_") ||
+                                 (checked.types->isPointer(payload) &&
+                                  (atomicCode == MachineMethod::FetchAnd ||
+                                   atomicCode == MachineMethod::FetchOr ||
+                                   atomicCode == MachineMethod::FetchXor))))
         expected = Type::Usize;
       else if (position >= 1)
         expected = payload;
@@ -532,40 +573,50 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
           return Type::U128;
         return Type::Usize;
       };
-      expected = numericMethod == "powi" ? Type::I32
-                 : (numericMethod == "carrying_add" ||
-                    numericMethod == "borrowing_sub") &&
-                         i == 2
-                     ? Type::Bool
-                 : numericMethod.ends_with("add_signed") ||
-                         numericMethod.ends_with("sub_signed")
-                     ? signedType()
-                 : numericMethod.ends_with("add_unsigned") ||
-                         numericMethod.ends_with("sub_unsigned")
-                     ? unsignedType()
-                 : numericMethod.ends_with("_shl") ||
-                         numericMethod.ends_with("_shr") ||
-                         numericMethod == "unbounded_shl" ||
-                         numericMethod == "unbounded_shr" ||
-                         numericMethod == "unchecked_shl" ||
-                         numericMethod == "unchecked_shr" ||
-                         numericMethod.ends_with("_pow") ||
-                         numericMethod == "pow" ||
-                         method == "numeric.rotate_left" ||
-                         method == "numeric.rotate_right"
-                     ? Type::U32
-                     : self;
+      expected =
+          operationCode.method == MachineMethod::Powi ? Type::I32
+          : (operationCode.method == MachineMethod::CarryingAdd ||
+             operationCode.method == MachineMethod::BorrowingSub) &&
+                  i == 2
+              ? Type::Bool
+          : numericMethod.ends_with("add_signed") ||
+                  numericMethod.ends_with("sub_signed")
+              ? signedType()
+          : numericMethod.ends_with("add_unsigned") ||
+                  numericMethod.ends_with("sub_unsigned")
+              ? unsignedType()
+          : numericMethod.ends_with("_shl") ||
+                  numericMethod.ends_with("_shr") ||
+                  operationCode.method == MachineMethod::UnboundedShl ||
+                  operationCode.method == MachineMethod::UnboundedShr ||
+                  operationCode.method == MachineMethod::UncheckedShl ||
+                  operationCode.method == MachineMethod::UncheckedShr ||
+                  numericMethod.ends_with("_pow") ||
+                  operationCode.method == MachineMethod::Pow ||
+                  operationCode ==
+                      MachineOperation{MachineFamily::Numeric,
+                                       MachineMethod::RotateLeft} ||
+                  operationCode == MachineOperation{MachineFamily::Numeric,
+                                                    MachineMethod::RotateRight}
+              ? Type::U32
+              : self;
     }
-    if (receiver < 0 && operation == "numeric.to_int_unchecked")
+    if (receiver < 0 &&
+        operationCode == MachineOperation{MachineFamily::Numeric,
+                                          MachineMethod::ToIntUnchecked})
       expected = self;
-    else if (receiver < 0 && operation.starts_with("numeric.") &&
-             operation != "numeric.from_bits" && isNumeric(argument))
+    else if (receiver < 0 && (operationCode.family == MachineFamily::Numeric) &&
+             operationCode != MachineOperation{MachineFamily::Numeric,
+                                               MachineMethod::FromBits} &&
+             isNumeric(argument))
       expected =
           i > 1 &&
                   (operation.ends_with("_shl") || operation.ends_with("_shr") ||
                    operation.ends_with("rotate_left") ||
                    operation.ends_with("rotate_right") ||
-                   operation.ends_with("_pow") || operation == "numeric.pow")
+                   operation.ends_with("_pow") ||
+                   operationCode == MachineOperation{MachineFamily::Numeric,
+                                                     MachineMethod::Pow})
               ? Type::U32
               : argument;
     if (receiver >= 0 && checked.types->isPointer(self)) {
@@ -575,13 +626,17 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       else if (method.ends_with("offset"))
         expected = Type::Isize;
       else if (method.ends_with("add") || method.ends_with("sub") ||
-               method == "ptr.with_addr")
+               operationCode == MachineOperation{MachineFamily::Ptr,
+                                                 MachineMethod::WithAddr})
         expected = Type::Usize;
     }
-    if (operation == "ptr.without_provenance" ||
-        operation == "ptr.with_exposed_provenance")
+    if (operationCode == MachineOperation{MachineFamily::Ptr,
+                                          MachineMethod::WithoutProvenance} ||
+        operationCode == MachineOperation{MachineFamily::Ptr,
+                                          MachineMethod::WithExposedProvenance})
       expected = Type::Usize;
-    if (operation == "numeric.from_bits")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Numeric, MachineMethod::FromBits})
       expected = argument == Type::F32 ? Type::U32 : Type::U64;
     if (receiver < 0 && operation.starts_with("numeric.from_") &&
         operation.ends_with("_bytes") && isNumeric(argument)) {
@@ -594,34 +649,53 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
           Type::U8, checked.types->constant(
                         Type::I32, static_cast<std::int64_t>(width / 8)));
     }
-    if (operation == "ptr.copy" || operation == "ptr.copy_nonoverlapping" ||
-        operation == "ptr.swap_nonoverlapping")
+    if (operationCode ==
+            MachineOperation{MachineFamily::Ptr, MachineMethod::Copy} ||
+        operationCode == MachineOperation{MachineFamily::Ptr,
+                                          MachineMethod::CopyNonoverlapping} ||
+        operationCode == MachineOperation{MachineFamily::Ptr,
+                                          MachineMethod::SwapNonoverlapping})
       expected = operands.size() == 2 ? Type::Usize : Type::Unknown;
-    if (operation == "ptr.write_bytes")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Ptr, MachineMethod::WriteBytes})
       expected = operands.size() == 1   ? Type::U8
                  : operands.size() == 2 ? Type::Usize
                                         : Type::Unknown;
-    if ((operation == "ptr.slice_from_raw_parts" ||
-         operation == "ptr.slice_from_raw_parts_mut") &&
+    if ((operationCode == MachineOperation{MachineFamily::Ptr,
+                                           MachineMethod::SliceFromRawParts} ||
+         operationCode ==
+             MachineOperation{MachineFamily::Ptr,
+                              MachineMethod::SliceFromRawPartsMut}) &&
         i == 2)
       expected = Type::Usize;
-    if (operation == "ptr.replace" && !operands.empty() &&
-        checked.types->isPointer(operands[0]))
+    if (operationCode ==
+            MachineOperation{MachineFamily::Ptr, MachineMethod::Replace} &&
+        !operands.empty() && checked.types->isPointer(operands[0]))
       expected = checked.types->pointer(operands[0]).payload;
-    if (operation == "mem.replace" && !operands.empty() &&
-        checked.types->isView(operands[0]))
+    if (operationCode ==
+            MachineOperation{MachineFamily::Mem, MachineMethod::Replace} &&
+        !operands.empty() && checked.types->isView(operands[0]))
       expected = checked.types->view(operands[0]).payload;
-    if (operation == "storage.new" && argument != Type::Unknown)
+    if (operationCode ==
+            MachineOperation{MachineFamily::Storage, MachineMethod::New} &&
+        argument != Type::Unknown)
       expected = checked.types->product(argument).components[0];
-    if (operation == "cell.new" && argument != Type::Unknown)
+    if (operationCode ==
+            MachineOperation{MachineFamily::Cell, MachineMethod::New} &&
+        argument != Type::Unknown)
       expected = checked.types->product(argument).components[0];
-    if (operation == "cell.replace" || operation == "cell.set")
+    if (operationCode ==
+            MachineOperation{MachineFamily::Cell, MachineMethod::Replace} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Cell, MachineMethod::Set})
       expected = checked.types->product(self).components[0];
-    if (operation == "storage.write")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Storage, MachineMethod::Write})
       expected = checked.types->product(self).components[0];
     if (receiver < 0 && operation.starts_with("ptr.write") &&
-        operation != "ptr.write_bytes" && !operands.empty() &&
-        checked.types->isPointer(operands[0]))
+        operationCode !=
+            MachineOperation{MachineFamily::Ptr, MachineMethod::WriteBytes} &&
+        !operands.empty() && checked.types->isPointer(operands[0]))
       expected = checked.types->pointer(operands[0]).payload;
     contextualize(value, expected);
     auto variable = node(value, reachable);
@@ -630,54 +704,112 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       coerce(value, variable, inference.fresh(expected), value.span);
     auto type = inference.value(variable);
     auto mode = ParameterMode::Value;
-    if (operation == "storage.new" || operation == "storage.write" ||
-        operation == "pin.inline" || operation == "cell.new" ||
-        operation == "cell.replace" || operation == "cell.set")
+    if (operationCode ==
+            MachineOperation{MachineFamily::Storage, MachineMethod::New} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Storage, MachineMethod::Write} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Pin, MachineMethod::Inline} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Cell, MachineMethod::New} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Cell, MachineMethod::Replace} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Cell, MachineMethod::Set})
       mode = ParameterMode::Take;
     if (operation.starts_with("ptr.write") && operands.size() == 1)
       mode = ParameterMode::Take;
-    if (operation == "mem.transmute" || operation == "mem.forget" ||
-        operation == "mem.drop" || operation == "hint.black_box" ||
-        (operation == "hint.select_unpredictable" && i >= 2) ||
-        operation == "coroutine.start" ||
-        (operation == "ptr.replace" && operands.size() == 1) ||
-        (operation == "mem.replace" && operands.size() == 1))
+    if (operationCode ==
+            MachineOperation{MachineFamily::Mem, MachineMethod::Transmute} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Mem, MachineMethod::Forget} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Mem, MachineMethod::Drop} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Hint, MachineMethod::BlackBox} ||
+        (operationCode ==
+             MachineOperation{MachineFamily::Hint,
+                              MachineMethod::SelectUnpredictable} &&
+         i >= 2) ||
+        operationCode ==
+            MachineOperation{MachineFamily::Coroutine, MachineMethod::Start} ||
+        (operationCode ==
+             MachineOperation{MachineFamily::Ptr, MachineMethod::Replace} &&
+         operands.size() == 1) ||
+        (operationCode ==
+             MachineOperation{MachineFamily::Mem, MachineMethod::Replace} &&
+         operands.size() == 1))
       mode = ParameterMode::Take;
     if (mode == ParameterMode::Take && checked.types->isCopy(type))
       mode = ParameterMode::Value;
-    if (i == 1 && (operation == "ptr.from_ref" || operation == "ptr.from_mut" ||
-                   operation == "storage.from_mut")) {
-      mode = operation != "ptr.from_ref" ? ParameterMode::Mut
-                                         : ParameterMode::Read;
+    if (i == 1 && (operationCode == MachineOperation{MachineFamily::Ptr,
+                                                     MachineMethod::FromRef} ||
+                   operationCode == MachineOperation{MachineFamily::Ptr,
+                                                     MachineMethod::FromMut} ||
+                   operationCode == MachineOperation{MachineFamily::Storage,
+                                                     MachineMethod::FromMut})) {
+      mode = operationCode != MachineOperation{MachineFamily::Ptr,
+                                               MachineMethod::FromRef}
+                 ? ParameterMode::Mut
+                 : ParameterMode::Read;
       if (checked.types->isView(type))
         type = checked.types->view(type).payload;
       if (mode == ParameterMode::Mut)
         requireMutablePlace(value);
       type = checked.types->viewType(type, mode);
     }
-    if ((operation == "mem.replace" && i == 1) ||
-        (operation == "va.next_arg" && i == 1) ||
-        (operation == "va.copy" && i == 1) ||
-        (operation == "coroutine.resume" && i == 1) ||
-        (operation == "mem.swap" && i <= 2) ||
-        (operation == "intrinsics.panic_fmt" && i == 1) ||
-        (operation == "intrinsics.variant_ordinal" && i == 1) ||
-        (operation == "mem.transmute_copy" && i == 1) ||
-        (operation == "mem.size_of_val" && i == 1) ||
-        (operation == "mem.align_of_val" && i == 1)) {
-      mode = operation.ends_with("_of_val") || operation == "va.copy" ||
-                     operation == "intrinsics.panic_fmt" ||
-                     operation == "intrinsics.variant_ordinal" ||
-                     operation == "mem.transmute_copy"
-                 ? ParameterMode::Read
-                 : ParameterMode::Mut;
+    if ((operationCode ==
+             MachineOperation{MachineFamily::Mem, MachineMethod::Replace} &&
+         i == 1) ||
+        (operationCode ==
+             MachineOperation{MachineFamily::Va, MachineMethod::NextArg} &&
+         i == 1) ||
+        (operationCode ==
+             MachineOperation{MachineFamily::Va, MachineMethod::Copy} &&
+         i == 1) ||
+        (operationCode == MachineOperation{MachineFamily::Coroutine,
+                                           MachineMethod::Resume} &&
+         i == 1) ||
+        (operationCode ==
+             MachineOperation{MachineFamily::Mem, MachineMethod::Swap} &&
+         i <= 2) ||
+        (operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                           MachineMethod::PanicFmt} &&
+         i == 1) ||
+        (operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                           MachineMethod::VariantOrdinal} &&
+         i == 1) ||
+        (operationCode == MachineOperation{MachineFamily::Mem,
+                                           MachineMethod::TransmuteCopy} &&
+         i == 1) ||
+        (operationCode ==
+             MachineOperation{MachineFamily::Mem, MachineMethod::SizeOfVal} &&
+         i == 1) ||
+        (operationCode ==
+             MachineOperation{MachineFamily::Mem, MachineMethod::AlignOfVal} &&
+         i == 1)) {
+      mode =
+          operation.ends_with("_of_val") ||
+                  operationCode == MachineOperation{MachineFamily::Va,
+                                                    MachineMethod::Copy} ||
+                  operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                                    MachineMethod::PanicFmt} ||
+                  operationCode ==
+                      MachineOperation{MachineFamily::Intrinsics,
+                                       MachineMethod::VariantOrdinal} ||
+                  operationCode ==
+                      MachineOperation{MachineFamily::Mem,
+                                       MachineMethod::TransmuteCopy}
+              ? ParameterMode::Read
+              : ParameterMode::Mut;
       if (checked.types->isView(type))
         type = checked.types->view(type).payload;
       if (mode == ParameterMode::Mut)
         requireMutablePlace(value);
       type = checked.types->viewType(type, mode);
     }
-    if (operation == "cell.swap") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Cell, MachineMethod::Swap}) {
       mode = ParameterMode::Read;
       if (checked.types->isView(type))
         type = checked.types->view(type).payload;
@@ -686,27 +818,43 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
     operands.push_back(type);
     borrowed.push_back(mode);
   }
-  if (operation.starts_with("mem.") && operation != "mem.transmute" &&
-      operation != "mem.transmute_copy" && operation != "mem.zeroed" &&
-      operation != "mem.forget" && !operands.empty() &&
-      checked.types->isView(operands[0]))
+  if ((operationCode.family == MachineFamily::Mem) &&
+      operationCode !=
+          MachineOperation{MachineFamily::Mem, MachineMethod::Transmute} &&
+      operationCode !=
+          MachineOperation{MachineFamily::Mem, MachineMethod::TransmuteCopy} &&
+      operationCode !=
+          MachineOperation{MachineFamily::Mem, MachineMethod::Zeroed} &&
+      operationCode !=
+          MachineOperation{MachineFamily::Mem, MachineMethod::Forget} &&
+      !operands.empty() && checked.types->isView(operands[0]))
     argument = checked.types->view(operands[0]).payload;
-  if ((operation == "ptr.slice_from_raw_parts" ||
-       operation == "ptr.slice_from_raw_parts_mut") &&
+  if ((operationCode == MachineOperation{MachineFamily::Ptr,
+                                         MachineMethod::SliceFromRawParts} ||
+       operationCode ==
+           MachineOperation{MachineFamily::Ptr,
+                            MachineMethod::SliceFromRawPartsMut}) &&
       operands.size() == 2 && checked.types->isPointer(operands[0]))
     argument =
         checked.types->sliceType(checked.types->pointer(operands[0]).payload);
-  if (operation == "intrinsics.variant_ordinal" && argument == Type::Unknown &&
-      operands.size() == 1 && checked.types->isView(operands[0]))
+  if (operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                        MachineMethod::VariantOrdinal} &&
+      argument == Type::Unknown && operands.size() == 1 &&
+      checked.types->isView(operands[0]))
     argument = checked.types->view(operands[0]).payload;
-  if ((operation == "mem.size_of_val_raw" ||
-       operation == "mem.align_of_val_raw") &&
+  if ((operationCode ==
+           MachineOperation{MachineFamily::Mem, MachineMethod::SizeOfValRaw} ||
+       operationCode == MachineOperation{MachineFamily::Mem,
+                                         MachineMethod::AlignOfValRaw}) &&
       argument == Type::Unknown && operands.size() == 1 &&
       checked.types->isPointer(operands[0]))
     argument = checked.types->pointer(operands[0]).payload;
-  if ((operation == "numeric.to_be_bytes" ||
-       operation == "numeric.to_le_bytes" ||
-       operation == "numeric.to_ne_bytes") &&
+  if ((operationCode ==
+           MachineOperation{MachineFamily::Numeric, MachineMethod::ToBeBytes} ||
+       operationCode ==
+           MachineOperation{MachineFamily::Numeric, MachineMethod::ToLeBytes} ||
+       operationCode == MachineOperation{MachineFamily::Numeric,
+                                         MachineMethod::ToNeBytes}) &&
       operands.size() == 1 && isNumeric(operands[0])) {
     auto width =
         isInteger(operands[0])
@@ -717,44 +865,62 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
         Type::U8, checked.types->constant(
                       Type::I32, static_cast<std::int64_t>(width / 8)));
   }
-  if (operation == "numeric.sin_cos" && operands.size() == 1 &&
-      isFloating(operands[0]))
+  if (operationCode ==
+          MachineOperation{MachineFamily::Numeric, MachineMethod::SinCos} &&
+      operands.size() == 1 && isFloating(operands[0]))
     argument = checked.types->structural(AggregateKind::Tuple,
                                          {operands[0], operands[0]});
-  if (operation == "coroutine.resume" && !operands.empty() &&
-      checked.types->isView(operands[0]))
+  if (operationCode ==
+          MachineOperation{MachineFamily::Coroutine, MachineMethod::Resume} &&
+      !operands.empty() && checked.types->isView(operands[0]))
     argument = checked.types->view(operands[0]).payload;
-  if (operation == "hint.black_box" && argument == Type::Unknown &&
-      operands.size() == 1)
+  if (operationCode ==
+          MachineOperation{MachineFamily::Hint, MachineMethod::BlackBox} &&
+      argument == Type::Unknown && operands.size() == 1)
     argument = operands[0];
-  if (operation == "hint.select_unpredictable" && argument == Type::Unknown &&
-      operands.size() == 3 && operands[1] == operands[2])
+  if (operationCode == MachineOperation{MachineFamily::Hint,
+                                        MachineMethod::SelectUnpredictable} &&
+      argument == Type::Unknown && operands.size() == 3 &&
+      operands[1] == operands[2])
     argument = operands[1];
-  if (operation == "storage.new" && argument == Type::Unknown &&
-      operands.size() == 1)
+  if (operationCode ==
+          MachineOperation{MachineFamily::Storage, MachineMethod::New} &&
+      argument == Type::Unknown && operands.size() == 1)
     argument = checked.types->structural(storageKind, {operands[0]});
-  if (operation == "storage.from_mut" && argument == Type::Unknown &&
-      operands.size() == 1 && checked.types->isView(operands[0]))
+  if (operationCode ==
+          MachineOperation{MachineFamily::Storage, MachineMethod::FromMut} &&
+      argument == Type::Unknown && operands.size() == 1 &&
+      checked.types->isView(operands[0]))
     argument = checked.types->structural(
         storageKind, {checked.types->view(operands[0]).payload});
-  if (operation == "storage.raw_get" && argument == Type::Unknown &&
-      operands.size() == 1 && checked.types->isPointer(operands[0]))
+  if (operationCode ==
+          MachineOperation{MachineFamily::Storage, MachineMethod::RawGet} &&
+      argument == Type::Unknown && operands.size() == 1 &&
+      checked.types->isPointer(operands[0]))
     argument = checked.types->pointer(operands[0]).payload;
-  if (operation == "cell.new" && argument == Type::Unknown &&
-      operands.size() == 1)
+  if (operationCode ==
+          MachineOperation{MachineFamily::Cell, MachineMethod::New} &&
+      argument == Type::Unknown && operands.size() == 1)
     argument = checked.types->structural(storageKind, {operands[0]});
   std::vector<Type> unpinProofs;
   Type unpinSubject = Type::Unknown;
-  if (operation == "pin.new" && operands.size() == 1 &&
-      checked.types->isView(operands[0]))
+  if (operationCode ==
+          MachineOperation{MachineFamily::Pin, MachineMethod::New} &&
+      operands.size() == 1 && checked.types->isView(operands[0]))
     unpinSubject = checked.types->view(operands[0]).payload;
-  if ((operation == "pin.get_mut" || operation == "pin.into_inner") &&
+  if ((operationCode ==
+           MachineOperation{MachineFamily::Pin, MachineMethod::GetMut} ||
+       operationCode ==
+           MachineOperation{MachineFamily::Pin, MachineMethod::IntoInner}) &&
       checked.types->isProduct(argument) &&
       checked.types->product(argument).kind == AggregateKind::Pin)
     unpinSubject =
         checked.types->view(checked.types->product(argument).components[0])
             .payload;
-  if (operation == "intrinsics.fn_addr" || operation == "ptr.fn_addr_eq")
+  if (operationCode ==
+          MachineOperation{MachineFamily::Intrinsics, MachineMethod::FnAddr} ||
+      operationCode ==
+          MachineOperation{MachineFamily::Ptr, MachineMethod::FnAddrEq})
     for (auto operand : operands) {
       if (!checked.types->isParameter(operand))
         continue;
@@ -818,13 +984,15 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
   }
   if (signature->unsafeCall)
     requireUnsafe(call.span);
-  if (operation == "va.next_arg" && checked.types->isParameter(argument)) {
+  if (operationCode ==
+          MachineOperation{MachineFamily::Va, MachineMethod::NextArg} &&
+      checked.types->isParameter(argument)) {
     TypeSyntax safe;
     safe.name = "core::ffi::VaArgSafe";
     if (!interfaceObligation(argument, safe, call.span))
       return inference.fresh();
   }
-  if (operation == "va.arg")
+  if (operationCode == MachineOperation{MachineFamily::Va, MachineMethod::Arg})
     if (auto vector = targetVector(checked.types->name(argument))) {
       if (vector->arch != checked.targetDescription.arch)
         error("feature", call.span, "variadic vector target mismatch");

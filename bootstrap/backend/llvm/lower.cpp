@@ -6,6 +6,7 @@
 #include "source/positions.h"
 #include "support/path.h"
 #include "types/layout.h"
+#include "types/machine.h"
 #include "llvm/IR/InlineAsm.h"
 
 #include "llvm/ADT/APFloat.h"
@@ -1367,10 +1368,14 @@ private:
   llvm::Value *atomic(const ir::Instruction &instruction,
                       llvm::ArrayRef<llvm::Value *> arguments) {
     auto method = std::string_view(instruction.text).substr(7);
-    bool fence = method == "fence" || method == "compiler_fence";
+    auto methodCode = machineMethod(method);
+    bool fence = methodCode == MachineMethod::Fence ||
+                 methodCode == MachineMethod::CompilerFence;
     bool raw = method.starts_with("raw_");
-    if (raw)
+    if (raw) {
       method.remove_prefix(4);
+      methodCode = machineMethod(method);
+    }
     Type wrapper = Type::Unknown, payload = Type::Unknown;
     if (!fence) {
       if (raw)
@@ -1383,13 +1388,14 @@ private:
         payload = program.types->product(wrapper).components[0];
       }
     }
-    if (method == "into_inner")
+    if (methodCode == MachineMethod::IntoInner)
       return lowering.extract(arguments[0], wrapper, 0);
-    if (method == "as_ptr")
+    if (methodCode == MachineMethod::AsPtr)
       return arguments[0];
-    bool compare =
-        method == "compare_exchange" || method == "compare_exchange_weak";
-    bool unary = method == "load" || method == "fetch_not";
+    bool compare = methodCode == MachineMethod::CompareExchange ||
+                   methodCode == MachineMethod::CompareExchangeWeak;
+    bool unary = methodCode == MachineMethod::Load ||
+                 methodCode == MachineMethod::FetchNot;
     auto orderIndex = fence ? 0u : unary ? 1u : compare ? 3u : 2u;
     auto *order = lowering.extract(arguments[orderIndex],
                                    instruction.operands[orderIndex].type, 0);
@@ -1423,9 +1429,10 @@ private:
     auto emit = [&](unsigned success, unsigned failure) -> llvm::Value * {
       auto memoryOrder = ordering(success);
       if (fence) {
-        builder.CreateFence(memoryOrder, method == "compiler_fence"
-                                             ? llvm::SyncScope::SingleThread
-                                             : llvm::SyncScope::System);
+        builder.CreateFence(memoryOrder,
+                            methodCode == MachineMethod::CompilerFence
+                                ? llvm::SyncScope::SingleThread
+                                : llvm::SyncScope::System);
         return unit();
       }
       auto logical = [&](llvm::Value *value) -> llvm::Value * {
@@ -1440,13 +1447,13 @@ private:
       };
       auto *pointer = arguments[0];
       auto alignment = llvm::Align(lowering.alignment(payload));
-      if (method == "load") {
+      if (methodCode == MachineMethod::Load) {
         auto *load = builder.CreateAlignedLoad(lowering.storageType(payload),
                                                pointer, alignment);
         load->setAtomic(memoryOrder);
         return logical(load);
       }
-      if (method == "store") {
+      if (methodCode == MachineMethod::Store) {
         auto *store = builder.CreateAlignedStore(physical(arguments[1]),
                                                  pointer, alignment);
         store->setAtomic(memoryOrder);
@@ -1465,7 +1472,7 @@ private:
         auto *exchange = builder.CreateAtomicCmpXchg(
             pointer, physical(arguments[1]), physical(arguments[2]),
             llvm::MaybeAlign(alignment), memoryOrder, failed);
-        exchange->setWeak(method == "compare_exchange_weak");
+        exchange->setWeak(methodCode == MachineMethod::CompareExchangeWeak);
         auto *old = logical(builder.CreateExtractValue(exchange, 0));
         auto *matched = builder.CreateExtractValue(exchange, 1);
         return lowering.construct(
@@ -1477,10 +1484,11 @@ private:
       bool pointerArithmetic =
           method.starts_with("fetch_ptr_") || method.starts_with("fetch_byte_");
       bool pointerMask = program.types->isPointer(payload) &&
-                         (method == "fetch_and" || method == "fetch_or" ||
-                          method == "fetch_xor");
+                         (methodCode == MachineMethod::FetchAnd ||
+                          methodCode == MachineMethod::FetchOr ||
+                          methodCode == MachineMethod::FetchXor);
       if (pointerArithmetic || pointerMask ||
-          (payload == Type::Bool && method == "fetch_nand")) {
+          (payload == Type::Bool && methodCode == MachineMethod::FetchNand)) {
         auto *function = builder.GetInsertBlock()->getParent();
         auto *entry = builder.GetInsertBlock();
         auto *load = builder.CreateAlignedLoad(lowering.storageType(payload),
@@ -1506,10 +1514,11 @@ private:
         } else if (pointerMask) {
           auto *address = builder.CreatePtrToInt(old, builder.getInt64Ty());
           auto *mask = arguments[1];
-          auto *masked =
-              method == "fetch_and"  ? builder.CreateAnd(address, mask)
-              : method == "fetch_or" ? builder.CreateOr(address, mask)
-                                     : builder.CreateXor(address, mask);
+          auto *masked = methodCode == MachineMethod::FetchAnd
+                             ? builder.CreateAnd(address, mask)
+                         : methodCode == MachineMethod::FetchOr
+                             ? builder.CreateOr(address, mask)
+                             : builder.CreateXor(address, mask);
           // Rebase the address on the observed pointer, as ptr.with_addr does.
           desired = builder.CreateGEP(builder.getInt8Ty(), old,
                                       builder.CreateSub(masked, address));
@@ -1528,27 +1537,29 @@ private:
         return logical(observed);
       }
       auto operation = llvm::AtomicRMWInst::Xchg;
-      if (method == "fetch_add")
+      if (methodCode == MachineMethod::FetchAdd)
         operation = llvm::AtomicRMWInst::Add;
-      else if (method == "fetch_sub")
+      else if (methodCode == MachineMethod::FetchSub)
         operation = llvm::AtomicRMWInst::Sub;
-      else if (method == "fetch_and")
+      else if (methodCode == MachineMethod::FetchAnd)
         operation = llvm::AtomicRMWInst::And;
-      else if (method == "fetch_or")
+      else if (methodCode == MachineMethod::FetchOr)
         operation = llvm::AtomicRMWInst::Or;
-      else if (method == "fetch_xor" || method == "fetch_not")
+      else if (methodCode == MachineMethod::FetchXor ||
+               methodCode == MachineMethod::FetchNot)
         operation = llvm::AtomicRMWInst::Xor;
-      else if (method == "fetch_nand")
+      else if (methodCode == MachineMethod::FetchNand)
         operation = llvm::AtomicRMWInst::Nand;
-      else if (method == "fetch_min")
+      else if (methodCode == MachineMethod::FetchMin)
         operation = isSignedInteger(payload) ? llvm::AtomicRMWInst::Min
                                              : llvm::AtomicRMWInst::UMin;
-      else if (method == "fetch_max")
+      else if (methodCode == MachineMethod::FetchMax)
         operation = isSignedInteger(payload) ? llvm::AtomicRMWInst::Max
                                              : llvm::AtomicRMWInst::UMax;
       return logical(builder.CreateAtomicRMW(
           operation, pointer,
-          method == "fetch_not" ? builder.getInt8(1) : physical(arguments[1]),
+          methodCode == MachineMethod::FetchNot ? builder.getInt8(1)
+                                                : physical(arguments[1]),
           llvm::MaybeAlign(alignment), memoryOrder));
     };
     auto *function = builder.GetInsertBlock()->getParent();
@@ -1559,8 +1570,10 @@ private:
     auto *dispatch = builder.CreateSwitch(order, invalid, compare ? 15 : 5);
     std::vector<std::pair<llvm::Value *, llvm::BasicBlock *>> outputs;
     for (unsigned success = 0; success < 5; ++success) {
-      if ((method == "load" && (success == 1 || success == 3)) ||
-          (method == "store" && (success == 2 || success == 3)) ||
+      if ((methodCode == MachineMethod::Load &&
+           (success == 1 || success == 3)) ||
+          (methodCode == MachineMethod::Store &&
+           (success == 2 || success == 3)) ||
           (fence && success == 0))
         continue;
       for (unsigned failure : {0u, 2u, 4u}) {
@@ -1593,7 +1606,8 @@ private:
     auto wrapper = instruction.typeArguments[0];
     auto kind = program.types->product(wrapper).kind;
     auto method = std::string_view(instruction.text).substr(5);
-    if (method == "into_inner")
+    auto methodCode = machineMethod(method);
+    if (methodCode == MachineMethod::IntoInner)
       return lowering.extract(arguments[0], wrapper, cellPayloadField(kind));
     bool guard = kind == AggregateKind::Ref || kind == AggregateKind::RefMut;
     auto owner = wrapper;
@@ -1611,12 +1625,14 @@ private:
     auto *storage =
         guard ? guardField(1)
               : lowering.projectField(address, owner, cellPayloadField(kind));
-    if (guard && method == "project_unchecked")
+    if (guard && methodCode == MachineMethod::ProjectUnchecked)
       return lowering.construct(instruction.result.type,
                                 {guardField(0), arguments[1]});
-    if (method == "as_ptr" || method == "get_ref" || method == "get_mut")
+    if (methodCode == MachineMethod::AsPtr ||
+        methodCode == MachineMethod::GetRef ||
+        methodCode == MachineMethod::GetMut)
       return storage;
-    if (method == "get")
+    if (methodCode == MachineMethod::Get)
       return lowering.load(payload, storage,
                            llvm::Align(lowering.alignment(payload)));
     auto *function = builder.GetInsertBlock()->getParent();
@@ -1647,14 +1663,15 @@ private:
                           counter);
       return lowering.construct(instruction.result.type, {counter, storage});
     }
-    if (method == "replace" || method == "swap") {
+    if (methodCode == MachineMethod::Replace ||
+        methodCode == MachineMethod::Swap) {
       if (dynamic)
         require(builder.CreateICmpEQ(
             builder.CreateLoad(builder.getInt64Ty(), counter),
             builder.getInt64(0)));
       auto *old = lowering.load(payload, storage,
                                 llvm::Align(lowering.alignment(payload)));
-      if (method == "replace") {
+      if (methodCode == MachineMethod::Replace) {
         lowering.store(payload, arguments[1], storage,
                        llvm::Align(lowering.alignment(payload)));
         return old;
@@ -1680,7 +1697,7 @@ private:
     }
     bool exclusive = method.ends_with("_mut");
     bool fallible = method.starts_with("try_");
-    bool unguarded = method == "try_borrow_unguarded";
+    bool unguarded = methodCode == MachineMethod::TryBorrowUnguarded;
     auto *count = builder.CreateLoad(builder.getInt64Ty(), counter);
     auto *available =
         exclusive   ? builder.CreateICmpEQ(count, builder.getInt64(0))
@@ -1728,9 +1745,10 @@ private:
   llvm::Value *machine(const ir::Instruction &instruction,
                        const std::vector<llvm::Value *> &arguments) {
     auto operation = std::string_view(instruction.text);
-    if (operation.starts_with("atomic."))
+    const auto operationCode = decodeMachineOperation(operation);
+    if ((operationCode.family == MachineFamily::Atomic))
       return atomic(instruction, arguments);
-    if (operation.starts_with("cell."))
+    if ((operationCode.family == MachineFamily::Cell))
       return cell(instruction, arguments);
     auto argument = instruction.typeArguments.empty()
                         ? Type::Unknown
@@ -1741,25 +1759,43 @@ private:
           module.get(), intrinsic, {values[0]->getType()});
       return builder.CreateCall(function, values);
     };
-    if (operation == "storage.uninit")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Storage, MachineMethod::Uninit})
       return lowering.indirect(instruction.result.type)
                  ? lowering.zero(instruction.result.type)
                  : llvm::UndefValue::get(type(instruction.result.type));
-    if (operation == "storage.zeroed")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Storage, MachineMethod::Zeroed})
       return lowering.zero(instruction.result.type);
-    if (operation == "storage.assume_init" ||
-        operation == "storage.into_inner" || operation == "pin.into_inner" ||
-        operation == "pin.into_inner_unchecked")
+    if (operationCode == MachineOperation{MachineFamily::Storage,
+                                          MachineMethod::AssumeInit} ||
+        operationCode == MachineOperation{MachineFamily::Storage,
+                                          MachineMethod::IntoInner} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Pin, MachineMethod::IntoInner} ||
+        operationCode == MachineOperation{MachineFamily::Pin,
+                                          MachineMethod::IntoInnerUnchecked})
       return lowering.extract(arguments[0], argument, 0);
-    if (operation == "storage.as_ptr" || operation == "storage.as_mut_ptr" ||
-        operation == "storage.get" || operation == "storage.raw_get" ||
-        operation == "storage.from_mut")
+    if (operationCode ==
+            MachineOperation{MachineFamily::Storage, MachineMethod::AsPtr} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Storage, MachineMethod::AsMutPtr} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Storage, MachineMethod::Get} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Storage, MachineMethod::RawGet} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Storage, MachineMethod::FromMut})
       return arguments[0];
-    if (operation == "storage.take" || operation == "storage.assume_init_read")
+    if (operationCode ==
+            MachineOperation{MachineFamily::Storage, MachineMethod::Take} ||
+        operationCode == MachineOperation{MachineFamily::Storage,
+                                          MachineMethod::AssumeInitRead})
       return lowering.load(
           instruction.result.type, arguments[0],
           llvm::Align(lowering.alignment(instruction.result.type)));
-    if (operation == "intrinsics.offset_of") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Intrinsics, MachineMethod::OffsetOf}) {
       std::uint64_t offset = 0;
       auto owner = argument;
       for (auto projection : instruction.place.fields) {
@@ -1768,18 +1804,23 @@ private:
       }
       return builder.getInt64(offset);
     }
-    if (operation == "size_of")
+    if (operationCode ==
+        MachineOperation{MachineFamily::None, MachineMethod::SizeOf})
       return builder.getInt64(lowering.layout(argument).size);
-    if (operation == "align_of")
+    if (operationCode ==
+        MachineOperation{MachineFamily::None, MachineMethod::AlignOf})
       return builder.getInt64(lowering.alignment(argument));
-    if (operation == "needs_drop")
+    if (operationCode ==
+        MachineOperation{MachineFamily::None, MachineMethod::NeedsDrop})
       return builder.getInt1(program.types->needsDrop(argument));
-    if (operation == "type_id") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::None, MachineMethod::TypeId}) {
       return builder.CreatePtrToInt(
           typeIdentityGlobal(typeIdentity(*program.types, argument)),
           builder.getInt64Ty());
     }
-    if (operation == "intrinsics.type_name") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Intrinsics, MachineMethod::TypeName}) {
       const auto name = std::string(program.types->name(argument));
       auto *global = textGlobal(name);
       auto *integerType = module->getDataLayout().getIntPtrType(context);
@@ -1790,7 +1831,8 @@ private:
       return llvm::ConstantStruct::get(
           type, {address, llvm::ConstantInt::get(integerType, name.size())});
     }
-    if (operation == "intrinsics.caller_location") {
+    if (operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                          MachineMethod::CallerLocation}) {
       auto *location = callerArgument(instruction.span);
       auto *value = builder.CreateLoad(callerType(), location);
       const auto &fields = program.types->product(argument).fields;
@@ -1803,29 +1845,37 @@ private:
                                 {file, builder.CreateExtractValue(value, 2),
                                  builder.CreateExtractValue(value, 3)});
     }
-    if (operation == "intrinsics.variant_ordinal")
+    if (operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                          MachineMethod::VariantOrdinal})
       return program.types->isSum(argument)
                  ? builder.CreateZExtOrTrunc(
                        lowering.enumTag(argument, arguments[0]),
                        type(Type::Usize))
                  : llvm::ConstantInt::get(
                        llvm::cast<llvm::IntegerType>(type(Type::Usize)), 0);
-    if (operation == "intrinsics.fn_addr") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Intrinsics, MachineMethod::FnAddr}) {
       auto *integerType = module->getDataLayout().getIntPtrType(context);
       return builder.CreatePtrToInt(arguments[0], integerType);
     }
-    if (operation == "ptr.fn_addr_eq")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Ptr, MachineMethod::FnAddrEq})
       return builder.CreateICmpEQ(arguments[0], arguments[1]);
-    if (operation == "ptr.slice_from_raw_parts" ||
-        operation == "ptr.slice_from_raw_parts_mut") {
+    if (operationCode == MachineOperation{MachineFamily::Ptr,
+                                          MachineMethod::SliceFromRawParts} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Ptr,
+                             MachineMethod::SliceFromRawPartsMut}) {
       llvm::Value *result =
           llvm::UndefValue::get(type(instruction.result.type));
       result = builder.CreateInsertValue(result, arguments[0], 0);
       return builder.CreateInsertValue(result, arguments[1], 1);
     }
-    if (operation == "mem.forget")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Mem, MachineMethod::Forget})
       return unit();
-    if (operation == "hint.black_box") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Hint, MachineMethod::BlackBox}) {
       // The value round-trips through memory that an empty assembly block may
       // read and write, so the optimizer can neither fold nor drop it.
       auto alignment = llvm::Align(lowering.alignment(argument));
@@ -1839,7 +1889,8 @@ private:
           ->addFnAttr(llvm::Attribute::NoUnwind);
       return lowering.load(argument, storage, alignment);
     }
-    if (operation == "hint.spin_loop") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Hint, MachineMethod::SpinLoop}) {
       const auto arch = module->getTargetTriple().getArch();
       const char *assembly =
           arch == llvm::Triple::x86 || arch == llvm::Triple::x86_64 ? "pause"
@@ -1853,15 +1904,18 @@ private:
       }
       return unit();
     }
-    if (operation == "hint.cold_path")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Hint, MachineMethod::ColdPath})
       return unit();
-    if (operation == "hint.assert_unchecked") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Hint, MachineMethod::AssertUnchecked}) {
       auto *assume = llvm::Intrinsic::getOrInsertDeclaration(
           module.get(), llvm::Intrinsic::assume);
       builder.CreateCall(assume, {arguments[0]});
       return unit();
     }
-    if (operation == "hint.select_unpredictable") {
+    if (operationCode == MachineOperation{MachineFamily::Hint,
+                                          MachineMethod::SelectUnpredictable}) {
       if (argument == Type::Unit)
         return unit();
       auto *type = lowering.type(argument);
@@ -1893,25 +1947,30 @@ private:
       selected->addIncoming(arguments[2], whenFalse);
       return selected;
     }
-    if (operation == "hint.unreachable_unchecked") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Hint,
+                         MachineMethod::UnreachableUnchecked}) {
       builder.CreateUnreachable();
       builder.SetInsertPoint(
           llvm::BasicBlock::Create(context, "after.unreachable_unchecked",
                                    builder.GetInsertBlock()->getParent()));
       return unit();
     }
-    if (operation == "intrinsics.abort") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Intrinsics, MachineMethod::Abort}) {
       builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(
           module.get(), llvm::Intrinsic::trap));
       return unit();
     }
-    if (operation == "intrinsics.panic_message") {
+    if (operationCode == MachineOperation{MachineFamily::Intrinsics,
+                                          MachineMethod::PanicMessage}) {
       emitPanicMessage(builder.CreateExtractValue(arguments[0], 0),
                        builder.CreateExtractValue(arguments[0], 1),
                        instruction.span);
       return unit();
     }
-    if (operation == "intrinsics.panic_fmt") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Intrinsics, MachineMethod::PanicFmt}) {
       // The single runtime hook: hosted programs report the message and
       // unwind; freestanding programs have no sink and trap.
       if (lowering.freestanding) {
@@ -1936,10 +1995,14 @@ private:
                                     location[1], location[2], location[3]});
       return unit();
     }
-    if (operation == "mem.replace" || operation == "mem.swap") {
+    if (operationCode ==
+            MachineOperation{MachineFamily::Mem, MachineMethod::Replace} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Mem, MachineMethod::Swap}) {
       auto alignment = llvm::Align(lowering.alignment(argument));
       auto *data = arguments[0];
-      if (operation == "mem.replace") {
+      if (operationCode ==
+          MachineOperation{MachineFamily::Mem, MachineMethod::Replace}) {
         auto *old = lowering.load(argument, data, alignment);
         lowering.store(argument, arguments[1], data, alignment);
         return old;
@@ -1951,11 +2014,19 @@ private:
       builder.CreateMemCpy(arguments[1], alignment, temporary, alignment, size);
       return unit();
     }
-    if (operation == "mem.size_of_val" || operation == "mem.align_of_val" ||
-        operation == "mem.size_of_val_raw" ||
-        operation == "mem.align_of_val_raw") {
-      bool alignmentOnly = operation == "mem.align_of_val" ||
-                           operation == "mem.align_of_val_raw";
+    if (operationCode ==
+            MachineOperation{MachineFamily::Mem, MachineMethod::SizeOfVal} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Mem, MachineMethod::AlignOfVal} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Mem, MachineMethod::SizeOfValRaw} ||
+        operationCode == MachineOperation{MachineFamily::Mem,
+                                          MachineMethod::AlignOfValRaw}) {
+      bool alignmentOnly =
+          operationCode ==
+              MachineOperation{MachineFamily::Mem, MachineMethod::AlignOfVal} ||
+          operationCode == MachineOperation{MachineFamily::Mem,
+                                            MachineMethod::AlignOfValRaw};
       if (program.types->isErased(argument)) {
         auto *table = builder.CreateExtractValue(arguments[0], 2);
         auto slotIndex = alignmentOnly ? std::uint32_t{2} : std::uint32_t{1};
@@ -2025,16 +2096,19 @@ private:
       }
       return size;
     }
-    if (operation == "mem.zeroed")
+    if (operationCode ==
+        MachineOperation{MachineFamily::Mem, MachineMethod::Zeroed})
       return lowering.zero(instruction.result.type);
-    if (operation == "mem.transmute") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Mem, MachineMethod::Transmute}) {
       auto source = instruction.operands[0].type;
       auto *storage = lowering.temporary(source);
       lowering.store(source, arguments[0], storage,
                      llvm::Align(lowering.alignment(source)));
       return lowering.load(instruction.result.type, storage, llvm::Align(1));
     }
-    if (operation == "mem.transmute_copy") {
+    if (operationCode ==
+        MachineOperation{MachineFamily::Mem, MachineMethod::TransmuteCopy}) {
       auto source = program.types->view(instruction.operands[0].type).payload;
       if (lowering.layout(instruction.result.type).size >
           lowering.layout(source).size) {
@@ -2051,11 +2125,12 @@ private:
       return lowering.load(instruction.result.type, arguments[0],
                            llvm::Align(1));
     }
-    if (operation.starts_with("numeric.")) {
+    if ((operationCode.family == MachineFamily::Numeric)) {
       auto method = operation.substr(8);
+      auto methodCode = operationCode.method;
       auto receiverType = instruction.operands[0].type;
-      bool mutatingAscii =
-          method == "make_ascii_lowercase" || method == "make_ascii_uppercase";
+      bool mutatingAscii = methodCode == MachineMethod::MakeAsciiLowercase ||
+                           methodCode == MachineMethod::MakeAsciiUppercase;
       auto self = program.types->isView(receiverType)
                       ? program.types->view(receiverType).payload
                       : receiverType;
@@ -2063,27 +2138,35 @@ private:
       if (mutatingAscii)
         a = builder.CreateLoad(type(self), a);
       auto *b = arguments.size() > 1 ? arguments[1] : nullptr;
-      if (method == "checked_cast")
+      if (methodCode == MachineMethod::CheckedCast)
         return checkedCast(instruction, a, argument);
-      if (method == "to_int_unchecked")
+      if (methodCode == MachineMethod::ToIntUnchecked)
         return isSignedInteger(argument)
                    ? builder.CreateFPToSI(a, type(argument))
                    : builder.CreateFPToUI(a, type(argument));
-      if (method == "to_bits" || method == "from_bits")
+      if (methodCode == MachineMethod::ToBits ||
+          methodCode == MachineMethod::FromBits)
         return builder.CreateBitCast(a, type(instruction.result.type));
-      if (method == "cast_signed" || method == "cast_unsigned")
+      if (methodCode == MachineMethod::CastSigned ||
+          methodCode == MachineMethod::CastUnsigned)
         return a;
-      if (method == "to_be" || method == "to_le" || method == "from_be" ||
-          method == "from_le") {
-        bool bigEndian = method == "to_be" || method == "from_be";
+      if (methodCode == MachineMethod::ToBe ||
+          methodCode == MachineMethod::ToLe ||
+          methodCode == MachineMethod::FromBe ||
+          methodCode == MachineMethod::FromLe) {
+        bool bigEndian = methodCode == MachineMethod::ToBe ||
+                         methodCode == MachineMethod::FromBe;
         bool swap = module->getDataLayout().isLittleEndian() == bigEndian;
         return swap && integerWidth(self) > 8
                    ? invoke(llvm::Intrinsic::bswap, {a})
                    : a;
       }
-      if (method == "to_be_bytes" || method == "to_le_bytes" ||
-          method == "to_ne_bytes" || method == "from_be_bytes" ||
-          method == "from_le_bytes" || method == "from_ne_bytes") {
+      if (methodCode == MachineMethod::ToBeBytes ||
+          methodCode == MachineMethod::ToLeBytes ||
+          methodCode == MachineMethod::ToNeBytes ||
+          methodCode == MachineMethod::FromBeBytes ||
+          methodCode == MachineMethod::FromLeBytes ||
+          methodCode == MachineMethod::FromNeBytes) {
         bool fromBytes = method.starts_with("from_");
         bool bigEndian = method.ends_with("be_bytes");
         bool littleEndian = method.ends_with("le_bytes");
@@ -2121,28 +2204,28 @@ private:
         return builder.CreateLoad(type(instruction.result.type), storage);
       }
       if (isFloating(self)) {
-        if (method == "sin_cos") {
+        if (methodCode == MachineMethod::SinCos) {
           auto *sine = invoke(llvm::Intrinsic::sin, {a});
           auto *cosine = invoke(llvm::Intrinsic::cos, {a});
           return lowering.construct(instruction.result.type, {sine, cosine});
         }
-        if (method == "mul_add")
+        if (methodCode == MachineMethod::MulAdd)
           return invoke(llvm::Intrinsic::fma, arguments);
-        if (method == "copysign")
+        if (methodCode == MachineMethod::Copysign)
           return invoke(llvm::Intrinsic::copysign, arguments);
-        if (method == "abs")
+        if (methodCode == MachineMethod::Abs)
           return invoke(llvm::Intrinsic::fabs, arguments);
-        if (method == "sqrt")
+        if (methodCode == MachineMethod::Sqrt)
           return invoke(llvm::Intrinsic::sqrt, arguments);
-        if (method == "floor")
+        if (methodCode == MachineMethod::Floor)
           return invoke(llvm::Intrinsic::floor, arguments);
-        if (method == "ceil")
+        if (methodCode == MachineMethod::Ceil)
           return invoke(llvm::Intrinsic::ceil, arguments);
-        if (method == "trunc")
+        if (methodCode == MachineMethod::Trunc)
           return invoke(llvm::Intrinsic::trunc, arguments);
-        if (method == "round")
+        if (methodCode == MachineMethod::Round)
           return invoke(llvm::Intrinsic::round, arguments);
-        if (method == "round_ties_even")
+        if (methodCode == MachineMethod::RoundTiesEven)
           return invoke(llvm::Intrinsic::roundeven, arguments);
         auto external = [&](std::string name,
                             llvm::ArrayRef<llvm::Value *> values) {
@@ -2156,86 +2239,89 @@ private:
           auto function = module->getOrInsertFunction(name, signature);
           return builder.CreateCall(function, values);
         };
-        if (method == "sin")
+        if (methodCode == MachineMethod::Sin)
           return invoke(llvm::Intrinsic::sin, arguments);
-        if (method == "cos")
+        if (methodCode == MachineMethod::Cos)
           return invoke(llvm::Intrinsic::cos, arguments);
-        if (method == "exp")
+        if (methodCode == MachineMethod::Exp)
           return invoke(llvm::Intrinsic::exp, arguments);
-        if (method == "exp2")
+        if (methodCode == MachineMethod::Exp2)
           return invoke(llvm::Intrinsic::exp2, arguments);
-        if (method == "ln")
+        if (methodCode == MachineMethod::Ln)
           return invoke(llvm::Intrinsic::log, arguments);
-        if (method == "log2")
+        if (methodCode == MachineMethod::Log2)
           return invoke(llvm::Intrinsic::log2, arguments);
-        if (method == "log10")
+        if (methodCode == MachineMethod::Log10)
           return invoke(llvm::Intrinsic::log10, arguments);
-        if (method == "powf")
+        if (methodCode == MachineMethod::Powf)
           return invoke(llvm::Intrinsic::pow, arguments);
-        if (method == "powi")
+        if (methodCode == MachineMethod::Powi)
           return builder.CreateCall(
               llvm::Intrinsic::getOrInsertDeclaration(
                   module.get(), llvm::Intrinsic::powi,
                   {arguments[0]->getType(), arguments[1]->getType()}),
               arguments);
-        if (method == "log") {
+        if (methodCode == MachineMethod::Log) {
           auto *numerator = invoke(llvm::Intrinsic::log, {a});
           auto *denominator = invoke(llvm::Intrinsic::log, {b});
           return builder.CreateFDiv(numerator, denominator);
         }
-        if (method == "tan")
+        if (methodCode == MachineMethod::Tan)
           return external("tan", arguments);
-        if (method == "asin")
+        if (methodCode == MachineMethod::Asin)
           return external("asin", arguments);
-        if (method == "acos")
+        if (methodCode == MachineMethod::Acos)
           return external("acos", arguments);
-        if (method == "atan")
+        if (methodCode == MachineMethod::Atan)
           return external("atan", arguments);
-        if (method == "atan2")
+        if (methodCode == MachineMethod::Atan2)
           return external("atan2", arguments);
-        if (method == "sinh")
+        if (methodCode == MachineMethod::Sinh)
           return external("sinh", arguments);
-        if (method == "cosh")
+        if (methodCode == MachineMethod::Cosh)
           return external("cosh", arguments);
-        if (method == "tanh")
+        if (methodCode == MachineMethod::Tanh)
           return external("tanh", arguments);
-        if (method == "asinh")
+        if (methodCode == MachineMethod::Asinh)
           return external("asinh", arguments);
-        if (method == "acosh")
+        if (methodCode == MachineMethod::Acosh)
           return external("acosh", arguments);
-        if (method == "atanh")
+        if (methodCode == MachineMethod::Atanh)
           return external("atanh", arguments);
-        if (method == "exp_m1")
+        if (methodCode == MachineMethod::ExpM1)
           return external("expm1", arguments);
-        if (method == "ln_1p")
+        if (methodCode == MachineMethod::Ln1p)
           return external("log1p", arguments);
-        if (method == "cbrt")
+        if (methodCode == MachineMethod::Cbrt)
           return external("cbrt", arguments);
-        if (method == "hypot")
+        if (methodCode == MachineMethod::Hypot)
           return external("hypot", arguments);
         // self - self.trunc(): an integral input yields +0.0, also when
         // negative.
-        if (method == "fract")
+        if (methodCode == MachineMethod::Fract)
           return builder.CreateFSub(a, invoke(llvm::Intrinsic::trunc, {a}));
-        if (method == "recip")
+        if (methodCode == MachineMethod::Recip)
           return builder.CreateFDiv(llvm::ConstantFP::get(type(self), 1.0), a);
-        if (method == "signum") {
+        if (methodCode == MachineMethod::Signum) {
           auto *nan = builder.CreateFCmpUNO(a, a);
           auto *one = llvm::ConstantFP::get(type(self), 1.0);
           auto *signedOne = invoke(llvm::Intrinsic::copysign, {one, a});
           return builder.CreateSelect(nan, a, signedOne);
         }
-        if (method == "to_degrees" || method == "to_radians") {
+        if (methodCode == MachineMethod::ToDegrees ||
+            methodCode == MachineMethod::ToRadians) {
           constexpr double pi = 3.14159265358979323846264338327950288;
-          auto factor = method == "to_degrees" ? 180.0 / pi : pi / 180.0;
+          auto factor =
+              methodCode == MachineMethod::ToDegrees ? 180.0 / pi : pi / 180.0;
           return builder.CreateFMul(a,
                                     llvm::ConstantFP::get(type(self), factor));
         }
-        if (method == "div_euclid" || method == "rem_euclid") {
+        if (methodCode == MachineMethod::DivEuclid ||
+            methodCode == MachineMethod::RemEuclid) {
           auto *remainder = builder.CreateFRem(a, b);
           auto *zero = llvm::ConstantFP::get(type(self), 0.0);
           auto *negative = builder.CreateFCmpOLT(remainder, zero);
-          if (method == "div_euclid") {
+          if (methodCode == MachineMethod::DivEuclid) {
             auto *quotient =
                 invoke(llvm::Intrinsic::trunc, {builder.CreateFDiv(a, b)});
             auto *one = llvm::ConstantFP::get(type(self), 1.0);
@@ -2254,7 +2340,7 @@ private:
               builder.CreateFCmpOEQ(remainder, zero), zero, remainder);
           return remainder;
         }
-        if (method == "midpoint") {
+        if (methodCode == MachineMethod::Midpoint) {
           auto two = [](llvm::Type *t) {
             return llvm::ConstantFP::get(t, 2.0);
           };
@@ -2287,11 +2373,13 @@ private:
               builder.CreateFDiv(builder.CreateFAdd(a, b), two(type(self))),
               result);
         }
-        if (method == "min" || method == "max")
-          return invoke(method == "min" ? llvm::Intrinsic::minnum
-                                        : llvm::Intrinsic::maxnum,
+        if (methodCode == MachineMethod::Min ||
+            methodCode == MachineMethod::Max)
+          return invoke(methodCode == MachineMethod::Min
+                            ? llvm::Intrinsic::minnum
+                            : llvm::Intrinsic::maxnum,
                         arguments);
-        if (method == "clamp") {
+        if (methodCode == MachineMethod::Clamp) {
           auto *invalid = builder.CreateOr(
               builder.CreateFCmpUNO(b, b),
               builder.CreateOr(
@@ -2304,7 +2392,8 @@ private:
           return builder.CreateSelect(
               builder.CreateFCmpOGT(lower, arguments[2]), arguments[2], lower);
         }
-        if (method == "next_up" || method == "next_down") {
+        if (methodCode == MachineMethod::NextUp ||
+            methodCode == MachineMethod::NextDown) {
           unsigned bitWidth = self == Type::F32 ? 32 : 64;
           auto *bits = builder.CreateBitCast(a, builder.getIntNTy(bitWidth));
           auto constant = [&](std::uint64_t value) {
@@ -2322,7 +2411,7 @@ private:
               builder.CreateAnd(bits, constant(exponentMask)),
               constant(exponentMask));
           auto *nan = builder.CreateFCmpUNO(a, a);
-          bool up = method == "next_up";
+          bool up = methodCode == MachineMethod::NextUp;
           auto *unchanged = builder.CreateOr(
               nan, builder.CreateAnd(special, up ? builder.CreateNot(negative)
                                                  : negative));
@@ -2350,39 +2439,45 @@ private:
         auto *special = builder.CreateICmpEQ(exponent, constant(exponentMask));
         auto *zeroExponent = builder.CreateICmpEQ(exponent, constant(0));
         auto *zeroFraction = builder.CreateICmpEQ(fraction, constant(0));
-        if (method == "is_nan")
+        if (methodCode == MachineMethod::IsNan)
           return builder.CreateAnd(special, builder.CreateNot(zeroFraction));
-        if (method == "is_infinite")
+        if (methodCode == MachineMethod::IsInfinite)
           return builder.CreateAnd(special, zeroFraction);
-        if (method == "is_finite")
+        if (methodCode == MachineMethod::IsFinite)
           return builder.CreateNot(special);
-        if (method == "is_subnormal")
+        if (methodCode == MachineMethod::IsSubnormal)
           return builder.CreateAnd(zeroExponent,
                                    builder.CreateNot(zeroFraction));
-        if (method == "is_normal")
+        if (methodCode == MachineMethod::IsNormal)
           return builder.CreateAnd(builder.CreateNot(zeroExponent),
                                    builder.CreateNot(special));
         auto *negative = builder.CreateICmpNE(
             builder.CreateAnd(bits, constant(std::uint64_t{1} << (width - 1))),
             constant(0));
-        return method == "is_sign_negative" ? negative
-                                            : builder.CreateNot(negative);
+        return methodCode == MachineMethod::IsSignNegative
+                   ? negative
+                   : builder.CreateNot(negative);
       }
       auto width = integerWidth(self);
       auto integer = [&](std::uint64_t value) {
         return llvm::ConstantInt::get(a->getType(), value);
       };
-      if (method == "swap_bytes")
+      if (methodCode == MachineMethod::SwapBytes)
         return width == 8 ? a : invoke(llvm::Intrinsic::bswap, arguments);
-      if (method == "reverse_bits")
+      if (methodCode == MachineMethod::ReverseBits)
         return invoke(llvm::Intrinsic::bitreverse, arguments);
-      if (method == "count_ones" || method == "count_zeros")
+      if (methodCode == MachineMethod::CountOnes ||
+          methodCode == MachineMethod::CountZeros)
         return builder.CreateZExtOrTrunc(
             invoke(llvm::Intrinsic::ctpop,
-                   {method == "count_zeros" ? builder.CreateNot(a) : a}),
+                   {methodCode == MachineMethod::CountZeros
+                        ? builder.CreateNot(a)
+                        : a}),
             builder.getInt32Ty());
-      if (method == "leading_zeros" || method == "leading_ones" ||
-          method == "trailing_zeros" || method == "trailing_ones") {
+      if (methodCode == MachineMethod::LeadingZeros ||
+          methodCode == MachineMethod::LeadingOnes ||
+          methodCode == MachineMethod::TrailingZeros ||
+          methodCode == MachineMethod::TrailingOnes) {
         auto *value = method.ends_with("ones") ? builder.CreateNot(a) : a;
         return builder.CreateZExtOrTrunc(invoke(method.starts_with("leading")
                                                     ? llvm::Intrinsic::ctlz
@@ -2390,16 +2485,18 @@ private:
                                                 {value, builder.getFalse()}),
                                          builder.getInt32Ty());
       }
-      if (method == "rotate_left" || method == "rotate_right") {
+      if (methodCode == MachineMethod::RotateLeft ||
+          methodCode == MachineMethod::RotateRight) {
         auto *count = builder.CreateZExtOrTrunc(b, a->getType());
-        return invoke(method == "rotate_left" ? llvm::Intrinsic::fshl
-                                              : llvm::Intrinsic::fshr,
+        return invoke(methodCode == MachineMethod::RotateLeft
+                          ? llvm::Intrinsic::fshl
+                          : llvm::Intrinsic::fshr,
                       {a, a, count});
       }
       if (self == Type::U8 &&
           (method.starts_with("is_ascii") || method.starts_with("to_ascii") ||
            method.starts_with("make_ascii") ||
-           method == "eq_ignore_ascii_case")) {
+           methodCode == MachineMethod::EqIgnoreAsciiCase)) {
         auto lower = [&](llvm::Value *value) {
           auto *upper =
               builder.CreateAnd(builder.CreateICmpUGE(value, integer(0x41)),
@@ -2414,20 +2511,21 @@ private:
           return builder.CreateSelect(
               lowercase, builder.CreateSub(value, integer(0x20)), value);
         };
-        if (method == "to_ascii_lowercase")
+        if (methodCode == MachineMethod::ToAsciiLowercase)
           return lower(a);
-        if (method == "to_ascii_uppercase")
+        if (methodCode == MachineMethod::ToAsciiUppercase)
           return upper(a);
-        if (method == "make_ascii_lowercase" ||
-            method == "make_ascii_uppercase") {
-          builder.CreateStore(method == "make_ascii_lowercase" ? lower(a)
-                                                               : upper(a),
+        if (methodCode == MachineMethod::MakeAsciiLowercase ||
+            methodCode == MachineMethod::MakeAsciiUppercase) {
+          builder.CreateStore(methodCode == MachineMethod::MakeAsciiLowercase
+                                  ? lower(a)
+                                  : upper(a),
                               arguments[0]);
           return unit();
         }
-        if (method == "eq_ignore_ascii_case")
+        if (methodCode == MachineMethod::EqIgnoreAsciiCase)
           return builder.CreateICmpEQ(lower(a), lower(b));
-        if (method == "is_ascii")
+        if (methodCode == MachineMethod::IsAscii)
           return builder.CreateICmpULT(a, integer(0x80));
         auto *alpha = builder.CreateOr(
             builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x41)),
@@ -2437,19 +2535,19 @@ private:
         auto *digit =
             builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x30)),
                               builder.CreateICmpULE(a, integer(0x39)));
-        if (method == "is_ascii_alphabetic")
+        if (methodCode == MachineMethod::IsAsciiAlphabetic)
           return alpha;
-        if (method == "is_ascii_alphanumeric")
+        if (methodCode == MachineMethod::IsAsciiAlphanumeric)
           return builder.CreateOr(alpha, digit);
-        if (method == "is_ascii_control")
+        if (methodCode == MachineMethod::IsAsciiControl)
           return builder.CreateOr(builder.CreateICmpULT(a, integer(0x20)),
                                   builder.CreateICmpEQ(a, integer(0x7f)));
-        if (method == "is_ascii_digit")
+        if (methodCode == MachineMethod::IsAsciiDigit)
           return digit;
-        if (method == "is_ascii_graphic")
+        if (methodCode == MachineMethod::IsAsciiGraphic)
           return builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x21)),
                                    builder.CreateICmpULE(a, integer(0x7e)));
-        if (method == "is_ascii_hexdigit")
+        if (methodCode == MachineMethod::IsAsciiHexdigit)
           return builder.CreateOr(
               digit,
               builder.CreateOr(
@@ -2457,15 +2555,15 @@ private:
                                     builder.CreateICmpULE(a, integer(0x46))),
                   builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x61)),
                                     builder.CreateICmpULE(a, integer(0x66)))));
-        if (method == "is_ascii_lowercase")
+        if (methodCode == MachineMethod::IsAsciiLowercase)
           return builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x61)),
                                    builder.CreateICmpULE(a, integer(0x7a)));
-        if (method == "is_ascii_punctuation")
+        if (methodCode == MachineMethod::IsAsciiPunctuation)
           return builder.CreateAnd(
               builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x21)),
                                 builder.CreateICmpULE(a, integer(0x7e))),
               builder.CreateNot(builder.CreateOr(alpha, digit)));
-        if (method == "is_ascii_uppercase")
+        if (methodCode == MachineMethod::IsAsciiUppercase)
           return builder.CreateAnd(builder.CreateICmpUGE(a, integer(0x41)),
                                    builder.CreateICmpULE(a, integer(0x5a)));
         // Tab, line feed, form feed, carriage return and space; vertical tab
@@ -2478,9 +2576,12 @@ private:
             builder.CreateICmpEQ(a, integer(0x20)));
       }
       bool sign = isSignedInteger(self);
-      if (method == "ilog" || method == "checked_ilog" || method == "ilog2" ||
-          method == "checked_ilog2" || method == "ilog10" ||
-          method == "checked_ilog10") {
+      if (methodCode == MachineMethod::Ilog ||
+          methodCode == MachineMethod::CheckedIlog ||
+          methodCode == MachineMethod::Ilog2 ||
+          methodCode == MachineMethod::CheckedIlog2 ||
+          methodCode == MachineMethod::Ilog10 ||
+          methodCode == MachineMethod::CheckedIlog10) {
         bool optional = method.starts_with("checked_");
         bool baseArgument =
             method.ends_with("ilog") || method.ends_with("checked_ilog");
@@ -2541,8 +2642,9 @@ private:
             aggregate, builder.CreateZExt(valid, builder.getInt32Ty()), 0);
         return builder.CreateInsertValue(aggregate, result, 1);
       }
-      if (method == "isqrt" || method == "checked_isqrt") {
-        bool optional = method == "checked_isqrt";
+      if (methodCode == MachineMethod::Isqrt ||
+          methodCode == MachineMethod::CheckedIsqrt) {
+        bool optional = methodCode == MachineMethod::CheckedIsqrt;
         auto *valid =
             sign ? builder.CreateICmpSGE(a, integer(0)) : builder.getTrue();
         if (!optional)
@@ -2592,15 +2694,17 @@ private:
             aggregate, builder.CreateZExt(valid, builder.getInt32Ty()), 0);
         return builder.CreateInsertValue(aggregate, result, 1);
       };
-      if (method == "bit_width" || method == "highest_one" ||
-          method == "lowest_one" || method == "isolate_highest_one") {
+      if (methodCode == MachineMethod::BitWidth ||
+          methodCode == MachineMethod::HighestOne ||
+          methodCode == MachineMethod::LowestOne ||
+          methodCode == MachineMethod::IsolateHighestOne) {
         auto *nonzero = builder.CreateICmpNE(a, integer(0));
-        bool lowest = method == "lowest_one";
+        bool lowest = methodCode == MachineMethod::LowestOne;
         // Zero yields the defined count `width` and is masked below.
         auto *count =
             invoke(lowest ? llvm::Intrinsic::cttz : llvm::Intrinsic::ctlz,
                    {a, builder.getFalse()});
-        if (method == "isolate_highest_one") {
+        if (methodCode == MachineMethod::IsolateHighestOne) {
           auto *top = llvm::ConstantInt::get(
               context, llvm::APInt::getSignedMinValue(width));
           auto *shift = builder.CreateSelect(nonzero, count, integer(0));
@@ -2608,17 +2712,18 @@ private:
                                       integer(0));
         }
         auto *count32 = builder.CreateZExtOrTrunc(count, builder.getInt32Ty());
-        if (method == "bit_width")
+        if (methodCode == MachineMethod::BitWidth)
           return builder.CreateSub(builder.getInt32(width), count32);
         return present(
             nonzero,
             lowest ? count32
                    : builder.CreateSub(builder.getInt32(width - 1), count32));
       }
-      if (method == "isolate_lowest_one")
+      if (methodCode == MachineMethod::IsolateLowestOne)
         return builder.CreateAnd(a, builder.CreateNeg(a));
-      if (method == "carrying_add" || method == "borrowing_sub") {
-        auto intrinsic = method == "carrying_add"
+      if (methodCode == MachineMethod::CarryingAdd ||
+          methodCode == MachineMethod::BorrowingSub) {
+        auto intrinsic = methodCode == MachineMethod::CarryingAdd
                              ? llvm::Intrinsic::uadd_with_overflow
                              : llvm::Intrinsic::usub_with_overflow;
         auto *first = invoke(intrinsic, {a, b});
@@ -2631,7 +2736,8 @@ private:
              builder.CreateOr(builder.CreateExtractValue(first, 1),
                               builder.CreateExtractValue(second, 1))});
       }
-      if (method == "carrying_mul" || method == "carrying_mul_add") {
+      if (methodCode == MachineMethod::CarryingMul ||
+          methodCode == MachineMethod::CarryingMulAdd) {
         // self * rhs + carry (+ add) never exceeds the double-width range.
         auto *wide = builder.getIntNTy(width * 2);
         auto *full = builder.CreateMul(builder.CreateZExt(a, wide),
@@ -2645,7 +2751,7 @@ private:
              builder.CreateTrunc(builder.CreateLShr(full, width),
                                  a->getType())});
       }
-      if (method == "checked_signed_diff") {
+      if (methodCode == MachineMethod::CheckedSignedDiff) {
         // The exact difference fits in width + 1 signed bits.
         auto *wide = builder.getIntNTy(width + 1);
         auto *difference = builder.CreateSub(builder.CreateZExt(a, wide),
@@ -2740,21 +2846,23 @@ private:
                : unchecked == "sub" ? builder.CreateSub(a, b)
                                     : builder.CreateMul(a, b);
       }
-      if (method == "unbounded_shl" || method == "unbounded_shr") {
+      if (methodCode == MachineMethod::UnboundedShl ||
+          methodCode == MachineMethod::UnboundedShr) {
         auto *tooWide = builder.CreateICmpUGE(b, builder.getInt32(width));
         auto *count = builder.CreateAnd(b, builder.getInt32(width - 1));
         count = builder.CreateZExtOrTrunc(count, a->getType());
-        auto *shifted = method == "unbounded_shl" ? builder.CreateShl(a, count)
+        auto *shifted = methodCode == MachineMethod::UnboundedShl
+                            ? builder.CreateShl(a, count)
                         : sign ? builder.CreateAShr(a, count)
                                : builder.CreateLShr(a, count);
-        auto *wideResult = method == "unbounded_shr" && sign
+        auto *wideResult = methodCode == MachineMethod::UnboundedShr && sign
                                ? builder.CreateAShr(a, integer(width - 1))
                                : integer(0);
         return builder.CreateSelect(tooWide, wideResult, shifted);
       }
-      if (method == "next_power_of_two" ||
-          method == "checked_next_power_of_two") {
-        bool optional = method == "checked_next_power_of_two";
+      if (methodCode == MachineMethod::NextPowerOfTwo ||
+          methodCode == MachineMethod::CheckedNextPowerOfTwo) {
+        bool optional = methodCode == MachineMethod::CheckedNextPowerOfTwo;
         auto *zero = builder.CreateICmpEQ(a, integer(0));
         auto *decremented = builder.CreateSub(a, integer(1));
         auto *leading = builder.CreateZExtOrTrunc(
@@ -2783,24 +2891,26 @@ private:
             0);
         return builder.CreateInsertValue(aggregate, power, 1);
       }
-      if (method == "div_ceil" || method == "next_multiple_of" ||
-          method == "checked_next_multiple_of" || method == "is_multiple_of") {
+      if (methodCode == MachineMethod::DivCeil ||
+          methodCode == MachineMethod::NextMultipleOf ||
+          methodCode == MachineMethod::CheckedNextMultipleOf ||
+          methodCode == MachineMethod::IsMultipleOf) {
         auto *zero = builder.CreateICmpEQ(b, integer(0));
         auto *safeDivisor = builder.CreateSelect(zero, integer(1), b);
         auto *quotient = builder.CreateUDiv(a, safeDivisor);
         auto *remainder = builder.CreateURem(a, safeDivisor);
-        if (method == "div_ceil") {
+        if (methodCode == MachineMethod::DivCeil) {
           panicIf(zero);
           auto *hasRemainder = builder.CreateICmpNE(remainder, integer(0));
           return builder.CreateAdd(
               quotient, builder.CreateZExt(hasRemainder, a->getType()));
         }
-        if (method == "is_multiple_of")
+        if (methodCode == MachineMethod::IsMultipleOf)
           return builder.CreateOr(
               builder.CreateAnd(zero, builder.CreateICmpEQ(a, integer(0))),
               builder.CreateAnd(builder.CreateNot(zero),
                                 builder.CreateICmpEQ(remainder, integer(0))));
-        bool optional = method == "checked_next_multiple_of";
+        bool optional = methodCode == MachineMethod::CheckedNextMultipleOf;
         auto *hasRemainder = builder.CreateICmpNE(remainder, integer(0));
         auto *increment = builder.CreateSelect(
             hasRemainder, builder.CreateSub(b, remainder), integer(0));
@@ -2821,7 +2931,7 @@ private:
             0);
         return builder.CreateInsertValue(aggregate, rounded, 1);
       }
-      if (method == "midpoint") {
+      if (methodCode == MachineMethod::Midpoint) {
         auto *wideA = sign
                           ? builder.CreateSExt(a, builder.getIntNTy(width + 1))
                           : builder.CreateZExt(a, builder.getIntNTy(width + 1));
@@ -2834,14 +2944,17 @@ private:
             sign ? builder.CreateSDiv(sum, two) : builder.CreateUDiv(sum, two);
         return builder.CreateTrunc(half, a->getType());
       }
-      if (method == "is_positive" || method == "is_negative") {
+      if (methodCode == MachineMethod::IsPositive ||
+          methodCode == MachineMethod::IsNegative) {
         if (!sign)
-          return method == "is_positive" ? builder.CreateICmpNE(a, integer(0))
-                                         : builder.getFalse();
-        return method == "is_positive" ? builder.CreateICmpSGT(a, integer(0))
-                                       : builder.CreateICmpSLT(a, integer(0));
+          return methodCode == MachineMethod::IsPositive
+                     ? builder.CreateICmpNE(a, integer(0))
+                     : builder.getFalse();
+        return methodCode == MachineMethod::IsPositive
+                   ? builder.CreateICmpSGT(a, integer(0))
+                   : builder.CreateICmpSLT(a, integer(0));
       }
-      if (method == "signum") {
+      if (methodCode == MachineMethod::Signum) {
         auto *nonzero = builder.CreateICmpNE(a, integer(0));
         if (!sign)
           return builder.CreateZExt(nonzero, a->getType());
@@ -2851,7 +2964,7 @@ private:
         return builder.CreateSelect(negative, minusOne,
                                     builder.CreateZExt(nonzero, a->getType()));
       }
-      if (method == "is_power_of_two") {
+      if (methodCode == MachineMethod::IsPowerOfTwo) {
         auto *nonzero = builder.CreateICmpNE(a, integer(0));
         auto *positive = sign ? builder.CreateICmpSGT(a, integer(0)) : nonzero;
         auto *previous = builder.CreateSub(a, integer(1));
@@ -2859,24 +2972,27 @@ private:
             positive,
             builder.CreateICmpEQ(builder.CreateAnd(a, previous), integer(0)));
       }
-      if (method == "unsigned_abs") {
+      if (methodCode == MachineMethod::UnsignedAbs) {
         auto *negative = builder.CreateICmpSLT(a, integer(0));
         return builder.CreateSelect(negative, builder.CreateNeg(a), a);
       }
-      if (method == "abs_diff") {
+      if (methodCode == MachineMethod::AbsDiff) {
         auto *less =
             sign ? builder.CreateICmpSLT(a, b) : builder.CreateICmpULT(a, b);
         return builder.CreateSelect(less, builder.CreateSub(b, a),
                                     builder.CreateSub(a, b));
       }
-      if (method == "pow" || method == "checked_pow" ||
-          method == "wrapping_pow" || method == "overflowing_pow" ||
-          method == "saturating_pow" || method == "strict_pow") {
-        bool optional = method == "checked_pow";
-        bool overflowing = method == "overflowing_pow";
-        bool saturating = method == "saturating_pow";
-        bool wrapping = method == "wrapping_pow";
-        bool strict = method == "strict_pow";
+      if (methodCode == MachineMethod::Pow ||
+          methodCode == MachineMethod::CheckedPow ||
+          methodCode == MachineMethod::WrappingPow ||
+          methodCode == MachineMethod::OverflowingPow ||
+          methodCode == MachineMethod::SaturatingPow ||
+          methodCode == MachineMethod::StrictPow) {
+        bool optional = methodCode == MachineMethod::CheckedPow;
+        bool overflowing = methodCode == MachineMethod::OverflowingPow;
+        bool saturating = methodCode == MachineMethod::SaturatingPow;
+        bool wrapping = methodCode == MachineMethod::WrappingPow;
+        bool strict = methodCode == MachineMethod::StrictPow;
         auto *one = integer(1);
         auto *minimum = llvm::ConstantInt::get(
             context, sign ? llvm::APInt::getSignedMinValue(width)
@@ -2978,6 +3094,7 @@ private:
                            : saturating  ? 11
                            : wrapping    ? 9
                                          : 0);
+      methodCode = machineMethod(method);
       llvm::Value *value = nullptr, *overflow = nullptr;
       auto *minimum = llvm::ConstantInt::get(
           context, sign ? llvm::APInt::getSignedMinValue(width)
@@ -2985,19 +3102,24 @@ private:
       auto *maximum = llvm::ConstantInt::get(
           context, sign ? llvm::APInt::getSignedMaxValue(width)
                         : llvm::APInt::getAllOnes(width));
-      if (method == "shl" || method == "shr") {
+      if (methodCode == MachineMethod::Shl ||
+          methodCode == MachineMethod::Shr) {
         overflow = builder.CreateICmpUGE(b, builder.getInt32(width));
         auto *count = builder.CreateAnd(b, builder.getInt32(width - 1));
         count = builder.CreateZExtOrTrunc(count, a->getType());
-        value = method == "shl" ? builder.CreateShl(a, count)
-                : sign          ? builder.CreateAShr(a, count)
-                                : builder.CreateLShr(a, count);
+        value = methodCode == MachineMethod::Shl ? builder.CreateShl(a, count)
+                : sign                           ? builder.CreateAShr(a, count)
+                                                 : builder.CreateLShr(a, count);
         if (strict)
           panicIf(overflow);
-      } else if (method == "div" || method == "rem" || method == "div_euclid" ||
-                 method == "rem_euclid") {
-        bool euclidean = method == "div_euclid" || method == "rem_euclid";
-        bool remainder = method == "rem" || method == "rem_euclid";
+      } else if (methodCode == MachineMethod::Div ||
+                 methodCode == MachineMethod::Rem ||
+                 methodCode == MachineMethod::DivEuclid ||
+                 methodCode == MachineMethod::RemEuclid) {
+        bool euclidean = methodCode == MachineMethod::DivEuclid ||
+                         methodCode == MachineMethod::RemEuclid;
+        bool remainder = methodCode == MachineMethod::Rem ||
+                         methodCode == MachineMethod::RemEuclid;
         auto *zero = builder.CreateICmpEQ(b, integer(0));
         auto *negativeOne =
             llvm::ConstantInt::get(context, llvm::APInt::getAllOnes(width));
@@ -3037,11 +3159,12 @@ private:
         if (strict ||
             (!optional && !overflowing && !saturating && !wrapping && checked))
           panicIf(overflow);
-      } else if (method == "neg" || method == "abs") {
+      } else if (methodCode == MachineMethod::Neg ||
+                 methodCode == MachineMethod::Abs) {
         auto *negated = builder.CreateNeg(a);
         overflow = sign ? builder.CreateICmpEQ(a, minimum)
                         : builder.CreateICmpNE(a, integer(0));
-        value = method == "abs"
+        value = methodCode == MachineMethod::Abs
                     ? builder.CreateSelect(builder.CreateICmpSLT(a, integer(0)),
                                            negated, a)
                     : negated;
@@ -3052,21 +3175,23 @@ private:
             (!optional && !overflowing && !saturating && !wrapping && checked))
           panicIf(overflow);
       } else {
-        auto intrinsic =
-            method == "add"   ? (sign ? llvm::Intrinsic::sadd_with_overflow
-                                      : llvm::Intrinsic::uadd_with_overflow)
-            : method == "sub" ? (sign ? llvm::Intrinsic::ssub_with_overflow
-                                      : llvm::Intrinsic::usub_with_overflow)
-                              : (sign ? llvm::Intrinsic::smul_with_overflow
-                                      : llvm::Intrinsic::umul_with_overflow);
+        auto intrinsic = methodCode == MachineMethod::Add
+                             ? (sign ? llvm::Intrinsic::sadd_with_overflow
+                                     : llvm::Intrinsic::uadd_with_overflow)
+                         : methodCode == MachineMethod::Sub
+                             ? (sign ? llvm::Intrinsic::ssub_with_overflow
+                                     : llvm::Intrinsic::usub_with_overflow)
+                             : (sign ? llvm::Intrinsic::smul_with_overflow
+                                     : llvm::Intrinsic::umul_with_overflow);
         auto *pair = invoke(intrinsic, {a, b});
         value = builder.CreateExtractValue(pair, 0);
         overflow = builder.CreateExtractValue(pair, 1);
         if (saturating) {
-          llvm::Value *limit = method == "sub" ? integer(0) : maximum;
+          llvm::Value *limit =
+              methodCode == MachineMethod::Sub ? integer(0) : maximum;
           if (sign) {
             auto *negative = builder.CreateICmpSLT(a, integer(0));
-            if (method == "mul")
+            if (methodCode == MachineMethod::Mul)
               negative = builder.CreateXor(
                   negative, builder.CreateICmpSLT(b, integer(0)));
             limit = builder.CreateSelect(negative, minimum, maximum);
@@ -3092,19 +3217,29 @@ private:
       }
       return value;
     }
-    if (operation == "ptr.null" || operation == "ptr.null_mut")
+    if (operationCode ==
+            MachineOperation{MachineFamily::Ptr, MachineMethod::Null} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Ptr, MachineMethod::NullMut})
       return llvm::ConstantPointerNull::get(builder.getPtrTy());
-    if (operation == "ptr.without_provenance" ||
-        operation == "ptr.with_exposed_provenance")
+    if (operationCode == MachineOperation{MachineFamily::Ptr,
+                                          MachineMethod::WithoutProvenance} ||
+        operationCode == MachineOperation{MachineFamily::Ptr,
+                                          MachineMethod::WithExposedProvenance})
       return builder.CreateIntToPtr(arguments[0], builder.getPtrTy());
-    if (operation == "ptr.from_ref" || operation == "ptr.from_mut")
+    if (operationCode ==
+            MachineOperation{MachineFamily::Ptr, MachineMethod::FromRef} ||
+        operationCode ==
+            MachineOperation{MachineFamily::Ptr, MachineMethod::FromMut})
       return arguments[0];
     auto *handle = arguments[0];
     auto *data = handle->getType()->isStructTy()
                      ? builder.CreateExtractValue(handle, 0)
                      : handle;
     auto method = operation.substr(4);
-    if (method == "as_array" || method == "as_mut_array") {
+    auto methodCode = operationCode.method;
+    if (methodCode == MachineMethod::AsArray ||
+        methodCode == MachineMethod::AsMutArray) {
       auto pointer = instruction.typeArguments[0];
       auto array = program.types->pointer(pointer).payload;
       auto *count = builder.CreateExtractValue(handle, 1);
@@ -3117,37 +3252,42 @@ private:
           result, builder.CreateZExt(matches, builder.getInt32Ty()), 0);
       return builder.CreateInsertValue(result, data, 1);
     }
-    if (method == "addr" || method == "expose_provenance")
+    if (methodCode == MachineMethod::Addr ||
+        methodCode == MachineMethod::ExposeProvenance)
       return builder.CreatePtrToInt(data, builder.getInt64Ty());
-    if (method == "is_null")
+    if (methodCode == MachineMethod::IsNull)
       return builder.CreateIsNull(data);
-    if (method == "cast" || method == "cast_mut" || method == "cast_const")
+    if (methodCode == MachineMethod::Cast ||
+        methodCode == MachineMethod::CastMut ||
+        methodCode == MachineMethod::CastConst)
       return type(instruction.result.type)->isPointerTy() ? data : handle;
     auto payload = program.types->pointer(instruction.operands[0].type).payload;
-    if (method == "copy" || method == "copy_nonoverlapping") {
+    if (methodCode == MachineMethod::Copy ||
+        methodCode == MachineMethod::CopyNonoverlapping) {
       auto *size = builder.CreateMul(
           arguments[2], builder.getInt64(lowering.layout(payload).size));
       auto alignment = llvm::Align(lowering.alignment(payload));
-      if (method == "copy")
+      if (methodCode == MachineMethod::Copy)
         builder.CreateMemMove(arguments[1], alignment, data, alignment, size);
       else
         builder.CreateMemCpy(arguments[1], alignment, data, alignment, size);
       return unit();
     }
-    if (method == "write_bytes") {
+    if (methodCode == MachineMethod::WriteBytes) {
       auto *size = builder.CreateMul(
           arguments[2], builder.getInt64(lowering.layout(payload).size));
       builder.CreateMemSet(data, arguments[1], size,
                            llvm::Align(lowering.alignment(payload)));
       return unit();
     }
-    if (method == "replace") {
+    if (methodCode == MachineMethod::Replace) {
       auto alignment = llvm::Align(lowering.alignment(payload));
       auto *old = lowering.load(payload, data, alignment);
       lowering.store(payload, arguments[1], data, alignment);
       return old;
     }
-    if (method == "swap" || method == "swap_nonoverlapping") {
+    if (methodCode == MachineMethod::Swap ||
+        methodCode == MachineMethod::SwapNonoverlapping) {
       auto alignment = llvm::Align(lowering.alignment(payload));
       auto *temporary = lowering.temporary(payload);
       auto size = lowering.layout(payload).size;
@@ -3156,7 +3296,7 @@ private:
         builder.CreateMemMove(first, alignment, second, alignment, size);
         builder.CreateMemCpy(second, alignment, temporary, alignment, size);
       };
-      if (method == "swap") {
+      if (methodCode == MachineMethod::Swap) {
         swap(data, arguments[1]);
       } else {
         auto *function = builder.GetInsertBlock()->getParent();
@@ -3183,8 +3323,10 @@ private:
       }
       return unit();
     }
-    if (method == "offset_from" || method == "offset_from_unsigned" ||
-        method == "byte_offset_from" || method == "byte_offset_from_unsigned") {
+    if (methodCode == MachineMethod::OffsetFrom ||
+        methodCode == MachineMethod::OffsetFromUnsigned ||
+        methodCode == MachineMethod::ByteOffsetFrom ||
+        methodCode == MachineMethod::ByteOffsetFromUnsigned) {
       auto *other = arguments[1]->getType()->isStructTy()
                         ? builder.CreateExtractValue(arguments[1], 0)
                         : arguments[1];
@@ -3205,25 +3347,25 @@ private:
         lowering.indirect(instruction.result.type))
       return lowering.load(
           instruction.result.type, data,
-          method == "read_unaligned"
+          methodCode == MachineMethod::ReadUnaligned
               ? llvm::Align(1)
               : llvm::Align(lowering.alignment(instruction.result.type)),
-          method == "read_volatile");
+          methodCode == MachineMethod::ReadVolatile);
     if (method.starts_with("write") &&
         lowering.indirect(instruction.operands[1].type)) {
       lowering.store(
           instruction.operands[1].type, arguments[1], data,
-          method == "write_unaligned"
+          methodCode == MachineMethod::WriteUnaligned
               ? llvm::Align(1)
               : llvm::Align(lowering.alignment(instruction.operands[1].type)),
-          method == "write_volatile");
+          methodCode == MachineMethod::WriteVolatile);
       return unit();
     }
     if (method.starts_with("read")) {
       auto *load = builder.CreateLoad(
           lowering.storageType(instruction.result.type), data);
-      load->setVolatile(method == "read_volatile");
-      if (method == "read_unaligned")
+      load->setVolatile(methodCode == MachineMethod::ReadVolatile);
+      if (methodCode == MachineMethod::ReadUnaligned)
         load->setAlignment(llvm::Align(1));
       return load->getType() == type(instruction.result.type)
                  ? load
@@ -3235,8 +3377,8 @@ private:
       if (value->getType() != physical)
         value = builder.CreateZExt(value, physical);
       auto *store = builder.CreateStore(value, data);
-      store->setVolatile(method == "write_volatile");
-      if (method == "write_unaligned")
+      store->setVolatile(methodCode == MachineMethod::WriteVolatile);
+      if (methodCode == MachineMethod::WriteUnaligned)
         store->setAlignment(llvm::Align(1));
       return unit();
     }
@@ -3248,17 +3390,18 @@ private:
     bool bytes = method.starts_with("byte_");
     if (bytes)
       method.remove_prefix(5);
-    if (method == "with_addr")
+    methodCode = machineMethod(method);
+    if (methodCode == MachineMethod::WithAddr)
       offset = builder.CreateSub(
           offset, builder.CreatePtrToInt(data, builder.getInt64Ty()));
     else {
-      if (method == "sub")
+      if (methodCode == MachineMethod::Sub)
         offset = builder.CreateNeg(offset);
       if (!bytes)
         element = lowering.storageType(
             program.types->pointer(instruction.operands[0].type).payload);
     }
-    auto *result = wrapping || method == "with_addr"
+    auto *result = wrapping || methodCode == MachineMethod::WithAddr
                        ? builder.CreateGEP(element, data, offset)
                        : builder.CreateInBoundsGEP(element, data, offset);
     return handle->getType()->isStructTy()

@@ -153,6 +153,12 @@ arrays and target endianness; semantics owns method/type/variant resolution and
 typed static materialization. IR verification validates the carrier before LLVM
 lowering.
 
+Machine operation wire names remain strings. The types component owns exact
+family and method decoding; semantics, signature validation and LLVM lowering
+compare the decoded values rather than redispatching by string. Prefix
+normalization redecodes the remaining method, and unknown spellings remain
+unknown rather than aliasing a recognized operation.
+
 Integer constant methods reuse `types`' 128-bit magnitude arithmetic and native
 machine signatures; `consteval` owns aggregate results, target byte order and
 provenance-checked mutable writeback. Typed throws propagate as interpreter
@@ -160,6 +166,16 @@ control flow through calls and loops. Capture handles only typed errors, never
 evaluation faults; checked semantic facts distinguish Outcome propagation.
 Nominal error construction and patterns select the active variant's fields,
 including named payloads and empty variants in payload-bearing enums.
+
+Constant aggregate elements are shared value snapshots. Mutable access detaches
+the affected aggregate before exposing an element; nested writes detach each
+aggregate on the projection path. Mutable references and iterators are scoped to
+one write and must not survive copying a containing value. Places retain a root
+and indices, read through const elements, and reacquire a writable projection
+after intervening evaluation.
+Successful complete coercions retain the immutable aggregate shape identity;
+mutable element access invalidates that proof. Scalar storage and provenance
+remain value-owned, and logical copy-cost limits do not depend on physical sharing.
 
 Constant pointer operations use target layouts and allocation-relative offsets,
 not host addresses. Raw byte transfers retain initialization and pointer
@@ -866,6 +882,12 @@ variant origins; a unique implementation target supplies its missing element
 types through the inference graph. Shape matching keeps known types rigid,
 and the complete target must satisfy the normal interface obligation. Owned
 and borrowed endpoint tuples remain ambiguous when neither carries a payload.
+Receiver searches, operator probes, constructor candidates and generic argument
+inference share immutable assumption snapshots only within their lexical
+environment. Span-taking solvers borrow a snapshot that outlives them and cannot
+be copied or moved; owning solvers retain their own storage. Caller and callee
+snapshots remain separate, while every solver keeps independent mutable region
+contexts, proof budgets and normalization state.
 `Within<region s>` bounds (used by scoped spawn) are enforced by the region
 pass (`withinBounds`): every region captured by the argument must outlive `s`,
 and closures checked against a callable bound receive a higher-ranked binder.

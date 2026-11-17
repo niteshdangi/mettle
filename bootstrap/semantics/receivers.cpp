@@ -96,7 +96,15 @@ static bool builtinPinMethod(std::string_view name) {
 std::optional<std::size_t> Checker::receiverCandidate(
     Type receiver, ParameterMode mode, std::string_view name, const Node &call,
     const std::function<const std::vector<Type> *()> &arguments,
-    bool viewExtension) {
+    bool viewExtension,
+    std::optional<std::vector<interfaces::Obligation>> *cachedAssumptions) {
+  std::optional<std::vector<interfaces::Obligation>> localAssumptions;
+  auto &assumptions = cachedAssumptions ? *cachedAssumptions : localAssumptions;
+  auto givens = [&]() {
+    if (!assumptions)
+      assumptions = interfaceAssumptions();
+    return std::span<const interfaces::Obligation>(*assumptions);
+  };
   std::vector<std::size_t> inherent;
   std::map<std::size_t, std::vector<Type>> inherentArguments;
   // Compiler-generated iteration calls name their protocol interface in
@@ -109,8 +117,8 @@ std::optional<std::size_t> Checker::receiverCandidate(
   // its builtin methods precede both.
   if (pinned && !builtinPinMethod(name) && !name.starts_with("project_")) {
     pinAsOwner = true;
-    auto own =
-        receiverCandidate(receiver, mode, name, call, arguments, viewExtension);
+    auto own = receiverCandidate(receiver, mode, name, call, arguments,
+                                 viewExtension, &assumptions);
     pinAsOwner = false;
     if (own)
       return own;
@@ -140,8 +148,8 @@ std::optional<std::size_t> Checker::receiverCandidate(
   std::optional<interfaces::Solver> solver;
   auto query = [&]() -> interfaces::Solver & {
     if (!solver) {
-      solver.emplace(*checked.types, *checked.interfaceData, diagnostics,
-                     interfaceAssumptions(), regionEnvironment());
+      solver.emplace(givens(), *checked.types, *checked.interfaceData,
+                     diagnostics, regionEnvironment());
       solver->setCallableProof([&](Type parameter, Type actual,
                                    const std::vector<TypeBinding> &bindings,
                                    std::span<const RegionBinding>, Span span) {
@@ -250,7 +258,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
     for (const auto &bound : query().projectionBounds(self, call.span))
       if (bound.property == interfaces::Property::Interface)
         consider(bound.interfaceType);
-    for (const auto &bound : interfaceAssumptions())
+    for (const auto &bound : givens())
       if (bound.subject == self &&
           bound.property == interfaces::Property::Interface)
         consider(bound.interfaceType);
@@ -403,7 +411,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
               bool fit =
                   argumentsFit(static_cast<std::size_t>(method->function),
                                bound, self, *types, call.span, candidateRegions,
-                               implementation.parameters);
+                               assumptions, implementation.parameters);
               if (!fit)
                 continue;
             }
@@ -496,7 +504,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
       for (auto candidate : candidates) {
         auto candidateRegions = regionEnvironment();
         if (argumentsFit(std::get<0>(candidate), std::get<1>(candidate), self,
-                         *types, call.span, candidateRegions))
+                         *types, call.span, candidateRegions, assumptions))
           fitting.push_back(
               {std::move(candidate), std::move(candidateRegions)});
       }
@@ -519,8 +527,9 @@ std::optional<std::size_t> Checker::receiverCandidate(
   facts(call).interfaceMethod = method;
   return function;
 }
-std::optional<ReceiverStep>
-Checker::dereferenceStep(Type source, bool exclusive, Span span) {
+std::optional<ReceiverStep> Checker::dereferenceStep(
+    Type source, bool exclusive, Span span,
+    std::optional<std::vector<interfaces::Obligation>> *cachedAssumptions) {
   auto protocol = interfaceNames.find(exclusive ? "core::ops::DerefMut"
                                                 : "core::ops::Deref");
   if (protocol == interfaceNames.end())
@@ -529,8 +538,13 @@ Checker::dereferenceStep(Type source, bool exclusive, Span span) {
   ErasedType descriptor{definition.name,
                         static_cast<std::uint32_t>(protocol->second)};
   auto bound = checked.types->erasedType(std::move(descriptor));
-  interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
-                            interfaceAssumptions(), regionEnvironment());
+  std::optional<std::vector<interfaces::Obligation>> localAssumptions;
+  auto &assumptions = cachedAssumptions ? *cachedAssumptions : localAssumptions;
+  if (!assumptions)
+    assumptions = interfaceAssumptions();
+  interfaces::Solver solver(
+      std::span<const interfaces::Obligation>(*assumptions), *checked.types,
+      *checked.interfaceData, diagnostics, regionEnvironment());
   if (!solver.prove({source, bound}, span, false))
     return std::nullopt;
   auto name = exclusive ? "deref_mut" : "deref";
@@ -624,10 +638,12 @@ bool Checker::mutableReceiverPlan(ReceiverPlan &plan, Span span, bool report) {
   }
   return true;
 }
-bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
-                           std::span<const Type> arguments, Span span,
-                           RegionEnvironment &candidateRegions,
-                           std::span<const Type> inferredParameters) {
+bool Checker::argumentsFit(
+    std::size_t index, Type &interfaceType, Type self,
+    std::span<const Type> arguments, Span span,
+    RegionEnvironment &candidateRegions,
+    std::optional<std::vector<interfaces::Obligation>> &callerAssumptions,
+    std::span<const Type> inferredParameters) {
   auto &function = module.functions[index];
   if (imported(function.span))
     functionEnvironment(function);
@@ -642,6 +658,7 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
   auto caller = genericEnvironment;
   genericEnvironment = const_cast<GenericEnvironment *>(&environment);
   annotationRegionScopes.push_back(functionRegions(function));
+  std::optional<std::vector<interfaces::Obligation>> matchingAssumptions;
   bool fits = true;
   for (std::size_t i = 0; i < arguments.size() && fits; ++i) {
     if (i + 1 >= function.parameters.size())
@@ -663,9 +680,11 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
         checked.types->product(actual).kind == AggregateKind::Array)
       actual = checked.types->sliceType(
           checked.types->product(actual).components[0]);
-    interfaces::Solver matching(*checked.types, *checked.interfaceData,
-                                diagnostics, interfaceAssumptions(),
-                                candidateRegions);
+    if (!matchingAssumptions)
+      matchingAssumptions = interfaceAssumptions();
+    interfaces::Solver matching(
+        std::span<const interfaces::Obligation>(*matchingAssumptions),
+        *checked.types, *checked.interfaceData, diagnostics, candidateRegions);
     auto matched = matching.match(pattern, actual, false, &candidateRegions);
     if (!matched) {
       fits = false;
@@ -706,9 +725,17 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
   }
   annotationRegionScopes.pop_back();
   genericEnvironment = caller;
-  interfaces::Solver projectionProof(*checked.types, *checked.interfaceData,
-                                     diagnostics, interfaceAssumptions(),
-                                     candidateRegions);
+  if (!obligations.empty() && !callerAssumptions)
+    callerAssumptions = interfaceAssumptions();
+  std::optional<interfaces::Solver> projectionProof;
+  auto projectionQuery = [&]() -> interfaces::Solver & {
+    if (!projectionProof)
+      projectionProof.emplace(
+          std::span<const interfaces::Obligation>(*callerAssumptions),
+          *checked.types, *checked.interfaceData, diagnostics,
+          candidateRegions);
+    return *projectionProof;
+  };
   for (auto [subject, required] : obligations) {
     if (!checked.types->isErased(required))
       continue;
@@ -733,7 +760,7 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
           associatedType.valueType, associatedType.copyRequested,
           associatedType.sized, associatedType.regionArguments,
           associatedType.thin);
-      auto actual = projectionProof.normalize(projection, {}, span);
+      auto actual = projectionQuery().normalize(projection, {}, span);
       if (actual == projection || actual == Type::Unknown ||
           checked.types->isSymbolic(actual))
         continue;
@@ -742,8 +769,8 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
         fits = false;
         break;
       }
-      auto matched = projectionProof.match(binding.argument, actual, false,
-                                           &candidateRegions);
+      auto matched = projectionQuery().match(binding.argument, actual, false,
+                                             &candidateRegions);
       if (!matched || !matched->empty()) {
         fits = false;
         break;
@@ -759,14 +786,18 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
       checked.types->substitute(interfaceType, bindings), regionBindings);
   for (auto &[subject, required] : obligations)
     required = checked.types->substituteRegions(required, regionBindings);
-  interfaces::Solver proof(*checked.types, *checked.interfaceData, diagnostics,
-                           interfaceAssumptions(), candidateRegions);
+  if (!fits || obligations.empty())
+    return fits;
+  interfaces::Solver proof(
+      std::span<const interfaces::Obligation>(*callerAssumptions),
+      *checked.types, *checked.interfaceData, diagnostics, candidateRegions);
   for (auto [subject, required] : obligations)
     fits = fits && proof.prove({subject, required}, span, false);
   return fits;
 }
 std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
                                                    bool reachable) {
+  std::optional<std::vector<interfaces::Obligation>> assumptions;
   auto native = source;
   while (checked.types->isView(native))
     native = checked.types->view(native).payload;
@@ -841,7 +872,7 @@ std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
            {ParameterMode::Take, ParameterMode::Read, ParameterMode::Mut}) {
         auto before = diagnostics.items.size();
         auto own = receiverCandidate(plan.target, mode, call.children[0]->text,
-                                     call, arguments, true);
+                                     call, arguments, true, &assumptions);
         if (own) {
           selectedPlan(plan, mode);
           return own;
@@ -858,8 +889,9 @@ std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
       const auto viewMode = checked.types->view(plan.target).mode;
       for (auto mode : {ParameterMode::Take, viewMode}) {
         auto before = diagnostics.items.size();
-        auto selected = receiverCandidate(
-            referent.target, mode, call.children[0]->text, call, arguments);
+        auto selected =
+            receiverCandidate(referent.target, mode, call.children[0]->text,
+                              call, arguments, false, &assumptions);
         // A consuming interface method of the referent must not preempt the
         // view's own implementation (`mut I`.fold); only an inherent one does.
         if (selected && mode == ParameterMode::Take &&
@@ -879,8 +911,9 @@ std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
     for (auto mode :
          {ParameterMode::Take, ParameterMode::Read, ParameterMode::Mut}) {
       auto before = diagnostics.items.size();
-      auto selected = receiverCandidate(
-          plan.target, mode, call.children[0]->text, call, arguments);
+      auto selected =
+          receiverCandidate(plan.target, mode, call.children[0]->text, call,
+                            arguments, false, &assumptions);
       if (selected) {
         selectedPlan(plan, mode);
         return selected;
@@ -893,8 +926,9 @@ std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
       for (auto mode :
            {ParameterMode::Take, ParameterMode::Read, ParameterMode::Mut}) {
         auto before = diagnostics.items.size();
-        auto selected = receiverCandidate(
-            borrowed, mode, call.children[0]->text, call, arguments, true);
+        auto selected =
+            receiverCandidate(borrowed, mode, call.children[0]->text, call,
+                              arguments, true, &assumptions);
         if (selected) {
           auto converted = plan;
           ReceiverStep step;
@@ -934,7 +968,8 @@ std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
                        ? checked.types->constant(Type::I32, array.fields.size())
                        : array.arrayCount;
     } else {
-      auto projection = dereferenceStep(plan.target, false, call.span);
+      auto projection =
+          dereferenceStep(plan.target, false, call.span, &assumptions);
       if (!projection)
         return std::nullopt;
       step = std::move(*projection);
@@ -948,6 +983,7 @@ std::optional<std::size_t> Checker::receiverMethod(Type source, Node &call,
 std::optional<ReceiverPlan>
 Checker::receiverConversion(Type source, Type target, ParameterMode mode,
                             Span span, bool report) {
+  std::optional<std::vector<interfaces::Obligation>> assumptions;
   ReceiverPlan plan{source, source, {}};
   std::set<Type> visited;
   for (unsigned depth = 0; depth < limits::typeDepth; ++depth) {
@@ -964,9 +1000,11 @@ Checker::receiverConversion(Type source, Type target, ParameterMode mode,
     if (!borrowView && checked.types->isErased(target) &&
         (checked.types->isErased(plan.target) ||
          checked.types->isSized(plan.target))) {
-      interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                                diagnostics, interfaceAssumptions(),
-                                regionEnvironment());
+      if (!assumptions)
+        assumptions = interfaceAssumptions();
+      interfaces::Solver solver(
+          std::span<const interfaces::Obligation>(*assumptions), *checked.types,
+          *checked.interfaceData, diagnostics, regionEnvironment());
       if (solver.prove({plan.target, target}, span, false)) {
         ReceiverStep step;
         step.kind = ReceiverStep::Kind::Erase;
@@ -1012,7 +1050,7 @@ Checker::receiverConversion(Type source, Type target, ParameterMode mode,
       step.source = plan.target;
       step.target = checked.types->view(plan.target).payload;
     } else {
-      auto projection = dereferenceStep(plan.target, false, span);
+      auto projection = dereferenceStep(plan.target, false, span, &assumptions);
       if (!projection)
         return std::nullopt;
       step = std::move(*projection);

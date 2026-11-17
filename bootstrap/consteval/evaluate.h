@@ -15,9 +15,80 @@
 // the target's integer widths: no host integer, clock, environment or address
 // is observable, and every fault is a spanned diagnostic.
 namespace mettle::evaluation {
+struct Shape {
+  struct Aggregate;
+  enum class Kind {
+    Scalar,
+    Unit,
+    Tuple,
+    Array,
+    Product,
+    Variant,
+    Reference,
+    Pointer
+  };
+  Kind kind = Kind::Scalar;
+  Type type = Type::Unknown;
+  std::shared_ptr<const Aggregate> aggregate{};
+  std::uint64_t count = 0;
+  bool exclusive = false;
+  bool uninitializedStorage = false;
+  std::span<const Shape> elements() const;
+  std::span<const std::string> names() const;
+  std::span<const std::vector<std::size_t>> variants() const;
+};
 // A compile-time value. Integers carry 128-bit magnitudes; `type` is Unknown
 // for an unsuffixed literal that has not met a typed operand yet.
 struct Value {
+  class Elements {
+  public:
+    std::shared_ptr<const Shape::Aggregate> checkedShape;
+    Elements() = default;
+    Elements(std::initializer_list<Value> values)
+        : values(std::make_shared<std::vector<Value>>(values)) {}
+    std::size_t size() const { return values ? values->size() : 0; }
+    bool empty() const { return size() == 0; }
+    const Value &operator[](std::size_t index) const { return read()[index]; }
+    Value &operator[](std::size_t index) { return edit()[index]; }
+    const Value &front() const { return read().front(); }
+    Value &front() { return edit().front(); }
+    const Value &back() const { return read().back(); }
+    Value &back() { return edit().back(); }
+    const Value *data() const { return read().data(); }
+    Value *data() { return edit().data(); }
+    auto begin() const { return read().begin(); }
+    auto end() const { return read().end(); }
+    auto begin() { return edit().begin(); }
+    auto end() { return edit().end(); }
+    void push_back(Value value) { edit().push_back(std::move(value)); }
+    void reserve(std::size_t size) { edit().reserve(size); }
+    void resize(std::size_t size) { edit().resize(size); }
+    void clear() {
+      values.reset();
+      checkedShape.reset();
+    }
+    void assign(std::size_t count, const Value &value) {
+      edit().assign(count, value);
+    }
+    template <class Iterator> void assign(Iterator first, Iterator last) {
+      edit().assign(first, last);
+    }
+
+  private:
+    std::shared_ptr<std::vector<Value>> values;
+    const std::vector<Value> &read() const {
+      static const std::vector<Value> empty;
+      return values ? *values : empty;
+    }
+    std::vector<Value> &edit() {
+      checkedShape.reset();
+      if (!values)
+        values = std::make_shared<std::vector<Value>>();
+      else if (!values.unique())
+        values = std::make_shared<std::vector<Value>>(*values);
+      return *values;
+    }
+  };
   struct Byte {
     std::optional<std::uint8_t> value{};
     std::shared_ptr<const Value> provenance{};
@@ -43,7 +114,7 @@ struct Value {
   Kind kind = Kind::Unit;
   Type type = Type::Unit;
   NumericLiteral number{};
-  std::vector<Value> elements{};
+  Elements elements{};
   std::vector<Byte> bytes{};
   std::weak_ptr<Value> storage{};
   Type storageType = Type::Unknown;
@@ -52,29 +123,6 @@ struct Value {
   std::string identity{};
   bool exclusive = false, writable = false, addressOnly = false;
   bool immutableLiteral = false;
-};
-
-struct Shape {
-  struct Aggregate;
-  enum class Kind {
-    Scalar,
-    Unit,
-    Tuple,
-    Array,
-    Product,
-    Variant,
-    Reference,
-    Pointer
-  };
-  Kind kind = Kind::Scalar;
-  Type type = Type::Unknown;
-  std::shared_ptr<const Aggregate> aggregate{};
-  std::uint64_t count = 0;
-  bool exclusive = false;
-  bool uninitializedStorage = false;
-  std::span<const Shape> elements() const;
-  std::span<const std::string> names() const;
-  std::span<const std::vector<std::size_t>> variants() const;
 };
 
 struct Shape::Aggregate {

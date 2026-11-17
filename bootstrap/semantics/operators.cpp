@@ -89,6 +89,12 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
           "native operator interface has no required method");
     return inference.fresh();
   }
+  std::optional<std::vector<interfaces::Obligation>> assumptions;
+  auto givens = [&] {
+    if (!assumptions)
+      assumptions = interfaceAssumptions();
+    return std::span<const interfaces::Obligation>(*assumptions);
+  };
   auto inferIndex = [&] {
     // An unsuffixed integer index takes the integer type of the receiver's
     // only integer Index implementation (`list[0]` indexes by usize).
@@ -103,8 +109,8 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
         ErasedType probe{definition.name,
                          static_cast<std::uint32_t>(interface->second)};
         probe.arguments.push_back(candidate);
-        interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                                  diagnostics, interfaceAssumptions(),
+        interfaces::Solver solver(givens(), *checked.types,
+                                  *checked.interfaceData, diagnostics,
                                   regionEnvironment());
         if (!solver.prove({self, checked.types->erasedType(std::move(probe))},
                           node.span, false))
@@ -166,8 +172,8 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
     }
     std::set<Type> visited;
     for (unsigned depth = 0; depth < limits::typeDepth; ++depth) {
-      interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                                diagnostics, interfaceAssumptions(),
+      interfaces::Solver solver(givens(), *checked.types,
+                                *checked.interfaceData, diagnostics,
                                 regionEnvironment());
       if (solver.prove({self, bound}, node.span, false)) {
         proven = true;

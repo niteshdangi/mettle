@@ -812,6 +812,16 @@ private:
         return false;
       value = std::move(*loaded);
     }
+    bool aggregate =
+        (want.kind == Shape::Kind::Tuple && value.kind == Value::Kind::Tuple) ||
+        (want.kind == Shape::Kind::Array && value.kind == Value::Kind::Array) ||
+        (want.kind == Shape::Kind::Product &&
+         value.kind == Value::Kind::Product);
+    if (aggregate && value.type == want.type && want.aggregate &&
+        value.elements.checkedShape == want.aggregate &&
+        (want.kind != Shape::Kind::Array || want.count == UINT64_MAX ||
+         value.elements.size() == want.count))
+      return true;
     switch (want.kind) {
     case Shape::Kind::Unit:
       if (value.kind == Value::Kind::Unit)
@@ -860,6 +870,8 @@ private:
           if (!coerce(value.elements[i], want.elements()[i], span))
             return false;
         value.type = want.type;
+        if (complete(want))
+          value.elements.checkedShape = want.aggregate;
         return true;
       }
       break;
@@ -875,6 +887,8 @@ private:
           if (!coerce(element, want.elements().front(), span))
             return false;
         value.type = want.type;
+        if (complete(want))
+          value.elements.checkedShape = want.aggregate;
         return true;
       }
       break;
@@ -884,6 +898,8 @@ private:
         for (std::size_t i = 0; i < value.elements.size(); ++i)
           if (!coerce(value.elements[i], want.elements()[i], span))
             return false;
+        if (complete(want))
+          value.elements.checkedShape = want.aggregate;
         return true;
       }
       break;
@@ -922,11 +938,15 @@ private:
   }
   // Remaining unsuffixed integers are i32, as in checked code.
   bool defaultTypes(Value &value, Span span) {
+    if (value.elements.checkedShape)
+      return true;
     if (value.kind == Value::Kind::Floating)
       return realizeFloating(
           value, value.type == Type::Unknown ? Type::F64 : value.type, span);
     if (value.kind == Value::Kind::Integer && value.type == Type::Unknown)
       return coerce(value, scalarShape(Type::I32), span);
+    if (value.elements.empty())
+      return true;
     for (auto &element : value.elements)
       if (!defaultTypes(element, span))
         return false;
@@ -1120,7 +1140,8 @@ private:
       result = std::move(*expanded);
     return result;
   }
-  Value *locate(Value &root, Type type, std::uint64_t offset, Type target) {
+  template <class V>
+  V *locate(V &root, Type type, std::uint64_t offset, Type target) {
     if (offset == 0 && type == target)
       return &root;
     auto shape = host.typeShape(type);
@@ -1406,8 +1427,8 @@ private:
     auto root = rootOf(address);
     if (!root)
       return readObject(address, shape, span);
-    if (auto found =
-            locate(*root, address.storageType, address.offset, shape.type)) {
+    if (auto found = locate(std::as_const(*root), address.storageType,
+                            address.offset, shape.type)) {
       if (!raw && !initialized(*found, span))
         return std::nullopt;
       return *found;
@@ -1538,7 +1559,8 @@ private:
         return value;
       return std::nullopt;
     }
-    auto found = locate(*root, address.storageType, address.offset, shape.type);
+    auto found = locate(std::as_const(*root), address.storageType,
+                        address.offset, shape.type);
     if (!found || found->kind == Value::Kind::Uninitialized)
       return fail("constant", span,
                   "constant read requires an initialized value of its type");
@@ -1590,7 +1612,7 @@ private:
   }
 
   struct Place {
-    Value *value = nullptr;
+    const Value *value = nullptr;
     Value *rootValue = nullptr;
     std::vector<std::size_t> path;
     bool mutableBinding = false;
@@ -1629,19 +1651,33 @@ private:
     result.symbol = place.symbol;
     return result;
   }
-  bool refresh(Place &place, Span span) {
-    place.value = place.rootValue;
-    for (auto index : place.path) {
-      if ((place.value->kind != Value::Kind::Array &&
-           place.value->kind != Value::Kind::Tuple &&
-           place.value->kind != Value::Kind::Product) ||
-          index >= place.value->elements.size()) {
+  template <class V>
+  V *project(V *value, std::span<const std::size_t> path, Span span) {
+    for (auto index : path) {
+      if ((value->kind != Value::Kind::Array &&
+           value->kind != Value::Kind::Tuple &&
+           value->kind != Value::Kind::Product) ||
+          index >= value->elements.size()) {
         fail("constant", span,
              "constant place changed while evaluating its index");
-        return false;
+        return nullptr;
       }
-      place.value = &place.value->elements[index];
+      value = &value->elements[index];
     }
+    return value;
+  }
+  bool refresh(Place &place, Span span) {
+    place.value = project<const Value>(place.rootValue, place.path, span);
+    return place.value != nullptr;
+  }
+  Value *writable(const Place &place, Span span) {
+    return project(place.rootValue, place.path, span);
+  }
+  bool consume(const Place &place, Span span) {
+    auto source = writable(place, span);
+    if (!source)
+      return false;
+    source->kind = Value::Kind::Uninitialized;
     return true;
   }
   Place place(const Node &node) {
@@ -2268,7 +2304,10 @@ private:
         return std::nullopt;
       return unitValue();
     }
-    *target_.value = std::move(*value);
+    auto destination = writable(target_, node.span);
+    if (!destination)
+      return std::nullopt;
+    *destination = std::move(*value);
     return unitValue();
   }
 
@@ -2359,7 +2398,7 @@ private:
 
   Opt forExpression(const Node &node) {
     const Node &iterable = *node.children[0];
-    std::vector<Value> items;
+    Value::Elements items;
     Opt current, high;
     if (iterable.kind == Kind::Range && iterable.name.empty()) {
       auto low = eval(*iterable.children[0], nullptr);
@@ -3306,9 +3345,12 @@ private:
           } else if (where.address) {
             if (!writeObject(*where.address, *value, callee.span))
               return std::nullopt;
-          } else if (where.value && where.mutableBinding)
-            *where.value = std::move(*value);
-          else
+          } else if (where.value && where.mutableBinding) {
+            auto destination = writable(where, callee.span);
+            if (!destination)
+              return std::nullopt;
+            *destination = std::move(*value);
+          } else
             return fail("constant", callee.span,
                         "integer mutation requires a mutable place");
           return unitValue();
@@ -3339,11 +3381,12 @@ private:
       if (value &&
           (operation.name == "storage.into_inner" ||
            operation.name == "storage.assume_init") &&
-          receiverPlace.value)
-        receiverPlace.value->kind = Value::Kind::Uninitialized;
+          receiverPlace.value && !consume(receiverPlace, node.span))
+        return std::nullopt;
       if (value && operation.name == "storage.new" && !arguments.empty() &&
-          !host.copy(host.valueType(arguments.front())) && places.front().value)
-        places.front().value->kind = Value::Kind::Uninitialized;
+          !host.copy(host.valueType(arguments.front())) &&
+          places.front().value && !consume(places.front(), node.span))
+        return std::nullopt;
       return value;
     }
     auto found =
@@ -3425,13 +3468,14 @@ private:
                   "const function call depth exceeded the limit of " +
                       std::to_string(options.callDepth));
     std::vector<Opt> bound(function->parameters.size());
-    auto bind = [&](std::size_t slot, Value value, const Place &where,
-                    Span span) {
+    auto bind = [&](std::size_t slot, Value value, Place &where, Span span) {
       if (slot >= bound.size() || bound[slot])
         return fail("type", span, "invalid constant call argument"), false;
       const auto &parameter = function->parameters[slot];
       if (parameter.mode == ParameterMode::Read ||
           parameter.mode == ParameterMode::Mut) {
+        if (where.value && !refresh(where, span))
+          return false;
         const bool exclusive = parameter.mode == ParameterMode::Mut;
         if (value.kind != Value::Kind::Reference) {
           if (!where.value && !where.address) {
@@ -3466,8 +3510,9 @@ private:
       } else {
         if (!coerce(value, parameter.shape, span))
           return false;
-        if (parameter.mode == ParameterMode::Take && where.value)
-          where.value->kind = Value::Kind::Uninitialized;
+        if (parameter.mode == ParameterMode::Take && where.value &&
+            !consume(where, span))
+          return false;
       }
       bound[slot] = std::move(value);
       return true;
@@ -3899,8 +3944,11 @@ private:
       if (node.text == "take") {
         auto where = place(*node.children[0]);
         if (where.value) {
-          auto value = std::move(*where.value);
-          where.value->kind = Value::Kind::Uninitialized;
+          auto source = writable(where, node.span);
+          if (!source)
+            return std::nullopt;
+          auto value = std::move(*source);
+          source->kind = Value::Kind::Uninitialized;
           return value;
         }
         return eval(*node.children[0], want);
@@ -4260,6 +4308,9 @@ private:
                         std::to_string(options.stepBudget) + " steps");
       steps += *count * *cost;
       result.elements.assign(static_cast<std::size_t>(*count), *first);
+      if (want && want->kind == Shape::Kind::Array &&
+          !coerce(result, *want, node.span))
+        return std::nullopt;
       return result;
     }
     std::optional<Shape> agreed;
@@ -4279,6 +4330,9 @@ private:
       for (auto &value : result.elements)
         if (!coerce(value, *agreed, node.span))
           return std::nullopt;
+    if (want && want->kind == Shape::Kind::Array &&
+        !coerce(result, *want, node.span))
+      return std::nullopt;
     return result;
   }
 };

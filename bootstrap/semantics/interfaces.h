@@ -163,9 +163,18 @@ public:
          std::vector<Obligation> assumptions = {},
          RegionEnvironment regionEnvironment = {}, bool revealOpaque = false)
       : types(types), database(database), diagnostics(diagnostics),
-        assumptions(std::move(assumptions)),
+        ownedAssumptions(std::move(assumptions)), assumptions(ownedAssumptions),
         regionEnvironment(std::move(regionEnvironment)),
         revealOpaque(revealOpaque) {}
+  Solver(std::span<const Obligation> assumptions, TypeStore &types,
+         const Database &database, Diagnostics &diagnostics,
+         RegionEnvironment regionEnvironment = {}, bool revealOpaque = false)
+      : types(types), database(database), diagnostics(diagnostics),
+        assumptions(assumptions),
+        regionEnvironment(std::move(regionEnvironment)),
+        revealOpaque(revealOpaque) {}
+  Solver(const Solver &) = delete;
+  Solver &operator=(const Solver &) = delete;
   bool prove(const Obligation &obligation, Span span, bool report = true);
   bool wellFormedInterface(Type subject, Type interfaceType, Span span,
                            bool report = true);
@@ -211,7 +220,8 @@ private:
   TypeStore &types;
   const Database &database;
   Diagnostics &diagnostics;
-  std::vector<Obligation> assumptions;
+  std::vector<Obligation> ownedAssumptions;
+  std::span<const Obligation> assumptions;
   RegionEnvironment regionEnvironment;
   bool revealOpaque = false;
   std::map<std::pair<Type, Type>, std::vector<RegionBinding>> regionSelections;
