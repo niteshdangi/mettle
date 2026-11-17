@@ -11,6 +11,7 @@ import os
 import re
 import select
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -1333,9 +1334,7 @@ def security_output_paths():
     assert sentinel.read_text() == "keep"
 
 
-def cache_compiler_content_identity():
-    # ELF permits inert trailing bytes, so alter identity without touching code.
-    # Preserve path, size and timestamps to exclude metadata-based invalidation.
+def cache_compiler_identity():
     if sys.platform != "linux":
         return
     compiler = evidence / "compiler-copy"
@@ -1353,10 +1352,51 @@ def cache_compiler_content_identity():
 
     assert "cache miss" in last_cache_event(build())
     assert "cache hit" in last_cache_event(build())
+    image = compiler.read_bytes()
+    wide = image[4] == 2
+    order = "<" if image[5] == 1 else ">"
+    word = order + ("Q" if wide else "I")
+    phoff = struct.unpack_from(word, image, 32 if wide else 28)[0]
+    stride, count = struct.unpack_from(order + "HH", image, 54 if wide else 42)
+    identity = None
+    for index in range(count):
+        entry = phoff + index * stride
+        if struct.unpack_from(order + "I", image, entry)[0] != 4:
+            continue
+        offset = struct.unpack_from(word, image, entry + (8 if wide else 4))[0]
+        size = struct.unpack_from(word, image, entry + (32 if wide else 16))[0]
+        end = offset + size
+        while offset + 12 <= end:
+            names, payload, kind = struct.unpack_from(order + "III", image, offset)
+            name = image[offset + 12:offset + 12 + names]
+            value = (offset + 12 + names + 3) & ~3
+            if kind == 3 and name == b"GNU\0" and payload:
+                identity = (offset, value)
+                break
+            offset = (value + payload + 3) & ~3
+        if identity:
+            break
+    assert identity is not None, "compiler has no linker build ID"
     stamp = compiler.stat()
     with compiler.open("r+b") as stream:
         stream.seek(-1, 2)
         stream.write(b"B")
+    os.utime(compiler, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    assert "cache hit" in last_cache_event(build())
+    with compiler.open("r+b") as stream:
+        stream.seek(identity[1])
+        stream.write(bytes([image[identity[1]] ^ 1]))
+    os.utime(compiler, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+    assert "cache miss" in last_cache_event(build())
+    assert "cache hit" in last_cache_event(build())
+    with compiler.open("r+b") as stream:
+        stream.seek(identity[0] + 8)
+        stream.write(struct.pack(order + "I", 0))
+    assert "cache miss" in last_cache_event(build())
+    assert "cache hit" in last_cache_event(build())
+    with compiler.open("r+b") as stream:
+        stream.seek(-1, 2)
+        stream.write(b"C")
     os.utime(compiler, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
     assert "cache miss" in last_cache_event(build())
 
@@ -3242,7 +3282,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          cache_corruption_and_clean, cache_corrupt_digest_preserves_other_files,
          cache_publication_failure_is_reported, cache_clean_failure, cache_clean_preserves_sources,
          security_output_paths,
-         cache_compiler_content_identity,
+         cache_compiler_identity,
          build_script, build_script_untracked_inputs,
          procedural_macro, procedural_macro_failure,
          public_declarative_macro_dependency,

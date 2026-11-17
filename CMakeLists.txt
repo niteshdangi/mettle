@@ -36,7 +36,7 @@ endif()
 
 find_package(LLVM ${METTLE_LLVM_VERSION} EXACT REQUIRED CONFIG)
 llvm_map_components_to_libnames(METTLE_LLVM_LIBRARIES
-                               Core BitWriter CodeGen MC Passes Instrumentation X86 AArch64
+                               Core BitWriter CodeGen MC Object Passes Instrumentation X86 AArch64
                                WebAssembly ARM)
 
 if(METTLE_ENABLE_SANITIZERS)
@@ -194,6 +194,9 @@ target_compile_definitions(mettle PRIVATE METTLE_VERSION="${PROJECT_VERSION}"
   METTLE_RUNTIME_SANITIZED=$<BOOL:${METTLE_ENABLE_SANITIZERS}>)
 add_dependencies(mettle mettle_runtime mettle_runtime_asan mettle_runtime_tsan)
 target_compile_options(mettle PRIVATE -Wall -Wextra -Wpedantic -Werror)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_options(mettle PRIVATE "LINKER:--build-id=sha1")
+endif()
 
 # Like Rust's test harness, tests are never killed for running long;
 # only CI job limits bound a run.

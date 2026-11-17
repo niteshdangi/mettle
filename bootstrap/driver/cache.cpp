@@ -2,6 +2,9 @@
 #include "diagnostics/diagnostics.h"
 #include "packages/sha256.h"
 #include "syntax/lexer.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Object/BuildID.h"
+#include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/FileSystem.h"
 #include <cstdint>
 #include <cstdlib>
@@ -15,6 +18,18 @@ std::string fileStamp(const fs::path &path) {
   std::uint64_t size = 0;
   auto hash = packages::hashFile(path, size);
   return path.generic_string() + ":" + hash.value_or("unreadable");
+}
+
+std::string compilerStamp(const fs::path &path) {
+  auto object = llvm::object::ObjectFile::createObjectFile(path.string());
+  if (object) {
+    auto identity = llvm::object::getBuildID(object->getBinary());
+    if (!identity.empty())
+      return path.generic_string() + ":build-id:" + llvm::toHex(identity, true);
+  } else {
+    llvm::consumeError(object.takeError());
+  }
+  return fileStamp(path);
 }
 
 std::string digest(const std::string &text) {
@@ -111,7 +126,7 @@ std::string compilerIdentity() {
     auto self = llvm::sys::fs::getMainExecutable(
         "mettle", reinterpret_cast<void *>(
                       reinterpret_cast<std::intptr_t>(&compilerIdentity)));
-    text += "\n" + fileStamp(self) + "\n" + fileStamp(METTLE_RUNTIME_PATH);
+    text += "\n" + compilerStamp(self) + "\n" + fileStamp(METTLE_RUNTIME_PATH);
     text += "\n" + fileStamp(METTLE_RUNTIME_ASAN_PATH);
     text += "\n" + fileStamp(METTLE_RUNTIME_TSAN_PATH);
     return text;

@@ -15,9 +15,7 @@ namespace mettle::driver {
 // cache directory), or none when caching is off or no directory is known.
 std::optional<packages::Store> openStore(const Options &options);
 
-// Identity of the running compiler and runtime library: version, target and
-// the size and modification time of both files. Any rebuilt compiler or
-// runtime changes every key.
+// Linker identity (or content hash) of the compiler and runtime content hashes.
 std::string compilerIdentity();
 
 // Every input a build's output depends on, gathered while the sources load.

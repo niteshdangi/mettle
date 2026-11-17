@@ -178,13 +178,16 @@ supported; only `name!(...)` invocations; no project isolation policy.
 ### Incremental builds and the build cache (T003)
 
 `mettle build` (executables and objects) keys its output by a SHA-256 over: the
-compiler identity (version, runtime target, compiler sanitizer mode, and paths
-and SHA-256 digests of the compiler and ordinary/address/thread runtime archives),
+compiler identity (version, runtime target, compiler sanitizer mode, compiler
+path and linker build ID, and paths and SHA-256 digests of the
+ordinary/address/thread runtime archives; a compiler without a readable build ID
+uses its SHA-256 digest instead),
 emit/profile/overflow policy/target/linker/sysroot, the
 output's file name (the linker embeds it as the code-signature identifier),
 enabled features, mounts, link libraries, and every source the load step read.
-User sources count by token stream (comments, spacing and blank lines do not
-matter; sound while no source position reaches the output, so debug info or
+Relinking changes compiler identity; post-link binary edits that preserve its
+build ID do not. User sources count by token stream (comments, spacing and blank
+lines do not matter; sound while no source position reaches the output, so debug info or
 panic locations must add positions to the key), library sources by content,
 and probed-but-absent paths as absent. A whole-build hit copies the stored
 artifact and skips checking, lowering, code generation and linking; a miss runs
