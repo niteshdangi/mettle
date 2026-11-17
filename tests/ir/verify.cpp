@@ -1,8 +1,10 @@
 #include "ir/verify.h"
-#include "ir/dominance.h"
 #include "analysis/initialization.h"
 #include "analysis/loans.h"
 #include "analysis/origins.h"
+#include "analysis/value_ownership.h"
+#include "instances/specialize.h"
+#include "ir/dominance.h"
 #include "lowering/scalar.h"
 #include "pipeline/compile.h"
 #include "semantics/check.h"
@@ -48,6 +50,67 @@ void dominanceCases() {
   require(!dominance.reachable(6) && !dominance.dominates(6, 5) &&
               dominance.dominates(5, 6),
           "unreachable predecessor changed dominance");
+}
+void emptySpecializationCases() {
+  Program program;
+  Function function{"main", Type::I32, 0, {}, {}, 7};
+  function.blocks.resize(5);
+  function.blocks[0] = {
+      {{Op::Constant, {0, Type::Bool}, {}, {}, "", {-1, {}}, -1, 1, {}}},
+      {Exit::Branch, {0, Type::Bool}, 3, 4}};
+  function.blocks[1] = {{{Op::Phi,
+                          {6, Type::I32},
+                          {{3, Type::I32}, {5, Type::I32}},
+                          {2, 4},
+                          "",
+                          {-1, {}},
+                          -1,
+                          0,
+                          {}}},
+                        {Exit::Return, {6, Type::I32}}};
+  function.blocks[2] = {{{Op::Phi,
+                          {3, Type::I32},
+                          {{2, Type::I32}},
+                          {3},
+                          "",
+                          {-1, {}},
+                          -1,
+                          0,
+                          {}},
+                         {Op::Binary,
+                          {4, Type::Bool},
+                          {{3, Type::I32}, {3, Type::I32}},
+                          {},
+                          "==",
+                          {-1, {}},
+                          -1,
+                          0,
+                          {}}},
+                        {Exit::Branch, {4, Type::Bool}, 1, 1}};
+  function.blocks[3] = {
+      {{Op::Constant, {1, Type::Never}, {}, {}, "", {-1, {}}, -1, 0, {}},
+       {Op::Constant, {2, Type::I32}, {}, {}, "", {-1, {}}, -1, 1, {}}},
+      {Exit::Jump, {}, 2}};
+  function.blocks[4] = {
+      {{Op::Constant, {5, Type::I32}, {}, {}, "", {-1, {}}, -1, 42, {}}},
+      {Exit::Jump, {}, 1}};
+  program.functions.push_back(std::move(function));
+  mettle::Diagnostics diagnostics;
+  auto specialized = mettle::instances::specialize(program, diagnostics);
+  require(specialized && diagnostics.empty(),
+          "empty specialization propagation failed");
+  const auto &blocks = specialized->functions[0].blocks;
+  require(blocks[3].exit.kind == Exit::Unreachable &&
+              blocks[2].exit.kind == Exit::Unreachable &&
+              blocks[2].instructions[0].op == Op::Constant &&
+              blocks[2].instructions[1].op == Op::Constant,
+          "empty values did not propagate through a reverse-ordered join");
+  require(blocks[1].instructions[0].op == Op::Phi &&
+              blocks[1].instructions[0].operands ==
+                  std::vector<Value>{{5, Type::I32}} &&
+              blocks[1].instructions[0].predecessors == std::vector<int>{4} &&
+              blocks[1].exit.kind == Exit::Return,
+          "empty specialization removed a live phi input");
 }
 void coherenceCandidateCases() {
   mettle::TypeStore types;
@@ -110,7 +173,7 @@ void rejected(const Program &program, const char *expected) {
 }
 Program diamond(bool phi) {
   auto program = simple();
-  auto &f = program.functions[0];
+  auto &f = program.functions.edit(0);
   f.blocks = {
       {{{Op::Constant, {0, Type::Bool}, {}, {}, "", {-1, {}}, -1, 1, {}}},
        {Exit::Branch, {0, Type::Bool}, 1, 2}},
@@ -138,55 +201,134 @@ Program diamond(bool phi) {
 void verifierCases() {
   mettle::Diagnostics diagnostics;
   require(verify(simple(), diagnostics), "valid simple CFG rejected");
+  {
+    auto program = simple();
+    auto types = std::make_shared<mettle::TypeStore>();
+    auto unused = types->declareImportedType(mettle::ImportedTypeKind::Product);
+    std::size_t loaded = 0;
+    auto loader =
+        std::make_shared<const mettle::TypeStore::ImportedDefinitionLoader>(
+            [&](std::size_t) -> mettle::ImportedTypeDefinition {
+              ++loaded;
+              mettle::ImportedProduct product{};
+              product.descriptor.name = "Unused";
+              product.descriptor.fields = {{"invalid", Type::Unknown}};
+              return product;
+            });
+    types->deferImportedDefinitions(
+        std::array{unused}, std::array{mettle::ImportedTypeIndex{}}, loader);
+    program.types = types;
+    Function declaration{"unused", Type::I32, 1, {{"value", unused, false, {}}},
+                         {},       0};
+    declaration.declarationOnly = true;
+    program.functions.push_back(std::move(declaration));
+    const std::vector<bool> trusted{false, true};
+    mettle::Diagnostics unusedDiagnostics;
+    require(verify(program, unusedDiagnostics, {}, {}, &trusted) && loaded == 0,
+            "unused trusted library declarations forced type expansion");
+    program.functions.edit(0).locals.push_back({"used", unused, false, {}});
+    mettle::Diagnostics usedDiagnostics;
+    require(!verify(program, usedDiagnostics, {}, {}, &trusted) && loaded == 1,
+            "trusted library types bypassed verification when used by source");
+  }
+  {
+    auto shared = std::make_shared<const Function>(simple().functions[0]);
+    Program imported;
+    imported.functions.push_shared(shared);
+    auto consumer = imported;
+    auto retained = imported.functions.retain(0);
+    require(&consumer.functions[0] == shared.get(),
+            "native header read copied its immutable definition");
+    shared.reset();
+    imported.functions.clear();
+    consumer.functions.edit(0).blocks[0].instructions[0].number = 42;
+    require(retained->blocks[0].instructions[0].number == 0 &&
+                consumer.functions[0].blocks[0].instructions[0].number == 42,
+            "consumer mutation changed a retained native definition");
+  }
+  {
+    auto cached = simple();
+    auto types = std::make_shared<mettle::TypeStore>();
+    auto payload = types->declareProduct("payload", true);
+    types->defineProduct(payload, {{"value", Type::I32}});
+    auto view = types->viewType(payload, mettle::ParameterMode::Read);
+    cached.types = types;
+    cached.functions.edit(0).locals.push_back({"view", view, false, {}});
+    TypeVerificationCache cache;
+    mettle::Diagnostics first;
+    require(verify(cached, first, {}, {}, nullptr, &cache),
+            "valid cached type graph rejected");
+    types->defineProduct(payload, {{"recursive", payload}});
+    mettle::Diagnostics changed;
+    require(!verify(cached, changed, {}, {}, nullptr, &cache) &&
+                !changed.empty(),
+            "cached view hid a changed recursive payload");
+    types->defineProduct(payload, {{"value", Type::I32}});
+    mettle::Diagnostics restored;
+    require(verify(cached, restored, {}, {}, nullptr, &cache),
+            "failed verification poisoned the type cache");
+  }
+  {
+    auto recursive = simple();
+    auto types = std::make_shared<mettle::TypeStore>();
+    const auto first = types->declareProduct("first", true);
+    const auto second = types->declareProduct("second", true);
+    const auto view = types->viewType(second, mettle::ParameterMode::Read);
+    types->defineProduct(first, {{"indirect", view}, {"direct", second}});
+    types->defineProduct(second, {{"recursive", first}});
+    recursive.types = types;
+    recursive.functions.edit(0).locals.push_back({"value", first, false, {}});
+    rejected(recursive, "recursive by-value layout");
+  }
   auto program = simple();
-  program.functions[0].blocks[0].exit = {};
+  program.functions.edit(0).blocks[0].exit = {};
   rejected(program, "terminator");
   program = simple();
-  program.functions[0].blocks[0].exit = {Exit::Jump, {}, 99};
+  program.functions.edit(0).blocks[0].exit = {Exit::Jump, {}, 99};
   rejected(program, "successor");
   program = simple();
-  program.functions[0].blocks[0].exit.value = {99, Type::I32};
+  program.functions.edit(0).blocks[0].exit.value = {99, Type::I32};
   rejected(program, "operand");
   program = simple();
-  program.functions[0].blocks[0].exit.value.type = Type::Bool;
+  program.functions.edit(0).blocks[0].exit.value.type = Type::Bool;
   rejected(program, "type");
   rejected(diamond(false), "dominate");
   require(verify(diamond(true), diagnostics), "valid phi CFG rejected");
   program = diamond(true);
-  program.functions[0].blocks[3].instructions[0].predecessors = {1, 1};
+  program.functions.edit(0).blocks[3].instructions[0].predecessors = {1, 1};
   rejected(program, "instruction");
   program = simple();
-  program.functions[0].blocks[0].instructions[0] = {
+  program.functions.edit(0).blocks[0].instructions[0] = {
       Op::Call, {0, Type::I32}, {}, {}, "", {-1, {}}, 5, 0, {}};
   rejected(program, "callee");
   program = simple();
-  program.functions[0].locals.push_back({"x", Type::I32, false, {}});
-  program.functions[0].blocks[0].instructions[0].place = {0, {}};
+  program.functions.edit(0).locals.push_back({"x", Type::I32, false, {}});
+  program.functions.edit(0).blocks[0].instructions[0].place = {0, {}};
   require(verify(program, diagnostics), "valid attached place rejected");
-  program.functions[0].blocks[0].instructions[0].place.fields = {
+  program.functions.edit(0).blocks[0].instructions[0].place.fields = {
       mettle::Projection::field(0)};
   rejected(program, "projected place");
-  program.functions[0].blocks[0].instructions[0].place.root = -1;
+  program.functions.edit(0).blocks[0].instructions[0].place.root = -1;
   rejected(program, "local slot");
-  program.functions[0].blocks[0].instructions[0].place = {99, {}};
+  program.functions.edit(0).blocks[0].instructions[0].place = {99, {}};
   rejected(program, "local slot");
-  program.functions[0].blocks[0].instructions[0].place.root = -2;
+  program.functions.edit(0).blocks[0].instructions[0].place.root = -2;
   rejected(program, "local slot");
   program = simple();
-  program.functions[0].locals.push_back({"x", Type::I32, false, {}});
-  program.functions[0].blocks[0].instructions[0] = {
+  program.functions.edit(0).locals.push_back({"x", Type::I32, false, {}});
+  program.functions.edit(0).blocks[0].instructions[0] = {
       Op::Load, {0, Type::I32}, {}, {}, "", {0, {}}, -1, 0, {}};
   require(verify(program, diagnostics),
           "typed uninitialized load was not structurally valid");
   mettle::analysis::initialization(program, diagnostics);
   require(!diagnostics.empty() && diagnostics.items.back().phase == "type",
           "independent initialization analysis missed uninitialized load");
-  program.functions[0].blocks[0].instructions[0].place.fields = {
+  program.functions.edit(0).blocks[0].instructions[0].place.fields = {
       mettle::Projection::field(0)};
   rejected(program, "projected place");
   program = simple();
-  program.functions[0].locals.push_back({"x", Type::I32, true, {}});
-  program.functions[0].blocks[0].instructions[0] = {
+  program.functions.edit(0).locals.push_back({"x", Type::I32, true, {}});
+  program.functions.edit(0).blocks[0].instructions[0] = {
       Op::BorrowRead,
       {0, Type::I32, Access::Read},
       {},
@@ -196,11 +338,11 @@ void verifierCases() {
       -1,
       0,
       {}};
-  program.functions[0].blocks[0].exit.value = {0, Type::I32, Access::Read};
+  program.functions.edit(0).blocks[0].exit.value = {0, Type::I32, Access::Read};
   rejected(program, "return type");
   program = simple();
-  program.functions[0].locals.push_back({"x", Type::I32, true, {}});
-  program.functions[0].blocks[0].instructions = {
+  program.functions.edit(0).locals.push_back({"x", Type::I32, true, {}});
+  program.functions.edit(0).blocks[0].instructions = {
       {Op::BorrowMut,
        {0, Type::I32, Access::Mut},
        {},
@@ -220,8 +362,8 @@ void verifierCases() {
        0,
        {}},
       {Op::Constant, {2, Type::I32}, {}, {}, "", {-1, {}}, -1, 0, {}}};
-  program.functions[0].values = 3;
-  program.functions[0].blocks[0].exit.value = {2, Type::I32};
+  program.functions.edit(0).values = 3;
+  program.functions.edit(0).blocks[0].exit.value = {2, Type::I32};
   program.functions.push_back(
       {"both",
        Type::Unit,
@@ -254,13 +396,13 @@ void functionAddressCases() {
   address.op = Op::FunctionAddress;
   address.callee = 1;
   address.result.id = 1;
-  program.functions[0].blocks[0].instructions.push_back(address);
-  program.functions[0].values = 2;
+  program.functions.edit(0).blocks[0].instructions.push_back(address);
+  program.functions.edit(0).values = 2;
   auto pointer = [&](const mettle::CallableType &contract) {
     auto type = types->callableType(contract);
     program.statics[0].type = type;
     program.statics[0].initializer->type = type;
-    program.functions[0].blocks[0].instructions[1].result.type = type;
+    program.functions.edit(0).blocks[0].instructions[1].result.type = type;
   };
   auto accepted = [&] {
     mettle::Diagnostics diagnostics;
@@ -292,7 +434,7 @@ void functionAddressCases() {
   pointer(mismatch);
   invalid();
   pointer(signature);
-  auto &target = program.functions[1];
+  auto &target = program.functions.edit(1);
   target.unsafeFunction = true;
   invalid();
   signature.unsafeCall = true;
@@ -357,11 +499,11 @@ void floatingCarrierCases() {
   instruction.result = {1, Type::F32};
   instruction.numeric = mettle::NumericLiteral{};
   instruction.numeric->floatingBits = 0x80000000u;
-  program.functions[0].blocks[0].instructions.push_back(instruction);
-  program.functions[0].values = 2;
+  program.functions.edit(0).blocks[0].instructions.push_back(instruction);
+  program.functions.edit(0).values = 2;
   mettle::Diagnostics diagnostics;
   require(verify(program, diagnostics), "raw binary32 signed zero rejected");
-  auto &constant = program.functions[0].blocks[0].instructions.back();
+  auto &constant = program.functions.edit(0).blocks[0].instructions.back();
   constant.numeric->floatingBits = 0x100000000ull;
   rejected(program, "instruction");
   constant.numeric->floatingBits = 0xff812345u;
@@ -403,13 +545,13 @@ void floatingCarrierCases() {
       {"value", parameter, false, {}, mettle::ParameterMode::Take});
   program.functions.push_back(std::move(function));
   rejected(program, "unsized owned storage");
-  program.functions[1].sizedBounds = {parameter};
+  program.functions.edit(1).sizedBounds = {parameter};
   mettle::Diagnostics scoped;
   auto valid = verify(program, scoped);
   require(valid, scoped.empty() ? "contextual Sized storage rejected"
                                 : scoped.items.front().message.c_str());
   require(!program.types->isSized(parameter), "contextual Sized bound leaked");
-  program.functions[1].sizedBounds.clear();
+  program.functions.edit(1).sizedBounds.clear();
   rejected(program, "unsized owned storage");
 }
 void staticConsumptionCases() {
@@ -502,13 +644,13 @@ void phaseOwnership() {
       products);
   require(constructed.has_value(), "product compilation failed");
   auto malformed = constructed->program();
-  for (auto &block : malformed.functions[0].blocks)
+  for (auto &block : malformed.functions.edit(0).blocks)
     for (auto &instruction : block.instructions)
       if (!instruction.place.fields.empty())
         instruction.place.fields.back() = mettle::Projection::field(999);
   rejected(malformed, "projected place");
   malformed = constructed->program();
-  for (auto &block : malformed.functions[0].blocks)
+  for (auto &block : malformed.functions.edit(0).blocks)
     for (auto &instruction : block.instructions)
       if (instruction.op == Op::Construct)
         instruction.operands.clear();
@@ -563,7 +705,8 @@ void ownedValueCases() {
         program.functions.begin(), program.functions.end(),
         [&](const auto &candidate) { return candidate.name == name; });
     require(found != program.functions.end(), "missing ownership fixture");
-    return *found;
+    return program.functions.edit(
+        std::distance(program.functions.begin(), found));
   };
   auto duplicated = compiled->program();
   auto &main = function(duplicated, "main");
@@ -637,6 +780,17 @@ void ownedValueCases() {
   mettle::Diagnostics valid;
   require(mettle::pipeline::admit(branch, valid).has_value(),
           "mutually exclusive phi transfers rejected");
+  auto leaking = route;
+  leaking.result = Type::Unit;
+  leaking.blocks[3] = {
+      {{Op::Constant, {2, Type::Unit}, {}, {}, "", {-1, {}}, -1, 0, {}}},
+      {Exit::Return, {2, Type::Unit}}};
+  mettle::Diagnostics leaked;
+  mettle::analysis::valueOwnership(leaking, *branch.types, leaked);
+  require(!leaked.empty() &&
+              leaked.items.front().message.find(
+                  "without transfer or cleanup") != std::string::npos,
+          "unused owned SSA value disappeared across empty blocks");
   auto consume = std::find_if(
       branch.functions.begin(), branch.functions.end(),
       [](const auto &candidate) { return candidate.name == "consume"; });
@@ -647,27 +801,108 @@ void ownedValueCases() {
        {},
        "",
        {-1, {}},
-       static_cast<int>(consume - branch.functions.begin()),
+       static_cast<int>(std::distance(branch.functions.begin(), consume)),
        0,
        {}});
   route.values = 4;
   rejectedOwner(std::move(branch), "already have been consumed");
 }
+void initializationLivenessCases() {
+  Program program;
+  auto types = std::make_shared<mettle::TypeStore>();
+  program.types = types;
+  Function assigned{"assigned", Type::I32, 0, {{"value", Type::I32, false, {}}},
+                    {},         7};
+  assigned.blocks = {
+      {{{Op::Declare, {0, Type::Unit}, {}, {}, "", {0, {}}, -1, 0, {}},
+        {Op::Constant, {1, Type::I32}, {}, {}, "", {-1, {}}, -1, 1, {}},
+        {Op::Store,
+         {2, Type::Unit},
+         {{1, Type::I32}},
+         {},
+         "",
+         {0, {}},
+         -1,
+         0,
+         {}},
+        {Op::Move, {3, Type::I32}, {}, {}, "", {0, {}}, -1, 0, {}}},
+       {Exit::Jump, {}, 1}},
+      {{}, {Exit::Jump, {}, 2}},
+      {{{Op::Constant, {4, Type::I32}, {}, {}, "", {-1, {}}, -1, 2, {}},
+        {Op::Store,
+         {5, Type::Unit},
+         {{4, Type::I32}},
+         {},
+         "",
+         {0, {}},
+         -1,
+         0,
+         {}},
+        {Op::Load, {6, Type::I32}, {}, {}, "", {0, {}}, -1, 0, {}}},
+       {Exit::Return, {6, Type::I32}}}};
+  program.functions.push_back(std::move(assigned));
+  mettle::Diagnostics reassigned;
+  mettle::analysis::initialization(program, reassigned);
+  require(reassigned.items.size() == 1 &&
+              reassigned.items.front().message.find("more than once") !=
+                  std::string::npos,
+          "moving an immutable place forgot its assignment history");
+
+  auto pair = types->declareProduct("Pair", true);
+  types->defineProduct(pair, {{"first", Type::I32}, {"second", Type::I32}});
+  auto &function = program.functions.edit(0);
+  function.result = pair;
+  function.parameters = 1;
+  function.locals = {{"flag", Type::Bool, false, {}}, {"pair", pair, true, {}}};
+  function.blocks = {
+      {{{Op::Load, {0, Type::Bool}, {}, {}, "", {0, {}}, -1, 0, {}},
+        {Op::Declare, {1, Type::Unit}, {}, {}, "", {1, {}}, -1, 0, {}}},
+       {Exit::Branch, {0, Type::Bool}, 1, 2}},
+      {{{Op::Constant, {2, Type::I32}, {}, {}, "", {-1, {}}, -1, 1, {}},
+        {Op::Store,
+         {3, Type::Unit},
+         {{2, Type::I32}},
+         {},
+         "",
+         {1, {mettle::Projection::field(0)}},
+         -1,
+         0,
+         {}}},
+       {Exit::Jump, {}, 3}},
+      {{{Op::Constant, {4, Type::I32}, {}, {}, "", {-1, {}}, -1, 2, {}},
+        {Op::Store,
+         {5, Type::Unit},
+         {{4, Type::I32}},
+         {},
+         "",
+         {1, {mettle::Projection::field(1)}},
+         -1,
+         0,
+         {}}},
+       {Exit::Jump, {}, 3}},
+      {{{Op::Load, {6, pair}, {}, {}, "", {1, {}}, -1, 0, {}}},
+       {Exit::Return, {6, pair}}}};
+  mettle::Diagnostics partial;
+  mettle::analysis::initialization(program, partial);
+  require(partial.items.size() == 1 &&
+              partial.items.front().message.find("may be uninitialized") !=
+                  std::string::npos,
+          "disjoint branch writes initialized an entire product");
+}
 void variantRefinementCases() {
   mettle::Diagnostics diagnostics;
   auto compiled = mettle::pipeline::compile(
-      mettle::Source{
-          "variants.mt",
-          "copy enum Value { Empty; Held(i32) }\n"
-          "fn unpack(value: Value) { match value { Value.Empty => 0, "
-          "Value.Held(payload) => payload } }\n"
-          "fn main() { unpack(Value.Held(42)) }\n"},
+      mettle::Source{"variants.mt",
+                     "copy enum Value { Empty; Held(i32) }\n"
+                     "fn unpack(value: Value) { match value { "
+                     "Value.Held(payload) => payload, Value.Empty => 0 } }\n"
+                     "fn main() { unpack(Value.Held(42)) }\n"},
       diagnostics);
   require(compiled.has_value(), "valid tagged pattern CFG rejected");
   auto malformed = compiled->program();
-  for (auto &function : malformed.functions)
-    if (function.name == "unpack")
-      for (auto &block : function.blocks)
+  for (std::size_t f = 0; f < malformed.functions.size(); ++f)
+    if (malformed.functions[f].name == "unpack")
+      for (auto &block : malformed.functions.edit(f).blocks)
         for (auto &instruction : block.instructions)
           if (instruction.op == Op::VariantTest)
             instruction = {Op::Constant,
@@ -689,9 +924,31 @@ void variantRefinementCases() {
                                    std::string::npos;
                       }),
           "missing variant-refinement diagnostic");
+  auto sameTarget = compiled->program();
+  bool redirected = false;
+  for (std::size_t f = 0; f < sameTarget.functions.size(); ++f)
+    if (sameTarget.functions[f].name == "unpack")
+      for (auto &block : sameTarget.functions.edit(f).blocks)
+        for (const auto &instruction : block.instructions)
+          if (instruction.op == Op::VariantTest && instruction.number == 1 &&
+              block.exit.kind == Exit::Branch &&
+              block.exit.value.id == instruction.result.id) {
+            block.exit.second = block.exit.first;
+            redirected = true;
+          }
+  require(redirected, "missing held-variant branch");
+  mettle::Diagnostics unrefinedEdge;
+  mettle::analysis::initialization(sameTarget, unrefinedEdge);
+  require(std::any_of(unrefinedEdge.items.begin(), unrefinedEdge.items.end(),
+                      [](const auto &item) {
+                        return item.phase == "internal" &&
+                               item.message.find("tag refinement") !=
+                                   std::string::npos;
+                      }),
+          "same-target branch incorrectly refined a variant");
   malformed = compiled->program();
-  for (auto &function : malformed.functions)
-    for (auto &block : function.blocks)
+  for (std::size_t f = 0; f < malformed.functions.size(); ++f)
+    for (auto &block : malformed.functions.edit(f).blocks)
       for (auto &instruction : block.instructions)
         if (instruction.op == Op::VariantConstruct)
           instruction.number = 999;
@@ -738,8 +995,8 @@ void indirectContractCases() {
   require(compiled.has_value(), "valid indirect call failed compilation");
   auto original = compiled->program();
   auto call = [](Program &program) -> Instruction & {
-    for (auto &function : program.functions)
-      for (auto &block : function.blocks)
+    for (std::size_t f = 0; f < program.functions.size(); ++f)
+      for (auto &block : program.functions.edit(f).blocks)
         for (auto &instruction : block.instructions)
           if (instruction.op == Op::IndirectCall)
             return instruction;
@@ -751,7 +1008,7 @@ void indirectContractCases() {
   for (int mutation = 0; mutation < 8; ++mutation) {
     auto malformed = original;
     auto &instruction = call(malformed);
-    auto &contract = malformed.functions[instruction.callee];
+    auto &contract = malformed.functions.edit(instruction.callee);
     switch (mutation) {
     case 0:
       instruction.callee = -1;
@@ -862,7 +1119,7 @@ void packageOwnershipPropagation() {
   family.push_back(types.regionalProduct(future, {{"value", Type::I64}},
                                          {mettle::RegionId::Static}, true));
   requirePackages(7);
-  types.refreshProductInstances();
+  types.refreshProductInstances(std::array{root, pattern});
   requirePackages(7);
   types.setProductPackage(root, 0);
   requirePackages(0);
@@ -888,7 +1145,7 @@ void regionalProductRefresh() {
   auto normalized =
       types.regionalProduct(instance, fields, {mettle::RegionId::Static}, true);
   types.setDestructor(root, 0);
-  types.refreshProductInstances();
+  types.refreshProductInstances(std::array{root});
   require(types.product(decorated).fields[0].type == view &&
               types.product(normalized).fields[0].type == view,
           "generic refresh erased derived field regions");
@@ -1058,7 +1315,7 @@ void contentsOnlyResultPathCases() {
 }
 void preparedAnalysisReuse() {
   auto program = simple();
-  program.functions[0].name = "value";
+  program.functions.edit(0).name = "value";
   auto caller = program.functions[0];
   caller.name = "main";
   caller.blocks[0].instructions[0] = {
@@ -1075,13 +1332,13 @@ void preparedAnalysisReuse() {
   require(diagnostics.empty() && reused.reusedFunctions == 3,
           "unchanged preparation did not reuse loan results");
   auto changed = program;
-  changed.functions[0].blocks[0].instructions[0].number = 42;
+  changed.functions.edit(0).blocks[0].instructions[0].number = 42;
   auto invalidated =
       mettle::analysis::loans(changed, diagnostics, &program, &checked);
   require(diagnostics.empty() && invalidated.reusedFunctions == 1,
           "changed callee did not invalidate its unchanged caller");
-  changed.functions[0].locals.push_back({"x", Type::I32, false, {}});
-  changed.functions[0].blocks[0].instructions[0] = {
+  changed.functions.edit(0).locals.push_back({"x", Type::I32, false, {}});
+  changed.functions.edit(0).blocks[0].instructions[0] = {
       Op::Load, {0, Type::I32}, {}, {}, "", {0, {}}, -1, 0, {}};
   mettle::analysis::initialization(changed, diagnostics, &program);
   require(!diagnostics.empty() && diagnostics.items.back().phase == "type",
@@ -1178,6 +1435,7 @@ void importedPreparation() {
 int main() {
   try {
     dominanceCases();
+    emptySpecializationCases();
     coherenceCandidateCases();
     verifierCases();
     functionAddressCases();
@@ -1185,6 +1443,7 @@ int main() {
     staticConsumptionCases();
     phaseOwnership();
     ownedValueCases();
+    initializationLivenessCases();
     variantRefinementCases();
     conditionalUnpinProofCases();
     indirectContractCases();

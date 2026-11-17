@@ -231,6 +231,69 @@ section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
 `--cache-limit-kib` takes precedence. Invalid environment values are errors.
 `METTLE_CACHE_DIR`; `mettle clean [PACKAGE] [--dry-run]`.
 
+### Resident compilation
+
+`mettle serve` accepts one JSON object per line on standard input and processes
+requests serially until EOF:
+
+```json
+{"id":1,"arguments":["check","src/main.mt","--profile","release"]}
+```
+
+`arguments` contains ordinary `check` or `build` arguments, without the executable
+name. Each response is one JSON object with the echoed `id` (null when absent),
+integer `status`, captured compiler `stdout` and `stderr` strings, and integer
+`queryHits` counting reused native-library import queries, `functionQueryHits`
+counting reused source-function queries, and `instanceQueryHits` counting reused
+pre-binding specializations. Invalid requests
+return status 2; compilation failures do not terminate the stream.
+
+The process retains successful immutable native-library imports and eligible
+source-function contracts and symbolic IR. Each request checks current source
+inputs; archive content, configuration and source/symbol remaps must match
+before an import can be reused. Decoded native headers are reused only with
+matching archive content and mounted source IDs. Verified archive snapshots are retained
+in owned immutable memory, with independent per-request source mounting. A
+matching snapshot does not reread its persistent cache blob; changing or
+removing that blob cannot change an already admitted snapshot. Source content
+changes still invalidate reuse, including same-size edits with unchanged
+timestamps. Native source snapshots are collected only for requested library
+roots. On supported Linux filesystems, resident snapshots remain reusable while
+directory/file notifications, root identity and mount topology are unchanged,
+and kernel read leases exclude unobserved writes or writable mappings.
+Invalidation or unsupported monitoring forces fresh source collection.
+Changed generations replace prior entries.
+Source-function reuse requires unchanged declaration context and dependency
+inputs. Edited bodies invalidate transitive callers; other eligible functions
+reuse successful semantic and body-analysis results while retaining normal IR
+and executable admission. Failed preparation preserves the last successful
+snapshot. Exact source spans can cause conservative misses after edits. Const,
+default, constructor/destructor and async bodies are not currently eligible;
+source interfaces/implementations, closures and static storage do not disable
+unrelated eligible functions. Entries depending on unsupported source-type or
+generated-helper identities and their callers are checked normally. Global
+assembly still disables source-function reuse. These are cache fallbacks, not
+language limits.
+Retained source snapshots contain only their live type/region closure above the
+shared native prefix; obsolete body-only types do not accumulate across edits.
+Specialization queries retain eligible instantiated IR before request-local
+callee binding. They share source-query context and dependency invalidation,
+rebind calls and destructor demand, and retain only the latest successful
+compilation's reached entries. Assembly, generated helper identities and types
+outside the immutable native prefix currently fall back to specialization.
+Region signatures are recomputed; concrete executable admission is never skipped.
+Native admission checks archive integrity, declaration/signature headers, type
+identities and canonical interning keys immediately. Function contracts and
+type payloads are independently framed and validated when demanded, including
+the dependencies required by their validation rules. Function payloads own their
+source-revision tables; retained immutable resolvers keep delayed loads valid.
+Malformed demanded records report `error[metadata]`; corruption confined to
+unused payloads is diagnosed only when referenced. General codec imports remain
+eager by default. Trusted native IR declarations do not force validation of
+unused type payloads; source uses and concrete executable admission still do.
+`--no-cache` bypasses the compiled-library path as well as persistent build
+caches. Resident edit latency and fresh-process latency are distinct measures.
+
 ## 1. Manifest and identity
 
 Use `package.mettle` and `lock.mettle` as the manifest/lock names. Both use

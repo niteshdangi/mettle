@@ -1,5 +1,6 @@
 #include "driver/cache.h"
 #include "diagnostics/diagnostics.h"
+#include "driver/library_cache.h"
 #include "packages/sha256.h"
 #include "syntax/lexer.h"
 #include "llvm/ADT/StringExtras.h"
@@ -9,10 +10,13 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
 
 namespace mettle::driver {
 namespace {
 namespace fs = std::filesystem;
+std::optional<std::string> runtimeIdentity;
+std::mutex identityMutex;
 
 std::string fileStamp(const fs::path &path) {
   std::uint64_t size = 0;
@@ -116,22 +120,27 @@ std::optional<packages::Store> openStore(const Options &options) {
 }
 
 std::string compilerIdentity() {
-  // One tool identity per compiler process, shared by nested host builds and
-  // package keys. Hashing the executable again for each dependency is
-  // redundant.
-  static const std::string identity = [] {
+  static const std::string image = [] {
     std::string text = std::string("mettle ") + METTLE_VERSION + " " +
                        METTLE_RUNTIME_TARGET +
                        " sanitized=" + std::to_string(METTLE_RUNTIME_SANITIZED);
     auto self = llvm::sys::fs::getMainExecutable(
         "mettle", reinterpret_cast<void *>(
                       reinterpret_cast<std::intptr_t>(&compilerIdentity)));
-    text += "\n" + compilerStamp(self) + "\n" + fileStamp(METTLE_RUNTIME_PATH);
-    text += "\n" + fileStamp(METTLE_RUNTIME_ASAN_PATH);
-    text += "\n" + fileStamp(METTLE_RUNTIME_TSAN_PATH);
+    text += "\n" + compilerStamp(self);
     return text;
   }();
-  return identity;
+  std::lock_guard lock(identityMutex);
+  if (!runtimeIdentity)
+    runtimeIdentity = image + "\n" + fileStamp(METTLE_RUNTIME_PATH) + "\n" +
+                      fileStamp(METTLE_RUNTIME_ASAN_PATH) + "\n" +
+                      fileStamp(METTLE_RUNTIME_TSAN_PATH);
+  return *runtimeIdentity;
+}
+
+void resetRuntimeIdentity() {
+  std::lock_guard lock(identityMutex);
+  runtimeIdentity.reset();
 }
 
 BuildInputs::BuildInputs(const std::string &libraryDirectory) {
@@ -144,12 +153,20 @@ BuildInputs::BuildInputs(const std::string &libraryDirectory) {
 }
 
 void BuildInputs::record(const Source &source) {
+  record(source, digest(source.text));
+}
+
+void BuildInputs::record(const LibraryInputs &snapshot) {
+  for (const auto &[path, source] : snapshot.sources)
+    record(source, snapshot.digests.at(path));
+}
+
+void BuildInputs::record(const Source &source, std::string contentDigest) {
   bool library =
       !libraryPrefix.empty() &&
       source.path.compare(0, libraryPrefix.size(), libraryPrefix) == 0;
-  inputs[source.path] =
-      library ? "text:" + digest(source.text) : tokenDigest(source);
-  sourceDigests[source.path] = digest(source.text);
+  inputs[source.path] = library ? "text:" + contentDigest : tokenDigest(source);
+  sourceDigests[source.path] = std::move(contentDigest);
 }
 
 void BuildInputs::absent(const std::string &path) {

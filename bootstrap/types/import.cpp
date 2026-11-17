@@ -296,8 +296,16 @@ void TypeStore::deferImportedDefinitions(
       break;
     case EntryKind::Callable:
       callables.defer(entry.index, i, callableLoader);
-      lookup.local.callables[{key.key.begin(), key.key.end()}].push_back(
-          ordinal);
+      lookup.local
+          .callables[{key.regionUniverse,
+                      {key.callableRegionParameters.begin(),
+                       key.callableRegionParameters.end()},
+                      {key.callableParameterRegions.begin(),
+                       key.callableParameterRegions.end()},
+                      {key.callableRegionRequirements.begin(),
+                       key.callableRegionRequirements.end()},
+                      {key.key.begin(), key.key.end()}}]
+          .push_back(ordinal);
       break;
     case EntryKind::Erased:
       erasedTypes.defer(entry.index, i, erasedLoader);

@@ -4,8 +4,10 @@
 #include "syntax/lexer.h"
 #include "types/machine.h"
 #include <algorithm>
+#include <condition_variable>
 #include <deque>
 #include <exception>
+#include <mutex>
 #include <pthread.h>
 #include <stdexcept>
 
@@ -44,6 +46,7 @@ bool truth(const Value &value) { return value.number.magnitude[0] != 0; }
 
 Shape shapeOfValue(const Value &value) {
   Shape shape;
+  std::vector<Shape> elements;
   shape.type = value.type;
   switch (value.kind) {
   case Value::Kind::Unit:
@@ -52,20 +55,20 @@ Shape shapeOfValue(const Value &value) {
   case Value::Kind::Tuple:
     shape.kind = Shape::Kind::Tuple;
     for (const auto &element : value.elements)
-      shape.elements.push_back(shapeOfValue(element));
+      elements.push_back(shapeOfValue(element));
     break;
   case Value::Kind::Array:
     shape.kind = Shape::Kind::Array;
     shape.count = value.elements.size();
     if (!value.elements.empty())
-      shape.elements.push_back(shapeOfValue(value.elements.front()));
+      elements.push_back(shapeOfValue(value.elements.front()));
     else
-      shape.elements.push_back(scalarShape(Type::Unknown));
+      elements.push_back(scalarShape(Type::Unknown));
     break;
   case Value::Kind::Product:
     shape.kind = Shape::Kind::Product;
     for (const auto &element : value.elements)
-      shape.elements.push_back(shapeOfValue(element));
+      elements.push_back(shapeOfValue(element));
     break;
   case Value::Kind::Variant:
     shape.kind = Shape::Kind::Variant;
@@ -81,13 +84,16 @@ Shape shapeOfValue(const Value &value) {
   default:
     shape.type = value.type;
   }
+  if (!elements.empty())
+    shape.aggregate = std::make_shared<const Shape::Aggregate>(
+        Shape::Aggregate{std::move(elements), {}, {}});
   return shape;
 }
 
 bool complete(const Shape &shape) {
   if (shape.kind == Shape::Kind::Scalar)
     return shape.type != Type::Unknown;
-  return std::all_of(shape.elements.begin(), shape.elements.end(),
+  return std::all_of(shape.elements().begin(), shape.elements().end(),
                      [](const Shape &element) { return complete(element); });
 }
 
@@ -487,7 +493,8 @@ private:
     if (constructor && bytes) {
       argumentShape.kind = Shape::Kind::Array;
       argumentShape.count = byteCount;
-      argumentShape.elements.push_back(scalarShape(Type::U8));
+      argumentShape.aggregate = std::make_shared<const Shape::Aggregate>(
+          Shape::Aggregate{{scalarShape(Type::U8)}, {}, {}});
     }
     for (std::size_t i = 1; i < node.children.size(); ++i) {
       auto value = eval(*node.children[i], &argumentShape);
@@ -725,12 +732,14 @@ private:
     case TypeForm::Tuple: {
       Shape result;
       result.kind = Shape::Kind::Tuple;
+      auto aggregate = std::make_shared<Shape::Aggregate>();
       for (const auto &element : type.elements) {
         auto inner = shape(element, span);
         if (!inner)
           return std::nullopt;
-        result.elements.push_back(std::move(*inner));
+        aggregate->elements.push_back(std::move(*inner));
       }
+      result.aggregate = std::move(aggregate);
       return result;
     }
     case TypeForm::Array: {
@@ -739,7 +748,8 @@ private:
       auto inner = shape(type.elements.front(), span);
       if (!inner || !type.countExpression)
         return std::nullopt;
-      result.elements.push_back(std::move(*inner));
+      result.aggregate = std::make_shared<const Shape::Aggregate>(
+          Shape::Aggregate{{std::move(*inner)}, {}, {}});
       auto count = length(*type.countExpression);
       if (!count)
         return std::nullopt;
@@ -845,9 +855,9 @@ private:
       break;
     case Shape::Kind::Tuple:
       if (value.kind == Value::Kind::Tuple &&
-          value.elements.size() == want.elements.size()) {
+          value.elements.size() == want.elements().size()) {
         for (std::size_t i = 0; i < value.elements.size(); ++i)
-          if (!coerce(value.elements[i], want.elements[i], span))
+          if (!coerce(value.elements[i], want.elements()[i], span))
             return false;
         value.type = want.type;
         return true;
@@ -862,7 +872,7 @@ private:
           return false;
         }
         for (auto &element : value.elements)
-          if (!coerce(element, want.elements.front(), span))
+          if (!coerce(element, want.elements().front(), span))
             return false;
         value.type = want.type;
         return true;
@@ -870,9 +880,9 @@ private:
       break;
     case Shape::Kind::Product:
       if (value.kind == Value::Kind::Product && value.type == want.type &&
-          value.elements.size() == want.elements.size()) {
+          value.elements.size() == want.elements().size()) {
         for (std::size_t i = 0; i < value.elements.size(); ++i)
-          if (!coerce(value.elements[i], want.elements[i], span))
+          if (!coerce(value.elements[i], want.elements()[i], span))
             return false;
         return true;
       }
@@ -882,13 +892,13 @@ private:
           (value.type == Type::Unknown || value.type == want.type)) {
         value.type = want.type;
         if (value.selection < 0 ||
-            std::size_t(value.selection) >= want.variants.size())
+            std::size_t(value.selection) >= want.variants().size())
           break;
-        const auto &fields = want.variants[value.selection];
+        const auto &fields = want.variants()[value.selection];
         if (fields.size() != value.elements.size())
           break;
         for (std::size_t i = 0; i < fields.size(); ++i)
-          if (!coerce(value.elements[i], want.elements[fields[i]], span))
+          if (!coerce(value.elements[i], want.elements()[fields[i]], span))
             return false;
         return true;
       }
@@ -1103,9 +1113,9 @@ private:
 
   std::optional<Shape> pointee(const Value &address) {
     auto shape = host.typeShape(address.type);
-    if (!shape || shape->elements.empty())
+    if (!shape || shape->elements().empty())
       return std::nullopt;
-    auto result = shape->elements.front();
+    auto result = shape->elements().front();
     if (auto expanded = host.typeShape(result.type))
       result = std::move(*expanded);
     return result;
@@ -1117,14 +1127,14 @@ private:
     auto layout = host.layout(type);
     if (!shape || !layout)
       return nullptr;
-    if (shape->kind == Shape::Kind::Array && !shape->elements.empty()) {
-      auto element = host.layout(shape->elements.front().type);
+    if (shape->kind == Shape::Kind::Array && !shape->elements().empty()) {
+      auto element = host.layout(shape->elements().front().type);
       if (!element)
         return nullptr;
       auto index = element->size ? offset / element->size : 0;
       if (index >= root.elements.size())
         return nullptr;
-      return locate(root.elements[index], shape->elements.front().type,
+      return locate(root.elements[index], shape->elements().front().type,
                     element->size ? offset % element->size : 0, target);
     }
     if (root.kind != Value::Kind::Product && root.kind != Value::Kind::Tuple &&
@@ -1134,17 +1144,17 @@ private:
       auto index = i;
       if (root.kind == Value::Kind::Variant) {
         if (root.selection < 0 ||
-            std::size_t(root.selection) >= shape->variants.size() ||
-            i >= shape->variants[root.selection].size())
+            std::size_t(root.selection) >= shape->variants().size() ||
+            i >= shape->variants()[root.selection].size())
           return nullptr;
-        index = shape->variants[root.selection][i];
+        index = shape->variants()[root.selection][i];
       }
-      if (index >= layout->fields.size() || index >= shape->elements.size())
+      if (index >= layout->fields.size() || index >= shape->elements().size())
         return nullptr;
-      auto field = host.layout(shape->elements[index].type);
+      auto field = host.layout(shape->elements()[index].type);
       auto start = layout->fields[index];
       if (field && offset >= start && offset - start <= field->size)
-        if (auto found = locate(root.elements[i], shape->elements[index].type,
+        if (auto found = locate(root.elements[i], shape->elements()[index].type,
                                 offset - start, target))
           return found;
     }
@@ -1199,25 +1209,25 @@ private:
     auto layout = host.layout(type);
     if (!shape || !layout || offset >= layout->size)
       return nullptr;
-    if (shape->kind == Shape::Kind::Array && !shape->elements.empty()) {
-      auto element = host.layout(shape->elements.front().type);
+    if (shape->kind == Shape::Kind::Array && !shape->elements().empty()) {
+      auto element = host.layout(shape->elements().front().type);
       if (!element || !element->size ||
           offset / element->size >= value.elements.size())
         return nullptr;
       return storageByte(value.elements[offset / element->size],
-                         shape->elements.front().type, offset % element->size,
+                         shape->elements().front().type, offset % element->size,
                          span);
     }
     if (shape->kind == Shape::Kind::Product ||
         shape->kind == Shape::Kind::Tuple) {
       for (std::size_t i = 0;
-           i < shape->elements.size() && i < layout->fields.size() &&
+           i < shape->elements().size() && i < layout->fields.size() &&
            i < value.elements.size();
            ++i) {
-        auto field = host.layout(shape->elements[i].type);
+        auto field = host.layout(shape->elements()[i].type);
         if (field && offset >= layout->fields[i] &&
             offset - layout->fields[i] < field->size)
-          return storageByte(value.elements[i], shape->elements[i].type,
+          return storageByte(value.elements[i], shape->elements()[i].type,
                              offset - layout->fields[i], span);
       }
     } else if (isInteger(type) || isFloating(type) || type == Type::Bool ||
@@ -1268,8 +1278,8 @@ private:
     if (!shape || !layout || start > layout->size)
       return;
     size = std::min(size, layout->size - start);
-    if (shape->kind == Shape::Kind::Array && !shape->elements.empty()) {
-      auto element = host.layout(shape->elements.front().type);
+    if (shape->kind == Shape::Kind::Array && !shape->elements().empty()) {
+      auto element = host.layout(shape->elements().front().type);
       if (!element || !element->size || !size)
         return;
       auto first = start / element->size;
@@ -1278,21 +1288,21 @@ private:
         auto offset = i * element->size;
         auto begin = std::max(start, offset);
         auto end = std::min(start + size, offset + element->size);
-        materializeBytes(value.elements[i], shape->elements.front().type,
+        materializeBytes(value.elements[i], shape->elements().front().type,
                          begin - offset, end - begin);
       }
     } else if (shape->kind == Shape::Kind::Product ||
                shape->kind == Shape::Kind::Tuple) {
       for (std::size_t i = 0;
-           i < shape->elements.size() && i < value.elements.size() &&
+           i < shape->elements().size() && i < value.elements.size() &&
            i < layout->fields.size();
            ++i) {
-        auto field = host.layout(shape->elements[i].type);
+        auto field = host.layout(shape->elements()[i].type);
         auto offset = layout->fields[i];
         if (field && offset < start + size && start < offset + field->size) {
           auto begin = std::max(start, offset);
           auto end = std::min(start + size, offset + field->size);
-          materializeBytes(value.elements[i], shape->elements[i].type,
+          materializeBytes(value.elements[i], shape->elements()[i].type,
                            begin - offset, end - begin);
         }
       }
@@ -1467,24 +1477,24 @@ private:
                   "constant mut view requires writable provenance"),
              false;
     while (target->kind == Shape::Kind::Product &&
-           target->elements.size() == 1) {
+           target->elements().size() == 1) {
       auto layout = host.layout(target->type);
       if (!layout || layout->size || layout->fields.size() != 1 ||
           layout->fields.front() != 0)
         break;
       if (!addressBounds(address, target->type, 0, span))
         return false;
-      auto tail = host.typeShape(target->elements.front().type);
+      auto tail = host.typeShape(target->elements().front().type);
       if (!tail)
         break;
       target = std::move(tail);
     }
     if (target->kind == Shape::Kind::Array && target->count == UINT64_MAX) {
-      auto element = host.layout(target->elements.front().type);
+      auto element = host.layout(target->elements().front().type);
       if (!element ||
           (element->size && address.count > UINT64_MAX / element->size))
         return fail("constant", span, "constant slice extent overflow"), false;
-      return addressBounds(address, target->elements.front().type,
+      return addressBounds(address, target->elements().front().type,
                            address.count * element->size, span);
     }
     auto layout = host.layout(target->type);
@@ -1495,12 +1505,12 @@ private:
       return std::nullopt;
     if (shape.kind == Shape::Kind::Array) {
       auto count = shape.count == UINT64_MAX ? address.count : shape.count;
-      if (shape.elements.empty() || count > options.stepBudget - steps)
+      if (shape.elements().empty() || count > options.stepBudget - steps)
         return fail("limit", span,
                     "constant aggregate exceeds the step budget");
-      auto element = host.layout(shape.elements.front().type);
+      auto element = host.layout(shape.elements().front().type);
       if (!element || (element->size && count > UINT64_MAX / element->size) ||
-          !addressBounds(address, shape.elements.front().type,
+          !addressBounds(address, shape.elements().front().type,
                          element->size * count, span))
         return std::nullopt;
       Value value;
@@ -1509,7 +1519,7 @@ private:
       for (std::uint64_t i = 0; i < count; ++i) {
         auto current = address;
         current.offset += i * element->size;
-        auto item = readObject(current, shape.elements.front(), span);
+        auto item = readObject(current, shape.elements().front(), span);
         if (!item)
           return std::nullopt;
         value.elements.push_back(std::move(*item));
@@ -1562,8 +1572,9 @@ private:
       return true;
     }
     auto shape = host.typeShape(type);
-    if (value.kind == Value::Kind::Array && shape && !shape->elements.empty()) {
-      auto element = host.layout(shape->elements.front().type);
+    if (value.kind == Value::Kind::Array && shape &&
+        !shape->elements().empty()) {
+      auto element = host.layout(shape->elements().front().type);
       if (!element)
         return false;
       for (std::size_t i = 0; i < value.elements.size(); ++i) {
@@ -1721,10 +1732,10 @@ private:
       std::uint64_t index = 0;
       if (type->kind == Shape::Kind::Product) {
         auto field =
-            std::find(type->names.begin(), type->names.end(), node.text);
-        if (field == type->names.end())
+            std::find(type->names().begin(), type->names().end(), node.text);
+        if (field == type->names().end())
           return {};
-        index = field - type->names.begin();
+        index = field - type->names().begin();
       } else if (node.text.empty() ||
                  !std::all_of(node.text.begin(), node.text.end(),
                               [](char c) { return c >= '0' && c <= '9'; }) ||
@@ -1732,7 +1743,7 @@ private:
         return {};
       else
         index = std::stoull(node.text);
-      if (index >= type->elements.size())
+      if (index >= type->elements().size())
         return {};
       if (!host.project(type->type, static_cast<std::size_t>(index), node)) {
         failed = reported = true;
@@ -1743,7 +1754,7 @@ private:
         return {};
       if (base.address) {
         base.address->offset += layout->fields[index];
-        base.address->type = host.referenceType(type->elements[index].type,
+        base.address->type = host.referenceType(type->elements()[index].type,
                                                 base.address->exclusive, false);
         return base;
       }
@@ -1771,7 +1782,8 @@ private:
               ? pointee(*base.address)
               : (base.value ? host.typeShape(host.valueType(*base.value))
                             : std::nullopt);
-      if (!type || type->kind != Shape::Kind::Array || type->elements.empty()) {
+      if (!type || type->kind != Shape::Kind::Array ||
+          type->elements().empty()) {
         fail("type", node.span, "cannot index this value in a constant");
         return {};
       }
@@ -1804,12 +1816,12 @@ private:
                  integerLiteralName(index->number));
         return {};
       }
-      auto element = host.layout(type->elements.front().type);
+      auto element = host.layout(type->elements().front().type);
       if (!element)
         return {};
       if (base.address) {
         base.address->offset += index->number.magnitude[0] * element->size;
-        base.address->type = host.referenceType(type->elements.front().type,
+        base.address->type = host.referenceType(type->elements().front().type,
                                                 base.address->exclusive, false);
         return base;
       }
@@ -1853,11 +1865,11 @@ private:
             auto field = i;
             if (loaded->kind == Value::Kind::Variant) {
               if (loaded->selection < 0 ||
-                  std::size_t(loaded->selection) >= target->variants.size() ||
-                  i >= target->variants[loaded->selection].size())
+                  std::size_t(loaded->selection) >= target->variants().size() ||
+                  i >= target->variants()[loaded->selection].size())
                 return fail("type", pattern.span,
                             "invalid constant enum variant");
-              field = target->variants[loaded->selection][i];
+              field = target->variants()[loaded->selection][i];
             }
             if (!layout || field >= layout->fields.size())
               return unsupported(pattern.span, "this viewed constant pattern");
@@ -2023,17 +2035,17 @@ private:
         if (found.value.selection != value.selection)
           return false;
         if (value.selection < 0 ||
-            std::size_t(value.selection) >= shape->variants.size())
+            std::size_t(value.selection) >= shape->variants().size())
           return fail("type", pattern.span, "invalid constant enum variant");
-        fields = shape->variants[value.selection];
+        fields = shape->variants()[value.selection];
       } else
-        for (std::size_t i = 0; i < shape->elements.size(); ++i)
+        for (std::size_t i = 0; i < shape->elements().size(); ++i)
           fields.push_back(i);
       for (const auto &child : pattern.children) {
         auto field =
             std::find_if(fields.begin(), fields.end(), [&](std::size_t index) {
-              return index < shape->names.size() &&
-                     shape->names[index] == child.field;
+              return index < shape->names().size() &&
+                     shape->names()[index] == child.field;
             });
         if (field == fields.end() ||
             std::size_t(field - fields.begin()) >= value.elements.size())
@@ -2205,7 +2217,7 @@ private:
       return std::nullopt;
     if (node.kind == Kind::Index)
       return base->kind == Shape::Kind::Array
-                 ? std::optional<Shape>(base->elements.front())
+                 ? std::optional<Shape>(base->elements().front())
                  : std::nullopt;
     if (base->kind != Shape::Kind::Tuple || node.text.empty() ||
         node.text.size() > 9 ||
@@ -2213,8 +2225,8 @@ private:
                      [](char c) { return c >= '0' && c <= '9'; }))
       return std::nullopt;
     auto index = std::stoull(node.text);
-    return index < base->elements.size()
-               ? std::optional<Shape>(base->elements[index])
+    return index < base->elements().size()
+               ? std::optional<Shape>(base->elements()[index])
                : std::nullopt;
   }
 
@@ -2469,15 +2481,15 @@ private:
         shape.kind == Shape::Kind::Tuple) {
       value.kind = shape.kind == Shape::Kind::Product ? Value::Kind::Product
                                                       : Value::Kind::Tuple;
-      for (const auto &field : shape.elements)
+      for (const auto &field : shape.elements())
         value.elements.push_back(uninitialized(field, expandArrays));
     } else if (expandArrays && shape.kind == Shape::Kind::Array &&
-               shape.count != UINT64_MAX && !shape.elements.empty() &&
+               shape.count != UINT64_MAX && !shape.elements().empty() &&
                shape.count <= options.stepBudget - steps) {
       value.kind = Value::Kind::Array;
       value.elements.assign(
           static_cast<std::size_t>(shape.count),
-          uninitialized(shape.elements.front(), expandArrays));
+          uninitialized(shape.elements().front(), expandArrays));
     }
     return value;
   }
@@ -2559,7 +2571,7 @@ private:
       auto target = host.typeShape(operation.type);
       if (!target || !target->uninitializedStorage ||
           target->kind != Shape::Kind::Product ||
-          target->elements.size() != 1 || receiver || !arguments.empty())
+          target->elements().size() != 1 || receiver || !arguments.empty())
         return unsupported(node.span, "this constant uninitialized storage");
       return uninitialized(*target, true);
     }
@@ -2568,11 +2580,11 @@ private:
       if (name == "storage.new") {
         auto target = host.typeShape(operation.type);
         if (!target || target->kind != Shape::Kind::Product ||
-            target->elements.size() != 1 || arguments.size() != 1)
+            target->elements().size() != 1 || arguments.size() != 1)
           return unsupported(node.span, "this constant storage constructor");
         auto payload = arguments.front();
         if (!initialized(payload, node.span) ||
-            !coerce(payload, target->elements.front(), node.span))
+            !coerce(payload, target->elements().front(), node.span))
           return std::nullopt;
         Value value;
         value.kind = Value::Kind::Product;
@@ -2630,10 +2642,10 @@ private:
                          : std::nullopt;
       auto layout = storage ? host.layout(storage->type) : std::nullopt;
       if (!storage || storage->kind != Shape::Kind::Product ||
-          storage->elements.size() != 1 || !layout ||
+          storage->elements().size() != 1 || !layout ||
           layout->fields.size() != 1 || arguments.size() != 1)
         return unsupported(node.span, "this constant storage write");
-      const auto &slot = storage->elements.front();
+      const auto &slot = storage->elements().front();
       auto payload = arguments.front();
       auto destination = *receiver;
       destination.kind = Value::Kind::Reference;
@@ -2651,11 +2663,11 @@ private:
         return unsupported(node.span, "this constant Cell pointer projection");
       auto storage = pointee(*receiver);
       if (!storage || storage->kind != Shape::Kind::Product ||
-          storage->elements.size() != 1)
+          storage->elements().size() != 1)
         return unsupported(node.span, "this constant Cell storage");
       auto value = *receiver;
       value.kind = Value::Kind::Pointer;
-      value.type = host.referenceType(storage->elements.front().type,
+      value.type = host.referenceType(storage->elements().front().type,
                                       name != "storage.as_ptr", true);
       if (name == "cell.as_ptr")
         value.exclusive = true;
@@ -2714,7 +2726,7 @@ private:
     if (name == "storage.raw_get" || name == "storage.from_mut") {
       auto wrapper =
           argumentType ? host.typeShape(*argumentType) : std::nullopt;
-      if (!wrapper || wrapper->elements.size() != 1 || arguments.size() != 1)
+      if (!wrapper || wrapper->elements().size() != 1 || arguments.size() != 1)
         return fail("constant", node.span, "invalid UnsafeCell operands");
       auto value = arguments[0];
       if (name == "storage.from_mut") {
@@ -2727,7 +2739,8 @@ private:
         if (value.kind != Value::Kind::Pointer)
           return fail("constant", node.span,
                       "UnsafeCell raw_get requires a pointer");
-        value.type = host.referenceType(wrapper->elements[0].type, true, true);
+        value.type =
+            host.referenceType(wrapper->elements()[0].type, true, true);
         value.exclusive = true;
       }
       value.bytes.clear();
@@ -2797,8 +2810,8 @@ private:
         auto shape =
             argumentType ? host.typeShape(*argumentType) : std::nullopt;
         auto array = shape && shape->kind == Shape::Kind::Pointer &&
-                             !shape->elements.empty()
-                         ? host.typeShape(shape->elements[0].type)
+                             !shape->elements().empty()
+                         ? host.typeShape(shape->elements()[0].type)
                          : std::nullopt;
         auto resultShape = host.expressionShape(node);
         if (!array || array->kind != Shape::Kind::Array ||
@@ -3131,16 +3144,16 @@ private:
         return value;
       }
       if (target->kind == Shape::Kind::Product &&
-          target->elements.size() == 2 &&
-          target->elements[0].kind == Shape::Kind::Pointer &&
-          target->elements[1].type == Type::Usize &&
+          target->elements().size() == 2 &&
+          target->elements()[0].kind == Shape::Kind::Pointer &&
+          target->elements()[1].type == Type::Usize &&
           value.kind == Value::Kind::Pointer) {
         Value raw;
         raw.kind = Value::Kind::Product;
         raw.type = target->type;
         auto count = integerValue(Type::Usize, integerLiteral(value.count));
-        value.type = target->elements[0].type;
-        value.exclusive = target->elements[0].exclusive;
+        value.type = target->elements()[0].type;
+        value.exclusive = target->elements()[0].exclusive;
         value.bytes.clear();
         raw.elements = {std::move(value), std::move(count)};
         return raw;
@@ -3171,10 +3184,10 @@ private:
         auto layout = host.layout(owner);
         auto shape = host.typeShape(owner);
         if (!layout || !shape || field >= layout->fields.size() ||
-            field >= shape->elements.size())
+            field >= shape->elements().size())
           return unsupported(node.span, "this offset_of layout");
         offset += layout->fields[field];
-        owner = shape->elements[field].type;
+        owner = shape->elements()[field].type;
       }
       return integerValue(Type::Usize, integerLiteral(offset));
     }
@@ -3356,37 +3369,36 @@ private:
         return unsupported(node.span, "this constant constructor");
       if (found.value.kind == Value::Kind::Variant) {
         auto selection = found.value.selection;
-        if (selection < 0 || std::size_t(selection) >= shape->variants.size())
+        if (selection < 0 || std::size_t(selection) >= shape->variants().size())
           return fail("type", callee.span, "invalid constant enum variant");
-        auto fields = shape->variants[selection];
-        std::vector<Shape> elements;
-        std::vector<std::string> names;
+        const auto &fields = shape->variants()[selection];
+        auto aggregate = std::make_shared<Shape::Aggregate>();
         for (auto field : fields) {
-          if (field >= shape->elements.size() || field >= shape->names.size())
+          if (field >= shape->elements().size() ||
+              field >= shape->names().size())
             return fail("type", callee.span, "invalid constant variant field");
-          elements.push_back(shape->elements[field]);
-          names.push_back(shape->names[field]);
+          aggregate->elements.push_back(shape->elements()[field]);
+          aggregate->names.push_back(shape->names()[field]);
         }
         shape->kind = Shape::Kind::Product;
-        shape->elements = std::move(elements);
-        shape->names = std::move(names);
+        shape->aggregate = std::move(aggregate);
       }
       auto value = uninitialized(*shape);
       value.kind = found.value.kind;
       value.selection = found.value.selection;
-      std::vector<bool> used(shape->elements.size());
+      std::vector<bool> used(shape->elements().size());
       for (std::size_t i = 0; i < arguments.size(); ++i) {
         std::size_t slot = i;
         auto &argument = *node.children[i + 1];
         if (!argument.name.empty())
-          slot = std::find(shape->names.begin(), shape->names.end(),
+          slot = std::find(shape->names().begin(), shape->names().end(),
                            argument.name) -
-                 shape->names.begin();
+                 shape->names().begin();
         if (slot >= value.elements.size() || used[slot])
           return fail("type", argument.span,
                       "invalid constant constructor argument");
         used[slot] = true;
-        if (!coerce(arguments[i], shape->elements[slot], argument.span))
+        if (!coerce(arguments[i], shape->elements()[slot], argument.span))
           return std::nullopt;
         value.elements[slot] = std::move(arguments[i]);
       }
@@ -3820,9 +3832,9 @@ private:
       for (std::size_t i = 0; i < node.children.size(); ++i) {
         const Shape *payload = nullptr;
         if (want && want->kind == Shape::Kind::Variant &&
-            std::size_t(value.selection) < want->variants.size() &&
-            i < want->variants[value.selection].size())
-          payload = &want->elements[want->variants[value.selection][i]];
+            std::size_t(value.selection) < want->variants().size() &&
+            i < want->variants()[value.selection].size())
+          payload = &want->elements()[want->variants()[value.selection][i]];
         auto item = eval(*node.children[i], payload);
         if (!item)
           return std::nullopt;
@@ -3847,12 +3859,14 @@ private:
               it->value->type == Type::Unknown &&
               !coerce(*it->value, *want, node.span))
             return std::nullopt;
-          auto result = *it->value;
           if (want && want->kind != Shape::Kind::Reference &&
-              result.kind != Value::Kind::Reference &&
-              !host.copy(host.valueType(result)))
+              it->value->kind != Value::Kind::Reference &&
+              !host.copy(host.valueType(*it->value))) {
+            auto result = std::move(*it->value);
             it->value->kind = Value::Kind::Uninitialized;
-          return result;
+            return result;
+          }
+          return *it->value;
         }
       auto found = lookup(node);
       switch (found.kind) {
@@ -3885,7 +3899,7 @@ private:
       if (node.text == "take") {
         auto where = place(*node.children[0]);
         if (where.value) {
-          auto value = *where.value;
+          auto value = std::move(*where.value);
           where.value->kind = Value::Kind::Uninitialized;
           return value;
         }
@@ -4067,7 +4081,7 @@ private:
       if (!value && (failed || signal != Signal::Throw))
         return std::nullopt;
       if (!want || want->kind != Shape::Kind::Variant ||
-          want->variants.size() != 2)
+          want->variants().size() != 2)
         return unsupported(node.span, "this typed capture result");
       Value captured;
       captured.kind = Value::Kind::Variant;
@@ -4115,8 +4129,8 @@ private:
       result.type = Type::Unknown;
       for (std::size_t i = 0; i < node.children.size(); ++i) {
         const Shape *inner = want && want->kind == Shape::Kind::Tuple &&
-                                     i < want->elements.size()
-                                 ? &want->elements[i]
+                                     i < want->elements().size()
+                                 ? &want->elements()[i]
                                  : nullptr;
         auto value = eval(*node.children[i], inner);
         if (!value)
@@ -4228,7 +4242,7 @@ private:
     result.kind = Value::Kind::Array;
     result.type = Type::Unknown;
     const Shape *element = want && want->kind == Shape::Kind::Array
-                               ? &want->elements.front()
+                               ? &want->elements().front()
                                : nullptr;
     if (node.flag) {
       auto first = eval(*node.children[0], element);
@@ -4287,33 +4301,85 @@ struct Job {
   Result result{};
   std::exception_ptr failure{};
 };
-void *runJob(void *argument) {
-  auto &job = *static_cast<Job *>(argument);
+thread_local bool onEvaluationWorker = false;
+void runJob(Job &job) {
   try {
     job.result = Interpreter(job.host, job.options).run(job.node, job.expected);
   } catch (...) {
     job.failure = std::current_exception();
   }
-  return nullptr;
 }
+class Worker {
+public:
+  Worker() {
+    constexpr std::size_t stackBytes = std::size_t{1} << 30;
+    pthread_attr_t attributes;
+    if (pthread_attr_init(&attributes) != 0)
+      return;
+    started = pthread_attr_setstacksize(&attributes, stackBytes) == 0 &&
+              pthread_create(&thread, &attributes, run, this) == 0;
+    pthread_attr_destroy(&attributes);
+  }
+  ~Worker() {
+    if (!started)
+      return;
+    {
+      std::lock_guard lock(mutex);
+      stopping = true;
+    }
+    ready.notify_one();
+    pthread_join(thread, nullptr);
+  }
+  bool evaluate(Job &job) {
+    if (!started)
+      return false;
+    std::unique_lock lock(mutex);
+    pending = &job;
+    ready.notify_one();
+    ready.wait(lock, [&] { return pending == nullptr; });
+    return true;
+  }
+
+private:
+  static void *run(void *argument) {
+    onEvaluationWorker = true;
+    auto &worker = *static_cast<Worker *>(argument);
+    std::unique_lock lock(worker.mutex);
+    while (true) {
+      worker.ready.wait(lock,
+                        [&] { return worker.pending || worker.stopping; });
+      if (worker.stopping)
+        return nullptr;
+      auto job = worker.pending;
+      lock.unlock();
+      runJob(*job);
+      lock.lock();
+      worker.pending = nullptr;
+      worker.ready.notify_one();
+    }
+  }
+  std::mutex mutex;
+  std::condition_variable ready;
+  pthread_t thread{};
+  Job *pending = nullptr;
+  bool started = false, stopping = false;
+};
 } // namespace
 
 Result evaluate(Host &host, const Options &options, const Node &node,
                 const Expectation &expected) {
   Job job{host, options, node, expected};
-  constexpr std::size_t stackBytes = std::size_t{1} << 30;
-  pthread_attr_t attributes;
-  pthread_t thread;
-  bool started = pthread_attr_init(&attributes) == 0;
-  if (started) {
-    started = pthread_attr_setstacksize(&attributes, stackBytes) == 0 &&
-              pthread_create(&thread, &attributes, runJob, &job) == 0;
-    pthread_attr_destroy(&attributes);
+  if (onEvaluationWorker)
+    runJob(job);
+  else {
+    thread_local Worker worker;
+    if (!worker.evaluate(job)) {
+      host.report("limit", node.span,
+                  "could not create constant evaluation worker with required "
+                  "stack");
+      return {};
+    }
   }
-  if (!started)
-    runJob(&job);
-  else
-    pthread_join(thread, nullptr);
   if (job.failure)
     std::rethrow_exception(job.failure);
   return std::move(job.result);

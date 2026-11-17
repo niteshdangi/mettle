@@ -390,8 +390,12 @@ collectInputs(const std::filesystem::path &directory,
     auto found = inputs.sources.find(name);
     if (found != inputs.sources.end() && found->second.text != text)
       return fail("source changed during snapshot: " + path.string());
-    inputs.sources.insert_or_assign(name,
-                                    Source{name, std::move(text), SourceId{0}});
+    if (found == inputs.sources.end()) {
+      packages::Sha256 content;
+      content.update(text);
+      inputs.digests.emplace(name, content.finish());
+      inputs.sources.emplace(name, Source{name, std::move(text), SourceId{0}});
+    }
   }
   if (inputs.sources.empty())
     return fail("no library sources");

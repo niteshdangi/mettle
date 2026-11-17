@@ -75,7 +75,7 @@ std::optional<Record> parseRecord(const std::string &text) {
 }
 
 std::optional<std::string> stale(const Record &record,
-                                 const fs::path &directory) {
+                                 const fs::path &directory) try {
   for (const auto &[state, path] : record.inputs)
     if (inputState(directory / path) != state)
       return "input '" + path + "' changed";
@@ -83,6 +83,8 @@ std::optional<std::string> stale(const Record &record,
     if (variableState(name) != state)
       return "environment variable " + name + " changed";
   return std::nullopt;
+} catch (const fs::filesystem_error &error) {
+  return error.what();
 }
 } // namespace
 
@@ -150,7 +152,7 @@ bool ProcedureHost::prepare() {
 }
 
 ProcedureResponse ProcedureHost::invoke(const std::string &name,
-                                        const std::string &request) {
+                                        const std::string &request) try {
   auto memoKey = name + std::string(1, '\0') + request;
   auto remembered = memo.find(memoKey);
   if (remembered != memo.end())
@@ -196,6 +198,8 @@ ProcedureResponse ProcedureHost::invoke(const std::string &name,
   inputs.generated(name + ":" + digest(request), response->text);
   memo.emplace(memoKey, *response);
   return *response;
+} catch (const fs::filesystem_error &error) {
+  return failure(error.what());
 }
 
 ProcedureResponse ProcedureHost::execute(const Program &program,

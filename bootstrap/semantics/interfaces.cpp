@@ -115,16 +115,17 @@ bool Checker::intrinsicProperty(const TypeSyntax &bound,
 }
 
 bool Checker::interfaceHasFunctions(const std::string &canonical) const {
-  auto [cached, inserted] = interfaceFunctionOwners.try_emplace(canonical, false);
+  auto [cached, inserted] =
+      interfaceFunctionOwners.try_emplace(canonical, false);
   if (inserted)
-    cached->second = std::any_of(
-        module.functions.begin(), module.functions.end(),
-        [&](const Function &function) {
-          return function.implementation < 0 &&
-                 !function.interfaceOwner.empty() &&
-                 typeName(function.interfaceOwner, function.span,
-                          function.owner) == canonical;
-        });
+    cached->second =
+        std::any_of(module.functions.begin(), module.functions.end(),
+                    [&](const Function &function) {
+                      return function.implementation < 0 &&
+                             !function.interfaceOwner.empty() &&
+                             typeName(function.interfaceOwner, function.span,
+                                      function.owner) == canonical;
+                    });
   return cached->second;
 }
 
@@ -275,7 +276,7 @@ Type Checker::interfaceBound(const TypeSyntax &bound, Span span,
   std::size_t required = 0;
   auto defaultArgument = [&](const GenericParameter &parameter,
                              std::size_t position) {
-    auto &environment = interfaceGenerics.at(&syntax);
+    auto &environment = typeEnvironment(syntax);
     auto identity = definition.parameters[position];
     auto cached = environment.defaults.find(identity);
     Type value;
@@ -475,7 +476,7 @@ Checker::superinterfacesOf(std::size_t index) {
   if (!resolvingSuperinterfaces.insert(index).second)
     return none;
   auto *saved = genericEnvironment;
-  genericEnvironment = &interfaceGenerics.at(&syntax);
+  genericEnvironment = &typeEnvironment(syntax);
   auto parents = resolveSuperinterfaces(index);
   genericEnvironment = saved;
   resolvingSuperinterfaces.erase(index);
@@ -633,7 +634,7 @@ void Checker::interfaceSignatures() {
     if (imported(syntax.span))
       continue;
     auto &definition = checked.interfaceData->definitions[i];
-    auto &environment = interfaceGenerics.at(&syntax);
+    auto &environment = typeEnvironment(syntax);
     definition.parameters = environment.parameters;
     TypeSyntax selfBound;
     selfBound.name = syntax.name;
@@ -785,7 +786,7 @@ void Checker::interfaceSignatures() {
   for (auto &function : module.functions) {
     if (imported(function.span))
       continue;
-    auto &environment = functionGenerics.at(&function);
+    auto &environment = functionEnvironment(function);
     genericEnvironment = &environment;
     if (function.implementation >= 0)
       environment.names[nameKey("Self", function.lexicalContext)] =
@@ -887,9 +888,7 @@ Type Checker::interfaceProjection(Type subject, Type interfaceType,
       checked.types->isSized(associated->parameter), regions,
       checked.types->parameter(associated->parameter).thin);
   auto &projections = checked.interfaceData->projections;
-  if (std::none_of(
-          projections.begin(), projections.end(),
-          [&](const auto &prior) { return prior.parameter == projection; }))
+  if (!checked.interfaceData->projectionFor(projection))
     projections.push_back({projection, subject, interfaceType, ordinal,
                            std::move(actuals), std::move(regions)});
   auto assumptions = interfaceAssumptions();

@@ -148,7 +148,7 @@ Type Checker::genericArgument(const GenericArgument &argument, Type parameter) {
 std::optional<CallableType> Checker::genericFunctionValue(Node &node,
                                                           std::size_t callee) {
   auto &function = module.functions[callee];
-  auto &environment = functionGenerics.at(&function);
+  auto &environment = functionEnvironment(function);
   if (environment.parameters.empty())
     return std::nullopt;
   auto caller = genericEnvironment;

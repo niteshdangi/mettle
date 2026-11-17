@@ -165,7 +165,7 @@ std::optional<Contract> parseContract(const std::string &text) {
 // Why a recorded result no longer holds, or nothing when it does.
 std::optional<std::string> stale(const Contract &contract,
                                  const fs::path &directory,
-                                 const fs::path &outDirectory) {
+                                 const fs::path &outDirectory) try {
   for (const auto &[state, path] : contract.inputs)
     if (inputState(directory / path) != state)
       return "input '" + path + "' changed";
@@ -179,6 +179,8 @@ std::optional<std::string> stale(const Contract &contract,
   if (filesBelow(outDirectory) != expected)
     return "generated files are missing or were modified";
   return std::nullopt;
+} catch (const fs::filesystem_error &error) {
+  return error.what();
 }
 
 class Runner {
@@ -258,7 +260,7 @@ private:
     return true;
   }
 
-  bool one(const packages::BuildScript &script) {
+  bool one(const packages::BuildScript &script) try {
     fs::path directory = script.directory;
     fs::path work = directory / "target" / "mettle";
     fs::path outDirectory = work / "out";
@@ -377,6 +379,8 @@ private:
       store->putText(key, serialize(contract));
     }
     return true;
+  } catch (const fs::filesystem_error &error) {
+    return fail(script, error.what());
   }
 };
 } // namespace

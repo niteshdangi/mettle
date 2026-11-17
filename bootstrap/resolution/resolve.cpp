@@ -722,9 +722,29 @@ private:
   bool bind(ModuleId module, std::string_view name, Target target,
             ModuleId visible, bool explicitBinding, Span span,
             std::size_t importIndex, bool prelude = false) {
-    const auto &definition = result.definitions[target.definition];
+    auto &definition = result.definitions[target.definition];
+    const bool discovered =
+        explicitBinding && definition.space == Namespace::Module &&
+        span.begin != span.end && definition.span.source == span.source &&
+        definition.span.begin == span.begin && definition.span.end == span.end;
+    if (discovered && definition.boundary != visible) {
+      definition.boundary = visible;
+      target.boundary = visible;
+      for (auto &item : result.items)
+        if (item.canonical == definition.canonical &&
+            item.span.source == span.source && item.span.begin == span.begin &&
+            item.span.end == span.end)
+          item.boundary = visible;
+    }
     auto &bindings =
         result.scopes[module].bindings[key(definition.space, name)];
+    for (auto &binding : bindings)
+      if (discovered && binding.definition == target.definition &&
+          !binding.import) {
+        binding.boundary = visible;
+        binding.import = importIndex;
+        return true;
+      }
     for (const auto &binding : bindings)
       if (binding.definition == target.definition &&
           binding.explicitBinding == explicitBinding &&

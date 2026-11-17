@@ -3,13 +3,18 @@
 #include "packages/plan.h"
 #include "resolution/load.h"
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
+namespace mettle::pipeline {
+class FunctionQueries;
+}
 namespace mettle::driver {
+class LibraryQueries;
 struct Options {
   Options();
   // `mettle fmt FILE...` and `mettle doc PATH...`: `input` is the first path,
@@ -40,11 +45,13 @@ struct Options {
   std::set<std::string> injectedFeatures;
   std::vector<resolution::Library::Package> injectedPackages;
   std::vector<std::pair<std::string, std::string>> packageDependencies;
-  // Build cache (see docs/process/performance.md section 5.1.1). An empty directory
-  // selects METTLE_CACHE_DIR, then the user cache directory.
+  // Build cache (see docs/process/performance.md section 5.1.1). An empty
+  // directory selects METTLE_CACHE_DIR, then the user cache directory.
   std::string cacheDir;
   std::uint64_t cacheLimitKib = 0, cacheMaxAgeDays = 30;
   bool noCache = false, explain = false, dryRun = false;
+  std::shared_ptr<LibraryQueries> libraryQueries;
+  std::shared_ptr<pipeline::FunctionQueries> functionQueries;
   // Link libraries requested by build scripts.
   std::vector<std::string> extraLibraries;
   // `mettle run`: arguments after `--`. `mettle test`/`bench`: name filters,

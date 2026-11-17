@@ -232,15 +232,19 @@ bool instrument(ir::Program &program, bool unwind) {
   int checker = static_cast<int>(program.functions.size());
   program.functions.push_back(
       external("mettle_test_cleanup_source_result", Type::I32, 2));
-  for (auto &function : program.functions)
-    if (function.name == "Guard.drop" || function.name == "Pair.drop" ||
-        function.name == "Builder.drop" || function.name == "Panicker.drop")
-      observe(function, recorder);
-  auto main = std::find_if(
+  for (std::size_t f = 0; f < program.functions.size(); ++f)
+    if (program.functions[f].name == "Guard.drop" ||
+        program.functions[f].name == "Pair.drop" ||
+        program.functions[f].name == "Builder.drop" ||
+        program.functions[f].name == "Panicker.drop")
+      observe(program.functions.edit(f), recorder);
+  auto found = std::find_if(
       program.functions.begin(), program.functions.end(),
       [](const auto &function) { return function.name == "main"; });
-  if (main == program.functions.end())
+  if (found == program.functions.end())
     return false;
+  auto *main =
+      &program.functions.edit(std::distance(program.functions.begin(), found));
   ir::Value caught;
   if (unwind) {
     for (auto &block : main->blocks)

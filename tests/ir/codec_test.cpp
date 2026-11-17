@@ -93,7 +93,7 @@ Fixture encodeFixture(bool addressOnly = false) {
                  constantFunction("$private", 9),
                  constantFunction("identity", 0),
                  constantFunction("$closure.body", 5)};
-  auto &api = p.functions[0];
+  auto &api = p.functions.edit(0);
   api.locals = {{"pair", product, false, {}, ParameterMode::Value, 1}};
   api.scopes.push_back({0});
   api.blocks[0].instructions = {
@@ -142,12 +142,12 @@ Fixture encodeFixture(bool addressOnly = false) {
   api.floatingPolicy = {true, false, true, false, true, false, true};
   api.targetFeatures = {"sse2"};
   api.span = {1, 12, 7};
-  p.functions[1].blocks[0].instructions[0] = {
+  p.functions.edit(1).blocks[0].instructions[0] = {
       Op::Call, {0, Type::I32}, {}, {}, "", {}, 2, 0, {}};
-  p.functions[1].locals = {
+  p.functions.edit(1).locals = {
       {"inactive", Type::I32, false, {}, ParameterMode::Value, -1},
       {"escaping", Type::I32, false, {}, ParameterMode::Value, -2}};
-  auto &privateBody = p.functions[2];
+  auto &privateBody = p.functions.edit(2);
   privateBody.locals = {{"COUNTER",
                          Type::I32,
                          false,
@@ -171,7 +171,7 @@ Fixture encodeFixture(bool addressOnly = false) {
        {}}};
   privateBody.values = 3;
   privateBody.blocks[0].exit.value = {2, Type::I32};
-  auto &generic = p.functions[3];
+  auto &generic = p.functions.edit(3);
   generic.result = parameter;
   generic.parameters = 1;
   generic.locals = {{"value", parameter, false, {}}};
@@ -338,8 +338,8 @@ void verifiedRemapping() {
   assembled.functions.resize(7);
   assembled.statics.resize(3);
   for (std::size_t i = 0; i < decoded.program.functions.size(); ++i)
-    assembled.functions[decoded.functionDestinations[i]] =
-        std::move(decoded.program.functions[i]);
+    assembled.functions.edit(decoded.functionDestinations[i]) =
+        std::move(decoded.program.functions.edit(i));
   for (std::size_t i = 0; i < decoded.program.statics.size(); ++i)
     assembled.statics[decoded.staticDestinations[i]] =
         std::move(decoded.program.statics[i]);
@@ -417,9 +417,14 @@ void verifiedRemapping() {
     bad = fixture.irBytes;
     bad[offset] ^= 0xff;
     auto result = decodeProgram(bad, refs);
-    if (!result)
+    if (!result) {
       require(result.program.functions.empty(),
               "mutated archive exposed partial records");
+      if (result.error == "invalid IR local scope reference" ||
+          result.error == "invalid IR lexical scope parent")
+        require(!decodeProgramLazy(bad, refs, true),
+                "compact validation ignored malformed body-local metadata");
+    }
   }
   require(imported.roots == rootsBefore,
           "decode mutated shared caller type roots");
@@ -433,6 +438,11 @@ void crossRecordSymbolAliases() {
     call.callee = i == 2 ? 101 : 100;
     program.functions.push_back(std::move(function));
   }
+  auto &header = program.functions.edit(0);
+  header.locals = {{"self", Type::I32, false, {}, ParameterMode::Value, 1},
+                   {"unused", Type::I32, false, {}, ParameterMode::Value, 1}};
+  header.scopes.push_back({0});
+  header.constructorSelfSlot = 0;
   metadata::EncodeReferences encode;
   encode.type = [](Type type) { return std::optional{type.index()}; };
   encode.symbol = symbolName;
@@ -469,6 +479,36 @@ void crossRecordSymbolAliases() {
   require(bool(first) &&
               first.function->blocks[0].instructions[0].callee == 100,
           "lazy function body did not decode");
+  auto compact = decodeProgramLazy(encoded.bytes, decode, true);
+  require(bool(compact), compact.error.c_str());
+  require(compact.program.functions[0].locals.size() == 1 &&
+              compact.program.functions[0].scopes.empty(),
+          "compact headers lost special slots or retained body-only metadata");
+  compact.program.functions.edit(0).locals[0].name = "consumer";
+  auto complete =
+      compact.lazyFunctions->load(0, compact.program.functions[0], decode);
+  require(bool(complete) && complete.function->locals.size() == 2 &&
+              complete.function->locals[0].name == "consumer" &&
+              complete.function->locals[1].name == "unused" &&
+              complete.function->scopes.size() == 2,
+          "demand-loaded metadata lost body locals or consumer header edits");
+  auto retained = std::make_shared<const metadata::DecodeReferences>(decode);
+  auto ownedBytes = encoded.bytes;
+  auto demand = decodeProgramLazy(ownedBytes, *retained, true, retained);
+  require(bool(demand), demand.error.c_str());
+  retained.reset();
+  ownedBytes.clear();
+  for (std::size_t i = 0; i < demand.program.functions.size(); ++i)
+    require(!demand.program.functions.isMaterialized(i),
+            "retained IR admission allocated an unused function header");
+  require(demand.program.functions[0].locals.size() == 1 &&
+              !demand.program.functions.isMaterialized(1) &&
+              demand.program.functionIndex[0].name == "caller",
+          "demanding one retained header materialized unrelated headers");
+  auto demandedBody =
+      demand.lazyFunctions->load(0, demand.program.functions[0], decode);
+  require(bool(demandedBody) && demandedBody.function->locals.size() == 2,
+          "retained header/body metadata outlived neither input nor resolver");
   auto resolve = decode.symbol;
   decode.symbol = [resolve](SymbolKind kind, std::string_view name) {
     auto index = resolve(kind, name);
@@ -751,14 +791,14 @@ void rawFieldCoverage() {
   std::fill_n(marker + n.text.size(), 4, 0x7f);
   require(!decodeProgram(bad, decode), "dangling owned place accepted");
   auto malformed = p;
-  malformed.functions[0].blocks[0].instructions[0].operands[0].id = 123;
+  malformed.functions.edit(0).blocks[0].instructions[0].operands[0].id = 123;
   require(!encodeProgram(malformed, encode), "dangling SSA operand exported");
   malformed = p;
-  malformed.functions[0].blocks[0].instructions[0].callee = -2;
+  malformed.functions.edit(0).blocks[0].instructions[0].callee = -2;
   require(!encodeProgram(malformed, encode),
           "negative symbol cast to unsigned");
   malformed = p;
-  malformed.functions[0].locals[0].scope = -3;
+  malformed.functions.edit(0).locals[0].scope = -3;
   require(!encodeProgram(malformed, encode),
           "invalid negative local scope accepted");
   malformed = p;

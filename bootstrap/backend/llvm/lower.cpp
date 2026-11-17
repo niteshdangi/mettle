@@ -3,6 +3,7 @@
 #include "backend/llvm/cleanup.h"
 #include "backend/llvm/object.h"
 #include "backend/llvm/target.h"
+#include "source/positions.h"
 #include "support/path.h"
 #include "types/layout.h"
 #include "llvm/IR/InlineAsm.h"
@@ -142,11 +143,13 @@ public:
         global = new llvm::GlobalVariable(
             *module, staticType(storage.type, initializer),
             !storage.mutableBinding && !interiorMutable(storage.type),
-            storage.externalName.empty() && !partition.split
+            storage.externalName.empty() &&
+                    (!partition.split || (partition.privateRoot && owns))
                 ? llvm::GlobalValue::InternalLinkage
                 : llvm::GlobalValue::ExternalLinkage,
             nullptr, name);
-      if (partition.split && storage.externalName.empty()) {
+      if (partition.split && storage.externalName.empty() &&
+          !global->hasLocalLinkage()) {
         global->setVisibility(llvm::GlobalValue::HiddenVisibility);
         global->setDSOLocal(true);
       }
@@ -200,7 +203,13 @@ public:
                 ? llvm::GlobalValue::ExternalLinkage
                 : llvm::GlobalValue::InternalLinkage,
             "mettle.abi." + f.name, *module);
-      } else
+      } else if (availableExternally(index))
+        function = llvm::cast<llvm::Function>(
+            module
+                ->getOrInsertFunction("mettle." + displayPath(f.name),
+                                      signature)
+                .getCallee());
+      else
         function =
             f.externalName.empty()
                 ? llvm::Function::Create(
@@ -213,6 +222,11 @@ public:
                       module->getOrInsertFunction(f.externalName, signature)
                           .getCallee());
       function->setUWTableKind(llvm::UWTableKind::Default);
+      if (availableExternally(index)) {
+        function->setLinkage(llvm::GlobalValue::AvailableExternallyLinkage);
+        function->setVisibility(llvm::GlobalValue::HiddenVisibility);
+        function->setDSOLocal(true);
+      }
       if (partition.split && f.externalName.empty() && !privateCopy(index)) {
         function->setVisibility(llvm::GlobalValue::HiddenVisibility);
         function->setDSOLocal(true);
@@ -242,13 +256,10 @@ public:
       if (ownsStatic(i) && program.statics[i].initializer)
         lowering.statics[i]->setInitializer(
             staticConstant(*program.statics[i].initializer));
-    std::vector<llvm::Function *> symbols;
-    for (std::size_t i = 0; i < functions.size(); ++i)
-      symbols.push_back(externals[i] ? externals[i] : functions[i]);
     AssemblySymbolResolver resolveSymbol = [&](AssemblyOperand::SymbolKind kind,
                                                int id) -> llvm::GlobalValue * {
       return kind == AssemblyOperand::SymbolKind::Function
-                 ? static_cast<llvm::GlobalValue *>(symbols[id])
+                 ? static_cast<llvm::GlobalValue *>(addressSymbol(id))
                  : lowering.statics[id];
     };
     for (const auto &assembly : program.globalAssembly)
@@ -272,8 +283,9 @@ public:
         builder.CreateUnreachable();
       }
     for (std::size_t i = 0; i < functions.size(); ++i)
-      if (ownsFunction(i) && !program.functions[i].blocks.empty())
-        function(program.functions[i], functions[i]);
+      if ((ownsFunction(i) || availableExternally(i)) &&
+          !program.functions[i].blocks.empty())
+        function(program.functions[i], functions[i], i);
     if (debugInfo)
       debugInfo->clear(builder);
     for (std::size_t i = 0; i < functions.size(); ++i)
@@ -343,6 +355,11 @@ private:
   std::map<std::string, llvm::GlobalVariable *> textLiterals;
   std::unique_ptr<DebugInfo> debugInfo;
   const DebugInfoRequest *sourceInfo = nullptr;
+  struct PositionedSource {
+    const Source *source;
+    SourcePositions positions;
+  };
+  std::map<SourceId, PositionedSource> sourcePositions;
   std::map<Type, int> coroutineStates;
   std::map<int, std::unique_ptr<CleanupFrame>> coroutineFrames;
   std::set<int> buildingFrames;
@@ -355,8 +372,32 @@ private:
             privateCopy(index));
   }
 
+  bool availableExternally(std::size_t index) const {
+    return partition.split && !partition.library &&
+           index < program.availableExternally.size() &&
+           program.availableExternally[index];
+  }
+
+  llvm::Function *addressSymbol(std::size_t index) {
+    if (externals[index])
+      return externals[index];
+    auto *function = functions[index];
+    if (partition.split && index < program.genericInstances.size() &&
+        program.genericInstances[index] && ownsFunction(index) &&
+        (!program.functions[index].blocks.empty() ||
+         program.functions[index].nakedAssembly)) {
+      function->setLinkage(llvm::GlobalValue::LinkOnceODRLinkage);
+      function->setVisibility(llvm::GlobalValue::HiddenVisibility);
+      function->setDSOLocal(true);
+      if (!module->getTargetTriple().isOSBinFormatMachO())
+        function->setComdat(module->getOrInsertComdat(function->getName()));
+    }
+    return function;
+  }
+
   bool privateCopy(std::size_t index) const {
-    return partition.library && index < program.functionPackages.size() &&
+    return (partition.library || partition.privateRoot) &&
+           index < program.functionPackages.size() &&
            program.functionPackages[index].empty();
   }
 
@@ -485,14 +526,25 @@ private:
       return location;
     if (sourceInfo->sourceSpan)
       span = sourceInfo->sourceSpan(span);
-    auto found = std::find_if(
-        sourceInfo->sources.begin(), sourceInfo->sources.end(),
-        [&](const Source &source) { return source.id == span.source; });
-    if (found == sourceInfo->sources.end() || found->path.empty() ||
-        span.begin > found->text.size())
+    auto found = sourcePositions.find(span.source);
+    if (found == sourcePositions.end()) {
+      auto input = std::find_if(
+          sourceInfo->sources.begin(), sourceInfo->sources.end(),
+          [&](const Source *source) { return source->id == span.source; });
+      if (input == sourceInfo->sources.end() || (*input)->path.empty() ||
+          span.begin > (*input)->text.size())
+        return location;
+      found = sourcePositions
+                  .emplace(
+                      span.source,
+                      PositionedSource{*input, SourcePositions((*input)->text)})
+                  .first;
+    }
+    const auto &source = *found->second.source;
+    if (span.begin > source.text.size())
       return location;
-    auto position = sourcePosition(*found, span.begin);
-    return {textGlobal(found->path), builder.getInt64(found->path.size()),
+    auto position = found->second.positions.position(span.begin);
+    return {textGlobal(source.path), builder.getInt64(source.path.size()),
             builder.getInt64(position.line), builder.getInt64(position.column)};
   }
   llvm::GlobalVariable *typeIdentityGlobal(const std::string &identity) {
@@ -538,10 +590,10 @@ private:
       return address;
     }
     if (value.kind == StaticConstant::Kind::Function)
-      return externals.at(value.symbol) ? externals[value.symbol]
-             : program.functions[value.symbol].trackCaller
+      return !externals.at(value.symbol) &&
+                     program.functions[value.symbol].trackCaller
                  ? callerShim(value.symbol)
-                 : functions.at(value.symbol);
+                 : addressSymbol(value.symbol);
     if (value.kind == StaticConstant::Kind::Address) {
       auto type = program.statics.at(value.symbol).type;
       std::uint64_t offset = value.byteOffset;
@@ -3180,7 +3232,8 @@ private:
                ? builder.CreateInsertValue(handle, result, 0)
                : result;
   }
-  void function(const ir::Function &source, llvm::Function *target) {
+  void function(const ir::Function &source, llvm::Function *target,
+                std::size_t sourceIndex) {
     llvm::FastMathFlags flags;
     const auto &policy = source.floatingPolicy;
     flags.setAllowReassoc(policy.reassociate);
@@ -3196,9 +3249,9 @@ private:
     std::unique_ptr<CleanupFrame> ownFrame;
     if (!source.coroutine)
       ownFrame = std::make_unique<CleanupFrame>(lowering, source, target);
-    auto &frame = source.coroutine ? coroutineFrame(static_cast<int>(
-                                         &source - program.functions.data()))
-                                   : *ownFrame;
+    auto &frame = source.coroutine
+                      ? coroutineFrame(static_cast<int>(sourceIndex))
+                      : *ownFrame;
     callerFrame = &frame;
     trackingCaller = source.trackCaller;
     if (debugInfo)
@@ -3366,16 +3419,13 @@ private:
         }
         case ir::Op::Assembly: {
           std::vector<llvm::Value *> inputs;
-          std::vector<llvm::Function *> symbols;
           for (std::size_t i = 0; i < n.operands.size(); ++i)
             inputs.push_back(get(i));
-          for (std::size_t i = 0; i < functions.size(); ++i)
-            symbols.push_back(externals[i] ? externals[i] : functions[i]);
           AssemblySymbolResolver resolveSymbol =
               [&](AssemblyOperand::SymbolKind kind,
                   int id) -> llvm::GlobalValue * {
             return kind == AssemblyOperand::SymbolKind::Function
-                       ? static_cast<llvm::GlobalValue *>(symbols[id])
+                       ? static_cast<llvm::GlobalValue *>(addressSymbol(id))
                        : lowering.statics[id];
           };
           result = emitAssembly(lowering, *n.assembly, n.result.type, inputs,
@@ -3541,7 +3591,7 @@ private:
             result = externals[n.callee] ? externals[n.callee]
                      : program.functions[n.callee].trackCaller
                          ? callerShim(n.callee)
-                         : functions[n.callee];
+                         : addressSymbol(n.callee);
           break;
         case ir::Op::CallableCoerce:
           result = get(0);

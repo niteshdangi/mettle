@@ -15,6 +15,14 @@ Type nominalOrigin(const TypeStore &types, Type type) {
   return generic == Type::Unknown ? type : generic;
 }
 } // namespace
+const Projection *Database::projectionFor(Type parameter) const {
+  for (; indexedProjections < projections.size(); ++indexedProjections)
+    projectionsByParameter.emplace(projections[indexedProjections].parameter,
+                                   indexedProjections);
+  auto found = projectionsByParameter.find(parameter);
+  return found == projectionsByParameter.end() ? nullptr
+                                               : &projections[found->second];
+}
 std::vector<Type> hierarchy(TypeStore &types, const Database &database,
                             Type subject, Type interfaceType, Span span,
                             Diagnostics &diagnostics) {
@@ -62,10 +70,12 @@ Solver::match(Type pattern, Type actual, bool symmetric,
   auto variables = patternParameters;
   if (partialActual)
     variables.clear();
-  auto actualParameters = types.typeParameters(actual);
-  if (symmetric)
+  std::vector<Type> actualParameters;
+  if (symmetric) {
+    actualParameters = types.typeParameters(actual);
     variables.insert(variables.end(), actualParameters.begin(),
                      actualParameters.end());
+  }
   auto variable = [&](Type type) {
     return std::find(variables.begin(), variables.end(), type) !=
                variables.end() &&
@@ -286,6 +296,8 @@ Solver::match(Type pattern, Type actual, bool symmetric,
   };
   if (!unify(pattern, actual))
     return std::nullopt;
+  if (!symmetric && !patternParameters.empty())
+    actualParameters = types.typeParameters(actual);
   for (auto parameter : patternParameters)
     if (std::find(actualParameters.begin(), actualParameters.end(),
                   parameter) != actualParameters.end() &&
@@ -924,7 +936,7 @@ Solver::candidatesFor(std::uint32_t declaration) {
     auto interfaceType = database.implementations[i].interfaceType;
     if (!types.isErased(interfaceType))
       continue;
-    auto owner = types.erased(interfaceType).declaration;
+    auto owner = types.erasedDeclaration(interfaceType);
     if (index.size() <= owner)
       index.resize(owner + 1);
     index[owner].push_back(i);
@@ -1139,13 +1151,18 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
   const auto wanted = types.erased(interfaceType);
   for (auto position : candidatesFor(wanted.declaration)) {
     const auto &candidate = database.implementations[position];
-    if (types.erased(candidate.interfaceType).arguments.size() !=
-        wanted.arguments.size())
+    if (types.isProduct(candidate.target) && types.isProduct(self) &&
+        !structuralAggregate(types.product(candidate.target).kind) &&
+        nominalOrigin(types, candidate.target) != nominalOrigin(types, self))
       continue;
+    {
+      const auto &provided = types.erased(candidate.interfaceType);
+      if (provided.arguments.size() != wanted.arguments.size() ||
+          provided.regionArguments.size() != wanted.regionArguments.size())
+        continue;
+    }
     auto provided = types.erased(candidate.interfaceType);
-    auto requirements = candidate.regionRequirements;
-    requirements.insert(requirements.end(), provided.regionRequirements.begin(),
-                        provided.regionRequirements.end());
+    auto requirements = std::move(provided.regionRequirements);
     provided.regionRequirements.clear();
     auto environment = regionEnvironment;
     std::vector<RegionBinding> regions;
@@ -1192,7 +1209,7 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
     }
     if (!valid)
       continue;
-    auto savedEnvironment = regionEnvironment;
+    auto savedEnvironment = std::move(regionEnvironment);
     regionEnvironment = environment;
     valid = constraints(candidate, *bindings, span, regions);
     regionEnvironment = std::move(savedEnvironment);
@@ -1284,14 +1301,18 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
           binding.argument = substitution.second;
     if (!revealOpaque) {
       RegionSolver solver(types.regions());
-      for (const auto &requirement : requirements) {
+      auto proveRequirement = [&](const RegionRequirement &requirement) {
         auto answer = solver.outlives(
             types.regions().substitute(requirement.longer, regions),
             types.regions().substitute(requirement.shorter, regions),
             environment);
         regionInconclusive |= answer == RegionAnswer::Inconclusive;
         valid &= answer == RegionAnswer::Proven;
-      }
+      };
+      for (const auto &requirement : candidate.regionRequirements)
+        proveRequirement(requirement);
+      for (const auto &requirement : requirements)
+        proveRequirement(requirement);
       auto answer = solver.leakCheck(environment);
       regionInconclusive |= answer == RegionAnswer::Inconclusive;
       valid &= answer == RegionAnswer::Proven;
@@ -1373,20 +1394,21 @@ Type Solver::normalizeUncached(Type type, std::span<const TypeBinding> bindings,
   if (types.isErased(type)) {
     if (!normalizing.insert(type).second)
       return type;
-    const auto descriptor = types.erased(type);
-    std::vector<TypeBinding> rebased;
-    for (auto argument : descriptor.arguments) {
-      auto normalized = normalize(argument, {}, span);
-      if (normalized != argument)
-        rebased.push_back({argument, normalized});
-    }
-    for (auto associated : descriptor.associated) {
-      auto normalized = normalize(associated.argument, {}, span);
-      if (normalized != associated.argument)
-        rebased.push_back({associated.argument, normalized});
-    }
-    normalizing.erase(type);
-    return rebased.empty() ? type : types.substitute(type, rebased);
+    return types.inspectErased(type, [&](const auto &descriptor) {
+      std::vector<TypeBinding> rebased;
+      for (auto argument : descriptor.arguments) {
+        auto normalized = normalize(argument, {}, span);
+        if (normalized != argument)
+          rebased.push_back({argument, normalized});
+      }
+      for (auto associated : descriptor.associated) {
+        auto normalized = normalize(associated.argument, {}, span);
+        if (normalized != associated.argument)
+          rebased.push_back({associated.argument, normalized});
+      }
+      normalizing.erase(type);
+      return rebased.empty() ? type : types.substitute(type, rebased);
+    });
   }
   std::optional<Projection> request;
   if (types.isProjection(type)) {
@@ -1399,10 +1421,7 @@ Type Solver::normalizeUncached(Type type, std::span<const TypeBinding> bindings,
                    {descriptor.operands.begin() + 2, descriptor.operands.end()},
                    descriptor.regionArguments};
   } else {
-    auto projection = std::find_if(
-        database.projections.begin(), database.projections.end(),
-        [&](const auto &projection) { return projection.parameter == type; });
-    if (projection != database.projections.end())
+    if (auto projection = database.projectionFor(type))
       request = *projection;
   }
   if (request) {
@@ -1625,14 +1644,20 @@ Type Solver::normalizeUncached(Type type, std::span<const TypeBinding> bindings,
     return result;
   }
   if (types.isView(type)) {
-    const auto view = types.view(type);
-    auto payload = normalize(view.payload, bindings, span);
-    return types.viewType(payload, view.mode, view.region);
+    return types.inspectView(type, [&](const auto &view) {
+      auto payload = normalize(view.payload, bindings, span);
+      return payload == view.payload
+                 ? type
+                 : types.viewType(payload, view.mode, view.region);
+    });
   }
   if (types.isPointer(type)) {
-    auto pointer = types.pointer(type);
-    return types.pointerType(normalize(pointer.payload, bindings, span),
-                             pointer.mode);
+    return types.inspectView(type, [&](const auto &pointer) {
+      auto payload = normalize(pointer.payload, bindings, span);
+      return payload == pointer.payload
+                 ? type
+                 : types.pointerType(payload, pointer.mode);
+    });
   }
   if (types.isSlice(type)) {
     auto element = types.slice(type).element;

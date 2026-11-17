@@ -7,6 +7,7 @@
 #include "types/assembly.h"
 #include "types/type.h"
 #include <cstdint>
+#include <memory>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -168,6 +169,53 @@ struct FunctionFacts {
   std::set<std::string> targetFeatures{};
   bool naked = false;
 };
+struct ImportedFunction;
+class ImportedFunctionReference;
+class FunctionFactsTable {
+public:
+  void resize(std::size_t count) {
+    local.resize(count);
+    borrowed.resize(count);
+    deferred.resize(count);
+  }
+  std::size_t size() const { return local.size(); }
+  void bind(std::size_t index, const FunctionFacts &facts) {
+    local.at(index).reset();
+    borrowed.at(index) = &facts;
+    deferred.at(index) = nullptr;
+  }
+  void bind(std::size_t index, const ImportedFunctionReference &function) {
+    local.at(index).reset();
+    borrowed.at(index) = nullptr;
+    deferred.at(index) = &function;
+  }
+  const FunctionFacts &at(std::size_t index) const {
+    if (const auto &value = local.at(index))
+      return *value;
+    if (auto value = borrowed.at(index))
+      return *value;
+    if (auto value = deferred.at(index))
+      return materialize(*value);
+    static const FunctionFacts uninitialized;
+    return uninitialized;
+  }
+  FunctionFacts &at(std::size_t index) {
+    auto &value = local.at(index);
+    if (!value)
+      value = std::make_unique<FunctionFacts>(std::as_const(*this).at(index));
+    return *value;
+  }
+  const FunctionFacts &operator[](std::size_t index) const { return at(index); }
+  FunctionFacts &operator[](std::size_t index) { return at(index); }
+
+private:
+  std::vector<std::unique_ptr<FunctionFacts>> local;
+  // CheckedModule owns the imported declaration snapshot for these references.
+  std::vector<const FunctionFacts *> borrowed;
+  std::vector<const ImportedFunctionReference *> deferred;
+  static const FunctionFacts &
+  materialize(const ImportedFunctionReference &function);
+};
 struct StaticFacts {
   std::string name, externalName, library;
   Type type = Type::Unknown;
@@ -245,6 +293,9 @@ public:
   const FunctionFacts &function(std::size_t index) const {
     return functions.at(index);
   }
+  const std::vector<std::size_t> &dependencies(std::size_t index) const {
+    return declarationDependencies.at(index);
+  }
   const IterationPlan *iteration(const Node &node) const {
     auto found = iterations.find(&node);
     return found == iterations.end() ? nullptr : &found->second;
@@ -258,22 +309,18 @@ public:
   std::shared_ptr<const interfaces::Database> interfaceStore() const {
     return interfaceData;
   }
+  std::shared_ptr<const ImportedDeclarations> declarations() const {
+    return declarationContracts;
+  }
+  std::shared_ptr<const ImportedDeclarations> imports() const {
+    return importedDeclarations;
+  }
   const std::vector<std::unique_ptr<ClosureFacts>> &closures() const {
     return closureBodies;
   }
-  bool imported(std::size_t function) const {
-    return importedFunctions.contains(function);
-  }
-  bool hasBody(std::size_t function) const {
-    return tree.functions.at(function).body.get() ||
-           importedBodies.contains(function);
-  }
-  bool hasDefault(std::size_t function, std::size_t parameter) const {
-    return tree.functions.at(function)
-               .parameters.at(parameter)
-               .defaultValue.get() ||
-           importedDefaults.contains({function, parameter});
-  }
+  bool imported(std::size_t function) const;
+  bool hasBody(std::size_t function) const;
+  bool hasDefault(std::size_t function, std::size_t parameter) const;
 
 private:
   friend class Checker;
@@ -296,7 +343,8 @@ private:
   std::unordered_map<const Node *, NodeFacts> nodes;
   std::unordered_map<const Pattern *, PatternFacts> patterns;
   std::unordered_map<const Node *, IterationPlan> iterations;
-  std::vector<FunctionFacts> functions;
+  FunctionFactsTable functions;
+  std::vector<std::vector<std::size_t>> declarationDependencies;
   std::vector<StaticFacts> staticStorage;
   std::vector<std::unique_ptr<ClosureFacts>> closureBodies;
   std::shared_ptr<TypeStore> types = std::make_shared<TypeStore>();
@@ -304,9 +352,6 @@ private:
   std::shared_ptr<interfaces::Database> interfaceData =
       std::make_shared<interfaces::Database>();
   std::shared_ptr<const ImportedDeclarations> importedDeclarations;
-  std::set<std::size_t> importedFunctions;
-  std::set<std::size_t> importedBodies;
-  std::set<std::pair<std::size_t, std::size_t>> importedDefaults;
   std::shared_ptr<ImportedDeclarations> declarationContracts;
 };
 } // namespace mettle

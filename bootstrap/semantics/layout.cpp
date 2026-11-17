@@ -34,7 +34,7 @@ void Checker::checkBorrowAlignment() {
         require(*node.children[0]);
       if ((resolved.operatorCall || resolved.indexView != Type::Unknown) &&
           resolved.callee >= 0) {
-        const auto &callee = checked.functions[resolved.callee];
+        const auto &callee = checked.function(resolved.callee);
         std::vector<const Node *> operands;
         if (node.kind == Kind::Index && node.children[1]->kind == Kind::Range) {
           const auto &range = *node.children[1];
@@ -80,7 +80,7 @@ void Checker::checkBorrowAlignment() {
               require(*node.children[i], true);
         }
       } else if (resolved.callee >= 0 && !resolved.constructor) {
-        const auto &callee = checked.functions[resolved.callee];
+        const auto &callee = checked.function(resolved.callee);
         if (resolved.method && !callee.locals.empty() &&
             (callee.locals[0].mode == ParameterMode::Read ||
              callee.locals[0].mode == ParameterMode::Mut))
@@ -101,8 +101,10 @@ void Checker::checkBorrowAlignment() {
         walk(*parameter.defaultValue);
   };
   for (std::size_t i = 0; i < module.functions.size(); ++i)
-    function(module.functions[i], checked.functions[i]);
+    if (!checked.imported(i))
+      function(module.functions[i], checked.function(i));
   for (const auto &closure : checked.closureBodies)
-    function(closure->declaration, closure->function);
+    if (!closure->imported)
+      function(closure->declaration, closure->function);
 }
 } // namespace mettle

@@ -71,9 +71,8 @@ public:
   const NodeFacts *nodeFacts(const Node &node) {
     if (auto found = syntheticFacts.find(&node); found != syntheticFacts.end())
       return &found->second;
-    if (auto imported = checker.importedExpressions.find(&node);
-        imported != checker.importedExpressions.end())
-      return &imported->second->facts.at(&node);
+    if (auto imported = checker.importedExpression(node))
+      return &imported->facts.at(&node);
     return checker.checked.find(node);
   }
   const Node *receiver(const Node &node) override {
@@ -123,7 +122,9 @@ public:
     return receiverExpressions.back().get();
   }
   std::optional<evaluation::Shape> typeShape(Type type) override {
-    return checker.constantShape(substitute(type));
+    if (auto shape = concreteShape(substitute(type)))
+      return shape->shape;
+    return std::nullopt;
   }
   bool project(Type type, std::size_t field, const Node &node) override {
     if (auto facts = nodeFacts(node); facts && facts->field >= 0)
@@ -208,6 +209,8 @@ public:
     const Function *declaration = destructorOf(origin);
     if (!declaration)
       return result;
+    if (checker.imported(declaration->span))
+      checker.functionEnvironment(*declaration);
     auto foundEnvironment = checker.functionGenerics.find(declaration);
     if (foundEnvironment == checker.functionGenerics.end())
       return result;
@@ -227,11 +230,11 @@ public:
     prepared->body = declaration->body.get();
     if (checker.checked.importedDeclarations) {
       auto imported = checker.checked.importedDeclarations->functions.find(
-          static_cast<std::size_t>(declaration -
-                                   checker.module.functions.data()));
+          checker.module.functions.indexOf(declaration));
       if (imported != checker.checked.importedDeclarations->functions.end() &&
-          imported->second.body)
-        prepared->body = imported->second.body->syntax.get();
+          imported->second->body)
+        prepared->body =
+            checker.importExpression(imported->second->body).syntax.get();
     }
     if (!prepared->body)
       return result;
@@ -353,6 +356,8 @@ public:
     context.bindings = function.bindings;
     context.declaration = function.declaration;
     if (function.declaration) {
+      if (checker.imported(function.declaration->span))
+        checker.functionEnvironment(*function.declaration);
       auto found = checker.functionGenerics.find(function.declaration);
       if (found != checker.functionGenerics.end())
         context.environment = found->second;
@@ -478,14 +483,15 @@ public:
     if (!declaration)
       return result;
     if (!checker.imported(declaration->span))
-      checker.inferFunctionResult(
-          checker.module
-              .functions[declaration - checker.module.functions.data()]);
+      checker.inferFunctionResult(checker.module.functions.edit(
+          checker.module.functions.indexOf(declaration)));
     result.kind = Lookup::Kind::Function;
     result.declaration = declaration;
     auto prepared = std::make_shared<evaluation::CheckedFunction>();
     prepared->declaration = declaration;
     prepared->unsafeFunction = declaration->unsafeFunction;
+    if (checker.imported(declaration->span))
+      checker.functionEnvironment(*declaration);
     auto foundEnvironment = checker.functionGenerics.find(declaration);
     if (foundEnvironment == checker.functionGenerics.end())
       return result;
@@ -498,7 +504,7 @@ public:
     if (typeArguments.empty())
       checker.explicitGenericBindings(*declaration, callee, environment,
                                       prepared->bindings, node.span);
-    auto index = declaration - checker.module.functions.data();
+    auto index = checker.module.functions.indexOf(declaration);
     const auto &signature = checker.facts(*declaration);
     auto parameterType = [&](std::size_t slot) {
       auto type = signature.locals.at(slot).type;
@@ -565,9 +571,10 @@ public:
     if (checker.checked.importedDeclarations) {
       auto found = checker.checked.importedDeclarations->functions.find(index);
       if (found != checker.checked.importedDeclarations->functions.end()) {
-        imported = &found->second;
+        imported = found->second.get();
         if (imported->body)
-          prepared->body = imported->body->syntax.get();
+          prepared->body =
+              checker.importExpression(imported->body).syntax.get();
       }
     }
     for (std::size_t i = 0; i < declaration->parameters.size(); ++i) {
@@ -582,7 +589,8 @@ public:
                                               : ParameterMode::Read;
       const Node *defaultValue = parameter.defaultValue.get();
       if (imported && i < imported->defaults.size() && imported->defaults[i])
-        defaultValue = imported->defaults[i]->syntax.get();
+        defaultValue =
+            checker.importExpression(imported->defaults[i]).syntax.get();
       prepared->parameters.push_back({parameter.name, std::move(*shape),
                                       parameter.span, defaultValue,
                                       parameter.context, mode});
@@ -598,9 +606,8 @@ public:
   std::optional<evaluation::Shape> expressionShape(const Node &node) override {
     if (auto found = syntheticFacts.find(&node); found != syntheticFacts.end())
       return typeShape(found->second.type);
-    if (auto imported = checker.importedExpressions.find(&node);
-        imported != checker.importedExpressions.end())
-      return typeShape(imported->second->facts.at(&node).type);
+    if (auto imported = checker.importedExpression(node))
+      return typeShape(imported->facts.at(&node).type);
     auto found = checker.checked.find(node);
     if (found && found->type != Type::Unknown)
       return typeShape(found->type);
@@ -612,15 +619,15 @@ public:
   std::optional<evaluation::Shape>
   functionResult(const Function &function) override {
     if (checker.facts(function).result == Type::Unknown)
-      checker.inferFunctionResult(
-          checker.module
-              .functions[&function - checker.module.functions.data()]);
-    return checker.constantShape(checker.facts(function).result);
+      checker.inferFunctionResult(checker.module.functions.edit(
+          checker.module.functions.indexOf(&function)));
+    if (auto shape = concreteShape(checker.facts(function).result))
+      return shape->shape;
+    return std::nullopt;
   }
   Type resolveType(const TypeSyntax &syntax, Span span) override {
-    if (auto imported = checker.importedAnnotations.find(&syntax);
-        imported != checker.importedAnnotations.end())
-      return substitute(imported->second);
+    if (auto imported = checker.importedAnnotation(syntax))
+      return substitute(*imported);
     const bool builtin = builtinType(syntax.name) != Type::Unknown;
     bool generic = checker.genericEnvironment &&
                    checker.genericEnvironment->names.contains(
@@ -636,7 +643,7 @@ public:
         !generic && !builtin && syntax.name != "Self")
       for (const auto *product : checker.productsNamed(
                checker.typeName(syntax.name, span, {}, syntax.context)))
-        if (!checker.productGenerics.at(product).parameters.empty())
+        if (!checker.typeEnvironment(*product).parameters.empty())
           return Type::Unknown;
     return substitute(checker.annotation(syntax, span));
   }
@@ -705,8 +712,9 @@ public:
                 checker.checked.importedDeclarations->functions.find(*selected);
             if (imported !=
                     checker.checked.importedDeclarations->functions.end() &&
-                imported->second.body) {
-              result.checkedFunction = &imported->second.evaluation;
+                imported->second->body) {
+              result.checkedFunction =
+                  &checker.evaluationContract(*imported->second);
               result.declaration = &function;
               return result;
             }
@@ -729,15 +737,15 @@ public:
     auto functionLookup = [&](const Function &function) {
       Lookup found;
       found.kind = Lookup::Kind::Function;
-      auto index =
-          static_cast<std::size_t>(&function - checker.module.functions.data());
+      auto index = checker.module.functions.indexOf(&function);
       found.value = functionValue(index);
       if (checker.checked.importedDeclarations) {
         auto imported =
             checker.checked.importedDeclarations->functions.find(index);
         if (imported != checker.checked.importedDeclarations->functions.end() &&
-            imported->second.body) {
-          found.checkedFunction = &imported->second.evaluation;
+            imported->second->body) {
+          found.checkedFunction =
+              &checker.evaluationContract(*imported->second);
           found.declaration = &function;
           return found;
         }
@@ -763,9 +771,8 @@ public:
       }
       return found;
     };
-    if (auto imported = checker.importedExpressions.find(&name);
-        imported != checker.importedExpressions.end()) {
-      const auto &expression = *imported->second;
+    if (auto imported = checker.importedExpression(name)) {
+      const auto &expression = *imported;
       const auto &facts = expression.facts.at(&name);
       if (facts.slot >= 0 && !contexts.empty() && contexts.back().declaration) {
         const auto &locals = checker.facts(*contexts.back().declaration).locals;
@@ -942,6 +949,164 @@ public:
   }
 
 private:
+  struct CachedShape {
+    evaluation::Shape shape;
+    unsigned height = 0;
+    bool ready = false;
+  };
+  bool productShapeComplete(Type type) {
+    auto &types = checker.typeStore();
+    const auto &product = types.product(type);
+    auto origin = type;
+    unsigned depth = 0;
+    while (true) {
+      if (depth++ > limits::typeDepth)
+        return false;
+      const auto &record = types.product(origin);
+      auto next = record.regionOrigin != Type::Unknown ? record.regionOrigin
+                                                       : record.genericOrigin;
+      if (next == Type::Unknown)
+        break;
+      if (!types.isProduct(next))
+        return false;
+      origin = next;
+    }
+    for (const auto *declaration :
+         checker.productsNamed(types.product(origin).name)) {
+      if (checker.imported(declaration->span))
+        continue;
+      if (!declaration->enumeration)
+        return product.fields.size() == declaration->fields.size();
+      if (product.variants.size() != declaration->variants.size())
+        return false;
+      std::size_t fields = 1;
+      for (std::size_t i = 0; i < declaration->variants.size(); ++i) {
+        if (product.variants[i].fields.size() !=
+            declaration->variants[i].fields.size())
+          return false;
+        fields += declaration->variants[i].fields.size();
+      }
+      return product.fields.size() == fields;
+    }
+    return true;
+  }
+  const CachedShape *concreteShape(Type type, unsigned depth = 0) {
+    auto [found, inserted] = shapes.try_emplace(type);
+    auto &cached = found->second;
+    if (!inserted) {
+      if (!cached.ready ||
+          (cached.height && (depth > limits::typeDepth ||
+                             cached.height - 1 > limits::typeDepth - depth)))
+        return nullptr;
+      return &cached;
+    }
+    struct Restore {
+      std::map<Type, CachedShape> &shapes;
+      std::map<Type, CachedShape>::iterator found;
+      ~Restore() {
+        if (!found->second.ready)
+          shapes.erase(found);
+      }
+    } restore{shapes, found};
+    auto &types = checker.typeStore();
+    const auto aggregate = types.isProduct(type) || types.isSlice(type);
+    if (aggregate && (depth > limits::typeDepth ||
+                      (types.isProduct(type) && !productShapeComplete(type))))
+      return nullptr;
+    unsigned height = aggregate ? 1 : 0;
+    auto shape = buildShape(type, depth, height);
+    if (!shape)
+      return nullptr;
+    cached.shape = std::move(*shape);
+    cached.height = height;
+    cached.ready = true;
+    return &cached;
+  }
+  std::optional<evaluation::Shape> buildShape(Type type, unsigned depth,
+                                              unsigned &height) {
+    using Shape = evaluation::Shape;
+    auto &types = checker.typeStore();
+    Shape shape;
+    shape.type = type;
+    if (types.isView(type) || types.isPointer(type)) {
+      const auto &view = types.view(type);
+      Shape element;
+      element.type = view.payload;
+      shape.kind =
+          types.isPointer(type) ? Shape::Kind::Pointer : Shape::Kind::Reference;
+      shape.exclusive = view.mode == ParameterMode::Mut;
+      shape.aggregate = std::make_shared<const Shape::Aggregate>(
+          Shape::Aggregate{{std::move(element)}, {}, {}});
+      return shape;
+    }
+    if (isNumeric(type) || type == Type::Bool || type == Type::Char ||
+        types.isFunctionPointer(type) || enumeration(type))
+      return shape;
+    if (type == Type::Unit) {
+      shape.kind = Shape::Kind::Unit;
+      return shape;
+    }
+    if (types.isSlice(type)) {
+      auto element = concreteShape(types.slice(type).element, depth + 1);
+      if (!element)
+        return std::nullopt;
+      shape.kind = Shape::Kind::Array;
+      shape.count = UINT64_MAX;
+      height = std::max(height, element->height + 1);
+      shape.aggregate = std::make_shared<const Shape::Aggregate>(
+          Shape::Aggregate{{element->shape}, {}, {}});
+      return shape;
+    }
+    if (!types.isProduct(type))
+      return std::nullopt;
+    const auto &record = types.product(type);
+    if (record.kind == AggregateKind::Array) {
+      auto length = types.arrayLength(type);
+      auto element = concreteShape(record.components[0], depth + 1);
+      if (!length || !element)
+        return std::nullopt;
+      shape.kind = Shape::Kind::Array;
+      shape.count = *length;
+      height = std::max(height, element->height + 1);
+      shape.aggregate = std::make_shared<const Shape::Aggregate>(
+          Shape::Aggregate{{element->shape}, {}, {}});
+      return shape;
+    }
+    if (types.isSum(type))
+      shape.kind = Shape::Kind::Variant;
+    else if (record.kind == AggregateKind::Tuple)
+      shape.kind = Shape::Kind::Tuple;
+    else if (record.kind == AggregateKind::Product ||
+             record.kind == AggregateKind::Cell ||
+             record.kind == AggregateKind::UnsafeCell ||
+             record.kind == AggregateKind::Uninit ||
+             record.kind == AggregateKind::ManualDrop) {
+      shape.kind = Shape::Kind::Product;
+      shape.uninitializedStorage = record.kind == AggregateKind::Uninit;
+    } else
+      return std::nullopt;
+    auto aggregate = std::make_shared<Shape::Aggregate>();
+    aggregate->elements.reserve(record.fields.size());
+    if (shape.kind != Shape::Kind::Tuple)
+      aggregate->names.reserve(record.fields.size());
+    for (const auto &field : record.fields) {
+      auto element = concreteShape(field.type, depth + 1);
+      if (!element)
+        return std::nullopt;
+      height = std::max(height, element->height + 1);
+      aggregate->elements.push_back(element->shape);
+      if (shape.kind != Shape::Kind::Tuple)
+        aggregate->names.push_back(field.name);
+    }
+    if (shape.kind == Shape::Kind::Variant) {
+      aggregate->variants.reserve(record.variants.size());
+      for (const auto &variant : record.variants)
+        aggregate->variants.emplace_back(variant.fields.begin(),
+                                         variant.fields.end());
+    }
+    shape.aggregate = std::move(aggregate);
+    return shape;
+  }
   struct Context {
     Checker::GenericEnvironment environment;
     Checker::GenericEnvironment *previous = nullptr;
@@ -954,6 +1119,7 @@ private:
   }
   Checker::GenericEnvironment *originalEnvironment;
   std::deque<Context> contexts;
+  std::map<Type, CachedShape> shapes;
   std::map<const Node *, NodeFacts> syntheticFacts;
   std::deque<NodeOwner> receiverExpressions;
   // Host ownership keeps literal roots live through checked serialization.
@@ -1031,9 +1197,8 @@ bool Checker::constFunctionCall(const Node &node) {
     return false;
   const NodeFacts *facts = checked.find(node);
   if (!facts)
-    if (auto imported = importedExpressions.find(&node);
-        imported != importedExpressions.end())
-      facts = &imported->second->facts.at(&node);
+    if (auto imported = importedExpression(node))
+      facts = &imported->facts.at(&node);
   if (!facts)
     return false;
   if (!facts->machineOperation.empty())
@@ -1081,94 +1246,8 @@ Type Checker::evaluatedConstant(const Node &node, Type expected) {
 }
 
 std::optional<evaluation::Shape> Checker::constantShape(Type type) {
-  evaluation::Shape shape;
-  shape.type = type;
-  if (checked.types->isView(type) || checked.types->isPointer(type)) {
-    const auto &view = checked.types->view(type);
-    evaluation::Shape element;
-    element.type = view.payload;
-    shape.kind = checked.types->isPointer(type)
-                     ? evaluation::Shape::Kind::Pointer
-                     : evaluation::Shape::Kind::Reference;
-    shape.exclusive = view.mode == ParameterMode::Mut;
-    shape.elements.push_back(std::move(element));
-    return shape;
-  }
-  if (isNumeric(type) || type == Type::Bool || type == Type::Char ||
-      checked.types->isFunctionPointer(type)) {
-    shape.type = type;
-    return shape;
-  }
-  if (type == Type::Unit) {
-    shape.kind = evaluation::Shape::Kind::Unit;
-    return shape;
-  }
-  if (checked.types->isSum(type)) {
-    ConstantHost host(*this);
-    if (host.enumeration(type))
-      return shape;
-    shape.kind = evaluation::Shape::Kind::Variant;
-    const auto record = checked.types->product(type);
-    for (const auto &field : record.fields) {
-      auto element = constantShape(field.type);
-      if (!element)
-        return std::nullopt;
-      shape.elements.push_back(std::move(*element));
-      shape.names.push_back(field.name);
-    }
-    for (const auto &variant : record.variants)
-      shape.variants.emplace_back(variant.fields.begin(), variant.fields.end());
-    return shape;
-  }
-  if (checked.types->isSlice(type)) {
-    auto element = constantShape(checked.types->slice(type).element);
-    if (!element)
-      return std::nullopt;
-    shape.kind = evaluation::Shape::Kind::Array;
-    shape.count = UINT64_MAX;
-    shape.elements.push_back(std::move(*element));
-    return shape;
-  }
-  if (!checked.types->isProduct(type))
-    return std::nullopt;
-  auto record = checked.types->product(type);
-  if (record.kind == AggregateKind::Tuple) {
-    shape.kind = evaluation::Shape::Kind::Tuple;
-    for (const auto &field : record.fields) {
-      auto element = constantShape(field.type);
-      if (!element)
-        return std::nullopt;
-      shape.elements.push_back(std::move(*element));
-    }
-    return shape;
-  }
-  if (record.kind == AggregateKind::Array) {
-    auto length = checked.types->arrayLength(type);
-    auto element = constantShape(record.components[0]);
-    if (!length || !element)
-      return std::nullopt;
-    shape.kind = evaluation::Shape::Kind::Array;
-    shape.count = *length;
-    shape.elements.push_back(std::move(*element));
-    return shape;
-  }
-  if (record.kind == AggregateKind::Product ||
-      record.kind == AggregateKind::Cell ||
-      record.kind == AggregateKind::UnsafeCell ||
-      record.kind == AggregateKind::Uninit ||
-      record.kind == AggregateKind::ManualDrop) {
-    shape.kind = evaluation::Shape::Kind::Product;
-    shape.uninitializedStorage = record.kind == AggregateKind::Uninit;
-    for (const auto &field : record.fields) {
-      auto element = constantShape(field.type);
-      if (!element)
-        return std::nullopt;
-      shape.elements.push_back(std::move(*element));
-      shape.names.push_back(field.name);
-    }
-    return shape;
-  }
-  return std::nullopt;
+  ConstantHost host(*this);
+  return host.typeShape(type);
 }
 
 std::optional<Value> Checker::constantValueOf(const StaticConstant &constant,
@@ -1509,7 +1588,7 @@ std::optional<Type> Checker::inherentConstantValue(std::size_t index,
                                                    Type subject,
                                                    const Node *use) {
   auto &constant = inherentConstants.at(index);
-  auto &environment = implementationGenerics.at(constant.implementation);
+  auto &environment = typeEnvironment(*constant.implementation);
   const bool genericNominal =
       checked.types->isProduct(constant.declaredType) &&
       (!environment.parameters.empty() ||
@@ -1585,10 +1664,11 @@ std::optional<Type> Checker::inherentConstantValue(std::size_t index,
       genericEnvironment = &environment;
       current = nullptr;
       unsafeDepth = 0;
-      const auto *initializer = constant.initializer
-                                    ? constant.initializer->syntax.get()
-                                    : constant.declaration->constantValue.get();
-      if (initializer)
+      const auto *initializer =
+          constant.initializer
+              ? importExpression(constant.initializer).syntax.get()
+              : constant.declaration->constantValue.get();
+      if (initializer && !constant.initializer)
         qualifyDottedPaths(const_cast<Node &>(*initializer));
       const auto concreteType =
           checked.types->substitute(constant.declaredType, bindings);
@@ -1643,16 +1723,19 @@ std::optional<Type> Checker::inherentConstantValue(std::size_t index,
     auto *savedEnvironment = genericEnvironment;
     auto *savedFunction = current;
     auto savedUnsafeDepth = unsafeDepth;
-    genericEnvironment = &implementationGenerics.at(constant.implementation);
+    genericEnvironment = &typeEnvironment(*constant.implementation);
     current = nullptr;
     unsafeDepth = 0;
-    if (constant.declaration->constantValue)
-      qualifyDottedPaths(
-          const_cast<Node &>(*constant.declaration->constantValue));
+    const auto *initializer =
+        constant.initializer
+            ? importExpression(constant.initializer).syntax.get()
+            : constant.declaration->constantValue.get();
+    if (initializer && !constant.initializer)
+      qualifyDottedPaths(const_cast<Node &>(*initializer));
     if (checked.types->isProduct(constant.declaredType)) {
-      if (constant.declaration->constantValue)
-        constant.materialized = staticInitializer(
-            *constant.declaration->constantValue, constant.declaredType);
+      if (initializer)
+        constant.materialized =
+            staticInitializer(*initializer, constant.declaredType);
       auto supported = [&](auto &&self, const StaticConstant &value) -> bool {
         if (value.kind == StaticConstant::Kind::Scalar)
           return value.type == Type::Unit || isNumeric(value.type) ||
@@ -1679,9 +1762,8 @@ std::optional<Type> Checker::inherentConstantValue(std::size_t index,
         constant.materialized.reset();
       }
     } else {
-      auto value = constant.declaration->constantValue
-                       ? constantType(*constant.declaration->constantValue,
-                                      constant.declaredType)
+      auto value = initializer
+                       ? constantType(*initializer, constant.declaredType)
                        : Type::Unknown;
       if (value != Type::Unknown &&
           (!checked.types->isConstant(value) ||
@@ -1712,7 +1794,7 @@ std::optional<Type> Checker::inherentConstantValue(std::size_t index,
     const auto &pattern = checked.types->product(constant.target);
     const auto &actual = checked.types->product(subject);
     const auto &parameters =
-        implementationGenerics.at(constant.implementation).parameters;
+        typeEnvironment(*constant.implementation).parameters;
     for (std::size_t i = 0; i < pattern.genericArguments.size() &&
                             i < actual.genericArguments.size();
          ++i)

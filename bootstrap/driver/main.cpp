@@ -1,5 +1,6 @@
 #include "driver/language_server.h"
 #include "driver/options.h"
+#include "driver/session.h"
 #include <exception>
 #include <iostream>
 #include <string_view>
@@ -21,12 +22,14 @@ int main(int argc, char **argv) {
       std::cerr << "mettle: invalid arguments; use --help\n";
     return status;
   }
-  auto options = mettle::driver::options(argc, argv);
-  if (!options) {
-    std::cerr << "mettle: invalid arguments; use --help\n";
-    return 2;
-  }
   try {
+    if (argc == 2 && std::string_view(argv[1]) == "serve")
+      return mettle::driver::compilationServer(std::cin, std::cout);
+    auto options = mettle::driver::options(argc, argv);
+    if (!options) {
+      std::cerr << "mettle: invalid arguments; use --help\n";
+      return 2;
+    }
     return mettle::driver::run(*options);
   } catch (const std::exception &error) {
     std::cerr << "mettle: error[internal]: " << error.what() << '\n';

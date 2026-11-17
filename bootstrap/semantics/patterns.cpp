@@ -8,7 +8,19 @@
 #include <set>
 
 namespace mettle {
-void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
+void Checker::pattern(Pattern &p, int variable, ParameterMode mode,
+                      std::optional<std::size_t> bindingScope) {
+  const auto firstScope = bindingScope.value_or(scopes.size() - 1);
+  auto duplicateBinding = [&](const Pattern &binding) {
+    const auto name = nameKey(binding.text, binding.context);
+    for (auto scope = firstScope; scope < scopes.size(); ++scope)
+      if (scopes[scope].contains(name)) {
+        error("name", binding.span,
+              "duplicate pattern binding '" + binding.text + "'");
+        return true;
+      }
+    return false;
+  };
   patternVariables[&p] = variable;
   auto type = inference.value(variable);
   if (p.kind == PatternKind::Wildcard)
@@ -39,11 +51,8 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
       p.kind = PatternKind::Literal;
     }
   if (p.kind == PatternKind::Binding || p.kind == PatternKind::At) {
-    auto prior = scopes.back().find(nameKey(p.text, p.context));
-    if (prior != scopes.back().end()) {
-      error("name", p.span, "duplicate pattern binding '" + p.text + "'");
+    if (duplicateBinding(p))
       return;
-    }
     auto slot =
         local(p.text, variable, mode == ParameterMode::Mut, p.span, p.context);
     facts(p).slot = slot;
@@ -59,7 +68,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
       if (mode == ParameterMode::Take && !checked.types->isCopy(type))
         error("ownership", p.span,
               "non-Copy at-pattern cannot move both whole value and payload");
-      pattern(p.children[0], variable, mode);
+      pattern(p.children[0], variable, mode, firstScope);
     }
     return;
   }
@@ -95,7 +104,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
       if (literalType == Type::Bool)
         error("type", p.span,
               "range pattern requires integer or scalar bounds");
-      pattern(p.children[0], variable, mode);
+      pattern(p.children[0], variable, mode, firstScope);
       auto lower = facts(p).numeric, upper = facts(p.children[0]).numeric;
       if (lower && upper &&
           (compareIntegers(*lower, *upper) > 0 ||
@@ -105,17 +114,14 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
     return;
   }
   if (p.kind == PatternKind::Or) {
-    auto saved = scopes.back();
     std::map<NameKey, Binding> bindings;
     for (std::size_t i = 0; i < p.children.size(); ++i) {
-      scopes.back() = saved;
-      pattern(p.children[i], variable, mode);
-      std::map<NameKey, Binding> currentBindings;
-      for (const auto &[name, binding] : scopes.back())
-        if (!saved.contains(name))
-          currentBindings.emplace(name, binding);
+      scopes.emplace_back();
+      pattern(p.children[i], variable, mode, firstScope);
+      auto currentBindings = std::move(scopes.back());
+      scopes.pop_back();
       if (i == 0)
-        bindings = currentBindings;
+        bindings = std::move(currentBindings);
       else {
         if (currentBindings.size() != bindings.size())
           error("type", p.span,
@@ -141,9 +147,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
         }
       }
     }
-    scopes.back() = saved;
-    for (const auto &[name, binding] : bindings)
-      scopes.back()[name] = binding;
+    scopes.back().merge(bindings);
     return;
   }
   if (p.kind == PatternKind::Tuple || p.kind == PatternKind::Array) {
@@ -192,6 +196,8 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
         for (std::size_t field = index; field < index + count; ++field)
           facts(child).fields.push_back(static_cast<std::uint32_t>(field));
         if (!child.text.empty()) {
+          if (duplicateBinding(child))
+            continue;
           auto slot =
               local(child.text, patternVariables[&child],
                     mode == ParameterMode::Mut, child.span, child.context);
@@ -206,7 +212,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
           }
         }
       } else
-        pattern(p.children[i], payloads[index], mode);
+        pattern(p.children[i], payloads[index], mode, firstScope);
     }
     return;
   }
@@ -258,7 +264,7 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
         for (auto &child : p.children) {
           auto binding = inference.fresh();
           poisonedVariables.push_back(binding);
-          pattern(child, binding, mode);
+          pattern(child, binding, mode, firstScope);
         }
         return;
       }
@@ -326,12 +332,12 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode) {
     for (auto &child : p.children) {
       auto poisoned = inference.fresh();
       poisonedVariables.push_back(poisoned);
-      pattern(child, poisoned, mode);
+      pattern(child, poisoned, mode, firstScope);
     }
     return;
   }
   for (std::size_t i = 0; i < payloads.size(); ++i)
-    pattern(p.children[i], payloads[i], mode);
+    pattern(p.children[i], payloads[i], mode, firstScope);
 }
 
 int Checker::match(Node &n, bool reachable) {

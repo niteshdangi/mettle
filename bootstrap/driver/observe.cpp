@@ -16,14 +16,16 @@ std::string digest(const std::string &text) {
 
 Files filesBelow(const fs::path &directory) {
   Files found;
-  std::error_code error;
-  for (fs::recursive_directory_iterator it(directory, error), end;
-       !error && it != end; it.increment(error))
-    if (it->is_regular_file(error)) {
+  for (fs::recursive_directory_iterator it(directory), end; it != end; ++it)
+    if (it->is_regular_file()) {
       std::uint64_t size = 0;
+      auto hash = packages::hashFile(it->path(), size);
+      if (!hash)
+        throw fs::filesystem_error("cannot read observed file", it->path(),
+                                   std::make_error_code(std::errc::io_error));
       found.emplace_back(
           it->path().lexically_relative(directory).generic_string(),
-          packages::hashFile(it->path(), size).value_or("unreadable"));
+          std::move(*hash));
     }
   std::sort(found.begin(), found.end());
   return found;
@@ -31,17 +33,30 @@ Files filesBelow(const fs::path &directory) {
 
 std::string inputState(const fs::path &path) {
   std::error_code error;
-  if (fs::is_directory(path, error)) {
+  auto status = fs::status(path, error);
+  if (status.type() == fs::file_type::not_found &&
+      (!error || error == std::errc::no_such_file_or_directory ||
+       error == std::errc::not_a_directory))
+    return "absent";
+  if (error)
+    throw fs::filesystem_error("cannot inspect declared input", path, error);
+  if (fs::is_directory(status)) {
     std::string listing;
     for (const auto &[name, hash] : filesBelow(path))
       listing += name + "=" + hash + "\n";
     return "dir:" + digest(listing);
   }
-  if (fs::is_regular_file(path, error)) {
+  if (fs::is_regular_file(status)) {
     std::uint64_t size = 0;
-    return "file:" + packages::hashFile(path, size).value_or("unreadable");
+    auto hash = packages::hashFile(path, size);
+    if (!hash)
+      throw fs::filesystem_error("cannot read declared input", path,
+                                 std::make_error_code(std::errc::io_error));
+    return "file:" + *hash;
   }
-  return "absent";
+  throw fs::filesystem_error(
+      "declared input is not a regular file or directory", path,
+      std::make_error_code(std::errc::operation_not_supported));
 }
 
 std::string variableState(const std::string &name) {

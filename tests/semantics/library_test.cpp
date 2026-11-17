@@ -53,6 +53,10 @@ pub module core {
     pub fn identity<T>(take value: T): T { value }
     pub const fn constIdentity<T: Copy>(value: T): T { value }
     pub fn add(x: i32 = hidden(3)): i32 { x + 1 }
+    pub fn cached(): i32 {
+        static VALUE: i32 = 7;
+        VALUE
+    }
     pub fn rangeShapes(read values: [i32]): usize {
         values[..].len() + values[1usize..].len() +
             values[..2usize].len() + values[0usize..=1usize].len()
@@ -142,6 +146,25 @@ import core as bootstrapOnly;
     return 1;
   }
   auto symbolic = lowering::lower(*checked, diagnostics);
+  for (bool sourceFirst : {false, true}) {
+    auto database = checked->interfaceDatabase();
+    auto rules = std::move(database.implementations);
+    auto conflict = std::as_const(rules).front();
+    conflict.checkedImport = false;
+    if (sourceFirst)
+      database.implementations.push_back(conflict);
+    for (auto rule : rules) {
+      rule.checkedImport = true;
+      database.implementations.push_back(std::move(rule));
+    }
+    if (!sourceFirst)
+      database.implementations.push_back(std::move(conflict));
+    TypeStore types(*checked->typeStore());
+    Diagnostics conflicts;
+    interfaces::Solver solver(types, database, conflicts);
+    expect(!solver.coherent() && !conflicts.empty(),
+           "coherence checks source/import conflicts in either ordering");
+  }
   symbolic.requireEntry = false;
   auto typesForAdapters =
       std::const_pointer_cast<TypeStore>(checked->typeStore());
@@ -259,6 +282,7 @@ import core as bootstrapOnly;
   };
   resolution::Library library;
   std::size_t headerReads = 0;
+  std::optional<LibraryHeaderImport> retainedHeader;
   auto makeHeader = [&]() -> std::optional<Module> {
     ++headerReads;
     library.compiledSourcePackages.emplace(42, "library");
@@ -266,10 +290,11 @@ import core as bootstrapOnly;
     library.compiledSourcePackages.emplace(43, "library");
     library.compiledSourceModules.emplace(
         43, std::vector<std::string>{"core", "network"});
-    auto header = decodeLibraryHeader(declarations.header, decode);
-    if (!header)
-      std::cerr << header.error << '\n';
-    return std::move(header.module);
+    if (!retainedHeader)
+      retainedHeader = decodeLibraryHeader(declarations.header, decode);
+    if (!*retainedHeader)
+      std::cerr << retainedHeader->error << '\n';
+    return std::move(copyLibraryHeader(*retainedHeader).module);
   };
   library.compiled.push_back({"core", makeHeader});
   std::size_t reads = 0;
@@ -377,14 +402,45 @@ fn main(): i32 {
     if (!importedTypes)
       return std::nullopt;
     importedRoots = std::move(importedTypes.roots);
-    auto contracts =
-        importLibraryDeclarations(declarations.contracts, types, decode);
+    auto transientBytes = declarations.contracts;
+    auto transientRoots = importedRoots;
+    auto transientReferences = decode;
+    transientReferences.type =
+        [&](std::uint32_t reference) -> std::optional<Type> {
+      return reference < transientRoots.size()
+                 ? std::optional{transientRoots[reference]}
+                 : std::nullopt;
+    };
+    auto contracts = importLibraryDeclarations(transientBytes, types,
+                                               transientReferences, &module);
     if (!contracts)
       std::cerr << contracts.error << '\n';
     expect(bool(contracts),
            "checked contracts decode after symbol/type remapping");
     if (!contracts)
       return std::nullopt;
+    if (!imported) {
+      auto corrupt = module;
+      auto owner = std::find_if(
+          corrupt.implementations.begin(), corrupt.implementations.end(),
+          [](const auto &item) {
+            return std::any_of(item.associated.begin(), item.associated.end(),
+                               [](const auto &item) { return item.constant; });
+          });
+      expect(owner != corrupt.implementations.end(),
+             "fixture has a mounted associated constant");
+      auto &associated = corrupt.implementations
+                             .edit(static_cast<std::size_t>(
+                                 owner - corrupt.implementations.begin()))
+                             .associated;
+      auto constant =
+          std::find_if(associated.begin(), associated.end(),
+                       [](const auto &item) { return item.constant; });
+      constant->constant = false;
+      expect(!importLibraryDeclarations(transientBytes, types,
+                                        transientReferences, &corrupt),
+             "admission rejects a constant contract bound to a nonconstant");
+    }
     imported = std::move(contracts.declarations);
     auto bodies = ir::decodeProgram(programBytes.bytes, decode);
     if (!bodies)
@@ -394,14 +450,15 @@ fn main(): i32 {
       return std::nullopt;
     auto bindings = std::make_shared<lowering::ImportedBodies>();
     for (std::size_t i = 0; i < sourceFunctionCount; ++i)
-      bindings->functions.emplace(i, std::move(bodies.program.functions[i]));
+      bindings->functions.emplace(i,
+                                  std::move(bodies.program.functions.edit(i)));
     for (std::size_t i = 0; i < defaultOwners.size(); ++i)
       bindings->defaults.emplace(
           defaultOwners[i],
-          std::move(bodies.program.functions[sourceFunctionCount + i]));
+          std::move(bodies.program.functions.edit(sourceFunctionCount + i)));
     for (std::size_t i = sourceFunctionCount + defaultOwners.size();
          i < bodies.program.functions.size(); ++i)
-      bindings->support.push_back(std::move(bodies.program.functions[i]));
+      bindings->support.push_back(std::move(bodies.program.functions.edit(i)));
     for (auto [closure, function] : bodies.closureFunctions) {
       if (bindings->closureFunctions.size() <= closure)
         bindings->closureFunctions.resize(std::size_t(closure) + 1, -1);
@@ -449,7 +506,7 @@ fn main(): i32 {
 
         auto inventory = declarationInventory(module);
         for (const auto &[index, contract] : imported->functions)
-          for (Type parameter : contract.generics.parameters)
+          for (Type parameter : contract->contract().generics.parameters)
             expect(std::any_of(inventory.types.begin(), inventory.types.end(),
                                [&](const auto &identity) {
                                  return identity.type == parameter;
@@ -509,8 +566,10 @@ fn main(): i32 {
               return std::nullopt;
             return found->second;
           };
-          auto restored = importLibraryDeclarations(transitive.contracts, types,
-                                                    roundtripDecode);
+          auto restored = importLibraryDeclarations(
+              transitive.contracts,
+              std::make_shared<TypeStore>(*module.typeStore()),
+              roundtripDecode);
           if (!restored)
             std::cerr << restored.error << '\n';
           expect(bool(restored), "transitive contracts import");
@@ -524,16 +583,16 @@ fn main(): i32 {
                      "transitive contract retains imported function");
               if (found == restored.declarations->functions.end())
                 continue;
-              const auto &actual = found->second;
-              expect(actual.generics.parameters ==
-                             original.generics.parameters &&
-                         actual.facts.locals.size() ==
-                             original.facts.locals.size() &&
-                         bool(actual.body) == bool(original.body) &&
-                         actual.defaults.size() == original.defaults.size(),
+              const auto &actual = *found->second;
+              expect(actual.contract().generics.parameters ==
+                             original->contract().generics.parameters &&
+                         actual.contract().facts.locals.size() ==
+                             original->contract().facts.locals.size() &&
+                         bool(actual.body) == bool(original->body) &&
+                         actual.defaults.size() == original->defaults.size(),
                      "transitive contract retains generics and checked bodies");
               for (std::size_t p = 0; p < actual.defaults.size(); ++p)
-                expect(bool(actual.defaults[p]) == bool(original.defaults[p]),
+                expect(bool(actual.defaults[p]) == bool(original->defaults[p]),
                        "transitive contract retains checked defaults");
             }
           }
@@ -575,13 +634,35 @@ fn main(): i32 {
   invalidReferences.source = {};
   expect(!decodeLibraryHeader(declarations.header, invalidReferences),
          "header mounting rejects missing source revision references");
+  auto unknownSource = declarations.header;
+  const std::string_view revision = "library-revision";
+  auto revisionBytes = std::search(unknownSource.begin(), unknownSource.end(),
+                                   revision.begin(), revision.end());
+  expect(revisionBytes >= unknownSource.begin() + 2 &&
+             revisionBytes != unknownSource.end(),
+         "fixture contains an indexed source revision");
+  if (revisionBytes >= unknownSource.begin() + 2 &&
+      revisionBytes != unknownSource.end()) {
+    *(revisionBytes - 2) = 2;
+    std::size_t sourceReads = 0;
+    invalidReferences = decode;
+    invalidReferences.source =
+        [&](const metadata::SourceReference &) -> std::optional<Span> {
+      ++sourceReads;
+      return std::nullopt;
+    };
+    auto rejected = decodeLibraryHeader(unknownSource, invalidReferences);
+    expect(!rejected && rejected.error == "unknown declaration source index" &&
+               sourceReads == 0,
+           "unknown source indexes fail before calling external resolvers");
+  }
   auto trailing = declarations.header;
   trailing.push_back(0);
   expect(!decodeLibraryHeader(trailing, decode),
          "header mounting rejects trailing bytes");
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
-      1 + std::string_view("mettle.checked-contracts.12").size();
+      1 + std::string_view("mettle.checked-contracts.15").size();
   oversized[inventoryOffset] = 0xff;
   oversized.insert(oversized.begin() + inventoryOffset + 1, 8, 0xff);
   oversized.insert(oversized.begin() + inventoryOffset + 9, 0x01);

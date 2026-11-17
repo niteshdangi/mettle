@@ -3,6 +3,8 @@
 #include "types/layout.h"
 #include <algorithm>
 #include <functional>
+#include <map>
+#include <set>
 
 namespace mettle {
 namespace {
@@ -45,35 +47,44 @@ std::vector<std::size_t> Checker::carriedResultSources(
   std::vector<std::size_t> selected;
   if (required.empty())
     return selected;
-  auto region = [&](const NameKey &name) -> std::optional<RegionId> {
+  auto resolveRegion = [&](const NameKey &name) -> std::optional<RegionId> {
     if (name.first == "static")
       return RegionId::Static;
     if (!annotationRegionScopes.empty())
       if (auto found = annotationRegionScopes.back().names.find(name);
           found != annotationRegionScopes.back().names.end())
         return found->second;
-    if (current)
-      if (auto found = functionRegions(*current).names.find(name);
-          found != functionRegions(*current).names.end())
+    if (current) {
+      const auto &scope = functionRegions(*current);
+      if (auto found = scope.names.find(name); found != scope.names.end())
         return found->second;
+    }
     for (const auto &function : module.functions)
       if (function.span.source == span.source &&
-          function.span.begin <= span.begin && span.end <= function.span.end)
-        if (auto found = functionRegions(function).names.find(name);
-            found != functionRegions(function).names.end())
+          function.span.begin <= span.begin && span.end <= function.span.end) {
+        const auto &scope = functionRegions(function);
+        if (auto found = scope.names.find(name); found != scope.names.end())
           return found->second;
+      }
     return std::nullopt;
   };
+  std::map<NameKey, std::optional<RegionId>> knownRegions;
+  auto region = [&](const NameKey &name) {
+    auto [found, inserted] = knownRegions.try_emplace(name);
+    if (inserted)
+      found->second = resolveRegion(name);
+    return found->second;
+  };
+  std::set<NameKey> namedParameters;
+  for (const auto &parameter : parameters)
+    namedParameters.insert(parameter.first);
   RegionSolver proof(checked.types->regions());
   for (std::size_t p = 0; p < parameters.size(); ++p) {
     const auto &[name, annotation] = parameters[p];
     auto carried = names(*annotation);
     bool matches = false;
     for (const auto &wanted : required) {
-      bool named = std::any_of(
-          parameters.begin(), parameters.end(),
-          [&](const auto &parameter) { return parameter.first == wanted; });
-      if (named) {
+      if (namedParameters.contains(wanted)) {
         matches |= wanted == name;
         if (matches)
           break;
@@ -346,15 +357,15 @@ CallableType Checker::functionSignature(std::size_t index) {
   auto &function = module.functions[index];
   auto resultSources = resultSourceNames(function.annotation, function.error);
   auto saved = genericEnvironment;
-  genericEnvironment = &functionGenerics.at(&function);
-  const auto &declaration = facts(function);
+  genericEnvironment = &functionEnvironment(function);
+  const auto &declaration = std::as_const(*this).facts(function);
   CallableType result;
   result.unsafeCall = function.unsafeFunction;
   result.abi = function.abi;
   result.variadic = function.variadic;
   result.targetFeatures = declaration.targetFeatures;
   result.regions = function.regions;
-  result.result = inference.value(functionVariables.at(&function));
+  result.result = functionResult(function);
   result.error = declaration.error;
   result.abiResult =
       result.error == Type::Unknown
@@ -366,7 +377,9 @@ CallableType Checker::functionSignature(std::size_t index) {
     const auto &parameter = function.parameters[p];
     auto type =
         p < declaration.locals.size()
-            ? inference.value(localVariables.at(&function)[p])
+            ? (imported(function.span)
+                   ? declaration.locals[p].type
+                   : inference.value(localVariables.at(&function)[p]))
             : annotation(parameter.annotation, parameter.span, function.owner);
     auto mode = p < declaration.locals.size()
                     ? declaration.locals[p].mode

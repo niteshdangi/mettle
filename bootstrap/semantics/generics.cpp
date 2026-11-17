@@ -137,11 +137,11 @@ void Checker::prepareGenerics() {
   for (const auto &product : module.products)
     if (!imported(product.span))
       validateGenericEnvironment(product.genericParameters, product.constraints,
-                                 productGenerics.at(&product));
+                                 typeEnvironment(product));
   for (const auto &alias : module.aliases)
     if (!imported(alias.span))
       validateGenericEnvironment(alias.genericParameters, alias.constraints,
-                                 aliasGenerics.at(&alias));
+                                 typeEnvironment(alias));
   for (const auto &interface : module.interfaces)
     if (!imported(interface.span) &&
         std::none_of(interface.genericParameters.begin(),
@@ -151,7 +151,7 @@ void Checker::prepareGenerics() {
                      }))
       validateGenericEnvironment(interface.genericParameters,
                                  interface.constraints,
-                                 interfaceGenerics.at(&interface));
+                                 typeEnvironment(interface));
   for (const auto &implementation : module.implementations) {
     if (imported(implementation.span) || implementation.negative ||
         std::none_of(implementation.associated.begin(),
@@ -173,7 +173,7 @@ void Checker::prepareGenerics() {
                                implementation.constraints, environment);
     implementationGenerics.emplace(&implementation, std::move(environment));
   }
-  for (auto &function : module.functions) {
+  for (auto &function : module.functions.local()) {
     if (imported(function.span))
       continue;
     if (function.associatedConstantInitializer) {
@@ -194,7 +194,7 @@ void Checker::prepareGenerics() {
         continue;
       }
       functionGenerics.emplace(&function, owner->second);
-      functionGenerics.at(&function)
+      functionEnvironment(function)
           .names[nameKey("Self", function.lexicalContext)] =
           owner->second.names.at(
               nameKey("Self", module.implementations[index].span));
@@ -204,14 +204,14 @@ void Checker::prepareGenerics() {
     if (!function.owner.empty() && function.implementation < 0) {
       auto name = typeName(function.owner, function.span);
       if (const auto &named = productsNamed(name); !named.empty())
-        parent = &productGenerics.at(named.front());
+        parent = &typeEnvironment(*named.front());
     }
     auto environment = makeGenericEnvironment(function.genericParameters,
                                               function.constraints, parent);
     environment.declarationSpan = function.span;
     functionGenerics.emplace(&function, std::move(environment));
   }
-  for (auto &function : module.functions) {
+  for (auto &function : module.functions.local()) {
     if (imported(function.span))
       continue;
     if (function.associatedConstantInitializer)
@@ -224,17 +224,17 @@ void Checker::prepareGenerics() {
         continue;
       }
       auto saved = genericEnvironment;
-      genericEnvironment = &functionGenerics.at(&function);
+      genericEnvironment = &functionEnvironment(function);
       genericEnvironment->names[nameKey("Self", function.lexicalContext)] =
           annotation(module.implementations[index].target, function.span);
       genericEnvironment = saved;
       validateGenericEnvironment(function.genericParameters,
                                  function.constraints,
-                                 functionGenerics.at(&function));
+                                 functionEnvironment(function));
       continue;
     }
     validateGenericEnvironment(function.genericParameters, function.constraints,
-                               functionGenerics.at(&function));
+                               functionEnvironment(function));
   }
 }
 void Checker::validateGenericEnvironment(
@@ -291,9 +291,11 @@ void Checker::validateGenericEnvironment(
         checked.types->constrainThin(left);
         checked.types->constrainThin(right);
       }
-      auto &target = environment.bounds[right];
-      const auto &source = environment.bounds[left];
-      target.insert(target.end(), source.begin(), source.end());
+      if (left != right) {
+        auto &target = environment.bounds[right];
+        const auto &source = environment.bounds[left];
+        target.insert(target.end(), source.begin(), source.end());
+      }
     }
     if (found != environment.names.end() && left != right)
       found->second = right;
@@ -389,6 +391,7 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
         parameters.push_back(binding.parameter);
       else
         known.push_back(binding);
+    std::optional<interfaces::Solver> solver;
     for (const auto &query : queries) {
       auto owner = std::find_if(known.begin(), known.end(), [&](const auto &b) {
         return b.parameter == query.subject;
@@ -402,11 +405,11 @@ void Checker::propagateGenericBindings(const GenericEnvironment &environment,
       if (!std::any_of(checked.types->erased(pattern).arguments.begin(),
                        checked.types->erased(pattern).arguments.end(), open))
         continue;
-      interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                                diagnostics, interfaceAssumptions(),
-                                regionEnvironment());
-      auto actual = solver.implementedInterface(owner->argument, pattern, span,
-                                                parameters);
+      if (!solver)
+        solver.emplace(*checked.types, *checked.interfaceData, diagnostics,
+                       interfaceAssumptions(), regionEnvironment());
+      auto actual = solver->implementedInterface(owner->argument, pattern, span,
+                                                 parameters);
       if (!actual)
         continue;
       const auto expected = checked.types->erased(pattern).arguments;
@@ -565,8 +568,8 @@ void Checker::completeGenericBindings(const GenericEnvironment &environment,
       error("type", span, "generic type equality is not satisfied");
   }
 }
-const std::vector<Type> &Checker::genericBindings(Function &function) {
-  genericEnvironment = &functionGenerics.at(&function);
+const std::vector<Type> &Checker::genericBindings(const Function &function) {
+  genericEnvironment = &functionEnvironment(function);
   return genericEnvironment->parameters;
 }
 Type Checker::constantContext(const Node &node) {
@@ -1053,7 +1056,7 @@ std::optional<Type> Checker::genericAnnotation(const TypeSyntax &syntax,
   auto name = typeName(syntax.name, span, owner, syntax.context);
   for (const auto *candidate : productsNamed(name))
     if (const auto &product = *candidate;
-        !productGenerics.at(&product).parameters.empty()) {
+        !typeEnvironment(product).parameters.empty()) {
       if (++genericDepth > limits::typeDepth) {
         --genericDepth;
         error("limit", span, "generic type expansion limit exceeded");
@@ -1074,7 +1077,7 @@ std::optional<Type> Checker::genericAnnotation(const TypeSyntax &syntax,
         }
       auto arguments =
           genericArguments(product.genericParameters, argumentSyntax,
-                           productGenerics.at(&product), span);
+                           typeEnvironment(product), span);
       auto result = checked.types->instantiateProduct(typeNames.at(name),
                                                       std::move(arguments));
       --genericDepth;
@@ -1087,7 +1090,7 @@ std::optional<Type> Checker::genericAnnotation(const TypeSyntax &syntax,
   auto alias = aliases.find(name);
   if (alias != aliases.end()) {
     auto &source = module.aliases[alias->second];
-    auto &environment = aliasGenerics.at(&source);
+    auto &environment = typeEnvironment(source);
     if (!environment.parameters.empty()) {
       auto arguments = genericArguments(source.genericParameters,
                                         syntax.arguments, environment, span);

@@ -1,4 +1,6 @@
 #include "source/source.h"
+#include "source/positions.h"
+#include <algorithm>
 
 namespace mettle {
 namespace {
@@ -25,6 +27,28 @@ std::size_t width(std::string_view text, std::size_t offset) {
   return count;
 }
 } // namespace
+SourcePositions::SourcePositions(std::string_view text) : size(text.size()) {
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    auto byte = static_cast<unsigned char>(text[i]);
+    bool crlf = byte == '\n' && i && text[i - 1] == '\r';
+    if (byte == '\r' || (byte == '\n' && !crlf))
+      lines.push_back(i + 1);
+    else if (crlf || (byte & 0xc0) == 0x80)
+      continuations.push_back(i);
+  }
+}
+
+SourcePosition SourcePositions::position(std::size_t offset) const {
+  offset = std::min(offset, size);
+  auto line = std::upper_bound(lines.begin(), lines.end(), offset);
+  auto start = *(line - 1);
+  auto first =
+      std::lower_bound(continuations.begin(), continuations.end(), start);
+  auto last = std::lower_bound(first, continuations.end(), offset);
+  return {static_cast<std::size_t>(line - lines.begin()),
+          1 + offset - start - static_cast<std::size_t>(last - first)};
+}
+
 SourcePosition sourcePosition(const Source &source, std::size_t offset) {
   SourcePosition position{1, 1};
   for (std::size_t i = 0; i < offset && i < source.text.size(); ++i) {

@@ -421,7 +421,7 @@ private:
         continue;
       }
       for (auto &option : options) {
-        auto branch = state;
+        auto branch = &option == &options.back() ? std::move(state) : state;
         choose(branch, edge, std::move(option));
         if (fatal)
           return false;

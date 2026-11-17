@@ -25,6 +25,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstdlib>
 #include <fcntl.h>
@@ -570,13 +571,38 @@ private:
         copyInputs(entry.path(), destination / entry.path().filename(), view,
                    root);
     } else if (fs::is_regular_file(status)) {
-      fs::remove_all(destination);
-      fs::copy_file(source, destination);
-      fs::permissions(destination, status.permissions());
+      auto copied = fs::symlink_status(destination);
+      if (!fs::is_regular_file(copied) ||
+          fs::hard_link_count(destination) != 1 ||
+          !sameContents(source, destination)) {
+        fs::remove_all(destination);
+        fs::copy_file(source, destination);
+        copied = fs::symlink_status(destination);
+      }
+      if (copied.permissions() != status.permissions())
+        fs::permissions(destination, status.permissions());
     } else {
       link(fs::is_symlink(status) ? fs::read_symlink(source) : source,
            destination);
     }
+  }
+
+  static bool sameContents(const fs::path &source,
+                           const fs::path &destination) {
+    if (fs::file_size(source) != fs::file_size(destination))
+      return false;
+    std::ifstream original(source, std::ios::binary);
+    std::ifstream copied(destination, std::ios::binary);
+    std::array<char, 1 << 16> left, right;
+    while (original && copied) {
+      original.read(left.data(), left.size());
+      copied.read(right.data(), right.size());
+      if (original.gcount() != copied.gcount() ||
+          !std::equal(left.begin(), left.begin() + original.gcount(),
+                      right.begin()))
+        return false;
+    }
+    return original.eof() && copied.eof() && !original.bad() && !copied.bad();
   }
 
   static void rebaseLinks(const fs::path &directory, const View &view) {
@@ -876,7 +902,7 @@ packages::Request packageRequest(const Options &options) {
   return request;
 }
 
-int run(const Options &requested) {
+int run(const Options &requested) try {
   if (!requested.sanitizerError.empty()) {
     std::cerr << "mettle: error[option]: " << requested.sanitizerError << '\n';
     return 2;
@@ -915,6 +941,9 @@ int run(const Options &requested) {
       requested.command == "bench")
     return execute(requested);
   return build(requested, nullptr);
+} catch (const metadata::InvalidMetadata &error) {
+  std::cerr << "mettle: error[metadata]: " << error.what() << '\n';
+  return 1;
 }
 
 int build(const Options &requested,
@@ -1111,7 +1140,7 @@ int build(const Options &requested,
       return std::nullopt;
     }
     if (checkedCore && checkedCore->active() &&
-        checkedCore->inputs().contains(canonical.generic_string())) {
+        checkedCore->containsInput(canonical.generic_string())) {
       diagnostics.error(
           "metadata", {},
           "checked core source requested after its interface was mounted: " +
@@ -1195,10 +1224,7 @@ int build(const Options &requested,
   auto tree = resolution::load(source, provider, diagnostics, library,
                                sourceModules, &loadedSources, &sourcePackages);
   if (checkedCore && checkedCore->active())
-    for (const auto &[path, source] : checkedCore->inputs()) {
-      (void)path;
-      inputs.record(source);
-    }
+    checkedCore->recordInputs(inputs);
   pipeline::PackageOwners packageOwners;
   if (checkedCore)
     packageOwners = checkedCore->packageOwners();
@@ -1289,11 +1315,15 @@ int build(const Options &requested,
                                observer, packageOwners,
                                backend::evaluateNumeric, sourcePackages,
                                checkedCore ? checkedCore->importer()
-                                           : pipeline::LibraryImporter{})
+                                           : pipeline::LibraryImporter{},
+                               options.functionQueries.get())
            : std::nullopt;
   std::optional<std::optional<ir::VerifiedProgram>> libraryProgram;
   std::vector<PackageObject> nativeObjects;
-  if (prepared && checkedCore && checkedCore->active() && store) {
+  const bool checking = options.command == "check" || options.command == "lint";
+  const bool nativeDeclarations =
+      checking && checkedCore && checkedCore->active();
+  if (prepared && checkedCore && checkedCore->active() && store && !checking) {
     auto packageSources = checkedCore->packageSources();
     auto packageKeys = checkedCore->packageKeys();
     nativeObjects =
@@ -1308,12 +1338,12 @@ int build(const Options &requested,
                          return *libraryProgram ? &**libraryProgram : nullptr;
                        });
   }
-  auto program =
-      prepared
-          ? nativeObjects.empty()
-                ? pipeline::compile(*prepared, diagnostics)
-                : pipeline::compileWithLibraryObjects(*prepared, diagnostics)
-          : std::nullopt;
+  auto program = prepared ? nativeDeclarations || !nativeObjects.empty()
+                                ? pipeline::compileWithLibraryObjects(
+                                      *prepared, diagnostics,
+                                      !checking && options.profile == "release")
+                                : pipeline::compile(*prepared, diagnostics)
+                          : std::nullopt;
   if (!program) {
     if (failurePhases)
       for (const auto &diagnostic : diagnostics.items)

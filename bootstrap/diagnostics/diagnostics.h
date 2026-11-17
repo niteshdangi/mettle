@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <optional>
 #include <ostream>
+#include <ranges>
 #include <set>
 #include <string>
 #include <tuple>
@@ -50,6 +51,25 @@ struct Generation {
 
 class Diagnostics {
 public:
+  auto registeredSources() const {
+    return sources |
+           std::views::transform(
+               [](const auto &source) -> const Source & { return *source; });
+  }
+  auto registeredGenerations() const {
+    return generations | std::views::transform(
+                             [](const auto &generation) -> const Generation & {
+                               return *generation;
+                             });
+  }
+  void registerSource(std::shared_ptr<const Source> source) {
+    if (std::none_of(sources.begin(), sources.end(), [&](const auto &entry) {
+          return entry->id == source->id;
+        }))
+      sources.push_back(std::move(source));
+  }
+  std::uint64_t syntaxContextCount() const { return syntaxIdentity; }
+  void reserveSyntaxContexts(std::uint64_t count) { syntaxIdentity += count; }
   class SourceContext {
   public:
     SourceContext(Diagnostics &diagnostics, const Source &source)
@@ -57,9 +77,9 @@ public:
       diagnostics.currentSource = source.id;
       auto found = std::find_if(
           diagnostics.sources.begin(), diagnostics.sources.end(),
-          [&](const Source &entry) { return entry.id == source.id; });
+          [&](const auto &entry) { return entry->id == source.id; });
       if (found == diagnostics.sources.end())
-        diagnostics.sources.push_back(source);
+        diagnostics.sources.push_back(std::make_shared<const Source>(source));
     }
     ~SourceContext() { diagnostics.currentSource = previous; }
     SourceContext(const SourceContext &) = delete;
@@ -92,6 +112,9 @@ public:
                      std::move(severity), std::move(related)});
   }
   void generated(Generation generation) {
+    generated(std::make_shared<const Generation>(std::move(generation)));
+  }
+  void generated(std::shared_ptr<const Generation> generation) {
     generations.push_back(std::move(generation));
   }
   // Drops sources and generations registered after the given counts, undoing
@@ -110,18 +133,19 @@ public:
         SyntaxContext{std::move(scope), definition, ++syntaxIdentity});
   }
   SyntaxContextPtr syntaxContext(Span span) const {
+    const auto records = registeredGenerations();
     for (std::size_t depth = 0; depth < generations.size(); ++depth) {
       auto generation = std::find_if(
-          generations.begin(), generations.end(),
+          records.begin(), records.end(),
           [&](const Generation &entry) { return entry.source == span.source; });
-      if (generation == generations.end())
+      if (generation == records.end())
         return {};
       auto mapping = std::upper_bound(
-          generation->mappings.begin(), generation->mappings.end(), span.begin,
-          [](std::size_t offset, const Generation::Mapping &entry) {
+          (*generation).mappings.begin(), (*generation).mappings.end(),
+          span.begin, [](std::size_t offset, const Generation::Mapping &entry) {
             return offset < entry.begin;
           });
-      if (mapping == generation->mappings.begin())
+      if (mapping == (*generation).mappings.begin())
         return {};
       --mapping;
       if (span.begin >= mapping->end)
@@ -138,29 +162,29 @@ public:
   }
   // True for the generated source of an attribute or macro expansion.
   bool isGenerated(SourceId id) const {
-    return std::any_of(
-        generations.begin(), generations.end(),
-        [&](const Generation &entry) { return entry.source == id; });
+    return std::any_of(generations.begin(), generations.end(),
+                       [&](const auto &entry) { return entry->source == id; });
   }
   bool empty() const { return items.empty(); }
   std::size_t count() const { return items.size(); }
   void print(const Source &source, std::ostream &out) const {
+    const auto records = registeredGenerations();
     for (const auto &item : items) {
-      auto generation = std::find_if(generations.begin(), generations.end(),
+      auto generation = std::find_if(records.begin(), records.end(),
                                      [&](const Generation &entry) {
                                        return entry.source == item.span.source;
                                      });
-      if (generation == generations.end()) {
+      if (generation == records.end()) {
         printItem(sourceOf(source, item.span), item.span.begin,
                   item.severity + "[" + item.phase + "]", item.message, out);
         printRelated(source, item, out);
         continue;
       }
-      auto target = generation->origin;
-      auto origin = generation->origin;
-      auto description = generation->description;
+      auto target = (*generation).origin;
+      auto origin = (*generation).origin;
+      auto description = (*generation).description;
       bool exact = false;
-      for (const auto &mapping : generation->mappings)
+      for (const auto &mapping : (*generation).mappings)
         if (mapping.begin <= item.span.begin && item.span.begin < mapping.end) {
           target = mapping.target;
           exact = mapping.exact;
@@ -182,27 +206,23 @@ public:
     }
   }
   std::vector<Diagnostic> items;
-  // Every source whose text was read, for consumers mapping spans to lines.
-  const std::vector<Source> &registeredSources() const { return sources; }
-  const std::vector<Generation> &registeredGenerations() const {
-    return generations;
-  }
   // Debug locations use the invocation for macro-produced tokens, while
   // unchanged copied text keeps its original offset.
   Span debugSpan(Span span) const {
+    const auto records = registeredGenerations();
     for (std::size_t depth = 0; depth < generations.size(); ++depth) {
       auto generation = std::find_if(
-          generations.begin(), generations.end(),
+          records.begin(), records.end(),
           [&](const Generation &entry) { return entry.source == span.source; });
-      if (generation == generations.end())
+      if (generation == records.end())
         break;
-      auto next = generation->origin;
+      auto next = (*generation).origin;
       auto mapping = std::upper_bound(
-          generation->mappings.begin(), generation->mappings.end(), span.begin,
-          [](std::size_t offset, const Generation::Mapping &entry) {
+          (*generation).mappings.begin(), (*generation).mappings.end(),
+          span.begin, [](std::size_t offset, const Generation::Mapping &entry) {
             return offset < entry.begin;
           });
-      if (mapping != generation->mappings.begin()) {
+      if (mapping != (*generation).mappings.begin()) {
         --mapping;
         if (span.begin < mapping->end) {
           if (mapping->exact) {
@@ -226,14 +246,14 @@ private:
   std::set<std::tuple<SourceId, std::size_t, std::size_t, std::string,
                       std::string, std::string>>
       reported;
-  std::vector<Source> sources;
-  std::vector<Generation> generations;
+  std::vector<std::shared_ptr<const Source>> sources;
+  std::vector<std::shared_ptr<const Generation>> generations;
   const Source &sourceOf(const Source &fallback, Span span) const {
     auto found =
-        std::find_if(sources.begin(), sources.end(), [&](const Source &entry) {
-          return entry.id == span.source;
+        std::find_if(sources.begin(), sources.end(), [&](const auto &entry) {
+          return entry->id == span.source;
         });
-    return found == sources.end() ? fallback : *found;
+    return found == sources.end() ? fallback : **found;
   }
   void printRelated(const Source &fallback, const Diagnostic &diagnostic,
                     std::ostream &out) const {

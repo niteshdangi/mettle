@@ -80,17 +80,32 @@ struct Point {
   Origins drops;
   std::set<Place> overwrites;
   Origins replacedViews;
+  bool empty() const {
+    return uses.empty() && defines.empty() && targets.empty() && dead.empty() &&
+           movedViews.empty() && drops.empty() && overwrites.empty() &&
+           replacedViews.empty();
+  }
 };
 struct OriginInfo {
   std::map<int, Loan> loans;
-  std::vector<std::vector<Point>> points;
-  std::vector<ViewOrigins> values;
+  std::vector<std::map<std::size_t, Point>> points;
+  std::map<int, ViewOrigins> values;
   std::vector<Origins> returns;
   std::vector<Origins> storedIn;
   std::map<int, int> externalSources;
   std::map<int, Place> externalPlaces;
   FunctionEffects effects;
   std::vector<std::pair<Origins, Span>> escapes;
+  const Point &point(std::size_t block, std::size_t instruction) const {
+    static const Point empty;
+    const auto found = points[block].find(instruction);
+    return found == points[block].end() ? empty : found->second;
+  }
+  const ViewOrigins &value(int id) const {
+    static const ViewOrigins empty;
+    const auto found = values.find(id);
+    return found == values.end() ? empty : found->second;
+  }
 };
 OriginInfo origins(const ir::Function &function, const ir::Program &program,
                    const EffectSummaries &summaries);

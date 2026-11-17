@@ -65,7 +65,7 @@ Checker::receiverCandidates(std::string_view name, bool includeInterfaces) {
       if (!checked.types->isErased(implementation.interfaceType))
         continue;
       auto declaration =
-          checked.types->erased(implementation.interfaceType).declaration;
+          checked.types->erasedDeclaration(implementation.interfaceType);
       if (declaring[declaration])
         candidates.interfaces.push_back(index);
     }
@@ -146,7 +146,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
   });
   for (auto implIndex : indexed.inherent) {
     const auto &implementation =
-        checked.interfaceData->implementations[implIndex];
+        std::as_const(*checked.interfaceData).implementations[implIndex];
     if (protocol ||
         (viewExtension && !checked.types->isView(implementation.target)))
       continue;
@@ -336,12 +336,14 @@ std::optional<std::size_t> Checker::receiverCandidate(
     const auto &interfaceCandidates = receiverCandidates(name, true).interfaces;
     for (auto index : interfaceCandidates) {
       const auto &implementation =
-          checked.interfaceData->implementations[index];
+          std::as_const(*checked.interfaceData).implementations[index];
       const auto declaration =
           checked.types->erased(implementation.interfaceType).declaration;
       const auto &definition = checked.interfaceData->definitions[declaration];
-      if (!visibility.try_emplace(declaration, visible(definition))
-               .first->second)
+      auto [cachedVisibility, inserted] = visibility.try_emplace(declaration);
+      if (inserted)
+        cachedVisibility->second = visible(definition);
+      if (!cachedVisibility->second)
         continue;
       std::vector<RegionBinding> regions;
       const auto targetHead = head(implementation.target);
@@ -374,8 +376,8 @@ std::optional<std::size_t> Checker::receiverCandidate(
                   return method.name == name &&
                          accepts(static_cast<std::size_t>(method.function));
                 });
-            auto candidateRegions = regionEnvironment();
             if (method != definition.methods.end()) {
+              auto candidateRegions = regionEnvironment();
               bool fit =
                   argumentsFit(static_cast<std::size_t>(method->function),
                                bound, self, *types, call.span, candidateRegions,
@@ -519,7 +521,7 @@ Checker::dereferenceStep(Type source, bool exclusive, Span span) {
     return std::nullopt;
   }
   auto &callee = module.functions[method->function];
-  auto &environment = functionGenerics.at(&callee);
+  auto &environment = functionEnvironment(callee);
   auto mode = exclusive ? ParameterMode::Mut : ParameterMode::Read;
   if (callee.parameters.size() != 1 || receiverMode(callee) != mode ||
       environment.parameters.empty() ||
@@ -539,8 +541,7 @@ Checker::dereferenceStep(Type source, bool exclusive, Span span) {
                     : annotation(callee.error, span, callee.owner);
   completeGenericBindings(environment, bindings, span);
   genericEnvironment = saved;
-  auto result = normalizeGenericType(
-      inference.value(functionVariables.at(&callee)), bindings, span);
+  auto result = normalizeGenericType(functionResult(callee), bindings, span);
   parameter = normalizeGenericType(parameter, bindings, span);
   if (parameter != source || effect != Type::Unknown ||
       !checked.types->isView(result) ||
@@ -606,6 +607,8 @@ bool Checker::argumentsFit(std::size_t index, Type &interfaceType, Type self,
                            RegionEnvironment &candidateRegions,
                            std::span<const Type> inferredParameters) {
   auto &function = module.functions[index];
+  if (imported(function.span))
+    functionEnvironment(function);
   auto found = functionGenerics.find(&function);
   if (found == functionGenerics.end())
     return true;

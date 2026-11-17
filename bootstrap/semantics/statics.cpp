@@ -8,25 +8,6 @@
 #include <set>
 
 namespace mettle {
-void Checker::staticLocals() {
-  if (facts(*current).naked)
-    return;
-  for (std::size_t i = 0; i < module.statics.size(); ++i) {
-    if (checked.staticStorage[i].identity != i)
-      continue;
-    if (facts(*current).locals.size() >= limits::locals) {
-      error("limit", current->span, "static storage root limit exceeded");
-      return;
-    }
-    const auto &source = module.statics[i];
-    auto type = checked.staticStorage[i].type;
-    facts(*current).locals.push_back(
-        {checked.staticStorage[i].name, type, source.mutableBinding,
-         source.span, ParameterMode::Value, false, StorageDuration::Static,
-         static_cast<int>(i)});
-    localVariables[current].push_back(inference.fresh(type));
-  }
-}
 std::optional<std::size_t>
 Checker::staticName(std::string_view name, Span span,
                     std::optional<SyntaxContextPtr> context) {
@@ -58,7 +39,7 @@ bool Checker::shareable(Type type, Span span) {
 // discriminants read constant storage before the remaining static checks run.
 void Checker::staticNamesAndTypes() {
   genericEnvironment = nullptr;
-  for (auto &source : module.statics)
+  for (auto &source : module.statics.local())
     if (source.initializer.get())
       qualifyDottedPaths(*source.initializer);
   inherentConstantNamesAndTypes();
@@ -271,7 +252,7 @@ std::optional<StaticConstant> Checker::staticValue(std::size_t index) {
   auto &storage = checked.staticStorage[index];
   if (staticStates[index] == 2)
     return storage.initializer;
-  auto &source = module.statics[index];
+  auto &source = module.statics.edit(index);
   if (source.foreignDeclaration) {
     error("constant", source.span,
           "required initialization cannot read mutable or foreign storage");
@@ -285,7 +266,8 @@ std::optional<StaticConstant> Checker::staticValue(std::size_t index) {
   // A use in a type (an array length) can precede the initializer's own check.
   if (index < staticInitializerFunctions.size() &&
       staticInitializerFunctions[index] >= 0)
-    inferFunctionResult(module.functions[staticInitializerFunctions[index]]);
+    inferFunctionResult(
+        module.functions.edit(staticInitializerFunctions[index]));
   qualifyDottedPaths(*source.initializer);
   auto depth = unsafeDepth;
   unsafeDepth = 0;
@@ -761,11 +743,22 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
           checked.types->eraseRegions(type))
         return fail("constant product constructor type does not match");
     }
-    if (!intrinsic)
-      for (const auto &function : module.functions)
-        if (function.constructor &&
-            typeName(function.owner, function.span) == origin)
+    if (!intrinsic) {
+      if (implementationsRegistered && diagnostics.empty()) {
+        auto owner = type;
+        while (checked.types->product(owner).regionOrigin != Type::Unknown)
+          owner = checked.types->product(owner).regionOrigin;
+        if (auto generic = checked.types->product(owner).genericOrigin;
+            generic != Type::Unknown)
+          owner = generic;
+        if (constructors.contains(owner))
           return fail("const-function execution is not implemented");
+      } else
+        for (const auto &function : module.functions)
+          if (function.constructor &&
+              typeName(function.owner, function.span) == origin)
+            return fail("const-function execution is not implemented");
+    }
     if (record.layout.unionType) {
       if (node.children.size() != 2 || node.children[1]->name.empty())
         return fail("constant union initialization selects one named field");

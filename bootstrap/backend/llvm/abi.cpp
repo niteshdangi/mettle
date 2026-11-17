@@ -28,6 +28,15 @@ CAbiValue CAbi::classify(Type type, bool result) {
     value.offsets.push_back(0);
     return value;
   }
+  auto key = std::pair{type, result};
+  if (auto found = classifications.find(key); found != classifications.end())
+    return found->second;
+  auto classified = classifyAggregate(type, result);
+  return classifications.emplace(key, std::move(classified)).first->second;
+}
+CAbiValue CAbi::classifyAggregate(Type type, bool result) {
+  CAbiValue value{type};
+  value.scalarType = type;
   if (auto field = transparentField(type)) {
     auto forwarded = classify(
         context.program.types->product(type).fields[*field].type, result);
@@ -241,31 +250,38 @@ CAbiSignature CAbi::signature(const ir::Function &function) {
 }
 void CAbi::attributes(llvm::Function &function,
                       const CAbiSignature &signature) {
+  function.setAttributes(attributes(function.getAttributes(), signature));
+}
+llvm::AttributeList CAbi::attributes(llvm::AttributeList previous,
+                                     const CAbiSignature &signature) {
   unsigned index = 0;
   if (signature.result.indirect) {
-    function.addParamAttr(
-        index,
+    previous = previous.addParamAttribute(
+        context.context, index,
         llvm::Attribute::getWithStructRetType(
             context.context, context.storageType(signature.result.type)));
-    function.addParamAttr(
-        index, llvm::Attribute::getWithAlignment(
-                   context.context,
-                   llvm::Align(context.alignment(signature.result.type))));
+    previous = previous.addParamAttribute(
+        context.context, index,
+        llvm::Attribute::getWithAlignment(
+            context.context,
+            llvm::Align(context.alignment(signature.result.type))));
     ++index;
   } else if (!signature.result.aggregate &&
              signature.type->getReturnType()->isIntegerTy() &&
              integerWidth(signature.result.scalarType) < 32)
-    function.addRetAttr(isSignedInteger(signature.result.scalarType)
-                            ? llvm::Attribute::SExt
-                            : llvm::Attribute::ZExt);
+    previous = previous.addRetAttribute(
+        context.context, isSignedInteger(signature.result.scalarType)
+                             ? llvm::Attribute::SExt
+                             : llvm::Attribute::ZExt);
   for (const auto &value : signature.parameters) {
     if (value.indirect) {
       if (value.byValue)
-        function.addParamAttr(
-            index, llvm::Attribute::getWithByValType(
-                       context.context, context.storageType(value.type)));
-      function.addParamAttr(
-          index,
+        previous = previous.addParamAttribute(
+            context.context, index,
+            llvm::Attribute::getWithByValType(context.context,
+                                              context.storageType(value.type)));
+      previous = previous.addParamAttribute(
+          context.context, index,
           llvm::Attribute::getWithAlignment(
               context.context,
               llvm::Align(value.byValue ? std::max<std::uint64_t>(
@@ -276,13 +292,15 @@ void CAbi::attributes(llvm::Function &function,
       for (auto *piece : value.pieces) {
         if (!value.aggregate && piece->isIntegerTy() &&
             integerWidth(value.scalarType) < 32)
-          function.addParamAttr(index, isSignedInteger(value.scalarType)
-                                           ? llvm::Attribute::SExt
-                                           : llvm::Attribute::ZExt);
+          previous = previous.addParamAttribute(
+              context.context, index,
+              isSignedInteger(value.scalarType) ? llvm::Attribute::SExt
+                                                : llvm::Attribute::ZExt);
         ++index;
       }
     }
   }
+  return previous;
 }
 std::vector<llvm::Value *> CAbi::encode(const CAbiValue &value,
                                         llvm::Value *source) {
@@ -349,16 +367,7 @@ llvm::Value *CAbi::decode(const CAbiValue &value,
 }
 void CAbi::callAttributes(llvm::CallBase &call,
                           const CAbiSignature &signature) {
-  std::vector<llvm::Type *> parameters;
-  for (auto &argument : call.args())
-    parameters.push_back(argument->getType());
-  auto *type = llvm::FunctionType::get(signature.type->getReturnType(),
-                                       parameters, false);
-  auto *temporary = llvm::Function::Create(
-      type, llvm::GlobalValue::ExternalLinkage, "", context.module);
-  attributes(*temporary, signature);
-  call.setAttributes(temporary->getAttributes());
-  temporary->eraseFromParent();
+  call.setAttributes(attributes({}, signature));
 }
 llvm::Value *CAbi::call(llvm::Value *target, const CAbiSignature &signature,
                         llvm::ArrayRef<llvm::Value *> arguments,

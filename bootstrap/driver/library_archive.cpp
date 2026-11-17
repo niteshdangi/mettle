@@ -133,79 +133,93 @@ private:
 };
 } // namespace
 
-LibrarySources::LibrarySources(std::string identity)
-    : identity(std::move(identity)) {}
+LibrarySources::LibrarySources(std::string identity) {
+  data->identity = std::move(identity);
+}
+
+void LibrarySources::edit() {
+  if (!data.unique())
+    data = std::make_shared<Data>(*data);
+  if (!mounts.unique() || mounts->current)
+    mounts = std::make_shared<MountCache>();
+  validated = false;
+}
 
 std::optional<std::string> LibrarySources::record(const Source &source,
                                                   std::string &error) {
-  if (auto found = sourceIndex.find(source.id); found != sourceIndex.end()) {
-    const auto &previous = sources[found->second];
+  if (auto found = data->sourceIndex.find(source.id);
+      found != data->sourceIndex.end()) {
+    const auto &previous = data->sources[found->second];
     if (previous.path != source.path || previous.text != source.text) {
       error = "compiled library source ID names conflicting revisions";
       return std::nullopt;
     }
-    return revisions[found->second];
+    return data->revisions[found->second];
   }
-  if (identity.empty() || identity.size() > limits::sourceBytes ||
+  if (data->identity.empty() || data->identity.size() > limits::sourceBytes ||
       source.path.size() > limits::sourceBytes ||
       source.text.size() > limits::sourceBytes ||
-      sources.size() >= limits::tokens || invalidUtf8(source.text)) {
+      data->sources.size() >= limits::tokens || invalidUtf8(source.text)) {
     error = "invalid compiled library source identity, size or encoding";
     return std::nullopt;
   }
   Writer revision;
-  revision.text(identity);
-  revision.integer(static_cast<std::uint32_t>(sources.size()));
+  revision.text(data->identity);
+  revision.integer(static_cast<std::uint32_t>(data->sources.size()));
   revision.text(source.path);
   revision.integer(static_cast<std::uint32_t>(source.text.size()));
   packages::Sha256 hash;
   hash.update(revision.bytes);
   hash.update(source.text);
   auto name = hash.finish();
-  sourceIndex.emplace(source.id, sources.size());
-  revisionIndex.emplace(name, sources.size());
-  revisions.push_back(name);
-  sources.push_back(source);
+  edit();
+  data->sourceIndex.emplace(source.id, data->sources.size());
+  data->revisionIndex.emplace(name, data->sources.size());
+  data->revisions.push_back(name);
+  data->sources.push_back(source);
   return name;
 }
 
 std::optional<metadata::SourceReference>
 LibrarySources::reference(Span span) const {
-  auto found = sourceIndex.find(span.source);
-  if (found == sourceIndex.end() || span.begin > span.end ||
-      span.end > sources[found->second].text.size())
+  auto found = data->sourceIndex.find(span.source);
+  if (found == data->sourceIndex.end() || span.begin > span.end ||
+      span.end > data->sources[found->second].text.size())
     return std::nullopt;
-  return metadata::SourceReference{revisions[found->second],
+  return metadata::SourceReference{data->revisions[found->second],
                                    static_cast<std::uint32_t>(span.begin),
                                    static_cast<std::uint32_t>(span.end)};
 }
 
 std::optional<Span>
 LibrarySources::resolve(const metadata::SourceReference &reference) const {
-  auto found = revisionIndex.find(reference.revision);
-  if (found == revisionIndex.end() || reference.begin > reference.end ||
-      reference.end > sources[found->second].text.size())
+  auto found = data->revisionIndex.find(reference.revision);
+  if (found == data->revisionIndex.end() || reference.begin > reference.end ||
+      reference.end > data->sources[found->second].text.size())
     return std::nullopt;
-  return Span{reference.begin, reference.end, sources[found->second].id};
+  return Span{reference.begin, reference.end, data->sources[found->second].id};
 }
 
 const Source *LibrarySources::source(std::string_view revision) const {
-  auto found = revisionIndex.find(std::string(revision));
-  return found == revisionIndex.end() ? nullptr : &sources[found->second];
+  auto found = data->revisionIndex.find(std::string(revision));
+  return found == data->revisionIndex.end() ? nullptr
+                                            : &data->sources[found->second];
 }
 
 bool LibrarySources::validate(std::string &error) const {
+  if (validated)
+    return true;
   auto fail = [&](std::string_view message) {
     error = "invalid compiled library source archive: " + std::string(message);
     return false;
   };
-  if (identity.empty() || sources.size() > limits::tokens ||
-      generations.size() > sources.size())
+  if (data->identity.empty() || data->sources.size() > limits::tokens ||
+      data->generations.size() > data->sources.size())
     return fail("invalid identity or table size");
   std::unordered_map<SourceId, std::vector<SourceId>> parents;
-  for (const auto &generation : generations) {
-    auto found = sourceIndex.find(generation.source);
-    if (found == sourceIndex.end() ||
+  for (const auto &generation : data->generations) {
+    auto found = data->sourceIndex.find(generation.source);
+    if (found == data->sourceIndex.end() ||
         !parents.emplace(generation.source, std::vector<SourceId>{}).second ||
         generation.description.size() > limits::sourceBytes ||
         generation.mappings.size() > limits::tokens)
@@ -222,7 +236,7 @@ bool LibrarySources::validate(std::string &error) const {
     std::size_t previousEnd = 0;
     for (const auto &mapping : generation.mappings) {
       if (mapping.begin < previousEnd || mapping.begin > mapping.end ||
-          mapping.end > sources[found->second].text.size() ||
+          mapping.end > data->sources[found->second].text.size() ||
           mapping.description.size() > limits::sourceBytes ||
           !span(mapping.target) ||
           (!mapping.description.empty() && !span(mapping.origin)) ||
@@ -274,9 +288,12 @@ bool LibrarySources::capture(const Diagnostics &diagnostics,
   for (const auto &source : diagnostics.registeredSources())
     if (!candidate.record(source, error))
       return false;
-  candidate.generations = diagnostics.registeredGenerations();
+  candidate.edit();
+  const auto generations = diagnostics.registeredGenerations();
+  candidate.data->generations.assign(generations.begin(), generations.end());
   if (!candidate.validate(error))
     return false;
+  candidate.validated = true;
   *this = std::move(candidate);
   return true;
 }
@@ -294,23 +311,49 @@ bool LibrarySources::mount(
   for (const auto &source : diagnostics.registeredSources())
     occupied.insert(source.id);
   std::unordered_map<SourceId, SourceId> remap;
-  for (const auto &source : sources) {
+  std::vector<SourceId> ids;
+  ids.reserve(data->sources.size());
+  for (const auto &source : data->sources) {
     auto id = allocate();
     if (!id || *id == 0 || !occupied.insert(*id).second) {
       error = "compiled library source allocation exhausted or collided";
       return false;
     }
     remap.emplace(source.id, *id);
+    ids.push_back(*id);
   }
+  const auto syntaxBegin = diagnostics.syntaxContextCount();
+  std::shared_ptr<const Mounted> cached;
+  {
+    std::lock_guard lock(mounts->mutex);
+    cached = mounts->current;
+  }
+  auto registerSnapshot = [&] {
+    for (const auto &source : data->sources)
+      diagnostics.registerSource(std::shared_ptr<const Source>(data, &source));
+    for (const auto &generation : data->generations)
+      diagnostics.generated(
+          std::shared_ptr<const Generation>(data, &generation));
+    validated = true;
+    mounted = true;
+  };
+  if (cached && cached->ids == ids && cached->syntaxBegin == syntaxBegin) {
+    data = cached->data;
+    diagnostics.reserveSyntaxContexts(cached->syntaxEnd - cached->syntaxBegin);
+    registerSnapshot();
+    return true;
+  }
+  if (!data.unique())
+    data = std::make_shared<Data>(*data);
   auto span = [&](Span value) {
     value.source = remap.at(value.source);
     return value;
   };
   std::unordered_map<SourceId, std::size_t> mountedIndex;
-  for (std::size_t i = 0; i < sources.size(); ++i)
-    mountedIndex.emplace(remap.at(sources[i].id), i);
+  for (std::size_t i = 0; i < data->sources.size(); ++i)
+    mountedIndex.emplace(remap.at(data->sources[i].id), i);
   std::unordered_map<std::uint64_t, std::uint64_t> binders;
-  for (auto &generation : generations) {
+  for (auto &generation : data->generations) {
     generation.source = remap.at(generation.source);
     generation.origin = span(generation.origin);
     for (auto &mapping : generation.mappings) {
@@ -336,15 +379,16 @@ bool LibrarySources::mount(
           SyntaxContext{context.scope, definition, identity});
     }
   }
-  for (auto &source : sources) {
+  for (auto &source : data->sources) {
     source.id = remap.at(source.id);
-    Diagnostics::SourceContext registerSource(diagnostics, source);
   }
-  for (auto &generation : generations)
-    diagnostics.generated(std::move(generation));
-  generations.clear();
-  sourceIndex = std::move(mountedIndex);
-  mounted = true;
+  data->sourceIndex = std::move(mountedIndex);
+  registerSnapshot();
+  {
+    std::lock_guard lock(mounts->mutex);
+    mounts->current = std::make_shared<const Mounted>(Mounted{
+        data, std::move(ids), syntaxBegin, diagnostics.syntaxContextCount()});
+  }
   return true;
 }
 
@@ -352,6 +396,7 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
                                                 std::string &error) {
   error.clear();
   const auto &sources = archive.sources;
+  const auto &data = *sources.data;
   if (sources.mounted) {
     error = "a mounted compiled library cannot be encoded";
     return std::nullopt;
@@ -366,12 +411,12 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
     error = "compiled library section exceeds the compiler data-file limit";
     return std::nullopt;
   }
-  if (archive.sourceModules.size() > sources.sources.size()) {
+  if (archive.sourceModules.size() > data.sources.size()) {
     error = "compiled library source-module table exceeds its source table";
     return std::nullopt;
   }
   for (const auto &[revision, path] : archive.sourceModules)
-    if (!sources.revisionIndex.contains(revision) ||
+    if (!data.revisionIndex.contains(revision) ||
         path.size() > limits::tokens ||
         std::any_of(path.begin(), path.end(), [](const auto &part) {
           return part.size() > limits::sourceBytes;
@@ -381,23 +426,22 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
     }
   Writer out;
   out.text("mettle-checked-library-2");
-  out.text(sources.identity);
-  out.integer(static_cast<std::uint32_t>(sources.sources.size()));
-  for (const auto &source : sources.sources) {
+  out.text(data.identity);
+  out.integer(static_cast<std::uint32_t>(data.sources.size()));
+  for (const auto &source : data.sources) {
     out.text(source.path);
     out.text(source.text);
   }
   auto span = [&](Span value) {
-    out.integer(
-        static_cast<std::uint32_t>(sources.sourceIndex.at(value.source)));
+    out.integer(static_cast<std::uint32_t>(data.sourceIndex.at(value.source)));
     out.integer(static_cast<std::uint32_t>(value.begin));
     out.integer(static_cast<std::uint32_t>(value.end));
   };
   std::unordered_map<std::uint64_t, std::uint32_t> binders;
-  out.integer(static_cast<std::uint32_t>(sources.generations.size()));
-  for (const auto &generation : sources.generations) {
+  out.integer(static_cast<std::uint32_t>(data.generations.size()));
+  for (const auto &generation : data.generations) {
     out.integer(
-        static_cast<std::uint32_t>(sources.sourceIndex.at(generation.source)));
+        static_cast<std::uint32_t>(data.sourceIndex.at(generation.source)));
     span(generation.origin);
     out.text(generation.description);
     out.integer(static_cast<std::uint32_t>(generation.mappings.size()));
@@ -512,7 +556,7 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
       }
       generation.mappings.push_back(std::move(mapping));
     }
-    archive.sources.generations.push_back(std::move(generation));
+    archive.sources.data->generations.push_back(std::move(generation));
   }
   auto modules = in.count(8);
   if (modules > count)
@@ -523,7 +567,7 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
     std::vector<std::string> path;
     for (std::size_t j = 0; in.good() && j < parts; ++j)
       path.push_back(in.text());
-    if (!archive.sources.revisionIndex.contains(revision) ||
+    if (!archive.sources.data->revisionIndex.contains(revision) ||
         !archive.sourceModules.emplace(std::move(revision), std::move(path))
              .second)
       in.fail("invalid or duplicate source-module reference");
@@ -547,6 +591,7 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
     in.fail("trailing data");
   if (!in.good() || !archive.sources.validate(error))
     return std::nullopt;
+  archive.sources.validated = true;
   return archive;
 }
 } // namespace mettle::driver

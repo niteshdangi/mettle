@@ -2852,6 +2852,10 @@ ImportedTypeIndex compactIndex(const CompactDefinitionView &definition,
           for (std::size_t i = 0; i < record.parameters.size(); ++i)
             key[i + 2] = record.parameters[i].type;
           result.key = key;
+          result.regionUniverse = record.regionUniverse;
+          result.callableRegionParameters = record.regionParameters;
+          result.callableParameterRegions = record.parameterRegions;
+          result.callableRegionRequirements = record.regionRequirements;
         } else
           result.declaration = record.declaration;
       },
@@ -2911,9 +2915,16 @@ void DeferredTypeGraph::validate(std::size_t index) const {
             (!nominal(identity) &&
              canonicalKey(graph, identity) != canonicalKey(graph, value)) ||
             !equal(expected.key, actual.key) ||
+            !equal(expected.callableRegionParameters,
+                   actual.callableRegionParameters) ||
+            !equal(expected.callableParameterRegions,
+                   actual.callableParameterRegions) ||
+            !equal(expected.callableRegionRequirements,
+                   actual.callableRegionRequirements) ||
             !equal(expected.coroutineInterior, actual.coroutineInterior) ||
             expected.genericOrigin != actual.genericOrigin ||
             expected.regionOrigin != actual.regionOrigin ||
+            expected.regionUniverse != actual.regionUniverse ||
             expected.payload != actual.payload ||
             expected.valueType != actual.valueType ||
             expected.region != actual.region || expected.mode != actual.mode ||

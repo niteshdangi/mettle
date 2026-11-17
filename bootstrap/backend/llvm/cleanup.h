@@ -107,9 +107,7 @@ public:
   llvm::Value *callerLocation();
   // Storage of a source local in the body callback; a borrowed local's
   // storage holds the pointer to its value.
-  llvm::Value *localStorage(std::size_t local) {
-    return field(localFields.at(local));
-  }
+  llvm::Value *localStorage(std::size_t local);
 
 private:
   CleanupFrame(LoweringContext &lowering, const ir::Function &source,
@@ -161,6 +159,7 @@ private:
   std::vector<Node> nodes;
   std::vector<unsigned> locals;
   std::vector<unsigned> localFields;
+  std::vector<llvm::AllocaInst *> bodyLocals;
   std::vector<unsigned> planNodes;
   std::unordered_map<int, unsigned> values;
   std::vector<Replacement> replacements;

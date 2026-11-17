@@ -26,7 +26,7 @@ std::optional<std::string> readFile(const fs::path &path) {
   text << stream.rdbuf();
   if (stream.bad() || text.bad())
     return std::nullopt;
-  return text.str();
+  return std::move(text).str();
 }
 
 // Package inputs exclude generated locks and build output.
@@ -77,11 +77,11 @@ std::optional<std::string> checksum(const fs::path &directory,
     Sha256 hash;
     for (const auto &[relative, path] : files) {
       auto content = readFile(path);
-      if (!content && !legacy) {
+      if (!content) {
         problem = "cannot read package input " + path.generic_string();
         return std::nullopt;
       }
-      const auto &text = content.value_or("");
+      const auto &text = *content;
       hash.update(relative);
       hash.update(std::string_view("\0", 1));
       hash.update(std::to_string(text.size()));
@@ -363,6 +363,7 @@ private:
 
   std::optional<Lock> lockOf(const Resolution &resolution) {
     Lock lock;
+    std::map<std::string, std::string> checksums;
     for (const auto &package : resolution.packages) {
       LockedPackage entry;
       entry.name = package.name();
@@ -370,14 +371,20 @@ private:
       entry.id = package.identity;
       entry.source = sourceOf(package.candidate);
       if (package.candidate.kind != SourceKind::Root) {
-        std::string problem;
-        auto value = checksum(package.candidate.location, problem);
-        if (!value) {
-          diagnostics.error("package", {},
-                            "package '" + package.name() + "': " + problem);
-          return std::nullopt;
+        auto found = checksums.find(package.candidate.location);
+        if (found == checksums.end()) {
+          std::string problem;
+          auto value = checksum(package.candidate.location, problem);
+          if (!value) {
+            diagnostics.error("package", {},
+                              "package '" + package.name() + "': " + problem);
+            return std::nullopt;
+          }
+          found =
+              checksums.emplace(package.candidate.location, std::move(*value))
+                  .first;
         }
-        entry.checksum = *value;
+        entry.checksum = found->second;
       }
       entry.features = package.features;
       entry.gitSelectors = package.gitSelectors;

@@ -17,6 +17,7 @@ std::optional<packages::Store> openStore(const Options &options);
 
 // Linker identity (or content hash) of the compiler and runtime content hashes.
 std::string compilerIdentity();
+void resetRuntimeIdentity();
 
 // Every input a build's output depends on, gathered while the sources load.
 // User sources count by their token stream, so edits to comments and layout
@@ -24,10 +25,12 @@ std::string compilerIdentity();
 // output: emitting debug info or panic locations must key positions too);
 // library sources count by content; a probed path that does not exist counts as
 // absent so creating it invalidates the build.
+struct LibraryInputs;
 class BuildInputs {
 public:
   explicit BuildInputs(const std::string &libraryDirectory);
   void record(const Source &source);
+  void record(const LibraryInputs &snapshot);
   void absent(const std::string &path);
   // Generated text that is not a source file (a procedural macro's output)
   // counts by content under `name`.
@@ -47,6 +50,7 @@ public:
   bool packageObjectsSafe() const { return packageInputsSafe; }
 
 private:
+  void record(const Source &source, std::string contentDigest);
   std::string libraryPrefix;
   std::map<std::string, std::string> inputs;
   std::map<std::string, std::string> sourceDigests;

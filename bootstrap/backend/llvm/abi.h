@@ -35,9 +35,13 @@ public:
 private:
   LoweringContext &context;
   bool aarch64;
+  std::map<std::pair<Type, bool>, CAbiValue> classifications;
   llvm::StructType *variadicType();
   std::optional<unsigned> transparentField(Type type);
   CAbiValue classify(Type type, bool result);
+  CAbiValue classifyAggregate(Type type, bool result);
+  llvm::AttributeList attributes(llvm::AttributeList previous,
+                                 const CAbiSignature &signature);
   std::vector<llvm::Value *> encode(const CAbiValue &value,
                                     llvm::Value *source);
   llvm::Value *decode(const CAbiValue &value,

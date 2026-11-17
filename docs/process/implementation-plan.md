@@ -670,8 +670,443 @@ The cold-check profile's `receiverCandidate` self share fell from 5.9% to 1.4%;
 solver applicability remains dominant. The two interface-ambiguity fixtures
 and argument-selected interface-method program pass. Evidence: `~/w/anal/check.raw`,
 `~/w/anal/check-receiver.raw`, and the three fresh-cache runs under
-`~/w/anal/check-{base,receiver}-{2,3}`. Next, investigate sharing pure solver
-results across the 505,896 solver instances in the cold-check workload.
+`~/w/anal/check-{base,receiver}-{2,3}`.
+
+A shared cache now reuses settled pure interface-selection and normalization
+results across solver instances. Five fresh-cache p04 checks measured a 30.51 s
+median and 2,572,800 KiB peak RSS, versus the receiver-index baseline's three
+checks at 32.66 s and 2,722,352 KiB. A follow-up removed redundant interface
+visibility work: `visible(definition)` had been evaluated eagerly for each
+implementation even when that interface declaration was already in the local
+visibility map. Two alternating pairs measured 30.28 s before and 26.91 s
+after (11.1% lower); peak RSS was unchanged. Combined with the cache, the
+candidate median is 17.6% below the receiver-index baseline. Focused visible
+and hidden blanket-method fixtures pass. The post-change profile's inclusive
+`receiverCandidate` share fell from 23.1% to 10.9%; remaining hotspots include
+`Solver::implementation` (27.9%), `normalizeUncached` (23.3%) and
+`Checker::checkRegions` (18.5%). A region-substitution cache-key factoring
+trial showed no median improvement in two pairs and was discarded. These are
+small-sample WSL engineering signals, not Rust-parity or release-gate results;
+continue from the installed-store measurements below, without broad test runs.
+
+To match Rust's prebuilt standard-library model, the current compiler's
+`mettle-shipped-store` target populated the installed core/alloc/std store
+(1.1 GiB). With separate fresh project caches, two p04 checks took 1.88 s and
+1.61 s with the shipped store, versus 26.53 s and 26.84 s without it; median
+time fell 15.3x and peak RSS fell from 2,573,070 KiB to 748,904 KiB. Compared
+with the frozen Rust check result (0.058 s), installed Mettle remains about
+30x slower; this is engineering evidence, not a gate result. Two fresh release
+builds with the store took 2.35 s and 1.81 s. The local p04 source is the
+harness semantic-edit variant (`seed` 12346 plus a comment), so its executable
+exits 83; the frozen result's checksum 64 is from the unedited source. The
+installed-store profile now concentrates on `importTypeGraph` (18.0%),
+`resolution::load` (16.5%) and `decodeProgramLazy` (11.9%). Evidence:
+`~/w/anal/check-{shipped,noship}-{1,2}.time`,
+`~/w/anal/p04-shipped-build-{1,2}.time` and
+`~/w/anal/check-shipped-profile.txt`. A candidate replacing one `TypeStore`
+copy in `importTypeGraph` passed the type-graph test, but two matched
+alternating no-cache p04 checks measured 30.38 s baseline versus 30.44 s
+candidate; it was reverted because it showed no gain. Timings:
+`~/w/anal/typegraph-import-matched-20261117/`.
+
+A profiling-only Release build with line tables sampled a no-cache p04 check
+(5,428 samples). The largest inclusive semantic costs were
+`Solver::implementation` (32.2%), `normalizeUncached` (22.2%) and
+`Checker::checkRegions` (17.6%); `TypeStore::instantiateProduct` accounted for
+6.8% self time and `ProductType` copying 5.8%. A candidate reducing copies in
+generic product instantiation passed `mettle-ir-tests`, but two alternating
+no-cache p04 pairs measured 26.20 s baseline versus 27.73 s candidate, so it
+was reverted. Evidence: `~/w/anal/typegraph-line-profile.raw` and
+`~/w/anal/instantiate-product-matched-20261117/`.
+
+Performance-only continuation on `b212a55c` plus the uncommitted working tree:
+empty type substitutions now return immediately, failed asymmetric matches no
+longer enumerate the actual type's parameters, and incompatible nominal
+implementations are rejected before region instantiation. Four randomized WSL
+p04 pairs reduced median full `check --no-cache` time from 22.176 s to 16.031 s
+(27.7%). Eight installed-library check pairs (0.903 s versus 0.910 s) and six
+semantic-edit build pairs (1.169 s versus 1.160 s) establish no everyday-build
+gain; all six paired executable outputs match. The final compiler SHA-256 is
+`ba06898e728188daeb1c720284df567d1f8a4ee33ebdedfa12d2aa4c43d7f890`;
+raw samples and commands are in `~/w/anal/perf-solver-20261117/`.
+Identity-substitution, builtin-leaf, ordered-interning and canonical-import
+experiments were removed because they established no elapsed-time gain.
+Only the Release compiler was rebuilt; test suites and qualification were not
+run, as requested. Source freeze and Rust parity remain open.
+
+The next performance-only batch targets installed-library import: canonical
+identity lookup now uses a reserved hash table, identity generation reuses its
+graph state, reference collection omits discarded key bytes, product descriptor
+export avoids a second copy, and imported implementation remapping indexes
+source spans instead of repeatedly scanning all implementations. Structural
+preflight and archive formats are unchanged. Against the preceding retained
+compiler, eight randomized installed-check pairs per workload measured p03
+0.8894 s -> 0.8455 s (4.9%), p04 0.8901 s -> 0.8495 s (4.6%), and p05
+0.9171 s -> 0.8601 s (6.2%). Six semantic-edit build pairs per workload measured
+1.1498 s -> 1.1174 s (2.8%), 1.1664 s -> 1.1022 s (5.5%), and
+1.3025 s -> 1.2378 s (5.0%), respectively; all 18 paired generated executables
+are byte-identical. These are WSL engineering measurements, not Rust parity or
+release qualification. Compiler SHA-256:
+`fd52f2a203f6cd2a31f5673ecf4dc480b54518a6c15b9bfd4ed43dfaf3e2eb5b`.
+Commands, raw samples and stage profiles:
+`~/w/anal/perf-import-20261117/`. A const-key copy experiment regressed installed
+checks and was removed; temporary timing instrumentation was also removed.
+Only the Release compiler and performance workloads were built; no test suites,
+sanitizers or qualification were run, as requested.
+
+I14 structural performance continuation (2026-11-17): the owner explicitly moved
+validation/materialization separation, indexed demand-loaded metadata, immutable
+dependency contracts and resident compiler/query work into I14, regardless of
+their earlier milestone placement. The first native-library query batch is
+implemented, not complete fine-grained query architecture or I14 acceptance:
+
+- `mettle serve` processes serial JSON-line check/build requests using the
+  ordinary driver. Successful imports retain owned archive/remap storage and
+  are reused only for matching content, configuration and complete consumer
+  remaps. A changed generation replaces the previous entry for that native root.
+  Runtime identities refresh between requests; compiler-image identity remains
+  fixed to the running image.
+- Imported type stores are const snapshots with consumer-owned paged copy-on-write
+  records. Function facts are borrowed through indexed slots and copied on
+  mutable access. Generic environments materialize on first use; imported type
+  declarations have reusable span indices.
+- Complete IR headers are validated before admission. Retained call headers omit
+  body-local metadata; indexed CFG loading restores it before verification.
+  Deferred decoders own their source/remap/archive lifetimes across requests.
+
+Final WSL Release compiler SHA-256:
+`53ee90d688159c2574f6530bbf14ec4215272fb20f0412ce24941d3cf7dd6c01`.
+The final const-snapshot rebuild is byte-identical to the measured executable.
+Against the preceding `fd52f2a2...` compiler, randomized semantic-edit measurements
+with independently primed, isolated whole-output caches produced these medians:
+
+| Workload | Check: prior / fresh / resident | Build: prior / fresh / resident |
+| --- | --- | --- |
+| P03 | 0.855 / 0.802 / 0.434 s | 1.088 / 1.092 / 0.691 s |
+| P04 | 0.875 / 0.858 / 0.473 s | 1.101 / 1.090 / 0.703 s |
+| P05 | 0.851 / 0.855 / 0.474 s | 1.243 / 1.246 / 0.854 s |
+
+P04 uses six check and four build triples; P03/P05 use four check and three
+build triples each. All ten build triples are byte-identical. Resident checks
+are 44-49% lower and builds 31-36% lower; fresh-process gains are not established
+across the workloads. Cache priming is excluded, and these are neither Rust
+parity nor release qualification. Results, hashes and raw samples:
+`~/w/anal/perf-query-20261117/{results,additional-results}.json`.
+An early build comparison shared output caches between fresh and resident
+requests; its build timings were rejected and rerun with isolated caches.
+
+Focused request probes cover malformed-input recovery, source failure/fix,
+semantic edits, added/removed function remaps, profile switches, newly created
+and deleted imports, native-tool stdout/stderr framing, failed-output
+preservation and emitted-program results. The negative-lookup probe exposed an
+implicit-module/import binding collision, also present in the frozen baseline.
+The resolver now merges a discovered namespace with its originating import,
+preserving duplicate-import errors and public reexports. Both new multi-file
+regressions passed without running the module suite.
+
+First-load metadata continuation (2026-11-17): type records are semantically
+validated before descriptor materialization. Empty stores directly adopt
+structurally unique graphs; canonical merging remains for aliases, existing
+consumer types and logical lookups. Compact IR admission streams locals/scopes,
+retains parameter/special slots, and borrows nested string tables. Full body
+loading restores omitted metadata. No archive-format or language change.
+Compiler SHA-256:
+`ec95b339f3bd12767d2aa77facdf8982ded3f64a756f1711d9e54b85666ff4cf`.
+Against `53ee90d6...`, six randomized fresh-check and four edited-build pairs
+per workload produced:
+
+| Workload | Fresh check: prior / current | Build: prior / current |
+| --- | --- | --- |
+| P03 | 0.839625 / 0.776091 s | 1.093852 / 1.047875 s |
+| P04 | 0.850123 / 0.784849 s | 1.091462 / 1.030716 s |
+| P05 | 0.855613 / 0.792220 s | 1.243837 / 1.178149 s |
+
+Checks are 7.4-7.7% lower; builds 4.2-5.6% lower. All twelve build pairs are
+byte-identical. The streaming-header addition has no independently established
+latency gain beyond the graph work. No memory improvement is established;
+build peak RSS increased approximately 2-4 MiB. Evidence:
+`~/w/anal/perf-metadata-20261117/{results,graph-results}.json`.
+
+Resident archive continuation retains one verified, owned immutable archive
+snapshot per root, shares section storage, and copies source state before
+mounting. Source-provenance validation is reused only while its inputs are
+unchanged. Complete source/configuration hashing remains per request. Compiler:
+`7ee55d6309ff6659538535d0d132793a0ef00202c0185da0215f6434e07d2c9c`.
+Against `ec95b339...`, six randomized resident-check and four edited-build pairs
+per workload, with independently primed caches and fresh semantic edits:
+
+| Workload | Resident check: prior / current | Resident build: prior / current |
+| --- | --- | --- |
+| P03 | 0.450148 / 0.403646 s | 0.697382 / 0.654893 s |
+| P04 | 0.437370 / 0.400409 s | 0.701217 / 0.649151 s |
+| P05 | 0.458010 / 0.423971 s | 0.860623 / 0.804645 s |
+
+Checks are another 7.4-10.3% lower; builds 6.1-7.4% lower, with twelve
+byte-identical build pairs. The six-pair fresh P04 sample was
+0.758533 / 0.777026 s: no fresh-process benefit is established for archive reuse.
+One-session resident peak RSS was 674572 / 649692 KiB, not memory qualification.
+An initial comparison was rejected because only the candidate resident had
+performed cold library compilation, retaining different allocator state.
+The final run primes native compilation in separate processes and excludes
+whole-output hits. Evidence: `~/w/anal/perf-mount-20261117/results.json`.
+
+Focused graph, IR codec and archive probes passed, including canonical fallback,
+special-slot restoration and invalidated provenance validation. Resident probes
+preserved build/runtime results after in-place replacement of all backing
+archive bytes, and rejected same-size native source edits with restored mtimes.
+The pinned Rust 1.99.1 compiler was found outside PATH; direct P04 engineering
+medians were 0.021221 s for metadata and 0.252018 s for linking, using the
+workload manifest's edition/release codegen/panic settings. This is not a
+consolidated parity comparison; the gap remains substantial. Raw Rust samples:
+`~/w/anal/perf-metadata-20261117/rust-results.json`.
+
+Resident source-query continuation now shares immutable function/type contracts,
+demand-creates imported type environments and borrows native bodies without
+copying their inventory. Decoded headers are retained by archive content and
+exact mounted source IDs; consumer header fields are copied without reparsing.
+Eligible user functions retain successful declaration/type contracts and raw
+symbolic IR. Body edits invalidate transitive semantic/IR callers, including
+unreachable checked references. Replayed indirect calls rebind request-local
+contracts. Unchanged functions reuse successful body-analysis proofs but retain
+normalization, structural verification and concrete executable admission.
+Only successful preparation replaces the source snapshot.
+
+Compiler `1530ee9619b2a9bf40628e7ee229c7bcfebaea3e9556c74123c762881397fa59`,
+against frozen `7ee55d63...`: five randomized edited-check and three edited-build
+pairs per workload, independently primed native caches, no whole-output hits:
+
+| Workload | Resident check: prior / current | Resident build: prior / current |
+| --- | --- | --- |
+| P03 | 0.396767 / 0.359910 s | 0.644859 / 0.628497 s |
+| P04 | 0.400631 / 0.351106 s | 0.662231 / 0.608800 s |
+| P05 | 0.419835 / 0.388270 s | 0.820149 / 0.773907 s |
+| 80 independent functions | 0.098507 / 0.063393 s | 0.237276 / 0.186813 s |
+
+Native-workload checks are 7.5-12.4% lower and builds 2.5-8.1% lower. Independent
+function checks are 35.7% lower and builds 21.3% lower. P04 reuses one source
+function; P03/P05 reuse none, isolating their gains to native/header work.
+All twelve paired builds are byte-identical. Four fresh P04 pairs give
+0.794826 / 0.739584 s, engineering evidence only. Combined resident peak RSS
+increased 636536 / 807716 KiB; no memory improvement or qualification is claimed.
+Evidence: `~/w/anal/perf-demand-20261117/results.json`.
+
+Native type-interning indices now share an immutable prefix with consumer-local
+additions, preserving full identity predicates and canonical ordering. Imported
+key changes invalidate only the consumer index. Compiler
+`154606276e5ec3c53246eedd5a810294da02c3926a53931a5739bd946b2451b9`,
+against frozen `1530ee96...`, with the same paired measurement shape:
+P03/P04/P05 checks are another 3.4-10.7% lower, builds 4.1-6.8% lower, with twelve
+byte-identical paired builds. Independent-function checks were 9.1% higher and
+builds essentially unchanged; no additional benefit is established there.
+Fresh P04 checks were 0.793532 / 0.757142 s. Peak RSS was 784560 / 803172 KiB;
+sharing indices has not established a memory reduction.
+Evidence: `~/w/anal/perf-interning-20261117/results.json`.
+
+Focused source-query, library-declaration and type-graph regressions pass:
+cached/fresh IR equivalence, transitive invalidation, inferred results, failed
+request recovery, generics, indirect calls, header ownership and interning
+isolation. No broad suites, sanitizers or qualification ran.
+
+Further frozen engineering batches, with the same paired measurement shape:
+
+| Candidate / prior | Native edited checks | Native edited builds | Fresh P04 prior / current | Peak RSS prior / current |
+| --- | --- | --- | --- | --- |
+| `a18f6d72...` / `15460627...` | 12.4-17.4% lower | 6.0-10.1% lower | 0.763366 / 0.666299 s | 798920 / 782560 KiB |
+| `899349dc...` / `a18f6d72...` | broadly similar | broadly similar | 0.713882 / 0.691987 s | 768136 / 778620 KiB |
+| `64eaa188...` / `899349dc...` | 6.6-16.3% lower | 4.2-9.5% lower | 0.693824 / 0.633265 s | 775540 / 738232 KiB |
+| `944b589f...` / `64eaa188...` | no consistent gain | mixed, within 3.3% | 0.652512 / 0.646468 s | 735972 / 706504 KiB |
+| `83ecad04...` / `944b589f...` | mixed, -4.4% to +4.5% | broadly similar | 0.640648 / 0.621488 s | 705528 / 708028 KiB |
+| `0a323ae2...` / `83ecad04...` | mixed | P05 6.5% lower; others mixed | not isolated | 698268 / 715204 KiB |
+| `93a01506...` / `0a323ae2...` | mixed | P04 7.5% lower; others mixed | not isolated | 704300 / 708328 KiB |
+| `bd90c503...` / `93a01506...` | 16.3-22.8% lower | 10.7-14.5% lower | 0.639486 / 0.616166 s | 697896 / 633220 KiB |
+
+Each batch has twelve byte-identical paired builds. Evidence:
+`~/w/anal/perf-{refresh,projection,semantic-prefix,typed-admission,borrowed-admission}-20261117/results.json`.
+The refresh batch avoids detaching native records on reads and refreshes source
+generic origins explicitly, including late destructor finalization. Projection
+retains only live source type/region closures over the native prefix; focused
+same-length array edits discard obsolete body types, and region projection
+preserves reachable binder/universe relationships. This is not a general RSS
+bound. The semantic-prefix batch shares implementation records through paged
+COW storage, persists finalized callable-bound contracts and checks coherence
+only for pairs containing a source rule. Fresh graph admission uses streamed
+fingerprint buckets with exact collision comparison and a DAG fast path before
+SCC fallback; complete graph validation/canonical merging remain mandatory.
+Typed admission replaces the largest-variant staging arena with typed pages and
+a compact ordinal index; validation borrows descriptors and only canonical
+fallback constructs the heavyweight variant arena. The latest pair establishes
+a lower observed resident peak, not a consistent latency improvement.
+Borrowed admission then removes the separate staging pools entirely: decoding
+fills the transactional typed store, validation borrows descriptors, and unique
+identities publish it directly. Canonical fallback alone copies owned variants.
+Its paired results do not establish another resident latency or memory win.
+
+The semantic-prefix compiler is
+`64eaa188b4254f764fdb0bc85072dd212a1dc3d35db0363f9d4c45e0fcdb7609`.
+The measured borrowed-admission compiler is
+`83ecad04a94cb0674672f2114ac2b419de9c0d1152a4df08079b0fd93c7d85f0`.
+Focused type-graph, declaration and module-memory checks pass. Specialization
+queries now retain eligible instantiated IR before callee binding, with the
+source-query context and dependency invalidation. Calls and destructor demand
+rebind to current result IDs; region signatures recompute, successful executable
+admission governs publication, and only reached entries survive each compile.
+Portable recipes now cover eligible consumer structural types, scalar constants
+and native generic instances across type-ID renumbering. Source nominal and
+normalized/regional shapes, generated helpers and assembly still fall back.
+Fixed builtin call contracts stop unnecessary caller invalidation while edited
+functions remain invalidated. Differential concrete-IR cases cover
+generic reuse, caller edits and changed demand order. The resident protocol now
+reports `instanceQueryHits` separately from semantic/raw-IR function reuse.
+
+The shared-declaration batch also makes imported region signatures demand-created.
+Checked headers share stable read-only records; source syntax remains owned,
+consumer mutations detach explicitly, and function identity no longer assumes
+contiguous objects. That batch's measured compiler is
+`bd90c50360a8e7d1c4c1572d26689c967c79939be623217c686ac6a4334932f9`.
+The comparison includes lazy regions and shared headers together, not an
+isolated attribution. Native edited-check medians are 0.220-0.238 s versus
+0.263-0.289 s; edited builds 0.464-0.601 s versus 0.531-0.672 s.
+Independent-function checks were 2.4% higher and builds 3.4% lower.
+Each new batch has twelve byte-identical paired builds. Evidence:
+`~/w/anal/perf-{structural-queries,fixed-contracts,shared-declarations}-20261117/results.json`.
+Integrated module-memory and declaration checks pass, including repeated
+consumers of one retained header.
+
+Subsequent batches share native annotation/expression indexes, construct constant
+evaluator shapes on demand, and consult admitted function contracts without
+reconstructing per-consumer membership sets. Against `bd90c503...`, the immutable
+index batch (`2a444f96...`) lowered native edited checks 4.1-12.5% and builds
+1.6-6.9%, with peak RSS 632280 / 643296 KiB. Direct contract views
+(`ba35c043...`) had mixed edited checks and 2.6-5.0% lower native builds;
+fresh P04 was 0.620040 / 0.618612 s, peak RSS 640116 / 640288 KiB.
+
+Checked-expression wire validation is now separate from AST/fact-map
+materialization. Admission retains owned byte slices and frozen remaps;
+constant calls, defaults and associated initializers materialize only on demand.
+The finalized measured candidate is
+`33844d2c2042848f135b61b40739a506b14276814f7661d4c14189cfd740ac1f`,
+against `ba35c043...`: fresh P04 checks 0.619470 / 0.571414 s (7.8% lower),
+resident peak RSS 636540 / 599948 KiB. Edited checks/builds are mixed, not a
+general latency win. An apparent text-build regression in the three-pair run
+did not reproduce in eight focused pairs (0.440521 / 0.438693 s).
+All twelve main paired builds were byte-identical.
+Evidence:
+`~/w/anal/perf-{immutable-index,native-contract-views,deferred-admission}-20261117/`.
+The earlier `perf-deferred-expressions-20261117` experiment recorded a fresh-check
+regression before remap recording was confined to deferred expressions.
+
+The integrated associated-constant index additionally retains exact immutable
+implementation/declaration matches, avoiding the repeated cross-inventory
+consumer scan. Ambiguous source spans and detached headers keep the fallback.
+Compiler `eb65a184be48beb8acf6e55d8bede28799ce295f8cf64216d54ac46e80eeb5ef`
+includes this follow-on, which has not been separately latency-measured.
+Integrated module-memory/declaration checks pass, including temporary byte and
+callback lifetimes and rejection of a mismatched associated-constant header.
+
+Hardware-counter profiling subsequently identified repeated native provenance
+copies/remapping and global IR type verification as material resident costs.
+Native source/provenance inventories now share immutable ownership through
+archive copies and diagnostics; resident mounts reuse only matching source-ID
+and hygiene allocations. Compiler
+`7c8b2277387e964178d55857c9482a4198410d96bdbadae158aaf317430db5f7`,
+against frozen `eb65a184...`, lowered native edited-check medians:
+P04 0.203448 / 0.168505 s, P03 0.213342 / 0.158922 s,
+P05 0.228192 / 0.181524 s (17.2-25.5% lower).
+Edited builds were 2.7-6.4% lower; independent-function checks/builds were
+0.067401 / 0.064919 s and 0.184384 / 0.184796 s.
+Fresh P04 checks did not improve (0.599474 / 0.609468 s).
+All twelve paired builds were byte-identical.
+Evidence: `~/w/anal/perf-native-snapshots-20261117/results.json`.
+Integrated archive/module-memory/declaration checks pass; the affected archive
+ownership, replay, remapping and lifetime cases also pass under ASan/UBSan.
+This is not whole-compiler sanitizer or I14 qualification.
+
+The subsequent source-only batch removes the preliminary type-graph decoding
+pass and duplicate root reads, with schema-derived allocation bounds. Resident
+IR verification now shares type proofs with transitive dependency invalidation,
+including destructor signatures, and retains product records instead of copying
+them during traversal. Read-only imported function-symbol lookup no longer
+detaches imported facts. Hash-map insertion
+and set replacement reuse vacant probe positions unless reservation rebuilds
+the index. Deferred symbol resolution preserves rejection of malformed wire
+input before resolver callbacks. Type proofs retain record-only snapshots,
+not copied interning indexes or normalization caches.
+
+The subsequent five-triple, six-workload comparison used compiler
+`e511e5de049ec40b964cb310ba42f503513029eaa6b8b5384909b2c68dd1eecd`
+against frozen `7c8b2277...` and direct Rust 1.99.1:
+native edited checks P03/P04/P05 were 0.166219 / 0.155713 s,
+0.173431 / 0.164872 s and 0.183482 / 0.166466 s (4.9-9.3% lower).
+Fresh P04 checks fell 9.0%; fresh P03 checks rose 2.7%.
+Native fresh builds were 0.837909 / 0.830019 s,
+0.870394 / 0.839450 s and 0.996514 / 0.958752 s.
+Runtime changes were small and mixed, not a material win; all six outputs
+matched Rust. Resident peak memory rose approximately 574 to 588 MiB.
+The experimental LLVM O3 policy regressed hash-map runtime in crossed
+compiler/library comparisons and was reverted to O2.
+Evidence: `~/w/anal/perf-three-final-20261117-1701/results.json`;
+the rejected experiment and isolation are in `perf-three-20261117-1701`.
+Focused type-graph and IR-boundary checks pass. These are engineering timings,
+not qualification; the new type-proof ownership work has no fresh sanitizer
+qualification. Full lazy type/signature loading and I14 remain open.
+
+An experimental decoded native-body cache added about 39 MiB of resident peak
+without a clear edited-build win and was removed. Its measurements in
+`~/w/anal/perf-specialization-bodies-20261117/results.json` are not an accepted
+optimization. Temporary instrumentation was removed.
+No broad suites or milestone qualification ran. HEAD remains `b212a55c`,
+with task and unrelated dirty changes preserved.
+
+The uncommitted borrowed-admission follow-up retains validated compact type
+descriptors for classification, region decoding and variadic escape checks;
+adapter discovery reuses native metadata instead of rescanning native roots.
+The focused type-graph executable passes, including input-buffer lifetime and
+consumer mutation. A three-triple P04 comparison against the preceding
+revision-index candidate measured fresh checks 658.134 / 632.312 ms, resident
+checks 138.985 / 132.773 ms and resident builds 410.018 / 393.677 ms.
+Peak resident memory increased 490084 / 506804 KiB. This is a small partial
+result, not removal of the dominant import cost or qualification.
+Evidence: `~/w/anal/perf-borrowed-admission-20261117-204951`.
+The hash SIMD-controls experiment regressed P05 44.589 / 49.669 ms and was
+reverted. The owner subsequently approved removing the public contiguous bucket
+slices and `Bucket.hash` contract for direct key/value buckets; that redesign is
+in progress. Evidence: `~/w/anal/perf-simd-hash-p05-20261117-2037`.
+
+The owner also approved linker build IDs for compiler-cache identity, with
+SHA-256 fallback when unavailable. Runtime archive digests remain unchanged.
+The focused cache-identity regression passes, including ID invalidation and
+content-hash fallback. Three-triple P01 fresh checks measured 65.060 / 11.299 ms
+(Rust 16.623 ms), and fresh builds 184.116 / 131.909 ms (Rust 231.511 ms).
+With the latest borrowed consumers, P04 fresh checks measured
+601.317 / 548.362 ms (Rust 19.974 ms); resident checks 140.703 / 135.134 ms.
+This removes the startup hashing floor, not the dominant native-import gap.
+Evidence: `~/w/anal/perf-native-build-id-20261117-r1/results.json`.
+The approved direct-bucket implementation measured P05 44.514 / 32.959 ms
+(Rust 37.077 ms) with matching outputs, one frozen compiler and three randomized
+pairs. Eighteen focused ASan runs passed, including portable probing, allocation
+failure, hash-panic rehash rollback and unwind cleanup. The validated library
+also builds and runs P05 with the latest borrowed-view/build-ID compiler.
+Evidence: `~/w/anal/perf-three-final-20261117-1701/runtime-root/direct-buckets/`;
+integration: `perf-native-build-id-20261117-r1/hash-integration.json`.
+
+Still missing: first-load type and function-signature materialization remains
+whole-inventory;
+specialization recipes do not cover every consumer-local type.
+Source queries conservatively fall back for unsupported cache shapes and shifted
+spans. Lifetime/sanitizer and consolidated memory/storage/performance gates
+remain open, as do source freeze and I14. Temporary profiling was removed.
+Next action: finish compact validated first-load type and function-signature
+views and their consumer-side materialization boundary; the current cache work
+has not removed the dominant fresh-import gap.
+Checked-expression
+admission is separated, not a completed lazy type graph. Retaining a decoded
+body merely to avoid
+parsing is not sufficient; full semantic/identity validation must not force a
+second heavyweight object graph, and implementation-selection closure remains
+mandatory. Broader specialization reuse needs explicit canonical type remapping,
+not reused numeric consumer TypeIds.
+Preserve frozen candidates and reuse unchanged-input evidence rather than
+rerunning broad passing groups.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
@@ -684,7 +1119,8 @@ full capability/target corpus. Add the applicable P12 compiler workload.
 Self-hosting alone proves neither correctness nor improved runtime.
 
 
-I15 obligations: compiled dependency interfaces and a query engine; a checked frontend
+I15 obligations: port the compiled dependency interfaces and query engine to Mettle
+(the performance-enabling bootstrap work above belongs to I14); a checked frontend
 and verified middle end; backend, build and editor integration; bounded storage and
 compiler/runtime performance including P12; then source freeze and staged
 bootstrap (stage 1/2/3 identities, repeatability, complete capability and target

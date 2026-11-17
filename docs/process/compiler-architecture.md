@@ -337,6 +337,10 @@ boundaries or self-compilation alone establish no performance or safety claim.
 
 The owner permits the C++ bootstrap work needed for this reusable boundary;
 this is not permission for unrelated bootstrap tuning or a test-only cache.
+The owner's 2026-11-17 I14 scope extension includes indexed imports, immutable
+dependency contracts with consumer-owned mutation overlays, and resident
+compilation/query reuse. These performance requirements are not deferred to I15;
+I15 still owns the substantive Mettle implementation and staged self-hosting.
 The first delivery must reuse checked `core` across different consumers.
 `alloc` and `std` follow through the same format and import path. The format
 must remain implementable by the self-hosted compiler; no public metadata ABI
@@ -383,6 +387,181 @@ for reuse. The backend consumes only admitted IR and emits independently
 linkable objects in both profiles; no cross-package optimization is implicit.
 Cache eligibility must not silently erase any of these obligations.
 
+**Resident import queries.** Validation and materialization are separate
+boundaries: successful queries retain immutable validated records and their
+archive backing; consumers materialize or detach only the state they modify.
+Malformed archives never become successful query results. Cached references own
+their source remaps, symbol maps and backing bytes, not a prior invocation's
+driver, diagnostics or stack. Query identities include archive content, complete
+source/symbol remaps, target and configuration. Inputs are content-checked again
+for every request, including source inventories and absent lookup candidates.
+Changing an input, implementation set or remap invalidates the dependent result.
+Eviction drops recomputable results, never changes semantics, and releases
+superseded generations once no active consumer owns them.
+
+The resident compiler is opt-in and uses stream requests in a single process;
+ordinary command-line builds remain independent. Successful reuse must preserve
+fresh-process diagnostics, source revisions, generated code and target/profile
+separation. Resident edit latency and first-process compilation are separate
+performance endpoints; one cannot substitute for the other.
+
+The bootstrap retains one successful remapped import, one decoded header and one
+unmounted archive snapshot per native root. Decoded headers require matching
+archive content and the exact mounted source-ID order. Top-level checked
+declarations share stable, read-only records; source declarations own their
+syntax. Explicit consumer edits detach a record before borrowing its addresses,
+and package composition changes only declarations requiring index/scope remaps.
+Archive admission verifies owned immutable bytes, not
+a mutable file mapping. Matching source/configuration identities reuse that
+snapshot without rereading the persistent blob; later file edits cannot change
+its bytes. Consumers copy source/remap state before mounting. Source-provenance
+validation survives these copies; source recording or recapture invalidates it.
+Archive sections share immutable storage. Replacing an entry releases its
+backing when no active import still owns it.
+
+Initial semantic admission still validates the complete type/declaration
+inventory and every IR header. Empty type stores directly adopt validated graph
+records only when structural identities need no canonical remapping; duplicate
+keys, existing consumer types and logical lookups retain canonical merging.
+Consumers share paged type records, immutable declaration contracts and indexed
+function facts; mutating access detaches the affected records. Native type
+and implementation records retain separate checking/finalized COW snapshots.
+Finalized quantified callable-bound contracts travel with the interface
+database, and consumer coherence compares only pairs containing a source rule.
+Native type interning indices have one immutable shared prefix and
+consumer-local additions;
+lookups preserve full identity checks and canonical ordering across both.
+Changing an imported identity key invalidates the consumer's index, not its
+shared prefix in other consumers. Generic function and type environments are
+materialized on first use rather than recreated for every imported declaration.
+Compact IR admission streams and validates all locals and lexical scopes,
+retaining only the parameter/special-slot prefix. Nested readers borrow their
+record's string table. The indexed body loader restores body-local storage,
+scopes and loop metadata before CFG validation. Archive storage and remap tables
+remain owned by the shared import.
+
+**Source function queries.** Resident requests also retain successful user
+declaration/type contracts and pre-normalization symbolic IR. Reuse requires
+identical declaration context, native import, target, evaluator, package/source
+identities and entry mode. Changed body fingerprints invalidate transitive callers using semantic
+dependencies, including checked references omitted from lowered IR. Propagation
+stops at parameterless, nongeneric, non-async functions with explicit builtin
+results and no error/region contract; those bodies cannot alter their callers'
+call contract, but the edited function itself is still rechecked. Request-local indirect-call contracts are rebound during replay.
+Unchanged functions reuse their successful initialization/loan-analysis proof;
+their IR still passes current normalization and structural verification and is
+never marked as trusted native-library IR. Concrete executable admission remains
+mandatory. Failed preparation does not replace the previous successful snapshot.
+Native bodies remain borrowed separately rather than copied into user snapshots.
+Successful source snapshots project their live type/region closure onto the
+immutable native prefix, retaining reachable binder/universe relationships
+without retaining obsolete body-only types from earlier edits.
+
+Source query eligibility currently excludes const/default/constructor/destructor
+and async bodies; source interfaces/implementations, closures, static locals and
+global assembly conservatively fall back to ordinary checking. Exact spans
+participate in fingerprints, so shifted declarations can invalidate more than
+the edited function. First-load type and function-signature materialization
+remains whole-inventory.
+Focused sustained-edit coverage establishes
+discarding obsolete body types, not general bounded RSS or lifetime/sanitizer
+qualification.
+
+**Specialization queries.** Eligible instantiated IR is retained before callee
+binding, under the source-query context and transitive invalidation contract.
+Keys use portable recipes for builtins/native identities, eligible structural
+types, scalar constants and generic instances. Source nominal recipes resolve
+unique declaration names in the current consumer; the enclosing declaration
+context must match before reuse. Their current region patterns are retained,
+not replayed by old numeric type identity. Region-free field normalization
+replays current origins and remapped field types only when generic arguments,
+region patterns and field names match. Other regional shapes, assembly and
+generated helper identities still fall back. Imported region
+signatures are created from checked contracts on demand. Region signatures are
+recomputed, and calls and destructor demand are rebound
+against the current result table. Only successful concrete admission publishes
+entries; each successful compilation drops entries it did not reach. Library
+object construction does not populate this cache.
+
+Check and lint reuse checked non-generic native declaration contracts without
+loading their executable bodies. Demanded generic bodies still specialize and
+pass concrete IR admission; executable builds retain the native object and
+cross-object optimization policy.
+
+Fresh graph admission validates arena-backed borrowed descriptors before
+publishing a transactional typed store. Owned and borrowed records share one
+wire schema and semantic validator; schema-derived minimum sizes bound
+allocations before shell creation and sequence reservation. Symbol callbacks run
+only after structural admission. Unique canonical keys populate interning
+indexes without expanding owned definitions. Reads materialize individual
+records from retained immutable bytes and resolved ordinal tables; canonical
+fallback keeps ordinary eager admission. The destination remains unchanged on
+failure.
+
+The admitted graph retains its borrowed descriptor arena over owned wire bytes.
+Parameter classification, interface ordinals, region carriers and variadic
+escape checks read those descriptors without expanding owned records. A
+materialized or modified slot uses its current owned definition instead; copies
+retain the original immutable view. Adapter discovery starts from consumer
+functions, reusing imported adapter metadata rather than walking every native
+signature again. Sized/Copy and symbolic-type queries, solver candidate indexes
+and IR layout/type validation use the same borrowed representation. Read-only
+sequences expose const elements through const records; inspection pins the
+record owner across callbacks that can extend or detach the consumer store.
+
+Native function admission retains compact parameter/result/external-symbol
+indexes and deferred checked expressions. Complete facts, generic environments
+and region contracts materialize once through `ImportedFunction::contract()`;
+mutable consumers detach shared contracts. Global annotation and return checks
+use signature indexes rather than forcing every contract. Structural scanning
+still validates discarded syntax, collection inventories and logical references.
+
+Checked-expression admission validates every encoded syntax node, operand
+inventory, fact, reference and interface dispatch without retaining an AST or
+per-node fact maps. Compact root spans and dispatch summaries suffice for
+admission; owned encoded slices materialize once on demand. Deferred readers
+retain frozen successful remaps or explicitly retained immutable driver-owned
+resolver tables, never caller-borrowing callbacks. Function-relative slices
+translate deferred expression offsets back to the enclosing archive. Header
+schema 2 and contract schema 14 encode each source revision once, followed by
+ordinal references. Admission rejects forward or conflicting definitions before
+source resolution; deferred readers retain the completed revision table.
+Span extents still pass through the admitted source resolver. The driver
+retains both owned declaration sections and borrowed archive backing. Demanded
+nodes and cast annotations enter checker-local overlays.
+
+Native annotation, expression and span indexes retain their immutable owners.
+Function and associated-constant header matches are established at admission;
+consumers bypass reconstruction only for the exact admitted header objects.
+Changed or ambiguous implementation headers retain the ordinary matching path.
+Constant-evaluator callable shapes are also created once on demand.
+
+Native source inventories and generated-source provenance are immutable shared
+snapshots. Diagnostics retain their owners, and archive edits detach before
+mutation. A resident mount reuses a snapshot only when every allocated source
+ID and the initial hygiene allocator position match; replay reserves the same
+hygiene range. Otherwise provenance is remapped normally. Each archive retains
+one mutex-protected mounted snapshot; diagnostics can outlive its archive.
+
+Resident IR type verification retains immutable record-only snapshots and
+dependency edges. Shared record identity and destructor-signature identity
+invalidate changed proofs transitively; target and declaration/normalizer
+contexts must match. By-value layout cycles are checked independently of
+reference traversal. Proofs publish only after complete successful verification.
+Snapshots do not copy type interning indexes or region/normalization caches.
+Dependency publication traverses checked types and their referenced closure,
+not the entire stored graph.
+Function validation keeps its existing trusted-library boundary; static and
+target validation still run for each request.
+
+IR function tables share immutable native headers with their archive owner.
+Reads do not detach pages; mutations use explicit indexed edits. Fixed page
+storage and release/acquire publication keep deferred record references stable
+while different readers materialize records. Page copying and first
+materialization serialize on the page mutex. Native IR header decoding and
+the verifier's header-type inventory remain eager; this is not complete
+random-access archive admission or a demand-only verifier.
+
 The constant evaluator accepts either an existing source declaration or a
 checked callable descriptor with resolved parameter/result shapes and borrowed
 expression storage. Both paths use the same interpreter, target arithmetic,
@@ -393,6 +572,13 @@ header codec. Imported calls retain the source path's declaration eligibility
 checks; importing a runtime-only declaration does not make it const-callable.
 Const eligibility precedes body availability, since runtime-only imported
 declarations intentionally have no constant-expression body.
+
+Evaluation reuses a large-stack worker per calling thread; nested evaluations
+run synchronously on that worker's stack with independent interpreter budgets.
+Every job finishes before its borrowed host or expression storage can expire.
+Constant hosts cache completed shapes as immutable shared aggregate graphs;
+recursive or incomplete builds are not published, and cache hits still enforce
+the caller-relative type-depth budget.
 
 Expansion can export and import complete indexed macro inventories with private
 support rules, imports/reexports, hygiene and token provenance. Logically equal

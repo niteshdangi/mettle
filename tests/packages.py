@@ -830,6 +830,65 @@ def checked_core_reuse():
         assert "using source" in fallback, fallback
 
 
+def native_core_inline_identity():
+    directory = evidence / "native-inline-identity"
+    directory.mkdir()
+    library = directory / "library"
+    shutil.copytree(Path(__file__).resolve().parents[1] / "library" / "core",
+                    library / "core")
+    core = library / "core" / "module.mt"
+    core.write_text(core.read_text() +
+                    "\npub fn identity<T: Copy>(value: T): T { value }\n"
+                    "fn forward<T: Copy>(): fn(i32): i32 { identity<i32> }\n"
+                    "static mut INLINE_COUNT: i32 = 0\n"
+                    "type InlineDrop { drop { unsafe { INLINE_COUNT += 10 } } }\n"
+                    "@inline(always)\n"
+                    "pub fn inline_pointer(): fn(i32): i32 { identity<i32> }\n"
+                    "@inline(always)\n"
+                    "pub fn inline_forward(): fn(i32): i32 { forward<i32>() }\n"
+                    "@inline(never)\n"
+                    "pub fn opaque_pointer(): fn(i32): i32 { identity<i32> }\n"
+                    "@inline(always)\n"
+                    "pub fn inline_increment(): i32 {\n"
+                    "    unsafe { INLINE_COUNT += 1; INLINE_COUNT }\n"
+                    "}\n"
+                    "@inline(always)\n"
+                    "pub fn inline_drop(): Unit { let value = InlineDrop() }\n"
+                    "@inline(never)\n"
+                    "pub fn opaque_count(): i32 { unsafe { INLINE_COUNT } }\n")
+    first, second = directory / "first.mt", directory / "second.mt"
+    first.write_text("fn main(): i32 { core.inline_increment() - 1 }\n")
+    second.write_text(
+        "fn main(): i32 {\n"
+        "    let direct = core.inline_pointer()\n"
+        "    let forwarded = core.inline_forward()\n"
+        "    let opaque = core.opaque_pointer()\n"
+        "    let instantiated: fn(i32): i32 = core.identity<i32>\n"
+        "    if direct(42) != 42 || forwarded(42) != 42 { return 1 }\n"
+        "    if core.intrinsics.fn_addr(direct) != "
+        "core.intrinsics.fn_addr(opaque) { return 2 }\n"
+        "    if core.intrinsics.fn_addr(forwarded) != "
+        "core.intrinsics.fn_addr(opaque) { return 3 }\n"
+        "    if core.intrinsics.fn_addr(instantiated) != "
+        "core.intrinsics.fn_addr(opaque) { return 6 }\n"
+        "    if core.inline_increment() != 1 || core.opaque_count() != 1 "
+        "{ return 4 }\n"
+        "    core.inline_drop()\n"
+        "    if core.opaque_count() != 11 { return 5 }\n"
+        "    0\n"
+        "}\n")
+    for profile in ("debug", "release"):
+        arguments = ["--library-dir", library, "--profile", profile]
+        _, program = explained(first, *arguments)
+        assert exit_code(program) == 0
+        warm, program = explained(second, *arguments)
+        assert "library object cache hit core " in warm, warm
+        assert exit_code(program) == 0
+        if profile == "release":
+            _, program = explained(second, *arguments, "--no-cache")
+            assert exit_code(program) == 0
+
+
 def checked_alloc_std_reuse(profile="debug"):
     directory = evidence / "checked-libraries"
     directory.mkdir()
@@ -1436,6 +1495,42 @@ def build_script_untracked_inputs():
         assert exit_code(built) == 0
     edit(script, '    0\n}', '    std.io.print("mettle:bogus=1\\n")\n    0\n}')
     explained(app, expected=1, contains="unknown or malformed declaration")
+
+
+def tool_input_observation_errors():
+    if os.name != "posix":
+        print("SKIP tool_input_observation_errors: POSIX symlink errors")
+        return
+    observed = evidence / "observed"
+    observed.mkdir()
+    link = observed / "loop"
+    link.symlink_to(link.name)
+    app = packages("build-script/app")
+    edit(app / "build.mt", 'mettle:rerun-if-changed=spec.txt',
+         f'mettle:rerun-if-changed=spec.txt\\nmettle:rerun-if-changed={observed}')
+    for _ in range(2):
+        explained(app, expected=1, contains=["error[build]", str(link)])
+    link.unlink()
+    text, binary = explained(app)
+    assert exit_code(binary) == 0
+    link.symlink_to(link.name)
+    explained(app, expected=1, contains=["error[build]", str(link)])
+    link.unlink()
+    unreadable = Path(os.sep) / "proc" / "self" / "mem"
+    if unreadable.exists():
+        link.symlink_to(unreadable)
+        explained(app, expected=1, contains=["error[build]",
+                                            "cannot read observed file"])
+        link.unlink()
+    app = packages("proc-macro/app")
+    macro = packages("proc-macro/genfn/macros/make_fn.mt")
+    edit(macro, 'try std.macros.depends_on_file("spec.txt")',
+         f'try std.macros.depends_on_file("{observed}")')
+    text, binary = explained(app)
+    assert exit_code(binary) == 0
+    link.symlink_to(link.name)
+    for _ in range(2):
+        explained(app, expected=1, contains=["error[macro]", str(link)])
 
 
 def procedural_macro():
@@ -2312,6 +2407,25 @@ def doc_resolves_dependency_links_and_warns():
     assert '<a href="units.html#base">units.base</a>' in math_page
 
 
+def doc_standalone_warning_sources():
+    first, second = evidence / "a.mt", evidence / "b.mt"
+    first.write_text(
+        "macro identity { ($value:expr) => { $value }; }\n"
+        "/// [first_missing]\n"
+        "pub fn first(): i32 { identity!(1) }\n")
+    second.write_text(
+        "/// [second_missing]\n"
+        "pub fn second(): i32 { 2 }\n")
+    text = invoke(["doc", first, second, "-o", evidence / "doc-multi"], 0,
+                  ["documented 2 modules", "first_missing", "second_missing"])
+    assert re.search(r"a\.mt:2:\d+: warning\[doc-link\].*first_missing", text), text
+    assert re.search(r"b\.mt:1:\d+: warning\[doc-link\].*second_missing", text), text
+    second.write_text("pub fn (\n")
+    text = invoke(["doc", first, second, "-o", evidence / "doc-partial"], 1,
+                  "error[parse]")
+    assert re.search(r"b\.mt:1:\d+: error\[parse\]", text), text
+
+
 def doctests_run_isolated_examples():
     source = evidence / "maths.mt"
     source.write_text(DOC_SOURCE)
@@ -2902,15 +3016,34 @@ def driver_git_host_outputs_preserve_package_paths():
             assert lock_of(app) == lock
             assert sorted(p.resolve() for p in
                           (app / "target/mettle/package-work").glob("*/tree")) == views
+        copied_input = copies[0] / "spec.txt"
+        untouched = copied_input.stat()
+        build_and_run(app, "--offline", "--locked")
+        current = copied_input.stat()
+        assert (current.st_ino, current.st_mtime_ns) == (
+            untouched.st_ino, untouched.st_mtime_ns)
         if root == host:
             generated = [p.read_text() for copy in copies
                          if (p := copy / "nested/helper/target/mettle/out/nested.mt").is_file()]
             assert "pub fn value(): i32 { 7 }\n" in generated, generated
             assert "pub fn value(): i32 { 42 }\n" in generated, generated
-        copied_input = copies[0] / "spec.txt"
-        copied_input.write_text("invalid private edit\n")
+        copied_stamp = copied_input.stat()
+        copied_input.write_bytes(b"X" * copied_stamp.st_size)
+        copied_input.chmod(0o700)
+        os.utime(copied_input, ns=(copied_stamp.st_atime_ns,
+                                 copied_stamp.st_mtime_ns))
         build_and_run(app, "--offline", "--locked")
         assert copied_input.read_bytes() == (checkout / "spec.txt").read_bytes()
+        assert copied_input.stat().st_mode == (checkout / "spec.txt").stat().st_mode
+        copied_input.unlink()
+        copied_input.symlink_to(checkout / "spec.txt")
+        build_and_run(app, "--offline", "--locked")
+        assert not copied_input.is_symlink()
+        assert not os.path.samefile(copied_input, checkout / "spec.txt")
+        copied_input.unlink()
+        os.link(checkout / "spec.txt", copied_input)
+        build_and_run(app, "--offline", "--locked")
+        assert not os.path.samefile(copied_input, checkout / "spec.txt")
         generated = [p for copy in copies
                      if (p := copy / "target/mettle/out/generated.mt").is_file()]
         assert generated
@@ -3271,7 +3404,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          coexisting_versions, git_source, git_concurrent_output, host_target_separation,
          manifest_diagnostics, data_format, lock_structure,
          package_options_need_package, incremental_reuse, checked_core_reuse,
-         native_core_object_reuse, checked_alloc_std_reuse,
+         native_core_object_reuse, native_core_inline_identity, checked_alloc_std_reuse,
          checked_alloc_std_release_reuse,
          checked_native_macro_reuse,
          checked_library_diagnostics, checked_constant_only_library,
@@ -3283,7 +3416,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          cache_publication_failure_is_reported, cache_clean_failure, cache_clean_preserves_sources,
          security_output_paths,
          cache_compiler_identity,
-         build_script, build_script_untracked_inputs,
+         build_script, build_script_untracked_inputs, tool_input_observation_errors,
          procedural_macro, procedural_macro_failure,
          public_declarative_macro_dependency,
          multi_package_extension,
@@ -3293,7 +3426,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          test_filter_exact, harness_quoted_names, bench_reports_timing,
          fmt_normalizes_layout_only,
          doc_writes_deterministic_html,
-         doc_resolves_dependency_links_and_warns,
+         doc_resolves_dependency_links_and_warns, doc_standalone_warning_sources,
          doctests_run_isolated_examples,
          lint_reports_semantic_findings, debug_info, debugger_workflow,
          language_server,

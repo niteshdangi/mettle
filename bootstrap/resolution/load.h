@@ -63,6 +63,7 @@ struct Library {
     // Cache-only header probe; a miss must not prepare or check the library.
     std::function<std::optional<Module>()> declarationIndex{};
     std::vector<std::string> replaces{};
+    std::function<bool()> available{};
   };
   std::vector<CompiledModule> compiled;
   expansion::MacroModuleProvider compiledMacros;

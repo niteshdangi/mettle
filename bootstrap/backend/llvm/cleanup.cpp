@@ -425,6 +425,47 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
       cleanupFunction(lowering.callback(name + ".unwind", true)),
       frameType(llvm::StructType::create(lowering.context, name + ".frame")),
       name(name), plan(cleanup::plan(source, *lowering.program.types)) {
+  // Cleanup can outlive the body stack, so only nonescaping, unowned locals
+  // move.
+  std::vector<bool> bodyOnly(source.locals.size(), false);
+  if (!source.coroutine) {
+    bodyLocals.resize(source.locals.size());
+    for (std::size_t i = source.parameters; i < source.locals.size(); ++i) {
+      const auto &local = source.locals[i];
+      bodyOnly[i] = local.storage == StorageDuration::Automatic &&
+                    (source.variadicCursor < 0 ||
+                     i != static_cast<std::size_t>(source.variadicCursor));
+    }
+    for (const auto &place : plan.places)
+      if (place.place.root >= 0)
+        bodyOnly[static_cast<std::size_t>(place.place.root)] = false;
+    for (const auto &block : source.blocks)
+      for (const auto &instruction : block.instructions) {
+        int root = instruction.place.root;
+        if (root < 0 || static_cast<std::size_t>(root) >= bodyOnly.size() ||
+            !bodyOnly[root])
+          continue;
+        switch (instruction.op) {
+        case ir::Op::Declare:
+        case ir::Op::Load:
+        case ir::Op::Store:
+        case ir::Op::Move:
+        case ir::Op::VariantTest:
+          if (std::all_of(instruction.place.fields.begin(),
+                          instruction.place.fields.end(), [](auto projection) {
+                            return projection.kind == Projection::Kind::Field;
+                          }))
+            continue;
+          break;
+        default:
+          break;
+        }
+        bodyOnly[root] = false;
+      }
+    for (std::size_t i = source.parameters; i < source.locals.size(); ++i)
+      if (bodyOnly[i] && lowering.indirect(source.locals[i].type))
+        bodyOnly[i] = false;
+  }
   locals.resize(source.locals.size(), std::numeric_limits<unsigned>::max());
   for (std::size_t i = 0; i < source.locals.size(); ++i) {
     const auto &local = source.locals[i];
@@ -433,9 +474,10 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
         (i < source.parameters && (local.mode == ParameterMode::Read ||
                                    local.mode == ParameterMode::Mut));
     localFields.push_back(
-        addField(borrowed ? lowering.builder.getPtrTy()
-                          : lowering.storageType(local.type),
-                 borrowed ? 8 : lowering.alignment(local.type)));
+        bodyOnly[i] ? std::numeric_limits<unsigned>::max()
+                    : addField(borrowed ? lowering.builder.getPtrTy()
+                                        : lowering.storageType(local.type),
+                               borrowed ? 8 : lowering.alignment(local.type)));
   }
   planNodes.resize(plan.places.size());
   std::vector<bool> children(plan.places.size(), false);
@@ -543,6 +585,19 @@ void CleanupFrame::finishCallbacks() {
 
 llvm::Value *CleanupFrame::field(unsigned index) {
   return lowering.builder.CreateStructGEP(frameType, frame, index);
+}
+
+llvm::Value *CleanupFrame::localStorage(std::size_t local) {
+  auto index = localFields.at(local);
+  if (index != std::numeric_limits<unsigned>::max())
+    return field(index);
+  auto *&storage = bodyLocals.at(local);
+  if (!storage) {
+    auto type = source.locals[local].type;
+    storage = lowering.temporary(lowering.storageType(type));
+    storage->setAlignment(llvm::Align(lowering.alignment(type)));
+  }
+  return storage;
 }
 
 llvm::Value *CleanupFrame::nodeAddress(unsigned node) {
@@ -660,7 +715,7 @@ llvm::Value *CleanupFrame::address(const Place &place) {
   llvm::Value *address =
       local.storage == StorageDuration::Static
           ? static_cast<llvm::Value *>(lowering.statics.at(local.staticIndex))
-          : field(localFields[place.root]);
+          : localStorage(place.root);
   if (static_cast<std::size_t>(place.root) < source.parameters &&
       (local.mode == ParameterMode::Read || local.mode == ParameterMode::Mut))
     address = lowering.builder.CreateLoad(lowering.builder.getPtrTy(), address);

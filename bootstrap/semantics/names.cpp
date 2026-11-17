@@ -54,20 +54,36 @@ Checker::Binding Checker::lookup(const std::string &name, Span span,
       return binding;
     }
   }
-  if (auto storage = staticName(name, span, context)) {
-    for (std::size_t i = 0; i < facts(*current).locals.size(); ++i) {
-      const auto &local = facts(*current).locals[i];
-      if (local.storage != StorageDuration::Static ||
-          local.staticIndex !=
-              static_cast<int>(checked.staticStorage[*storage].identity))
-        continue;
-      if (local.mutableBinding)
-        requireUnsafe(span);
-      if (checked.staticStorage[*storage].type == Type::Unknown)
-        inference.equal(localVariables[current][i],
-                        inference.fresh(staticType(*storage)), span);
-      return {localVariables[current][i], static_cast<int>(i), current};
+  if (auto storage = staticName(name, span, context);
+      storage && !facts(*current).naked &&
+      (current->body.get() || closureFunctions.contains(current))) {
+    auto identity = checked.staticStorage[*storage].identity;
+    auto &locals = facts(*current).locals;
+    auto found =
+        std::find_if(locals.begin(), locals.end(), [&](const auto &local) {
+          return local.storage == StorageDuration::Static &&
+                 local.staticIndex == static_cast<int>(identity);
+        });
+    std::size_t slot = static_cast<std::size_t>(found - locals.begin());
+    if (found == locals.end()) {
+      if (locals.size() >= limits::locals) {
+        error("limit", current->span, "static storage root limit exceeded");
+        return {inference.fresh(), -1, current};
+      }
+      const auto &source = module.statics[identity];
+      auto type = checked.staticStorage[identity].type;
+      locals.push_back({checked.staticStorage[identity].name, type,
+                        source.mutableBinding, source.span,
+                        ParameterMode::Value, false, StorageDuration::Static,
+                        static_cast<int>(identity)});
+      localVariables[current].push_back(inference.fresh(type));
     }
+    if (locals[slot].mutableBinding)
+      requireUnsafe(span);
+    if (checked.staticStorage[*storage].type == Type::Unknown)
+      inference.equal(localVariables[current][slot],
+                      inference.fresh(staticType(*storage)), span);
+    return {localVariables[current][slot], static_cast<int>(slot), current};
   }
   error("name", span, "unresolved value '" + displayPath(name) + "'",
         vocabularyHelp(name));

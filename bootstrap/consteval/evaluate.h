@@ -6,6 +6,7 @@
 #include "types/type.h"
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,7 @@ struct Value {
 };
 
 struct Shape {
+  struct Aggregate;
   enum class Kind {
     Scalar,
     Unit,
@@ -66,13 +68,34 @@ struct Shape {
   };
   Kind kind = Kind::Scalar;
   Type type = Type::Unknown;
-  std::vector<Shape> elements{};
+  std::shared_ptr<const Aggregate> aggregate{};
   std::uint64_t count = 0;
-  std::vector<std::string> names{};
-  std::vector<std::vector<std::size_t>> variants{};
   bool exclusive = false;
   bool uninitializedStorage = false;
+  std::span<const Shape> elements() const;
+  std::span<const std::string> names() const;
+  std::span<const std::vector<std::size_t>> variants() const;
 };
+
+struct Shape::Aggregate {
+  std::vector<Shape> elements;
+  std::vector<std::string> names;
+  std::vector<std::vector<std::size_t>> variants;
+};
+
+inline std::span<const Shape> Shape::elements() const {
+  return aggregate ? std::span<const Shape>(aggregate->elements)
+                   : std::span<const Shape>();
+}
+inline std::span<const std::string> Shape::names() const {
+  return aggregate ? std::span<const std::string>(aggregate->names)
+                   : std::span<const std::string>();
+}
+inline std::span<const std::vector<std::size_t>> Shape::variants() const {
+  return aggregate
+             ? std::span<const std::vector<std::size_t>>(aggregate->variants)
+             : std::span<const std::vector<std::size_t>>();
+}
 
 struct CheckedFunction {
   struct Parameter {

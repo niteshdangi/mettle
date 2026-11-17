@@ -5,6 +5,7 @@
 #include "types/assembly.h"
 #include "types/type.h"
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -235,6 +236,17 @@ struct Function {
   }
   bool operator==(const Function &) const = default;
 };
+void remapTypes(Function &function, const std::function<Type(Type)> &remap);
+struct FunctionIndex {
+  std::string name;
+  Type result = Type::Unknown;
+  std::size_t parameters = 0;
+  bool generic = false, declarationOnly = false, exportedDefinition = false,
+       indirectContract = false, naked = false;
+  std::set<std::string> targetFeatures;
+  bool valid = false;
+};
+FunctionIndex indexFunction(const Function &function);
 struct Program {
   struct Static {
     std::string name, externalName, library;
@@ -243,7 +255,14 @@ struct Program {
     Span span{};
     std::optional<StaticConstant> initializer{};
   };
-  std::vector<Function> functions;
+  TypeRecords<Function, true> functions;
+  std::vector<FunctionIndex> functionIndex{};
+  const FunctionIndex *deferredFunctionIndex(std::size_t index) const {
+    return index < functionIndex.size() && functionIndex[index].valid &&
+                   !functions.isMaterialized(index)
+               ? &functionIndex[index]
+               : nullptr;
+  }
   // Optional package-instance ownership, aligned with `functions` and
   // `statics`; an empty entry means root-owned or owner-ambiguous.
   std::vector<std::string> functionPackages{};
@@ -263,6 +282,10 @@ struct Program {
   // Functions imported unchanged from a checked library; an executable
   // instantiates the ones its entry reaches. Not part of the encoding.
   std::vector<bool> libraryBodies{};
+  // Verified bodies supplied only for cross-object optimization.
+  std::vector<bool> availableExternally{};
+  // Concrete generic instances may be emitted in more than one object.
+  std::vector<bool> genericInstances{};
   std::vector<Static> statics{};
   std::vector<std::string> staticPackages{};
   std::vector<std::string> libraries{};

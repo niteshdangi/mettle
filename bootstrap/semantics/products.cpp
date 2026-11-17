@@ -7,12 +7,15 @@
 namespace mettle {
 void Checker::products() {
   std::vector<Type> identities;
+  std::vector<Type> defined;
   for (const auto &product : module.products) {
     identities.push_back(
         typeNames.at(definitionName(product.span, product.name)));
-    if (!imported(product.span))
+    if (!imported(product.span)) {
+      defined.push_back(identities.back());
       checked.types->setProductLayout(identities.back(),
                                       productLayout(product));
+    }
   }
   std::vector<std::vector<Span>> fieldSpans(module.products.size());
   for (std::size_t i = 0; i < module.products.size(); ++i) {
@@ -20,7 +23,7 @@ void Checker::products() {
     if (imported(product.span))
       continue;
     auto savedEnvironment = genericEnvironment;
-    genericEnvironment = &productGenerics.at(&product);
+    genericEnvironment = &typeEnvironment(product);
     std::unordered_set<std::string> names;
     std::vector<TypeField> fields;
     if (checked.types->product(identities[i]).kind == AggregateKind::VarArgs) {
@@ -74,7 +77,7 @@ void Checker::products() {
   }
   if (!diagnostics.empty())
     return;
-  checked.types->refreshProductInstances();
+  checked.types->refreshProductInstances(defined);
   std::vector<int> state(module.products.size());
   std::function<void(std::size_t, unsigned, Span)> visit;
   std::set<Type> structural;

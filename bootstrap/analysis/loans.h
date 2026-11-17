@@ -15,7 +15,7 @@ struct LoanResults {
 LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
                   const ir::Program *prepared = nullptr,
                   const LoanResults *previous = nullptr,
-                  // Functions whose bodies were checked with their library:
+                  // Unchanged bodies whose analysis has already succeeded:
                   // they are summarized only when something else calls them.
                   const std::vector<bool> *trusted = nullptr);
 } // namespace mettle::analysis

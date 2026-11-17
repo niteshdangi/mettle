@@ -149,7 +149,7 @@ Function erasedAsyncCompanion(const Function &method, std::string_view name,
 }
 } // namespace
 
-TypeSyntax Parser::boundType() {
+TypeSyntax Parser::boundType(unsigned *depth) {
   TypeSyntax bound;
   if (take("for")) {
     auto parameters = genericParameters();
@@ -167,8 +167,11 @@ TypeSyntax Parser::boundType() {
       bound.name += "::";
     bound.name += component;
   }
+  unsigned argumentDepth = 0;
   if (is("<"))
-    bound.arguments = genericArguments();
+    bound.arguments = genericArguments(&argumentDepth);
+  if (depth)
+    *depth = argumentDepth + 1;
   return bound;
 }
 Module::Associated Parser::associatedDeclaration() {

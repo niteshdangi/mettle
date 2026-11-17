@@ -7,7 +7,7 @@ std::optional<int> Checker::genericCall(
     Node &n, bool reachable, std::size_t callee, std::size_t receiverOffset,
     std::span<const TypeBinding> ownerBindings, bool aliasConstructor) {
   auto &function = module.functions[callee];
-  auto &environment = functionGenerics.at(&function);
+  auto &environment = functionEnvironment(function);
   if (environment.parameters.empty() && !aliasConstructor &&
       functionRegions(function).parameters.empty())
     return std::nullopt;
@@ -47,7 +47,7 @@ std::optional<int> Checker::genericCall(
                     : checked.types->isCopy(type) ? ParameterMode::Value
                                                   : ParameterMode::Read);
   }
-  auto resultPattern = inference.value(functionVariables.at(&function));
+  auto resultPattern = functionResult(function);
   auto errorPattern =
       function.error.empty()
           ? Type::Unknown
@@ -426,8 +426,7 @@ void Checker::inferFromExpected(Type pattern, Type expected,
 }
 void Checker::resolveGenericCalls() {
   for (auto &request : genericCallRequests) {
-    auto declarationResult =
-        inference.value(functionVariables.at(request.function));
+    auto declarationResult = functionResult(*request.function);
     if (declarationResult == Type::Unknown ||
         declarationResult == request.resolvedDeclaration)
       continue;

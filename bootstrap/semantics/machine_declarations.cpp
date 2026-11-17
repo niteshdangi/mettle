@@ -7,6 +7,7 @@
 #include <functional>
 #include <set>
 #include <tuple>
+#include <utility>
 
 namespace mettle {
 static bool literalDiscriminant(const Node &node) {
@@ -245,12 +246,11 @@ void Checker::machineDeclarations() {
         auto index = static_cast<std::uint32_t>(&field - record.fields.data());
         if (std::find(record.layout.pinnedFields.begin(),
                       record.layout.pinnedFields.end(),
-                      index) != record.layout.pinnedFields.end() &&
-            objectLayout(*checked.types, field.type) &&
-            objectLayout(*checked.types, field.type)->alignment >
-                record.layout.packing)
-          error("attribute", declaration.span,
-                "an unaligned packed field cannot be structurally pinned");
+                      index) != record.layout.pinnedFields.end())
+          if (auto layout = objectLayout(*checked.types, field.type);
+              layout && layout->alignment > record.layout.packing)
+            error("attribute", declaration.span,
+                  "an unaligned packed field cannot be structurally pinned");
       }
     }
   }
@@ -357,14 +357,15 @@ void Checker::machineDeclarations() {
   std::set<std::string> functionSymbols;
   for (auto &function : module.functions) {
     if (imported(function.span)) {
-      const auto &symbol = facts(function).externalName;
+      const auto index = module.functions.indexOf(&function);
+      const auto symbol =
+          checked.importedDeclarations->functions.at(index).externalSymbol();
       if (!symbol.empty()) {
-        functionSymbols.insert(symbol);
-        const auto index =
-            static_cast<std::size_t>(&function - module.functions.data());
-        symbols.emplace(symbol, std::pair{checked.types->callableType(
-                                              functionSignature(index)),
-                                          checked.hasBody(index)});
+        functionSymbols.emplace(symbol);
+        symbols.emplace(
+            std::string(symbol),
+            std::pair{checked.types->callableType(functionSignature(index)),
+                      checked.hasBody(index)});
       }
       continue;
     }
@@ -528,8 +529,8 @@ void Checker::machineDeclarations() {
               "foreign parameter has no specified C-compatible representation");
       }
     }
-    auto signature = checked.types->callableType(functionSignature(
-        static_cast<std::size_t>(&function - module.functions.data())));
+    auto signature = checked.types->callableType(
+        functionSignature(module.functions.indexOf(&function)));
     if (auto found = symbols.find(symbol); found != symbols.end()) {
       if (found->second.first != signature ||
           (found->second.second && function.body.get()))

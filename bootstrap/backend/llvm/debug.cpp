@@ -172,13 +172,14 @@ DebugInfo::SourceInfo *DebugInfo::info(SourceId id) {
   if (inserted) {
     auto found = std::find_if(
         request.sources.begin(), request.sources.end(),
-        [&](const Source &candidate) { return candidate.id == id; });
+        [&](const Source *candidate) { return candidate->id == id; });
     if (found != request.sources.end()) {
-      entry->second.source = &*found;
-      entry->second.file = dib.createFile(found->path, request.directory);
+      const auto &source = **found;
+      entry->second.source = &source;
+      entry->second.file = dib.createFile(source.path, request.directory);
       entry->second.lines.push_back(0);
-      for (std::size_t i = 0; i < found->text.size(); ++i)
-        if (found->text[i] == '\n')
+      for (std::size_t i = 0; i < source.text.size(); ++i)
+        if (source.text[i] == '\n')
           entry->second.lines.push_back(i + 1);
     }
   }
@@ -375,11 +376,20 @@ llvm::DIType *DebugInfo::describe(Type type) {
   return types[type.index()] = result;
 }
 
+const ObjectLayout *DebugInfo::layoutFor(Type type) {
+  if (auto found = layouts.find(type.index()); found != layouts.end())
+    return &found->second;
+  auto layout = objectLayout(*program.types, type);
+  if (!layout)
+    return nullptr;
+  return &layouts.emplace(type.index(), std::move(*layout)).first->second;
+}
+
 llvm::DIType *DebugInfo::build(Type type) {
   const auto &store = *program.types;
   if (type == Type::Unknown)
     return nullptr;
-  const auto layout = objectLayout(store, type);
+  const auto *layout = layoutFor(type);
   if (!layout)
     return nullptr;
   if (store.isProduct(type) &&
@@ -439,7 +449,7 @@ llvm::DIType *DebugInfo::build(Type type) {
     members.push_back(dib.createMemberType(
         unit, "data_ptr", rootFile, 0, pointerBits, pointerBits,
         layout->fields[0] * 8, llvm::DINode::FlagZero, pointer));
-    auto lengthLayout = objectLayout(store, Type::Usize);
+    auto lengthLayout = layoutFor(Type::Usize);
     if (!length || !lengthLayout)
       return opaque();
     members.push_back(dib.createMemberType(
@@ -515,7 +525,7 @@ llvm::DIType *DebugInfo::build(Type type) {
   if (record.kind == AggregateKind::Array) {
     auto count = store.arrayLength(type);
     auto *element = describe(record.components.at(0));
-    auto stride = objectLayout(store, record.components.at(0));
+    auto stride = layoutFor(record.components.at(0));
     if (!count || !element || !stride || stride->size * *count != layout->size)
       return opaque();
     return dib.createArrayType(bits, alignment, element,
@@ -533,7 +543,7 @@ llvm::DIType *DebugInfo::build(Type type) {
       record.layout.kind != LayoutKind::Transparent) {
     auto tagIdentity = record.layout.tag;
     auto *tagType = describe(tagIdentity);
-    auto tagLayout = objectLayout(store, tagIdentity);
+    auto tagLayout = layoutFor(tagIdentity);
     if (tagType && tagLayout && !layout->fields.empty()) {
       auto *tag = dib.createMemberType(
           temporary, "discriminant", rootFile, 0, tagLayout->size * 8,
@@ -558,7 +568,7 @@ llvm::DIType *DebugInfo::build(Type type) {
             0, variantBits, alignment);
         for (auto fieldIndex : variant.fields) {
           const auto &field = record.fields[fieldIndex];
-          auto fieldLayout = objectLayout(store, field.type);
+          auto fieldLayout = layoutFor(field.type);
           if (auto *member = describe(field.type); member && fieldLayout)
             fields.push_back(dib.createMemberType(
                 payloadTemporary, field.name, rootFile, 0,
@@ -600,7 +610,7 @@ llvm::DIType *DebugInfo::build(Type type) {
   for (std::size_t i = first; i < record.fields.size(); ++i)
     if (auto *member = describe(record.fields[i].type)) {
       const auto &field = record.fields[i];
-      auto fieldLayout = objectLayout(store, field.type);
+      auto fieldLayout = layoutFor(field.type);
       members.push_back(dib.createMemberType(
           temporary, field.name, rootFile, 0,
           fieldLayout ? fieldLayout->size * 8 : 0,
@@ -684,7 +694,7 @@ void DebugInfo::describeCoroutine(Type type, const ir::Function &source,
     auto *debugType = describe(fieldType);
     if (!debugType)
       return;
-    auto fieldLayout = objectLayout(store, fieldType);
+    auto fieldLayout = layoutFor(fieldType);
     auto size = fieldLayout ? fieldLayout->size * 8 : 0;
     auto alignment =
         fieldLayout ? static_cast<std::uint32_t>(fieldLayout->alignment * 8)

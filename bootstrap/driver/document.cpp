@@ -309,6 +309,8 @@ int document(const Options &options) {
     SourceId nextSource =
         sources.empty() ? 0
                         : static_cast<SourceId>(sources.rbegin()->first + 1);
+    for (const auto &source : diagnostics.registeredSources())
+      nextSource = std::max(nextSource, SourceId(source.id + 1));
     std::vector<Input> extraInputs;
     for (const auto &argument : options.moreInputs)
       if (!gather(argument, extraInputs))
@@ -361,6 +363,7 @@ int document(const Options &options) {
                               right.file.generic_string();
                      });
     std::set<std::string> seen;
+    SourceId nextSource = 0;
     for (const auto &input : inputs) {
       auto display = input.file.lexically_normal().generic_string();
       if (!seen.insert(display).second)
@@ -373,10 +376,9 @@ int document(const Options &options) {
         status = 1;
         continue;
       }
-      Source source{display, std::move(text)};
-      SourceId next = source.id + 1;
-      auto expanded =
-          expansion::expandMacros(source, diagnostics, [&] { return next++; });
+      Source source{display, std::move(text), nextSource++};
+      auto expanded = expansion::expandMacros(source, diagnostics,
+                                              [&] { return nextSource++; });
       parse(expanded ? *expanded : source, diagnostics);
       if (!diagnostics.empty()) {
         diagnostics.print(source, std::cerr);
@@ -384,7 +386,6 @@ int document(const Options &options) {
         diagnostics = {};
         continue;
       }
-      source.id = static_cast<SourceId>(sources.size());
       sources.emplace(source.id, source);
       pages.push_back(
           documentation::extract(source, input.name, options.documentPrivate));

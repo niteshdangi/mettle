@@ -360,6 +360,10 @@ struct Writer : Fields<Writer> {
       identity(kind, static_cast<std::uint32_t>(id));
   }
 };
+struct HeaderShape {
+  std::size_t locals = 0, scopes = 0, localsOffset = 0;
+  int largestLocalScope = -1;
+};
 struct Reader : Fields<Reader> {
   static constexpr bool reading = true;
   const metadata::DecodeReferences &references;
@@ -367,11 +371,14 @@ struct Reader : Fields<Reader> {
   std::span<const std::uint8_t> bytes;
   std::size_t position = 0;
   bool interned;
-  std::vector<std::string_view> texts;
+  std::vector<std::string_view> ownedTexts;
+  std::span<const std::string_view> texts;
   metadata::SourceReference sourceReference;
+  const Function *compactHeader = nullptr;
+  HeaderShape headerShape;
   Reader(std::span<const std::uint8_t> bytes,
          const metadata::DecodeReferences &references, bool interned = false,
-         const std::vector<std::string_view> *inheritedTexts = nullptr)
+         const std::span<const std::string_view> *inheritedTexts = nullptr)
       : references(references), bytes(bytes), interned(interned) {
     if (bytes.size() > limits::sourceBytes)
       reject("IR archive exceeds compiler file size limit");
@@ -381,7 +388,8 @@ struct Reader : Fields<Reader> {
       } else {
         auto size = count(limits::tokens);
         for (std::uint32_t i = 0; i < size; ++i)
-          texts.push_back(rawText());
+          ownedTexts.push_back(rawText());
+        texts = ownedTexts;
       }
     }
   }
@@ -442,6 +450,47 @@ struct Reader : Fields<Reader> {
     for (std::uint32_t i = 0; i < size; ++i) {
       v.emplace_back();
       value(v.back());
+    }
+  }
+  void sequence(std::vector<Local> &locals, std::size_t limit) {
+    if (!compactHeader) {
+      sequence<std::vector<Local>>(locals, limit);
+      return;
+    }
+    auto size = count(limit);
+    headerShape.locals = size;
+    headerShape.localsOffset = position;
+    if (compactHeader->parameters > size)
+      reject("invalid IR function shape");
+    locals.clear();
+    locals.reserve(compactHeader->parameters);
+    Local local;
+    for (std::uint32_t i = 0; i < size; ++i) {
+      value(local);
+      if (local.scope < -2)
+        reject("invalid IR local scope reference");
+      headerShape.largestLocalScope =
+          std::max(headerShape.largestLocalScope, local.scope);
+      if (i < compactHeader->parameters)
+        locals.push_back(local);
+    }
+  }
+  void sequence(std::vector<Function::Scope> &scopes, std::size_t limit) {
+    if (!compactHeader) {
+      sequence<std::vector<Function::Scope>>(scopes, limit);
+      return;
+    }
+    auto size = count(limit);
+    headerShape.scopes = size;
+    scopes.clear();
+    for (std::uint32_t i = 0; i < size; ++i) {
+      Function::Scope scope;
+      value(scope);
+      if (!i ? scope.parent != -1
+             : scope.parent < 0 ||
+                   static_cast<std::uint32_t>(scope.parent) >= i)
+        reject(i ? "invalid IR lexical scope parent"
+                 : "invalid IR function shape");
     }
   }
   void strings(std::set<std::string> &v) {
@@ -553,18 +602,22 @@ struct FunctionRecordExtent {
   std::size_t bodyLength = 0;
 };
 
-void checkFunctionHeader(const Function &function);
+void checkFunctionHeader(const Function &function,
+                         const HeaderShape *shape = nullptr);
 
 void decodeFunctionHeaders(
-    std::vector<Function> &functions,
+    TypeRecords<Function, true> &functions,
     const std::vector<std::pair<std::size_t, std::size_t>> &extents,
     std::span<const std::uint8_t> bytes,
     const metadata::DecodeReferences &references, Symbols &symbols,
-    std::vector<FunctionRecordExtent> &bodyRecords) {
+    std::vector<FunctionRecordExtent> &bodyRecords, bool compactHeaders,
+    bool retainHeaders = true, std::vector<FunctionIndex> *indices = nullptr) {
   const std::size_t count = extents.size();
   std::vector<std::string> failures(count);
   std::vector<Symbols> bound(count);
   bodyRecords.resize(count);
+  if (indices)
+    indices->resize(count);
   auto decode = [&](std::size_t i) {
     try {
       auto recordBytes = bytes.subspan(extents[i].first, extents[i].second);
@@ -576,12 +629,36 @@ void decodeFunctionHeaders(
         reject("invalid IR function header or body extent");
       auto headerBytes = recordBytes.subspan(record.position, headerLength);
       Reader header(headerBytes, references, true, &record.texts);
-      functionHeader(header, functions[i]);
+      Function temporary;
+      auto &function = retainHeaders ? functions.edit(i) : temporary;
+      if (compactHeaders)
+        header.compactHeader = &function;
+      functionHeader(header, function);
       if (header.position != headerBytes.size())
         reject("trailing data in IR function header");
-      checkFunctionHeader(functions[i]);
+      checkFunctionHeader(function,
+                          compactHeaders ? &header.headerShape : nullptr);
+      if (compactHeaders) {
+        auto retained = std::max(
+            {function.parameters,
+             static_cast<std::size_t>(function.constructorSelfSlot + 1),
+             static_cast<std::size_t>(function.variadicCursor + 1)});
+        if (retained > function.locals.size()) {
+          header.position = header.headerShape.localsOffset;
+          function.locals.clear();
+          function.locals.reserve(retained);
+          for (std::size_t j = 0; j < retained; ++j) {
+            Local local;
+            header.value(local);
+            function.locals.push_back(std::move(local));
+          }
+        }
+        std::vector<Function::ArrayLoop>().swap(function.arrayLoops);
+      }
       bodyRecords[i] = {extents[i].first, extents[i].second,
                         static_cast<std::size_t>(bodyLength)};
+      if (indices)
+        (*indices)[i] = indexFunction(function);
       bound[i] = std::move(header.symbols);
     } catch (const InvalidArchive &error) {
       failures[i] = error.message;
@@ -618,10 +695,12 @@ void checkNumber(const NumericLiteral &literal, Type type,
        !integerLiteralFits(literal, type, pointerBits)))
     reject("invalid typed IR numeric literal");
 }
-void checkFunctionHeader(const Function &f) {
+void checkFunctionHeader(const Function &f, const HeaderShape *shape) {
+  const auto locals = shape ? shape->locals : f.locals.size();
+  const auto scopes = shape ? shape->scopes : f.scopes.size();
   if (f.values < 0 || static_cast<std::size_t>(f.values) > limits::tokens ||
-      f.parameters > f.locals.size() || f.scopes.empty() ||
-      f.scopes.front().parent != -1)
+      f.parameters > locals || !scopes ||
+      (!shape && f.scopes.front().parent != -1))
     reject("invalid IR function shape");
   auto parameters = [&](const auto &entries) {
     for (auto parameter : entries)
@@ -635,9 +714,15 @@ void checkFunctionHeader(const Function &f) {
   for (auto [source, target] : f.withinFlows)
     if (source >= f.parameters || target >= f.parameters)
       reject("invalid IR within-flow parameter reference");
-  if (!validIndex(f.constructorSelfSlot, f.locals.size(), true) ||
-      !validIndex(f.variadicCursor, f.locals.size(), true))
+  if (!validIndex(f.constructorSelfSlot, locals, true) ||
+      !validIndex(f.variadicCursor, locals, true))
     reject("invalid IR special local reference");
+  if (shape) {
+    if (shape->largestLocalScope >= 0 &&
+        static_cast<std::size_t>(shape->largestLocalScope) >= scopes)
+      reject("invalid IR local scope reference");
+    return;
+  }
   for (std::size_t i = 1; i < f.scopes.size(); ++i)
     if (!validIndex(f.scopes[i].parent, i))
       reject("invalid IR lexical scope parent");
@@ -655,8 +740,9 @@ void checkFunctionNumbers(const Function &function, unsigned pointerBits) {
 void checkNumbers(const Program &program) {
   auto pointerBits =
       program.target.pointerBits ? program.target.pointerBits : 64;
-  for (const auto &function : program.functions)
-    checkFunctionNumbers(function, pointerBits);
+  for (std::size_t i = 0; i < program.functions.size(); ++i)
+    if (program.functions.isMaterialized(i))
+      checkFunctionNumbers(program.functions[i], pointerBits);
   auto constant = [&](auto &self, const StaticConstant &value) -> void {
     if (value.kind == StaticConstant::Kind::Scalar)
       checkNumber(value.scalar, value.type, pointerBits);
@@ -780,9 +866,11 @@ template <class A, class T> void tail(A &a, T &p) {
 
 struct LazyFunctionBodies::State {
   std::span<const std::uint8_t> bytes;
+  std::shared_ptr<const void> backing;
   std::vector<FunctionRecordExtent> records;
   Symbols symbols;
   TargetFacts target;
+  bool compactHeaders = false;
   mutable std::mutex mutex;
 };
 
@@ -806,6 +894,19 @@ LazyFunctionBodies::load(std::size_t recordIndex, const Function &header,
         recordBytes.subspan(record.position + headerLength, bodyLength);
     Reader body(bodyBytes, references, true, &record.texts);
     Function function = header;
+    if (state->compactHeaders) {
+      auto headerBytes = recordBytes.subspan(record.position, headerLength);
+      Reader complete(headerBytes, references, true, &record.texts);
+      Function decoded;
+      functionHeader(complete, decoded);
+      if (complete.position != headerBytes.size())
+        reject("trailing data in IR function header");
+      for (std::size_t i = 0; i < header.locals.size(); ++i)
+        decoded.locals.at(i) = header.locals[i];
+      function.locals = std::move(decoded.locals);
+      function.scopes = std::move(decoded.scopes);
+      function.arrayLoops = std::move(decoded.arrayLoops);
+    }
     functionBody(body, function);
     if (body.position != bodyBytes.size())
       reject("trailing data in IR function body");
@@ -931,9 +1032,20 @@ EncodeResult encodeProgram(const Program &program,
   }
 }
 
-DecodeResult decodeProgramLazy(std::span<const std::uint8_t> bytes,
-                               const metadata::DecodeReferences &references) {
+DecodeResult decodeProgramLazy(
+    std::span<const std::uint8_t> bytes,
+    const metadata::DecodeReferences &references, bool compactHeaders,
+    std::shared_ptr<const metadata::DecodeReferences> retainedReferences,
+    std::shared_ptr<const void> backing) {
   try {
+    if (retainedReferences && retainedReferences.get() != &references)
+      reject("retained IR references do not own the resolver");
+    if (retainedReferences && !backing) {
+      auto owned = std::make_shared<const std::vector<std::uint8_t>>(
+          bytes.begin(), bytes.end());
+      bytes = *owned;
+      backing = std::move(owned);
+    }
     Reader reader(bytes, references);
     if (reader.unsignedInteger(4) != 0x5249544d ||
         reader.unsignedInteger(4) != 11)
@@ -960,10 +1072,33 @@ DecodeResult decodeProgramLazy(std::span<const std::uint8_t> bytes,
           reject("truncated IR record");
         extents.emplace_back(reader.position, length);
         reader.position += length;
-        items.emplace_back();
+        items.push_uninitialized();
       }
-      decodeFunctionHeaders(items, extents, bytes, references, reader.symbols,
-                            functionRecords);
+      decodeFunctionHeaders(
+          items, extents, bytes, references, reader.symbols, functionRecords,
+          compactHeaders, !retainedReferences,
+          retainedReferences ? &result.program.functionIndex : nullptr);
+      if (retainedReferences) {
+        auto loader =
+            std::make_shared<const TypeRecords<Function, true>::Loader>(
+                [bytes, extents = std::move(extents), retainedReferences,
+                 backing, compactHeaders](std::size_t index) {
+                  try {
+                    TypeRecords<Function, true> decoded;
+                    decoded.push_uninitialized();
+                    Symbols symbols;
+                    std::vector<FunctionRecordExtent> records;
+                    decodeFunctionHeaders(decoded, {extents.at(index)}, bytes,
+                                          *retainedReferences, symbols, records,
+                                          compactHeaders);
+                    return std::move(decoded.edit(0));
+                  } catch (const InvalidArchive &error) {
+                    throw metadata::InvalidMetadata(error.message);
+                  }
+                });
+        for (std::size_t i = 0; i < count; ++i)
+          items.defer(i, i, loader);
+      }
     };
     auto records = [&](auto &items, auto &packages, auto &names,
                        auto &destinations, SymbolKind kind) {
@@ -1013,6 +1148,11 @@ DecodeResult decodeProgramLazy(std::span<const std::uint8_t> bytes,
     checkNumbers(program);
     auto state = std::make_shared<LazyFunctionBodies::State>();
     state->bytes = bytes;
+    state->backing = std::move(backing);
+    state->compactHeaders = compactHeaders;
+    result.functionBodySizes.reserve(functionRecords.size());
+    for (const auto &record : functionRecords)
+      result.functionBodySizes.push_back(record.bodyLength);
     state->records = std::move(functionRecords);
     state->symbols = std::move(reader.symbols);
     state->target = program.target;
@@ -1044,7 +1184,7 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
       result.lazyFunctions.reset();
       return result;
     }
-    result.program.functions[i] = std::move(*decoded.function);
+    result.program.functions.edit(i) = std::move(*decoded.function);
   }
   result.lazyFunctions.reset();
   return result;

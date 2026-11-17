@@ -10,6 +10,13 @@ import processes
 import scheduling
 
 TARGET_FILES = {
+    "discovered-module-import": {
+        "main.mt": "import child;\nfn main() { child.answer() - 42 }\n",
+        "child.mt": "pub fn answer() { 42 }\n"},
+    "discovered-module-reexport": {
+        "main.mt": "import facade;\nfn main() { facade.child.answer() - 42 }\n",
+        "facade.mt": "pub import child;\n",
+        "facade/child.mt": "pub fn answer() { 42 }\n"},
     "external-inline-alias-group-reexport": {
         "main.mt": "module math;\nimport math.{answer as result};\n"
                    "fn main() { result() - 42 }\n",

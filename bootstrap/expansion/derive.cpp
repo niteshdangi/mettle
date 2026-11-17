@@ -60,7 +60,7 @@ public:
   Generator(Module &module, std::size_t index, const DeriveRequest &request,
             const std::string &interface, Diagnostics &diagnostics,
             const SourceAllocator &allocate)
-      : module(module), product(module.products[index]), request(request),
+      : module(module), product(module.products.edit(index)), request(request),
         interface(interface), diagnostics(diagnostics), allocate(allocate) {}
 
   void run() {
@@ -567,7 +567,7 @@ void generateDerives(Module &module, std::size_t index,
                      const std::vector<DeriveRequest> &requests,
                      Diagnostics &diagnostics,
                      const SourceAllocator &allocate) {
-  auto &product = module.products[index];
+  auto &product = module.products.edit(index);
   auto unsupported = [&](const DeriveRequest &request, const std::string &why) {
     diagnostics.error("feature", request.span,
                       "derive(" + request.name + ") " + why);

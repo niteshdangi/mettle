@@ -62,8 +62,6 @@ void Checker::function(Function &f) {
   }
   if (diagnostics.count() != priorErrors)
     return;
-  if (f.body.get())
-    staticLocals();
   parameterDefaults(f);
   if (!f.body.get())
     return;

@@ -1,4 +1,5 @@
 #include "lowering/builder.h"
+#include "metadata/references.h"
 
 namespace mettle::lowering {
 using ir::Exit;
@@ -237,8 +238,14 @@ ir::Value Builder::merge(Type type, const std::vector<Value> &values,
   return emit(std::move(phi), type);
 }
 ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
-                  ImportedBodies *imported) {
+                  std::shared_ptr<const ImportedBodies> imported,
+                  const std::map<std::size_t, ir::Function> *queries) {
   ir::Program result;
+  if (imported && imported->headers.size() != imported->headerIndex.size()) {
+    diagnostics.error("metadata", {},
+                      "imported header inventory is incomplete");
+    return result;
+  }
   auto append = [&](ir::Function function, bool libraryBody,
                     std::optional<std::size_t> record) {
     result.libraryBodies.resize(result.functions.size());
@@ -247,13 +254,41 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
     result.lazyFunctionRecords.push_back(record);
     result.functions.push_back(std::move(function));
   };
-  auto take = [&](ir::Function &function,
+  auto deferredHeader =
+      imported && !imported->headers.empty()
+          ? std::make_shared<const TypeRecords<ir::Function, true>::Loader>(
+                [imported](std::size_t record) {
+                  auto result = imported->headers.at(record);
+                  if (record < imported->headerIndex.size())
+                    result.name = imported->headerIndex[record].name;
+                  return result;
+                })
+          : nullptr;
+  auto takeRecord = [&](std::size_t record) {
+    if (record >= imported->headers.size())
+      throw metadata::InvalidMetadata("imported function record is absent");
+    result.functionIndex.resize(result.functions.size());
+    result.functionIndex.push_back(imported->headerIndex.at(record));
+    result.libraryBodies.resize(result.functions.size());
+    result.libraryBodies.push_back(true);
+    result.lazyFunctionRecords.resize(result.functions.size());
+    result.lazyFunctionRecords.push_back(record);
+    auto index = result.functions.size();
+    result.functions.push_uninitialized();
+    result.functions.defer(index, record, deferredHeader);
+  };
+  auto take = [&](const ir::Function &function,
                   std::optional<std::size_t> record = std::nullopt) {
-    append(std::move(function), true, record);
+    result.libraryBodies.resize(result.functions.size());
+    result.libraryBodies.push_back(true);
+    result.lazyFunctionRecords.resize(result.functions.size());
+    result.lazyFunctionRecords.push_back(record);
+    result.functions.push_shared({imported, &function});
   };
   result.types = module.typeStore();
   for (std::size_t i = 0; i < module.syntax().functions.size(); ++i)
-    if (!module.imported(i) && !module.function(i).library.empty())
+    if ((!module.imported(i) || (queries && queries->contains(i))) &&
+        !module.function(i).library.empty())
       result.libraries.push_back(module.function(i).library);
   for (std::size_t i = 0; i < module.statics().size(); ++i) {
     const auto &facts = module.statics()[i];
@@ -270,8 +305,20 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
   try {
     for (std::size_t i = 0; i < module.syntax().functions.size(); ++i) {
       if (module.imported(i)) {
-        auto found = imported ? imported->functions.find(i)
-                              : std::map<std::size_t, ir::Function>::iterator{};
+        if (queries)
+          if (auto found = queries->find(i); found != queries->end()) {
+            append(found->second, false, std::nullopt);
+            continue;
+          }
+        if (deferredHeader)
+          if (auto record = imported->functionRecords.find(i);
+              record != imported->functionRecords.end()) {
+            takeRecord(record->second);
+            continue;
+          }
+        auto found =
+            imported ? imported->functions.find(i)
+                     : std::map<std::size_t, ir::Function>::const_iterator{};
         if (!imported || found == imported->functions.end()) {
           diagnostics.error("metadata", module.syntax().functions[i].span,
                             "imported function has no verified symbolic body");
@@ -282,7 +329,8 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
                                 ? std::nullopt
                                 : std::optional(record->second));
       } else
-        append(Builder(module, imported).run(module.syntax().functions[i], i),
+        append(Builder(module, imported.get())
+                   .run(module.syntax().functions[i], i),
                false, std::nullopt);
     }
     for (std::size_t i = 0; i < module.syntax().functions.size(); ++i)
@@ -290,6 +338,12 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
            p < module.syntax().functions[i].parameters.size(); ++p)
         if (module.hasDefault(i, p)) {
           if (module.imported(i)) {
+            if (deferredHeader)
+              if (auto record = imported->defaultRecords.find({i, p});
+                  record != imported->defaultRecords.end()) {
+                takeRecord(record->second);
+                continue;
+              }
             if (!imported || !imported->defaults.contains({i, p})) {
               diagnostics.error(
                   "metadata", module.syntax().functions[i].span,
@@ -302,15 +356,20 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
                      ? std::nullopt
                      : std::optional(record->second));
           } else
-            append(Builder(module, imported)
+            append(Builder(module, imported.get())
                        .runDefault(module.syntax().functions[i], i, p),
                    false, std::nullopt);
         }
     if (imported) {
-      for (std::size_t i = 0; i < imported->support.size(); ++i)
-        take(imported->support[i], i < imported->supportRecords.size()
-                                       ? imported->supportRecords[i]
-                                       : std::nullopt);
+      auto supportCount = deferredHeader ? imported->supportRecords.size()
+                                         : imported->support.size();
+      for (std::size_t i = 0; i < supportCount; ++i)
+        if (deferredHeader && imported->supportRecords[i])
+          takeRecord(*imported->supportRecords[i]);
+        else
+          take(imported->support.at(i), i < imported->supportRecords.size()
+                                            ? imported->supportRecords[i]
+                                            : std::nullopt);
       result.closureFunctions = imported->closureFunctions;
     }
     for (std::size_t i = 0; i < module.closures().size(); ++i) {
@@ -318,11 +377,14 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
         continue;
       result.closureFunctions.push_back(
           static_cast<int>(result.functions.size()));
-      append(Builder(module, imported).runClosure(i), false, std::nullopt);
+      append(Builder(module, imported.get()).runClosure(i), false,
+             std::nullopt);
     }
     callableContracts(result);
   } catch (const LoweringLimit &error) {
     diagnostics.error("limit", {}, error.what());
+  } catch (const metadata::InvalidMetadata &error) {
+    diagnostics.error("metadata", {}, error.what());
   }
   return result;
 }

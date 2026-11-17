@@ -214,12 +214,13 @@ distinctConstraints(std::vector<GenericConstraint> constraints) {
   return constraints;
 }
 } // namespace
-Module parseDeclarations(const Source &source, Diagnostics &diagnostics) {
+Module parseDeclarations(const Source &source, Diagnostics &diagnostics,
+                         ParseDepth *depth) {
   Diagnostics::SourceContext context(diagnostics, source);
   Module module;
   module.tokens = tokenize(source, diagnostics);
   if (diagnostics.empty()) {
-    parsing::Parser parser(module.tokens, diagnostics);
+    parsing::Parser parser(module.tokens, diagnostics, depth);
     parser.run(module);
     module.textLiterals = parser.textLiterals();
   }
@@ -233,7 +234,7 @@ Module parse(const Source &source, Diagnostics &diagnostics) {
 }
 
 void completeDeclarations(Module &module) {
-  for (auto &product : module.products) {
+  for (auto &product : module.products.local()) {
     std::vector<std::size_t> methods;
     for (auto &method : product.methods) {
       if (!method.destructor && !method.constructor)
@@ -266,7 +267,7 @@ void completeDeclarations(Module &module) {
     }
     product.methods.clear();
   }
-  for (auto &interface : module.interfaces) {
+  for (auto &interface : module.interfaces.local()) {
     for (auto &method : interface.methods) {
       GenericParameter self;
       self.name = "Self";
@@ -314,7 +315,7 @@ void completeDeclarations(Module &module) {
     interface.methods.clear();
   }
   for (std::size_t i = 0; i < module.implementations.size(); ++i) {
-    auto &implementation = module.implementations[i];
+    auto &implementation = module.implementations.edit(i);
     for (auto &method : implementation.methods) {
       method.implementation = static_cast<int>(i);
       method.interfaceOwner = implementation.interface.name;

@@ -1,8 +1,9 @@
 #include "syntax/parser/detail.h"
 
 namespace mettle::parsing {
-TypeSyntax Parser::callableType() {
+TypeSyntax Parser::callableType(unsigned *depth) {
   auto callable = std::make_shared<CallableTypeSyntax>();
+  unsigned maximumDepth = 1;
   if (take("for")) {
     expect("<");
     do {
@@ -35,18 +36,27 @@ TypeSyntax Parser::callableType() {
       CallableParameterSyntax parameter;
       if (is("read") || is("mut") || is("take"))
         parameter.mode = tokens[position++].text;
-      parameter.annotation = type();
+      unsigned parameterDepth;
+      parameter.annotation = type(true, &parameterDepth);
+      maximumDepth = std::max(maximumDepth, parameterDepth);
       callable->parameters.push_back(std::move(parameter));
     } while (take(","));
   expect(")");
   --parens;
   expect(":");
-  callable->result = type(false);
-  if (take("throws"))
-    callable->error = type();
+  unsigned resultDepth;
+  callable->result = type(false, &resultDepth);
+  maximumDepth = std::max(maximumDepth, resultDepth);
+  if (take("throws")) {
+    unsigned errorDepth;
+    callable->error = type(true, &errorDepth);
+    maximumDepth = std::max(maximumDepth, errorDepth);
+  }
   TypeSyntax result;
   result.form = TypeForm::Callable;
   result.callable = std::move(callable);
+  if (depth)
+    *depth = maximumDepth + 1;
   return result;
 }
 std::unique_ptr<Node> Parser::closure() {

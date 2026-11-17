@@ -87,7 +87,7 @@ void PlaceTree::linearize(int index) {
     linearize(child);
   entries[index].last = order.size();
 }
-void PlaceTree::set(std::vector<bool> &state, int index, bool value) const {
+int PlaceTree::writeRoot(int index) const {
   const auto &place = entries[index].place;
   Place prefix{place.root, {}};
   for (auto projection : place.fields) {
@@ -95,13 +95,23 @@ void PlaceTree::set(std::vector<bool> &state, int index, bool value) const {
         projectedType(types, function.locals[place.root].type, prefix.fields);
     if (owner && types.isProduct(*owner) &&
         types.product(*owner).layout.unionType) {
-      index = this->index(prefix);
-      break;
+      return this->index(prefix);
     }
     prefix.fields.push_back(projection);
   }
-  for (auto i = entries[index].first; i < entries[index].last; ++i)
-    state[order[i]] = value;
+  return index;
+}
+std::span<const int> PlaceTree::subtree(int index) const {
+  const auto &entry = entries[index];
+  return std::span<const int>(order).subspan(entry.first,
+                                             entry.last - entry.first);
+}
+std::span<const int> PlaceTree::written(int index) const {
+  return subtree(writeRoot(index));
+}
+void PlaceTree::set(std::vector<bool> &state, int index, bool value) const {
+  for (auto child : written(index))
+    state[child] = value;
 }
 bool PlaceTree::all(const std::vector<bool> &state, int index) const {
   const auto &entry = entries[index];

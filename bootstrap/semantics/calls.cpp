@@ -45,7 +45,8 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
   interfaces::Solver inherentSolver(*checked.types, *checked.interfaceData,
                                     diagnostics, interfaceAssumptions(),
                                     regionEnvironment());
-  for (const auto &implementation : checked.interfaceData->implementations) {
+  for (const auto &implementation :
+       std::as_const(*checked.interfaceData).implementations) {
     if (implementation.interfaceType != Type::Unknown)
       continue;
     auto method = implementation.inherent.find(member);
@@ -67,7 +68,7 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
   if (inherent) {
     facts(n).interfaceSelf = self;
     facts(n).implementationArguments = std::move(implementationArguments);
-    return checked.functions[*inherent].canonicalName;
+    return checked.function(*inherent).canonicalName;
   }
   // Arguments are checked once here; the call reuses their results.
   std::vector<Type> arguments;
@@ -83,6 +84,7 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
     std::size_t method;
   };
   std::vector<Candidate> candidates;
+  std::optional<interfaces::Solver> interfaceSolver;
   const auto &definitions = checked.interfaceData->definitions;
   for (std::size_t d = 0; d < definitions.size(); ++d) {
     const auto &definition = definitions[d];
@@ -109,10 +111,11 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
       } else if (!definition.parameters.empty())
         continue;
       auto bound = checked.types->erasedType(std::move(descriptor));
-      interfaces::Solver solver(*checked.types, *checked.interfaceData,
+      if (!interfaceSolver)
+        interfaceSolver.emplace(*checked.types, *checked.interfaceData,
                                 diagnostics, interfaceAssumptions(),
                                 regionEnvironment());
-      if (solver.prove({self, bound}, n.span, false))
+      if (interfaceSolver->prove({self, bound}, n.span, false))
         candidates.push_back({bound, m});
     }
   }
@@ -124,7 +127,7 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
   facts(n).interfaceSelf = self;
   facts(n).interfaceType = chosen.bound;
   facts(n).interfaceMethod = static_cast<int>(chosen.method);
-  return checked.functions[definition.methods[chosen.method].function]
+  return checked.function(definition.methods[chosen.method].function)
       .canonicalName;
 }
 bool Checker::formatMessage(Type type) const {
@@ -337,7 +340,7 @@ int Checker::call(Node &n, bool reachable) {
     auto before = diagnostics.items.size();
     auto selected = receiverMethod(type, n, reachable);
     if (selected) {
-      name = checked.functions[*selected].canonicalName;
+      name = checked.function(*selected).canonicalName;
       facts(n).method = true;
       offset = 1;
       directDestructor = module.functions[*selected].destructor;
@@ -415,7 +418,7 @@ int Checker::call(Node &n, bool reachable) {
       facts(n).interfaceType = interface;
       facts(n).interfaceMethod =
           static_cast<int>(method - definition.methods.begin());
-      name = checked.functions[method->function].canonicalName;
+      name = checked.function(method->function).canonicalName;
     } else
       name = callableName(n.children[0]->text, current->owner, n.span,
                           n.children[0]->context);
@@ -722,13 +725,14 @@ void Checker::fields(bool final) {
   bool changed;
   do {
     changed = false;
-    for (auto &request : fieldRequests) {
+    for (std::size_t next = 0; next < fieldRequests.size(); ++next) {
+      auto request = fieldRequests[next];
       if (request.resolved)
         continue;
       auto base = inference.value(request.base);
       if (base == Type::Unknown)
         continue;
-      request.resolved = true;
+      fieldRequests[next].resolved = true;
       changed = true;
       if (request.origin != Type::Unknown) {
         const auto &instance = checked.types->isProduct(base)
@@ -870,6 +874,8 @@ void Checker::fields(bool final) {
                       inference.fresh(product.fields[index].type),
                       request.node->span);
     }
+    std::erase_if(fieldRequests,
+                  [](const auto &request) { return request.resolved; });
   } while (changed);
   if (!final)
     return;

@@ -31,6 +31,14 @@ void merge(std::vector<Item> &destination, std::vector<Item> source,
     destination.push_back(std::move(item));
   }
 }
+template <typename Item>
+void merge(Declarations<Item> &destination, Declarations<Item> source,
+           const std::vector<std::string> &prefix) {
+  if (!prefix.empty())
+    for (std::size_t i = 0; i < source.size(); ++i)
+      prepend(source.edit(i), prefix);
+  destination.append(std::move(source));
+}
 
 struct DefinitionReference {
   SyntaxContextPtr context;
@@ -123,6 +131,33 @@ private:
   using Key = std::pair<std::string, std::uint64_t>;
   struct Bindings {
     std::set<Key> values, types;
+    struct Change {
+      std::set<Key> *set;
+      std::set<Key>::iterator entry;
+    };
+    std::vector<Change> changes;
+    Bindings() = default;
+    Bindings(const Bindings &) = delete;
+    Bindings &operator=(const Bindings &) = delete;
+    void insert(std::set<Key> &set, Key identity) {
+      auto [entry, inserted] = set.insert(std::move(identity));
+      if (inserted)
+        changes.push_back({&set, entry});
+    }
+    struct Scope {
+      Bindings &bindings;
+      std::size_t checkpoint;
+      explicit Scope(Bindings &bindings)
+          : bindings(bindings), checkpoint(bindings.changes.size()) {}
+      Scope(const Scope &) = delete;
+      ~Scope() {
+        while (bindings.changes.size() > checkpoint) {
+          auto change = bindings.changes.back();
+          bindings.changes.pop_back();
+          change.set->erase(change.entry);
+        }
+      }
+    };
   };
   Diagnostics &diagnostics;
   std::vector<DefinitionReference> references;
@@ -132,8 +167,8 @@ private:
   }
   static void self(Bindings &bindings, const SyntaxContextPtr &context) {
     auto identity = key("Self", context);
-    bindings.types.insert(identity);
-    bindings.values.insert(identity);
+    bindings.insert(bindings.types, identity);
+    bindings.insert(bindings.values, identity);
   }
   void reference(std::string_view name, const SyntaxContextPtr &context,
                  Span span, const std::set<Key> &bindings) {
@@ -174,8 +209,8 @@ private:
     for (const auto &parameter : parameters)
       if (parameter.kind != GenericParameterKind::Region) {
         auto identity = key(parameter.name, parameter.context);
-        bindings.types.insert(identity);
-        bindings.values.insert(identity);
+        bindings.insert(bindings.types, identity);
+        bindings.insert(bindings.values, identity);
       }
     for (const auto &parameter : parameters) {
       if (parameter.kind == GenericParameterKind::Region)
@@ -198,9 +233,9 @@ private:
     }
   }
   void associated(const std::vector<Module::Associated> &items,
-                  const Bindings &parent) {
+                  Bindings &bindings) {
     for (const auto &item : items) {
-      auto bindings = parent;
+      Bindings::Scope scope{bindings};
       generics(item.genericParameters, item.constraints, bindings, item.span);
       type(item.annotation, bindings, item.span);
       type(item.value, bindings, item.span);
@@ -219,7 +254,7 @@ private:
     if ((syntax.kind == PatternKind::Binding ||
          syntax.kind == PatternKind::At || syntax.kind == PatternKind::Rest) &&
         !syntax.text.empty() && syntax.text != "_")
-      bindings.values.insert(key(syntax.text, syntax.context));
+      bindings.insert(bindings.values, key(syntax.text, syntax.context));
     for (const auto &child : syntax.children)
       pattern(child, bindings);
   }
@@ -233,7 +268,7 @@ private:
     if (parameter.pattern)
       pattern(*parameter.pattern, bindings);
     else
-      bindings.values.insert(key(parameter.name, parameter.context));
+      bindings.insert(bindings.values, key(parameter.name, parameter.context));
   }
   void node(const Node &syntax, Bindings &bindings) {
     type(syntax.annotation, bindings, syntax.span);
@@ -249,11 +284,11 @@ private:
     }
     if (syntax.kind == Kind::Binding) {
       for (const auto &child : syntax.children) {
-        auto initializer = bindings;
-        node(*child, initializer);
+        Bindings::Scope initializer{bindings};
+        node(*child, bindings);
       }
       if (syntax.patterns.empty())
-        bindings.values.insert(key(syntax.text, syntax.context));
+        bindings.insert(bindings.values, key(syntax.text, syntax.context));
       else
         for (const auto &binding : syntax.patterns)
           pattern(binding, bindings);
@@ -261,31 +296,34 @@ private:
     }
     if (syntax.kind == Kind::If || syntax.kind == Kind::While ||
         syntax.kind == Kind::For) {
-      auto branch = bindings;
-      node(*syntax.children[0], branch);
-      for (const auto &binding : syntax.patterns)
-        pattern(binding, branch);
-      node(*syntax.children[1], branch);
+      {
+        Bindings::Scope branch{bindings};
+        node(*syntax.children[0], bindings);
+        for (const auto &binding : syntax.patterns)
+          pattern(binding, bindings);
+        node(*syntax.children[1], bindings);
+      }
       if (syntax.children.size() > 2) {
-        auto alternative = bindings;
-        node(*syntax.children[2], alternative);
+        Bindings::Scope alternative{bindings};
+        node(*syntax.children[2], bindings);
       }
       return;
     }
     if (syntax.kind == Kind::Block || syntax.kind == Kind::Closure ||
         syntax.kind == Kind::Arm) {
-      auto local = bindings;
+      Bindings::Scope local{bindings};
       for (const auto &binding : syntax.patterns)
-        pattern(binding, local);
+        pattern(binding, bindings);
       for (const auto &parameter : syntax.parameters) {
-        type(parameter.annotation, local, parameter.span);
+        type(parameter.annotation, bindings, parameter.span);
         if (parameter.pattern)
-          pattern(*parameter.pattern, local);
+          pattern(*parameter.pattern, bindings);
         else
-          local.values.insert(key(parameter.name, parameter.context));
+          bindings.insert(bindings.values,
+                          key(parameter.name, parameter.context));
       }
       for (const auto &child : syntax.children)
-        node(*child, local);
+        node(*child, bindings);
       return;
     }
     for (const auto &child : syntax.children)
@@ -489,13 +527,16 @@ private:
   bool builtinMethodsLoaded = false;
   std::size_t scanned = 0, scannedLiterals = 0, scannedImports = 0;
 
-  const Library::CompiledModule *compiledModule(std::string_view root) const {
+  const Library::CompiledModule *compiledModule(std::string_view root,
+                                                bool prepare = true) const {
     auto found = std::find_if(
         library.compiled.begin(), library.compiled.end(),
         [&](const auto &compiled) { return compiled.root == root; });
     if (found == library.compiled.end() ||
-        std::any_of(found->replaces.begin(), found->replaces.end(),
-                    [&](const auto &name) { return shadowed.contains(name); }))
+        std::any_of(
+            found->replaces.begin(), found->replaces.end(),
+            [&](const auto &name) { return shadowed.contains(name); }) ||
+        (prepare && found->available && !found->available()))
       return nullptr;
     return &*found;
   }
@@ -622,12 +663,15 @@ private:
       if (found == compiledHeaders.end())
         continue;
       auto &header = found->second;
-      for (auto &implementation : header.implementations)
-        for (auto &function : implementation.methodFunctions)
-          function += prefix.functions.size();
-      for (auto &function : header.functions)
-        if (function.implementation >= 0)
-          function.implementation += prefix.implementations.size();
+      if (!prefix.functions.empty())
+        for (std::size_t i = 0; i < header.implementations.size(); ++i)
+          for (auto &function : header.implementations.edit(i).methodFunctions)
+            function += prefix.functions.size();
+      if (!prefix.implementations.empty())
+        for (std::size_t i = 0; i < header.functions.size(); ++i)
+          if (header.functions[i].implementation >= 0)
+            header.functions.edit(i).implementation +=
+                prefix.implementations.size();
       merge(prefix.interfaces, std::move(header.interfaces), {});
       merge(prefix.implementations, std::move(header.implementations), {});
       merge(prefix.functions, std::move(header.functions), {});
@@ -638,15 +682,19 @@ private:
       merge(prefix.imports, std::move(header.imports), {});
       merge(prefix.macros, std::move(header.macros), {});
     }
-    for (auto &implementation : result.implementations)
+    for (auto &implementation : result.implementations.local())
       for (auto &function : implementation.methodFunctions)
         function += prefix.functions.size();
-    for (auto &function : result.functions)
+    for (auto &function : result.functions.local())
       if (function.implementation >= 0)
         function.implementation += prefix.implementations.size();
     auto prepend = [](auto &target, auto &items) {
-      target.insert(target.begin(), std::make_move_iterator(items.begin()),
-                    std::make_move_iterator(items.end()));
+      if constexpr (requires { items.append(std::move(target)); }) {
+        items.append(std::move(target));
+        target = std::move(items);
+      } else
+        target.insert(target.begin(), std::make_move_iterator(items.begin()),
+                      std::make_move_iterator(items.end()));
     };
     prepend(result.interfaces, prefix.interfaces);
     prepend(result.implementations, prefix.implementations);
@@ -919,7 +967,7 @@ private:
   const std::unordered_map<std::string, std::string> &builtinMethods() {
     if (builtinMethodsLoaded)
       return methods;
-    if (const auto *compiled = compiledModule("core");
+    if (const auto *compiled = compiledModule("core", false);
         compiled && compiled->declarationIndex)
       if (auto header = compiled->declarationIndex()) {
         if (reserveCompiledSources())
@@ -1631,10 +1679,10 @@ private:
     if (currentRoot.empty() || currentPackage)
       discoverImports(tree, prefix, depth, rootPackageSource);
     auto implementationOffset = static_cast<int>(result.implementations.size());
-    for (auto &implementation : tree.implementations)
+    for (auto &implementation : tree.implementations.local())
       for (auto &function : implementation.methodFunctions)
         function += result.functions.size();
-    for (auto &function : tree.functions)
+    for (auto &function : tree.functions.local())
       if (function.implementation >= 0)
         function.implementation += implementationOffset;
     merge(result.interfaces, std::move(tree.interfaces), prefix);

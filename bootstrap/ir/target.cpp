@@ -33,7 +33,15 @@ bool verifyTarget(const Program &program, Diagnostics &diagnostics) {
   };
   for (const auto &code : program.globalAssembly)
     assembly(code, {}, {});
-  for (const auto &function : program.functions) {
+  for (std::size_t i = 0; i < program.functions.size(); ++i) {
+    if (auto index = program.deferredFunctionIndex(i); index && !index->naked) {
+      for (const auto &feature : index->targetFeatures)
+        if (!program.target.initialProfile() ||
+            !recognizedFeature(program.target.arch, feature))
+          fail({}, "unknown or unavailable function target feature");
+      continue;
+    }
+    const auto &function = program.functions[i];
     auto baseline = function.targetFeatures;
     baseline.insert(program.target.baseline.begin(),
                     program.target.baseline.end());

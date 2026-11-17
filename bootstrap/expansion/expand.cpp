@@ -76,6 +76,10 @@ private:
   static void retain(std::vector<T> &items, Keep keep) {
     std::erase_if(items, [&](T &item) { return !keep(item); });
   }
+  template <typename T, typename Keep>
+  static void retain(Declarations<T> &items, Keep keep) {
+    items.retain(std::move(keep));
+  }
 
   static Span extent(Span span, const std::vector<Attribute> &attributes) {
     for (const auto &attribute : attributes)
@@ -279,7 +283,7 @@ private:
   }
 
   void derive(std::size_t index) {
-    auto &item = module.products[index];
+    auto &item = module.products.edit(index);
     std::vector<DeriveRequest> requests;
     std::set<std::string> requested;
     for (const auto &attribute : item.item.attributes)

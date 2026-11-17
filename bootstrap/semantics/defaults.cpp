@@ -133,14 +133,13 @@ void Checker::parameterDefaults(Function &function) {
   }
 }
 
-void Checker::completeArguments(Node &node, Function &function,
+void Checker::completeArguments(Node &node, const Function &function,
                                 const std::vector<bool> &used,
                                 bool reportMissing) {
   for (std::size_t i = 0; i < function.parameters.size(); ++i) {
     if (i < used.size() && used[i])
       continue;
-    if (checked.hasDefault(
-            static_cast<std::size_t>(&function - module.functions.data()), i))
+    if (checked.hasDefault(module.functions.indexOf(&function), i))
       facts(node).defaultArguments.push_back(i);
     else if (reportMissing)
       error("type", node.span,

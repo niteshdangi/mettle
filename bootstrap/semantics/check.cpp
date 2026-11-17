@@ -22,7 +22,7 @@ void Checker::error(std::string phase, Span span, std::string message,
 void Checker::prepareFunction(Function &f) {
   current = &f;
   if (imported(f.span)) {
-    genericEnvironment = &functionGenerics.at(&f);
+    genericEnvironment = nullptr;
     return;
   }
   const auto &parameters = genericBindings(f);
@@ -60,9 +60,10 @@ void Checker::prepareFunction(Function &f) {
     controlFlow(f);
 }
 
-std::vector<std::size_t> Checker::functionDependencies(Function &function) {
+std::vector<std::size_t>
+Checker::functionDependencies(const Function &function) {
   std::vector<std::size_t> result;
-  auto calls = [&](auto &&self, Node &n) -> void {
+  auto calls = [&](auto &&self, const Node &n) -> void {
     const auto &owner = function.owner;
     if (n.kind == Kind::Name && !facts(n).lexicallyBound) {
       auto found = names.find(callableName(n.text, owner, n.span));
@@ -80,7 +81,7 @@ std::vector<std::size_t> Checker::functionDependencies(Function &function) {
       else if (auto alias = aliases.find(called); alias != aliases.end()) {
         const auto &syntax = module.aliases[alias->second];
         auto *saved = genericEnvironment;
-        genericEnvironment = &aliasGenerics.at(&syntax);
+        genericEnvironment = &typeEnvironment(syntax);
         calledType = annotation(syntax.target, syntax.span);
         genericEnvironment = saved;
       }
@@ -113,7 +114,8 @@ std::vector<std::size_t> Checker::functionDependencies(Function &function) {
 }
 
 void Checker::inferFunctionResult(Function &f) {
-  if (checkedFunctions.contains(&f) || !checkingFunctions.insert(&f).second)
+  if (imported(f.span) || checkedFunctions.contains(&f) ||
+      !checkingFunctions.insert(&f).second)
     return;
   auto *savedFunction = current;
   auto *savedEnvironment = genericEnvironment;
@@ -133,7 +135,9 @@ void Checker::inferFunctionResult(Function &f) {
   annotationRegionScopes.clear();
   prepareFunction(f);
   for (auto dependency : functionDependencies(f))
-    inferFunctionResult(module.functions[dependency]);
+    if (!imported(module.functions[dependency].span) &&
+        !checkedFunctions.contains(&module.functions[dependency]))
+      inferFunctionResult(module.functions.edit(dependency));
   if (f.body.get()) {
     auto value = flow(*f.body, f.owner);
     if (f.annotation.empty() && !value.normal && !value.returns) {
@@ -210,10 +214,11 @@ std::optional<CheckedModule> Checker::run() {
   const auto keptFunctionCount = module.functions.size();
   staticInitializerFunctions.assign(module.statics.size(), -1);
   for (std::size_t index = 0; index < module.statics.size(); ++index) {
-    auto &storage = module.statics[index];
-    if (storage.foreignDeclaration || !storage.initializer.get() ||
-        !needsConstantTypeCheck(needsConstantTypeCheck, *storage.initializer))
+    const auto &stored = module.statics[index];
+    if (stored.foreignDeclaration || !stored.initializer.get() ||
+        !needsConstantTypeCheck(needsConstantTypeCheck, *stored.initializer))
       continue;
+    auto &storage = module.statics.edit(index);
     staticInitializerFunctions[index] =
         static_cast<int>(module.functions.size());
     Function initializer;
@@ -234,17 +239,25 @@ std::optional<CheckedModule> Checker::run() {
   checked.functions.resize(module.functions.size());
   std::unordered_map<std::string, std::size_t> constructorOrdinals;
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
-    auto &f = module.functions[i];
+    const auto &f = module.functions[i];
     auto name = definitionName(f.span, f.name);
-    facts(f).canonicalName =
+    auto canonicalName =
         f.constructor
             ? name + "$init" + std::to_string(constructorOrdinals[name]++)
             : name;
+    const auto &imports = checked.importedDeclarations;
+    auto contract = imports ? imports->functions.find(i)
+                            : decltype(imports->functions)::const_iterator{};
+    if (imports && contract != imports->functions.end())
+      checked.functions.bind(i, contract->second);
+    else
+      facts(f).canonicalName = std::move(canonicalName);
     auto [existing, inserted] = names.emplace(name, i);
     if (!inserted &&
         !(f.constructor && module.functions[existing->second].constructor))
       error("name", f.span, "duplicate function '" + displayPath(f.name) + "'");
-    functionVariables[&f] = inference.fresh();
+    if (!imports || contract == imports->functions.end())
+      functionVariables[&f] = inference.fresh();
   }
   checked.staticStorage.resize(module.statics.size());
   staticStates.resize(module.statics.size());
@@ -270,7 +283,7 @@ std::optional<CheckedModule> Checker::run() {
     return std::nullopt;
   interfaceSignatures();
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
-    auto &f = module.functions[i];
+    const auto &f = module.functions[i];
     auto name = definitionName(f.span, f.name);
     if (auto type = typeNames.find(name);
         type != typeNames.end() && checked.types->isProduct(type->second) &&
@@ -278,14 +291,15 @@ std::optional<CheckedModule> Checker::run() {
       error("name", f.span,
             "function conflicts with type constructor '" + displayPath(f.name) +
                 "'");
-    prepareFunction(f);
+    if (!imported(f.span))
+      prepareFunction(module.functions.edit(i));
     if (f.destructor && !imported(f.span))
       checked.types->setDestructor(typeNames.at(typeName(f.owner, f.span)),
                                    static_cast<int>(i));
   }
   targetDeclarations();
   staticNamesAndTypes();
-  for (auto &f : module.functions)
+  for (auto &f : module.functions.local())
     if (!imported(f.span) && checkedFunctions.contains(&f))
       for (std::size_t i = 0; i < facts(f).locals.size(); ++i) {
         const auto &local = facts(f).locals[i];
@@ -401,6 +415,10 @@ std::optional<CheckedModule> Checker::run() {
       if (member == caller)
         break;
     }
+    if (component.size() == 1 &&
+        std::none_of(asyncCalls[caller].begin(), asyncCalls[caller].end(),
+                     [&](const auto &call) { return call.target == caller; }))
+      return;
     std::vector<bool> inComponent(asyncCalls.size());
     for (auto member : component)
       inComponent[member] = true;
@@ -451,7 +469,7 @@ std::optional<CheckedModule> Checker::run() {
   bool changed;
   do {
     changed = false;
-    for (auto &f : module.functions) {
+    for (auto &f : module.functions.local()) {
       if (imported(f.span))
         continue;
       if (!f.body.get())
@@ -468,7 +486,7 @@ std::optional<CheckedModule> Checker::run() {
       }
     }
   } while (changed);
-  for (auto &f : module.functions)
+  for (auto &f : module.functions.local())
     if (f.body.get())
       flow(*f.body, f.owner);
 
@@ -481,7 +499,7 @@ std::optional<CheckedModule> Checker::run() {
         interfaceSyntax.associated.begin(), interfaceSyntax.associated.end(),
         [&](const auto &item) { return item.name == function.asyncFuture; });
     std::vector<TypeBinding> typeBindings;
-    const auto &environment = functionGenerics.at(&function);
+    const auto &environment = functionEnvironment(function);
     auto bindType = [&](const NameKey &name, Type target) {
       auto found = environment.names.find(name);
       if (found != environment.names.end())
@@ -700,7 +718,9 @@ std::optional<CheckedModule> Checker::run() {
         break;
     }
     for (auto w : component) {
-      auto &f = module.functions[w];
+      if (imported(module.functions[w].span))
+        continue;
+      auto &f = module.functions.edit(w);
       if (!checkedFunctions.contains(&f)) {
         checkingFunctions.insert(&f);
         function(f);
@@ -711,11 +731,15 @@ std::optional<CheckedModule> Checker::run() {
     resolveGenericCalls();
     fields();
     for (auto w : component) {
-      publishAsyncDefault(module.functions[w]);
-      bindInferredAsyncOutput(module.functions[w]);
+      if (imported(module.functions[w].span))
+        continue;
+      publishAsyncDefault(module.functions.edit(w));
+      bindInferredAsyncOutput(module.functions.edit(w));
     }
     for (auto w : component) {
-      auto &f = module.functions[w];
+      const auto &f = module.functions[w];
+      if (imported(f.span))
+        continue;
       facts(f).result = inference.value(functionVariables[&f]);
       facts(f).abiResult =
           facts(f).error == Type::Unknown
@@ -729,6 +753,7 @@ std::optional<CheckedModule> Checker::run() {
   for (std::size_t i = 0; i < edges.size(); ++i)
     if (index[i] == -1)
       visit(i);
+  checked.declarationDependencies = std::move(edges);
   resolveGenericCalls();
 
   finishClosures();
@@ -784,7 +809,11 @@ std::optional<CheckedModule> Checker::run() {
       }
     }
   }
-  for (auto &implementation : checked.interfaceData->implementations) {
+  for (std::size_t i = 0; i < checked.interfaceData->implementations.size();
+       ++i) {
+    if (std::as_const(*checked.interfaceData).implementations[i].checkedImport)
+      continue;
+    auto &implementation = checked.interfaceData->implementations[i];
     if (!checked.types->isErased(implementation.interfaceType))
       continue;
     const auto descriptor = checked.types->erased(implementation.interfaceType);
@@ -850,7 +879,7 @@ std::optional<CheckedModule> Checker::run() {
     else if (checked.types->isProduct(inference.value(variable)))
       error("type", span,
             "product comparisons require a declared comparison interface");
-  for (auto &f : module.functions) {
+  for (auto &f : module.functions.local()) {
     if (imported(f.span))
       continue;
     facts(f).result = inference.value(functionVariables[&f]);
@@ -932,7 +961,8 @@ std::optional<CheckedModule> Checker::run() {
             if (checked.types->isParameter(carrier))
               associatedCarriers[parameter].insert(carrier);
     }
-    // A result related by `U: From<T>` or `U: Into<T>` carries its counterpart's views.
+    // A result related by `U: From<T>` or `U: Into<T>` carries its
+    // counterpart's views.
     for (const auto &[subject, bound] : facts(f).interfaceBounds) {
       if (!checked.types->isErased(bound))
         continue;
@@ -1038,11 +1068,14 @@ std::optional<CheckedModule> Checker::run() {
         error("type", syntax->span, "invalid scalar conversion");
     }
   }
-  for (const auto &function : module.functions)
-    if (holdsVarArgs(facts(function).result) &&
-        !frameBoundCursor(facts(function).result))
+  for (const auto &function : module.functions) {
+    if (imported(function.span))
+      continue;
+    const auto result = functionResult(function);
+    if (holdsVarArgs(result) && !frameBoundCursor(result))
       error("ownership", function.span,
             "a variadic cursor cannot escape its invocation");
+  }
   if (diagnostics.empty())
     checkBorrowAlignment();
   if (diagnostics.empty())
@@ -1114,6 +1147,9 @@ check(Module module, Diagnostics &diagnostics,
                    requireEntry, std::move(target), numericEvaluator,
                    std::move(imported))
         .run();
+  } catch (const metadata::InvalidMetadata &failure) {
+    diagnostics.error("metadata", {}, failure.what());
+    return std::nullopt;
   } catch (const std::length_error &failure) {
     diagnostics.error("limit", {}, failure.what());
     return std::nullopt;

@@ -118,18 +118,22 @@ struct StructuralPropertyDeclaration {
 };
 struct Database {
   std::vector<Definition> definitions;
-  std::vector<Implementation> implementations;
+  TypeRecords<Implementation> implementations;
   // Lazily maintained index of `implementations` by interface declaration;
   // implementations are append-only, so only the new tail is indexed.
   mutable std::vector<std::vector<std::size_t>> implementationsByDeclaration;
   mutable std::size_t indexedImplementations = 0;
   std::vector<Projection> projections;
+  mutable std::map<Type, std::size_t> projectionsByParameter;
+  mutable std::size_t indexedProjections = 0;
+  const Projection *projectionFor(Type parameter) const;
   std::map<Type, Implementation> unpinImplementations;
   // Manual (unsafe) positive and negative structural-property declarations
   // keyed by property and nominal origin.
   std::map<std::pair<Property, Type>, StructuralPropertyDeclaration>
       structuralDeclarations;
   bool argumentsReady = false;
+  std::map<Type, Type> callableContracts;
 };
 std::vector<Type> hierarchy(TypeStore &types, const Database &database,
                             Type subject, Type interfaceType, Span span,

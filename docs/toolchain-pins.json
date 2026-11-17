@@ -7,7 +7,18 @@
       "repository": "https://github.com/llvm/llvm-project",
       "tag": "llvmorg-22.1.3",
       "tag_object": "123329d89b19f1e9c6d390576cc071fb0c12d3f0",
-      "commit": "e9846648fd6183ee6d8cbdb4502213fcf902a211"
+      "commit": "e9846648fd6183ee6d8cbdb4502213fcf902a211",
+      "backports": [
+        {
+          "upstream_commit": "d049eef4b5ab8e7f8dcfb40406d81666d9f5dfdc",
+          "patch": "tools/patches/llvm-22.1.3-x86-disjoint-or.patch",
+          "sha256": "94704431cbabdd180b2dceb942087f8eaa939bafdd9b6e62664d971af29396d4",
+          "platforms": ["linux-x86_64"],
+          "base_archive_sha256": "9910c96a8ff9222c86cf57e7996c127a104c2245d8de15d31793340fae0ab711",
+          "reason": "Honor disjoint OR during X86 address selection without changing LLVM versions",
+          "scope": "Verified source overlay only; default prebuilt SDK remains unmodified and other hosts remain unqualified"
+        }
+      ]
     },
     {
       "component": "CMake",

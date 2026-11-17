@@ -305,16 +305,26 @@ static int emitOne(const Options &options, const Source &source,
     }
     // The comp_dir is the root source's directory, never a temporary path.
     mettle::backend::DebugInfoRequest debugRequest{
-        diagnostics.registeredSources(),
+        {},
         std::filesystem::path(source.path).parent_path().string(),
         [&diagnostics](Span span) { return diagnostics.debugSpan(span); }};
+    debugRequest.sources.reserve(diagnostics.registeredSources().size());
+    for (const auto &input : diagnostics.registeredSources())
+      debugRequest.sources.push_back(&input);
     const bool splitPackages = !packageObjects.empty();
+    const bool privateRoot =
+        release && splitPackages &&
+        std::all_of(packageObjects.begin(), packageObjects.end(),
+                    [](const auto &package) {
+                      return package.identity.starts_with("native:");
+                    });
     auto module = mettle::backend::lower(
         program, context, checked, options.target, options.freestanding,
         options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr,
         options.sanitizers.contains("address"),
         options.sanitizers.contains("thread"),
-        {splitPackages, {}, !options.library}, &debugRequest);
+        {splitPackages, {}, !options.library, false, privateRoot},
+        &debugRequest);
     module->setSourceFileName(source.path);
     module->setTargetTriple(
         llvm::Triple(llvm::Triple::normalize(options.target)));

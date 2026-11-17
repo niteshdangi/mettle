@@ -19,6 +19,11 @@
 namespace mettle::driver {
 namespace {
 using Symbol = std::pair<metadata::SymbolKind, std::uint32_t>;
+struct ImportedStorage {
+  LibrarySources sources;
+  Section ir, declarations;
+  std::shared_ptr<const void> backing;
+};
 struct SymbolNameHash {
   using is_transparent = void;
   std::size_t operator()(std::string_view name) const {
@@ -99,6 +104,59 @@ std::string supportPrefix(std::string_view root, std::string_view key) {
 }
 } // namespace
 
+std::optional<LibraryArchive>
+LibraryQueries::findArchive(const std::string &unit, const std::string &key,
+                            std::string &content) const {
+  auto found = archives.find(unit);
+  if (found == archives.end() || found->second.key != key)
+    return std::nullopt;
+  content = found->second.content;
+  return found->second.archive;
+}
+
+void LibraryQueries::publishArchive(std::string unit, std::string key,
+                                    std::string content,
+                                    LibraryArchive archive) {
+  archives.insert_or_assign(
+      std::move(unit),
+      ArchiveEntry{std::move(key), std::move(content), std::move(archive)});
+}
+
+std::shared_ptr<const LibraryHeaderImport>
+LibraryQueries::findHeader(const std::string &unit, const std::string &content,
+                           std::span<const SourceId> sources) const {
+  auto found = headers.find(unit);
+  if (found == headers.end() || found->second.content != content ||
+      !std::equal(sources.begin(), sources.end(), found->second.sources.begin(),
+                  found->second.sources.end()))
+    return nullptr;
+  return found->second.header;
+}
+
+void LibraryQueries::publishHeader(
+    std::string unit, std::string content, std::vector<SourceId> sources,
+    std::shared_ptr<const LibraryHeaderImport> header) {
+  headers.insert_or_assign(
+      std::move(unit),
+      HeaderEntry{std::move(content), std::move(sources), std::move(header)});
+}
+
+std::optional<pipeline::ImportedProgram>
+LibraryQueries::find(const std::string &unit,
+                     const std::string &identity) const {
+  auto found = imports.find(unit);
+  if (found == imports.end() || found->second.identity != identity)
+    return std::nullopt;
+  ++reused;
+  return found->second.program;
+}
+
+void LibraryQueries::publish(std::string unit, std::string identity,
+                             pipeline::ImportedProgram program) {
+  imports.insert_or_assign(std::move(unit),
+                           Entry{std::move(identity), std::move(program)});
+}
+
 CheckedLibrary::CheckedLibrary(const Options &options, packages::Store &store,
                                expansion::Configuration configuration,
                                TargetFacts target)
@@ -121,18 +179,39 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
     error = "cannot acquire checked " + root + " cache lease";
     return false;
   }
+  if (options.libraryQueries)
+    if (auto reused = options.libraryQueries->findArchive(root, archiveKey,
+                                                          archiveContent)) {
+      archive = std::move(*reused);
+      if (options.explain)
+        std::cerr << "mettle: checked library archive query hit " << root << " "
+                  << archiveKey.substr(0, 12) << '\n';
+      return true;
+    }
   // The archive's sealing digest covers every byte, so it replaces the
   // store's serial blob hash; a rejected archive is evicted as corrupt.
   std::optional<LibraryArchive> decoded;
   auto stored = store.mapped(
       archiveKey, limits::sourceBytes,
       [&](const std::shared_ptr<const packages::Store::Mapping> &mapping) {
+        std::shared_ptr<const void> backing = mapping;
+        auto bytes = mapping->bytes();
+        if (options.libraryQueries) {
+          auto snapshot = std::make_shared<const std::string>(bytes);
+          bytes = *snapshot;
+          backing = std::move(snapshot);
+        }
         decoded =
-            decodeLibraryArchive(mapping->bytes(), archiveKey, error, mapping);
+            decodeLibraryArchive(bytes, archiveKey, error, std::move(backing));
+        if (decoded)
+          archiveContent = std::string(bytes.substr(bytes.size() - 64));
         return decoded.has_value();
       });
   if (stored.status == packages::Store::Lookup::Hit) {
     archive = std::move(*decoded);
+    if (options.libraryQueries)
+      options.libraryQueries->publishArchive(root, archiveKey, archiveContent,
+                                             archive);
     if (options.explain)
       std::cerr << "mettle: checked library interface cache hit " << root << " "
                 << archiveKey.substr(0, 12) << '\n';
@@ -177,10 +256,9 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
                         "cannot identify " + path + ": " + fileError.message());
       return std::nullopt;
     }
-    auto found = sourceInputs.find(canonical.generic_string());
-    if (found == sourceInputs.end())
-      return std::nullopt;
-    return found->second;
+    if (auto source = input(canonical.generic_string()))
+      return *source;
+    return std::nullopt;
   };
   std::vector<resolution::SourceModule> loaded;
   resolution::SourcePackages packages;
@@ -401,7 +479,8 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
     return found == definitions.end() ? std::nullopt
                                       : std::optional(found->second);
   };
-  auto graph = metadata::exportTypeGraph(*program.types, roots, typeSymbols);
+  auto graph = metadata::exportTypeGraph(*program.types, roots, typeSymbols,
+                                         metadata::ValidationMode::OnDemand);
   if (!graph) {
     error = graph.error;
     return false;
@@ -414,11 +493,15 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
   auto encoded = encodeLibraryArchive(candidate, error);
   if (!encoded)
     return false;
+  archiveContent = encoded->substr(encoded->size() - 64);
   if (!store.putData(archiveKey, *encoded)) {
     error = "cannot publish checked " + root + " interface";
     return false;
   }
   archive = std::move(candidate);
+  if (options.libraryQueries)
+    options.libraryQueries->publishArchive(root, archiveKey, archiveContent,
+                                           archive);
   for (const auto &note : store.prune(archiveKey))
     if (options.explain)
       std::cerr << "mettle: " << note << '\n';
@@ -426,6 +509,47 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
     std::cerr << "mettle: checked library interface cache stored " << root
               << " " << archiveKey.substr(0, 12) << '\n';
   return true;
+}
+
+bool CheckedLibrary::prepareInputs(std::string &error) {
+  if (inputsPrepared)
+    return true;
+  if (dependency) {
+    if (!dependency->prepareInputs(error))
+      return false;
+    cacheConfiguration.dependencies =
+        dependency->cacheConfiguration.dependencies;
+    cacheConfiguration.dependencies.emplace(dependency->root,
+                                            dependency->archiveKey);
+  }
+  auto directory = std::filesystem::path(options.libraryDirectory) / root;
+  std::shared_ptr<const LibraryInputs> inputs;
+  if (options.libraryQueries) {
+    std::string fallback;
+    inputs = options.libraryQueries->snapshots.collect(
+        directory, cacheConfiguration, error, fallback);
+    if (!fallback.empty() && options.explain)
+      std::cerr << "mettle: checked library snapshot reuse unavailable " << root
+                << ": " << fallback << "; scanning sources\n";
+  } else if (auto collected =
+                 collectLibraryInputs(directory, cacheConfiguration, error))
+    inputs = std::make_shared<const LibraryInputs>(std::move(*collected));
+  if (!inputs)
+    return false;
+  archiveKey = inputs->key;
+  sourceInputs = std::move(inputs);
+  inputsPrepared = true;
+  return true;
+}
+
+const Source *CheckedLibrary::input(const std::string &path) const {
+  for (auto unit = this; unit; unit = unit->dependency)
+    if (unit->sourceInputs) {
+      auto found = unit->sourceInputs->sources.find(path);
+      if (found != unit->sourceInputs->sources.end())
+        return &found->second;
+    }
+  return nullptr;
 }
 
 bool CheckedLibrary::mount(resolution::Library &library,
@@ -453,7 +577,7 @@ bool CheckedLibrary::mount(resolution::Library &library,
                             previous](const std::vector<std::string> &path,
                                       const std::vector<std::string> &from)
       -> std::optional<expansion::MacroModuleSource> {
-    if (path.empty() || path.front() != root)
+    if (path.empty() || path.front() != root || ineligible)
       return previous ? previous(path, from) : std::nullopt;
     return macroSource(path);
   };
@@ -502,7 +626,7 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
     error = "previous checked-library preparation failed";
     return false;
   }
-  if (!prepareArchive(error)) {
+  if (!prepareInputs(error) || !prepareArchive(error)) {
     unavailable = true;
     return false;
   }
@@ -532,10 +656,24 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
   references.source = [&](const auto &reference) {
     return archive.sources.resolve(reference);
   };
-  auto decoded = decodeLibraryHeader(archive.header, references);
+  std::vector<SourceId> sourceIds;
+  for (const auto &source : archive.sources.snapshots())
+    sourceIds.push_back(source.id);
+  auto retained =
+      options.libraryQueries
+          ? options.libraryQueries->findHeader(root, archiveContent, sourceIds)
+          : nullptr;
+  auto decoded = retained ? copyLibraryHeader(*retained)
+                          : decodeLibraryHeader(archive.header, references);
   if (!decoded) {
     error = decoded.error;
     return false;
+  }
+  if (options.libraryQueries && !retained) {
+    retained = std::make_shared<const LibraryHeaderImport>(std::move(decoded));
+    options.libraryQueries->publishHeader(root, archiveContent,
+                                          std::move(sourceIds), retained);
+    decoded = copyLibraryHeader(*retained);
   }
   Diagnostics macroDiagnostics;
   auto rules = expansion::decodeMacros(archive.macros, macroDiagnostics);
@@ -691,14 +829,16 @@ CheckedLibrary::import(const Module &module,
   auto supportBase = module.functions.size() + defaultCount;
   auto prefix = supportPrefix(root, archiveKey);
   auto largestSupportOrdinal = std::make_shared<std::atomic<std::int64_t>>(-1);
+  auto supportLimit =
+      std::make_shared<std::atomic<std::size_t>>(limits::functions);
   metadata::DecodeReferences references;
   references.source = [&](const auto &source) {
     return archive.sources.resolve(source);
   };
   references.symbol =
-      [symbols, packageIndices, prefix, supportBase, largestSupportOrdinal](
-          metadata::SymbolKind kind,
-          std::string_view name) -> std::optional<std::uint32_t> {
+      [symbols, packageIndices, prefix, supportBase, largestSupportOrdinal,
+       supportLimit](metadata::SymbolKind kind,
+                     std::string_view name) -> std::optional<std::uint32_t> {
     if (kind == metadata::SymbolKind::Package) {
       auto found = packageIndices->find(std::string(name));
       return found == packageIndices->end() ? std::nullopt
@@ -714,7 +854,8 @@ CheckedLibrary::import(const Module &module,
         std::from_chars(name.data(), name.data() + name.size(), ordinal);
     if (parsed.ec != std::errc{} || parsed.ptr != name.data() + name.size() ||
         ordinal >= limits::functions ||
-        supportBase + ordinal >= limits::functions)
+        supportBase + ordinal >= limits::functions ||
+        ordinal >= supportLimit->load())
       return std::nullopt;
     auto largest = largestSupportOrdinal->load();
     while (ordinal > largest &&
@@ -722,12 +863,52 @@ CheckedLibrary::import(const Module &module,
     }
     return static_cast<std::uint32_t>(supportBase + ordinal);
   };
+  packages::Sha256 identity;
+  auto integer = [&](std::uint64_t value) {
+    std::array<char, 8> bytes;
+    for (unsigned i = 0; i < bytes.size(); ++i)
+      bytes[i] = static_cast<char>(value >> (8 * i));
+    identity.update({bytes.data(), bytes.size()});
+  };
+  auto text = [&](std::string_view value) {
+    integer(value.size());
+    identity.update(value);
+  };
+  text(archiveKey);
+  text(archiveContent);
+  integer(archive.sources.snapshots().size());
+  for (const auto &source : archive.sources.snapshots())
+    integer(source.id);
+  integer(supportBase);
+  integer(defaultDestinations.size());
+  for (const auto &[parameter, destination] : defaultDestinations) {
+    integer(parameter.first);
+    integer(parameter.second);
+    integer(destination);
+  }
+  integer(packageIndices->size());
+  for (const auto &[package, index] : *packageIndices) {
+    text(package);
+    integer(index);
+  }
+  auto queryIdentity = identity.finish();
+  if (options.libraryQueries)
+    if (auto reused = options.libraryQueries->find(root, queryIdentity))
+      return reused;
+  auto storage = std::make_shared<const ImportedStorage>(
+      ImportedStorage{archive.sources, std::move(archive.ir),
+                      archive.declarations, archive.backing});
+  references.source = [storage](const auto &source) {
+    return storage->sources.resolve(source);
+  };
   auto types = std::make_shared<TypeStore>();
   types->setPointerBits(target.pointerBits);
   types->setVaListAbi(targetVaListAbi(target));
-  metadata::TypeGraphSymbols typeSymbols;
-  typeSymbols.resolve = references.symbol;
-  auto graph = metadata::importTypeGraph(*types, archive.types, typeSymbols);
+  auto typeSymbols = std::make_shared<metadata::TypeGraphSymbols>();
+  typeSymbols->resolve = references.symbol;
+  auto graph = metadata::importTypeGraph(*types, archive.types, *typeSymbols,
+                                         metadata::ValidationMode::OnDemand,
+                                         typeSymbols);
   if (!graph)
     return fail(graph.error);
   auto roots = std::make_shared<std::vector<Type>>(std::move(graph.roots));
@@ -736,12 +917,17 @@ CheckedLibrary::import(const Module &module,
       return std::nullopt;
     return (*roots)[reference];
   };
-  // Decoders share only immutable tables; the future joins before they expire.
-  auto pendingIR = std::async(std::launch::async | std::launch::deferred, [&] {
-    return ir::decodeProgramLazy(archive.ir, references);
-  });
-  auto declarations =
-      importLibraryDeclarations(archive.declarations, types, references);
+  auto retainedReferences =
+      std::make_shared<const metadata::DecodeReferences>(references);
+  auto pendingIR = std::async(std::launch::async | std::launch::deferred,
+                              [storage, retainedReferences] {
+                                return ir::decodeProgramLazy(
+                                    storage->ir, *retainedReferences, true,
+                                    retainedReferences, storage);
+                              });
+  auto declarations = importLibraryDeclarations(
+      storage->declarations, types, *retainedReferences, &module, storage,
+      retainedReferences, metadata::ValidationMode::OnDemand);
   if (!declarations)
     return fail(declarations.error);
   if (declarations.declarations->closures.size() != closureCount)
@@ -754,10 +940,10 @@ CheckedLibrary::import(const Module &module,
     return fail("compiled IR definitions do not match the declaration header");
   auto supportCount =
       decoded.program.functions.size() - functions - defaults.size();
+  supportLimit->store(supportCount);
   if (largestSupportOrdinal->load() >= static_cast<std::int64_t>(supportCount))
     return fail("compiled support identity exceeds its artifact-local table");
   auto bodies = std::make_shared<lowering::ImportedBodies>();
-  std::vector<std::optional<ir::Function>> support(supportCount);
   std::vector<std::optional<std::size_t>> supportRecords(supportCount);
   std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>>
       importedDefaults;
@@ -771,37 +957,32 @@ CheckedLibrary::import(const Module &module,
     if (destination < functions) {
       if (decoded.functionIdentities[i] != functionSymbols[destination])
         return fail("compiled function identity does not match its header");
-      bodies->functions.emplace(destination,
-                                std::move(decoded.program.functions[i]));
       bodies->functionRecords.emplace(destination, i);
     } else if (destination < supportBase) {
       auto found = importedDefaults.find(destination);
       if (found == importedDefaults.end())
         return fail("compiled body occupies a consumer default-helper slot");
-      decoded.program.functions[i].name = decoded.functionIdentities[i];
-      bodies->defaults.emplace(found->second,
-                               std::move(decoded.program.functions[i]));
+      decoded.program.functionIndex[i].name = decoded.functionIdentities[i];
       bodies->defaultRecords.emplace(found->second, i);
     } else if (destination - supportBase < supportCount) {
-      decoded.program.functions[i].name = decoded.functionIdentities[i];
-      support[destination - supportBase] =
-          std::move(decoded.program.functions[i]);
+      decoded.program.functionIndex[i].name = decoded.functionIdentities[i];
       supportRecords[destination - supportBase] = i;
     } else {
       return fail("compiled body destination exceeds its support table");
     }
   }
-  if (bodies->functions.size() != functions ||
-      bodies->defaults.size() != defaults.size())
+  if (bodies->functionRecords.size() != functions ||
+      bodies->defaultRecords.size() != defaults.size())
     return fail("compiled IR is missing a source function or default helper");
-  for (auto &function : support) {
-    if (!function)
+  for (auto record : supportRecords)
+    if (!record)
       return fail("compiled support destinations contain a gap");
-    bodies->support.push_back(std::move(*function));
-  }
   bodies->supportRecords = std::move(supportRecords);
+  bodies->headers = std::move(decoded.program.functions);
+  bodies->headerIndex = std::move(decoded.program.functionIndex);
   if (!decoded.lazyFunctions)
     return fail("compiled IR function body loader is absent");
+  bodies->functionBodySizes = std::move(decoded.functionBodySizes);
   auto lazyFunctions = decoded.lazyFunctions;
   auto bodyReferences = references;
   bodies->loadFunction =
@@ -839,11 +1020,14 @@ CheckedLibrary::import(const Module &module,
   decoded.program.functionPackages.clear();
   decoded.program.statics.clear();
   decoded.program.staticPackages.clear();
+  types->shareInterning();
   decoded.program.types = types;
   pipeline::ImportedProgram imported;
   imported.declarations = std::move(declarations.declarations);
   imported.bodies = std::move(bodies);
   imported.metadata = std::move(decoded.program);
+  if (options.libraryQueries)
+    options.libraryQueries->publish(root, queryIdentity, imported);
   return imported;
 }
 
@@ -867,29 +1051,15 @@ std::unique_ptr<CheckedLibraries> CheckedLibraries::create(
   for (auto root : nativeRoots) {
     if (root == "std" && options.freestanding)
       break;
-    std::string error;
     identity.identity = std::string(nativePackage) + ":" + std::string(root) +
                         ":macro-provenance-1";
-    auto inputs = collectLibraryInputs(
-        std::filesystem::path(options.libraryDirectory) / root, identity,
-        error);
-    if (!inputs) {
-      if (options.explain)
-        std::cerr << "mettle: checked library interface cache ineligible "
-                  << root << ": " << error << "; using source\n";
-      break;
-    }
     auto unit = std::unique_ptr<CheckedLibrary>(
         new CheckedLibrary(options, store, nativeConfiguration, target));
     unit->root = root;
     unit->numeric = numeric;
-    unit->archiveKey = std::move(inputs->key);
-    unit->sourceInputs = std::move(inputs->sources);
-    if (!result->units.empty()) {
-      const auto &dependencies = result->units.back()->sourceInputs;
-      unit->sourceInputs.insert(dependencies.begin(), dependencies.end());
-    }
-    identity.dependencies.emplace(root, unit->archiveKey);
+    unit->cacheConfiguration = identity;
+    if (!result->units.empty())
+      unit->dependency = result->units.back().get();
     result->units.push_back(std::move(unit));
   }
   return result;
@@ -904,6 +1074,18 @@ bool CheckedLibraries::mount(resolution::Library &library,
     if (!unit->mount(library, diagnostics, allocate, error))
       return false;
     auto &entry = library.compiled.back();
+    entry.available = [unit = unit.get()]() {
+      if (unit->ineligible)
+        return false;
+      std::string error;
+      if (unit->prepareInputs(error))
+        return true;
+      unit->ineligible = true;
+      if (unit->options.explain)
+        std::cerr << "mettle: checked library interface cache ineligible "
+                  << unit->root << ": " << error << "; using source\n";
+      return false;
+    };
     for (auto root : nativeRoots) {
       if (root == unit->name())
         break;
@@ -928,7 +1110,7 @@ bool CheckedLibraries::mount(resolution::Library &library,
     if (selected && selected->contains(path.front()))
       return selected->macroSource(path);
     for (const auto &unit : units)
-      if (unit->name() == path.front())
+      if (unit->name() == path.front() && !unit->ineligible)
         return unit->macroSource(path);
     return previousMacros ? previousMacros(path, from) : std::nullopt;
   };
@@ -944,9 +1126,13 @@ pipeline::LibraryImporter CheckedLibraries::importer() {
   };
 }
 
-const std::map<std::string, Source> &CheckedLibraries::inputs() const {
-  static const std::map<std::string, Source> empty;
-  return selected ? selected->inputs() : empty;
+bool CheckedLibraries::containsInput(const std::string &path) const {
+  return selected && selected->input(path);
+}
+
+void CheckedLibraries::recordInputs(BuildInputs &inputs) const {
+  for (auto unit = selected; unit; unit = unit->dependency)
+    inputs.record(*unit->sourceInputs);
 }
 
 pipeline::PackageOwners CheckedLibraries::packageOwners() const {
@@ -972,7 +1158,7 @@ CheckedLibraries::packageSources() const {
     return sources;
   for (const auto &[revision, scope] : selected->archive.sourceModules)
     if (auto source = selected->archive.sources.source(revision);
-        source && !scope.empty() && selected->inputs().contains(source->path))
+        source && !scope.empty() && selected->input(source->path))
       sources["native:" + scope.front()].push_back(source->path);
   for (auto &[owner, paths] : sources) {
     (void)owner;

@@ -14,6 +14,8 @@ struct CodegenPartition {
   // A reusable library object: every body is lowered, the identity's own
   // functions are exported and other unowned bodies are private copies.
   bool library = false;
+  // Cached native libraries cannot refer to root-owned definitions.
+  bool privateRoot = false;
 };
 
 std::unique_ptr<llvm::Module>

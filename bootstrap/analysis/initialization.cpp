@@ -11,8 +11,18 @@ namespace {
 struct State {
   std::vector<bool> definite, possible, ever, moved;
   std::map<Place, std::set<int>> variants{};
-  bool operator==(const State &) const = default;
 };
+bool readsPlace(ir::Op op) {
+  return op == ir::Op::Load || op == ir::Op::Move || op == ir::Op::DropPlace ||
+         op == ir::Op::VariantTest || op == ir::Op::BorrowRead ||
+         op == ir::Op::BorrowMut || op == ir::Op::ReserveMut ||
+         op == ir::Op::ViewRead || op == ir::Op::ArrayBorrowRead ||
+         op == ir::Op::ArrayBorrowMut || op == ir::Op::ArrayTake ||
+         op == ir::Op::EraseView || op == ir::Op::ErasedUpcast ||
+         op == ir::Op::UnsizeView || op == ir::Op::SliceLength ||
+         op == ir::Op::SliceBorrowRead || op == ir::Op::SliceBorrowMut ||
+         op == ir::Op::ViewMut;
+}
 void checkFunction(const ir::Function &function, const TypeStore &types,
                    Diagnostics &diagnostics) {
   if (function.blocks.empty())
@@ -42,23 +52,34 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
                               prefix.fields);
       }
     }
-  entry.variants = unknownVariants;
   auto contains = [](const Place &parent, const Place &child) {
     return parent.root == child.root &&
            parent.fields.size() <= child.fields.size() &&
            std::equal(parent.fields.begin(), parent.fields.end(),
                       child.fields.begin());
   };
-  for (std::size_t i = 0; i < function.locals.size(); ++i)
-    if (i < function.parameters ||
-        function.locals[i].storage == StorageDuration::Static)
+  std::map<int, std::vector<int>> scopedLocals;
+  std::vector<int> droppableLocals;
+  std::vector<bool> droppable(function.locals.size());
+  for (std::size_t i = 0; i < function.locals.size(); ++i) {
+    const auto &local = function.locals[i];
+    droppable[i] = types.needsDrop(local.type);
+    if (i < function.parameters || local.storage == StorageDuration::Static)
       for (auto *bits : {&entry.definite, &entry.possible, &entry.ever})
         tree.set(*bits, tree.index({static_cast<int>(i), {}}), true);
+    if (local.storage != StorageDuration::Static &&
+        !(i < function.parameters && (local.mode == ParameterMode::Read ||
+                                      local.mode == ParameterMode::Mut))) {
+      scopedLocals[local.scope].push_back(static_cast<int>(i));
+      if (droppable[i])
+        droppableLocals.push_back(static_cast<int>(i));
+    }
+  }
   auto apply = [&](State &state, const ir::Instruction &instruction) {
     auto forget = [&](const Place &place) {
-      for (const auto &[sum, unknown] : unknownVariants)
+      for (auto &[sum, variants] : state.variants)
         if (contains(place, sum))
-          state.variants[sum] = unknown;
+          variants = unknownVariants.at(sum);
     };
     if (instruction.op == ir::Op::Call ||
         instruction.op == ir::Op::IndirectCall ||
@@ -71,7 +92,8 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
           if (definition && definition->place.root >= 0)
             forget(definition->place);
           else
-            state.variants = unknownVariants;
+            for (auto &[sum, variants] : state.variants)
+              variants = unknownVariants.at(sum);
         }
     }
     if (instruction.op == ir::Op::Store ||
@@ -83,17 +105,13 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
         state.variants[instruction.place] = {value->number};
     }
     if (instruction.op == ir::Op::ScopeExit) {
-      for (std::size_t l = 0; l < function.locals.size(); ++l) {
-        const auto &local = function.locals[l];
-        if (local.storage == StorageDuration::Static ||
-            local.scope != instruction.number ||
-            (l < function.parameters && (local.mode == ParameterMode::Read ||
-                                         local.mode == ParameterMode::Mut)))
-          continue;
-        auto index = tree.index({static_cast<int>(l), {}});
-        for (auto *bits : {&state.definite, &state.possible, &state.moved})
-          tree.set(*bits, index, false);
-      }
+      if (auto found = scopedLocals.find(instruction.number);
+          found != scopedLocals.end())
+        for (auto local : found->second) {
+          auto index = tree.index({local, {}});
+          for (auto *bits : {&state.definite, &state.possible, &state.moved})
+            tree.set(*bits, index, false);
+        }
       return;
     }
     if (instruction.op != ir::Op::Declare && instruction.op != ir::Op::Store &&
@@ -115,59 +133,299 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
         tree.set(state.ever, index, true);
     }
   };
-  std::vector<std::optional<State>> inputs(function.blocks.size()),
-      outputs(function.blocks.size());
-  inputs[0] = entry;
+  constexpr unsigned char definiteBit = 1, possibleBit = 2, everBit = 4,
+                          movedBit = 8;
+  using Demand = std::map<int, unsigned char>;
+  const auto count = function.blocks.size();
+  std::vector<Demand> reads(count), kills(count), relevant(count);
+  std::vector<std::set<Place>> variantUses(count), variantReads(count),
+      variantKills(count), variantRelevant(count);
+  std::vector<bool> variantReset(count);
+  std::vector<std::vector<int>> successors(count), predecessors(count);
+  auto killed = [&](std::size_t b, int index) {
+    auto found = kills[b].find(index);
+    return found == kills[b].end() ? 0 : found->second;
+  };
+  auto variantKilled = [&](std::size_t b, const Place &place) {
+    if (variantReset[b])
+      return true;
+    Place prefix{place.root, {}};
+    for (std::size_t depth = 0;; ++depth) {
+      if (variantKills[b].contains(prefix))
+        return true;
+      if (depth == place.fields.size())
+        return false;
+      prefix.fields.push_back(place.fields[depth]);
+    }
+  };
+  for (std::size_t b = 0; b < count; ++b) {
+    const auto &block = function.blocks[b];
+    if (ir::continues(block.exit.kind) || block.exit.kind == ir::Exit::Branch)
+      successors[b].push_back(block.exit.first);
+    if (block.exit.kind == ir::Exit::Branch)
+      successors[b].push_back(block.exit.second);
+    for (auto next : successors[b])
+      predecessors[next].push_back(static_cast<int>(b));
+    auto observe = [&](int index, unsigned char bits) {
+      for (auto child : tree.subtree(index))
+        if (auto needed = static_cast<unsigned char>(bits & ~killed(b, child)))
+          reads[b][child] |= needed;
+    };
+    auto kill = [&](int index, unsigned char bits) {
+      for (auto child : tree.written(index))
+        kills[b][child] |= bits;
+    };
+    for (const auto &instruction : block.instructions) {
+      if (instruction.place.root >= 0) {
+        const auto &local = function.locals[instruction.place.root];
+        auto index = readsPlace(instruction.op) ||
+                             instruction.op == ir::Op::Declare ||
+                             instruction.op == ir::Op::Store ||
+                             instruction.op == ir::Op::StorageWrite
+                         ? tree.index(instruction.place)
+                         : -1;
+        if (readsPlace(instruction.op))
+          observe(index, definiteBit | movedBit);
+        Place prefix{instruction.place.root, {}};
+        auto type = local.type;
+        for (auto projection : instruction.place.fields) {
+          if (types.isSum(type) && projection.kind == Projection::Kind::Field &&
+              projection.index != 0) {
+            variantUses[b].insert(prefix);
+            if (!variantKilled(b, prefix))
+              variantReads[b].insert(prefix);
+          }
+          if (projection.kind == Projection::Kind::Dereference)
+            observe(tree.index(prefix), definiteBit | movedBit);
+          if (instruction.op == ir::Op::Move && types.isProduct(type) &&
+              (types.product(type).hasDestructor ||
+               types.product(type).nativeCleanup != NativeCleanup::None))
+            observe(tree.index(prefix), possibleBit);
+          prefix.fields.push_back(projection);
+          type = *projectedType(types, local.type, prefix.fields);
+        }
+        if (instruction.op == ir::Op::Declare &&
+            droppable[instruction.place.root])
+          observe(index, possibleBit);
+        if (instruction.op == ir::Op::StorageWrite) {
+          auto owner = instruction.place;
+          owner.fields.pop_back();
+          observe(tree.index(owner), definiteBit);
+        }
+        if ((instruction.op == ir::Op::Store ||
+             instruction.op == ir::Op::StorageWrite) &&
+            !local.mutableBinding && local.mode != ParameterMode::Mut &&
+            local.mode != ParameterMode::Read)
+          observe(index, everBit);
+        if (instruction.op == ir::Op::Declare ||
+            instruction.op == ir::Op::Store ||
+            instruction.op == ir::Op::StorageWrite)
+          kill(index, definiteBit | possibleBit | everBit | movedBit);
+        else if (instruction.op == ir::Op::Move ||
+                 instruction.op == ir::Op::DropPlace)
+          kill(index, definiteBit | possibleBit | movedBit);
+      }
+      if (instruction.op == ir::Op::Store ||
+          instruction.op == ir::Op::StorageWrite) {
+        if (!variantReset[b])
+          variantKills[b].insert(instruction.place);
+      } else if (instruction.op == ir::Op::Call ||
+                 instruction.op == ir::Op::IndirectCall ||
+                 instruction.op == ir::Op::CatchCall) {
+        for (auto operand : instruction.operands)
+          if (operand.access == ir::Access::Mut ||
+              (types.isView(operand.type) &&
+               types.view(operand.type).mode == ParameterMode::Mut)) {
+            const auto *definition = definitions[operand.id];
+            if (!definition || definition->place.root < 0) {
+              variantReset[b] = true;
+              variantKills[b].clear();
+              break;
+            }
+            if (!variantReset[b])
+              variantKills[b].insert(definition->place);
+          }
+      }
+      if (instruction.op == ir::Op::ScopeExit)
+        if (auto found = scopedLocals.find(instruction.number);
+            found != scopedLocals.end())
+          for (auto local : found->second)
+            kill(tree.index({local, {}}), definiteBit | possibleBit | movedBit);
+    }
+    if (block.exit.kind == ir::Exit::Return)
+      for (auto local : droppableLocals)
+        observe(tree.index({local, {}}), possibleBit);
+  }
+  std::deque<int> demands;
+  std::vector<bool> queued(count, true);
+  for (std::size_t b = count; b-- > 0;)
+    demands.push_back(static_cast<int>(b));
+  while (!demands.empty()) {
+    auto b = demands.front();
+    demands.pop_front();
+    queued[b] = false;
+    auto needed = reads[b];
+    auto variants = variantReads[b];
+    for (auto next : successors[b]) {
+      for (auto [index, bits] : relevant[next])
+        if (auto incoming =
+                static_cast<unsigned char>(bits & ~killed(b, index)))
+          needed[index] |= incoming;
+      for (const auto &place : variantRelevant[next])
+        if (!variantKilled(b, place))
+          variants.insert(place);
+    }
+    if (needed == relevant[b] && variants == variantRelevant[b])
+      continue;
+    relevant[b] = std::move(needed);
+    variantRelevant[b] = std::move(variants);
+    for (auto previous : predecessors[b])
+      if (!queued[previous]) {
+        queued[previous] = true;
+        demands.push_back(previous);
+      }
+  }
+  reads.clear();
+  kills.clear();
+  variantReads.clear();
+  variantKills.clear();
+  variantReset.clear();
+  std::vector<std::vector<std::pair<int, unsigned char>>> places(count);
+  for (std::size_t b = 0; b < count; ++b) {
+    places[b].assign(relevant[b].begin(), relevant[b].end());
+    relevant[b].clear();
+  }
+  relevant.clear();
+  struct Input {
+    std::vector<unsigned char> places;
+    std::map<Place, std::set<int>> variants;
+  };
+  std::vector<std::optional<Input>> inputs(count);
+  auto placeBits = [&](const State &state, std::size_t index,
+                       unsigned char mask) {
+    return static_cast<unsigned char>(
+        ((state.definite[index] ? definiteBit : 0) |
+         (state.possible[index] ? possibleBit : 0) |
+         (state.ever[index] ? everBit : 0) |
+         (state.moved[index] ? movedBit : 0)) &
+        mask);
+  };
+  inputs[0].emplace();
+  for (const auto &place : variantRelevant[0])
+    inputs[0]->variants.emplace(place, unknownVariants.at(place));
+  inputs[0]->places.reserve(places[0].size());
+  for (auto [index, bits] : places[0])
+    inputs[0]->places.push_back(placeBits(entry, index, bits));
+  State state = std::move(entry);
+  auto restore = [&](std::size_t b) {
+    state.variants.clear();
+    auto restoreVariant = [&](const Place &place) {
+      if (state.variants.contains(place))
+        return;
+      auto found = inputs[b]->variants.find(place);
+      state.variants.emplace(place, found != inputs[b]->variants.end()
+                                        ? found->second
+                                        : unknownVariants.at(place));
+    };
+    for (const auto &place : variantUses[b])
+      restoreVariant(place);
+    for (auto next : successors[b])
+      for (const auto &place : variantRelevant[next])
+        restoreVariant(place);
+    for (const auto &[place, variants] : inputs[b]->variants)
+      state.variants.try_emplace(place, variants);
+    std::size_t position = 0;
+    for (auto [index, bits] : places[b]) {
+      auto value = inputs[b]->places[position++];
+      state.definite[index] = value & definiteBit;
+      state.possible[index] = value & possibleBit;
+      state.ever[index] = value & everBit;
+      state.moved[index] = value & movedBit;
+    }
+  };
+  queued.assign(count, false);
+  queued[0] = true;
   std::deque<int> work{0};
   while (!work.empty()) {
     int block = work.front();
     work.pop_front();
-    auto out = *inputs[block];
+    queued[block] = false;
+    restore(block);
+    auto &out = state;
     for (const auto &instruction : function.blocks[block].instructions)
       apply(out, instruction);
-    if (outputs[block] && *outputs[block] == out)
-      continue;
-    outputs[block] = out;
     const auto &exit = function.blocks[block].exit;
-    std::vector<int> successors;
-    if (ir::continues(exit.kind) || exit.kind == ir::Exit::Branch)
-      successors.push_back(exit.first);
-    if (exit.kind == ir::Exit::Branch)
-      successors.push_back(exit.second);
-    for (auto next : successors) {
-      auto incoming = out;
-      if (exit.kind == ir::Exit::Branch) {
-        const auto *condition = definitions[exit.value.id];
-        if (condition && condition->op == ir::Op::VariantTest) {
-          auto &variants = incoming.variants[condition->place];
-          if (next == exit.first) {
-            bool possible = variants.contains(condition->number);
-            variants.clear();
-            if (possible)
-              variants.insert(condition->number);
-          } else
-            variants.erase(condition->number);
+    const auto *condition =
+        exit.kind == ir::Exit::Branch && exit.first != exit.second
+            ? definitions[exit.value.id]
+            : nullptr;
+    if (condition && condition->op != ir::Op::VariantTest)
+      condition = nullptr;
+    for (auto next : successors[block]) {
+      bool first = !inputs[next], changed = first;
+      if (first) {
+        inputs[next].emplace();
+        inputs[next]->places.reserve(places[next].size());
+      }
+      auto &merged = *inputs[next];
+      std::size_t position = 0;
+      for (auto [index, mask] : places[next]) {
+        auto incoming = placeBits(out, index, mask);
+        if (first)
+          merged.places.push_back(incoming);
+        else {
+          auto &previous = merged.places[position];
+          auto bits = static_cast<unsigned char>(
+              ((previous & incoming) & definiteBit) |
+              ((previous | incoming) & ~definiteBit));
+          changed |= previous != bits;
+          previous = bits;
         }
+        ++position;
       }
-      auto merged = inputs[next].value_or(incoming);
-      for (std::size_t i = 0; i < tree.size(); ++i) {
-        merged.definite[i] = merged.definite[i] && incoming.definite[i];
-        merged.possible[i] = merged.possible[i] || incoming.possible[i];
-        merged.ever[i] = merged.ever[i] || incoming.ever[i];
-        merged.moved[i] = merged.moved[i] || incoming.moved[i];
+      for (const auto &place : variantRelevant[next]) {
+        const auto &variants = out.variants.at(place);
+        auto [found, inserted] = merged.variants.try_emplace(place, variants);
+        auto &known = found->second;
+        if (inserted) {
+          if (condition && condition->place == place) {
+            if (next == exit.first) {
+              bool possible = known.contains(condition->number);
+              known.clear();
+              if (possible)
+                known.insert(condition->number);
+            } else
+              known.erase(condition->number);
+          }
+          changed = true;
+          continue;
+        }
+        if (known.size() == unknownVariants.at(place).size())
+          continue;
+        auto previous = known.size();
+        if (!condition || condition->place != place)
+          known.insert(variants.begin(), variants.end());
+        else if (next == exit.first) {
+          if (variants.contains(condition->number))
+            known.insert(condition->number);
+        } else
+          for (auto variant : variants)
+            if (variant != condition->number)
+              known.insert(variant);
+        changed |= previous != known.size();
       }
-      for (const auto &[place, variants] : incoming.variants)
-        merged.variants[place].insert(variants.begin(), variants.end());
-      if (!inputs[next] || *inputs[next] != merged) {
-        inputs[next] = std::move(merged);
-        work.push_back(next);
+      if (changed) {
+        if (!queued[next]) {
+          queued[next] = true;
+          work.push_back(next);
+        }
       }
     }
   }
   for (std::size_t b = 0; b < function.blocks.size(); ++b) {
     if (!inputs[b])
       continue;
-    auto state = *inputs[b];
+    restore(b);
     for (const auto &instruction : function.blocks[b].instructions) {
       bool reference = false, writable = false, readOnly = false;
       bool invalidHandle = false;
@@ -191,7 +449,7 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
           if (types.isSum(type) && projection.kind == Projection::Kind::Field &&
               projection.index != 0) {
             const auto &sum = types.product(type);
-            const auto &variants = state.variants[prefix];
+            const auto &variants = state.variants.at(prefix);
             for (auto variant : variants)
               if (std::find(sum.variants[variant].fields.begin(),
                             sum.variants[variant].fields.end(),
@@ -223,23 +481,7 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
           prefix.fields.push_back(projection);
         }
       }
-      if (instruction.op == ir::Op::Load || instruction.op == ir::Op::Move ||
-          instruction.op == ir::Op::DropPlace ||
-          instruction.op == ir::Op::VariantTest ||
-          instruction.op == ir::Op::BorrowRead ||
-          instruction.op == ir::Op::BorrowMut ||
-          instruction.op == ir::Op::ReserveMut ||
-          instruction.op == ir::Op::ViewRead ||
-          instruction.op == ir::Op::ArrayBorrowRead ||
-          instruction.op == ir::Op::ArrayBorrowMut ||
-          instruction.op == ir::Op::ArrayTake ||
-          instruction.op == ir::Op::EraseView ||
-          instruction.op == ir::Op::ErasedUpcast ||
-          instruction.op == ir::Op::UnsizeView ||
-          instruction.op == ir::Op::SliceLength ||
-          instruction.op == ir::Op::SliceBorrowRead ||
-          instruction.op == ir::Op::SliceBorrowMut ||
-          instruction.op == ir::Op::ViewMut) {
+      if (readsPlace(instruction.op)) {
         auto index = tree.index(instruction.place);
         if (!invalidHandle && !tree.all(state.definite, index)) {
           bool moved = tree.any(state.moved, index);
@@ -288,7 +530,7 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
         diagnostics.error("ownership", instruction.span,
                           "cannot consume static storage");
       if (instruction.op == ir::Op::Declare &&
-          types.needsDrop(function.locals[instruction.place.root].type) &&
+          droppable[instruction.place.root] &&
           tree.any(state.possible, tree.index(instruction.place)))
         diagnostics.error("internal", instruction.span,
                           "declaration discards live owned storage");
@@ -334,14 +576,9 @@ void checkFunction(const ir::Function &function, const TypeStore &types,
       apply(state, instruction);
     }
     if (function.blocks[b].exit.kind == ir::Exit::Return)
-      for (std::size_t local = 0; local < function.locals.size(); ++local) {
+      for (auto local : droppableLocals) {
         const auto &storage = function.locals[local];
-        bool borrowed = local < function.parameters &&
-                        (storage.mode == ParameterMode::Read ||
-                         storage.mode == ParameterMode::Mut);
-        if (!borrowed && storage.storage != StorageDuration::Static &&
-            types.needsDrop(storage.type) &&
-            tree.any(state.possible, tree.index({static_cast<int>(local), {}})))
+        if (tree.any(state.possible, tree.index({local, {}})))
           diagnostics.error(
               "internal", storage.span,
               "owned storage reaches return without scope cleanup");
@@ -353,9 +590,9 @@ void initialization(const ir::Program &program, Diagnostics &diagnostics,
                     const ir::Program *prepared,
                     const std::vector<bool> *trusted) {
   for (std::size_t i = 0; i < program.functions.size(); ++i) {
-    const auto &function = program.functions[i];
     if (trusted && i < trusted->size() && (*trusted)[i])
       continue;
+    const auto &function = program.functions[i];
     if (prepared && i < prepared->functions.size() &&
         function == prepared->functions[i])
       continue;

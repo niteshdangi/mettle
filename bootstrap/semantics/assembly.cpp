@@ -176,7 +176,7 @@ void Checker::finishAssembly() {
     facts(n).machineType =
         checked.types->structural(AggregateKind::Tuple, std::move(outputs));
   };
-  for (auto &function : module.functions) {
+  for (auto &function : module.functions.local()) {
     current = &function;
     std::function<void(Node &)> visit = [&](Node &node) {
       if (node.kind == Kind::Assembly && facts(node).assembly)

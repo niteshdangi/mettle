@@ -1024,6 +1024,36 @@ int main() {
            "imported ABI result contracts must not collapse");
   }
   {
+    TypeStore types;
+    std::array ids{types.declareImportedType(ImportedTypeKind::Callable),
+                   types.declareImportedType(ImportedTypeKind::Callable),
+                   types.declareImportedType(ImportedTypeKind::Callable)};
+    std::array<std::size_t, 3> loaded{};
+    std::array<CallableType, 3> descriptors{plain, plain, plain};
+    std::array<ImportedTypeIndex, 3> index{};
+    auto scope = types.regions().binder();
+    auto other = types.regions().binder();
+    auto first = types.regions().inference(scope);
+    auto second = types.regions().inference(scope);
+    std::array key{plain.result, plain.error, plain.parameters.front().type};
+    for (std::size_t i = 0; i < descriptors.size(); ++i) {
+      descriptors[i].regionUniverse = i == 2 ? other.universe : scope.universe;
+      descriptors[i].parameterRegions = {i == 0 ? first : second};
+      index[i].key = key;
+      index[i].regionUniverse = descriptors[i].regionUniverse;
+      index[i].callableParameterRegions = descriptors[i].parameterRegions;
+    }
+    auto loader = std::make_shared<const TypeStore::ImportedDefinitionLoader>(
+        [descriptors, &loaded](std::size_t i) -> ImportedTypeDefinition {
+          ++loaded.at(i);
+          return descriptors.at(i);
+        });
+    types.deferImportedDefinitions(ids, index, loader);
+    expect(types.callableType(descriptors[1]) == ids[1] && loaded[0] == 0 &&
+               loaded[1] == 1 && loaded[2] == 0,
+           "callable lookup must not decode unrelated region identities");
+  }
+  {
     TypeStore producer;
     auto first = producer.structural(AggregateKind::Tuple, {Type::I32});
     auto duplicate = producer.declareImportedType(ImportedTypeKind::Product);

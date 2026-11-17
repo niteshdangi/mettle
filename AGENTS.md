@@ -8,7 +8,7 @@
 
 ## Whenever working on task if you know you dont need any checklist verification for that then absolutely dont do that. If you changes affects one system run targeted checks only. No Broad builds/ checks should be ran. If you know a thing is going to waste time, immediately stop it, and work in most efficient & fastest way without compromising quality of project.
 
-## Comments in internal code should never be written to explain some code, code should be self understandable, comments only allowed for non-obvious things, that too in max 1 line rarely 2 lines for complex non-obvious things.
+## Code Comments are not allowed 
 
 ## ALWAYS RUN TESTS / BUILDS IN THE MOST EFFICIENT WAY: size the work first (item count x per-item time / cores), use incremental builds and caches, parallelize across cores (`xargs -P`, `--jobs`, `ctest -j`), report results incrementally, and narrow to the affected set. Never run a serial loop over many builds.
 
@@ -18,7 +18,7 @@
 
 ## COMPILER OR LANGUAGE FIX FIRST. When the language or compiler cannot express what a correct library, API or test needs (a rejected construct, a missing capability, a wrong diagnostic), fix the compiler or language properly instead of working around it in library code, names or tests. Use a workaround only with the owner's explicit approval, and record why. This applies even before I15 when the defect blocks a correct design (C++ compiler change limits above still require a correctness or soundness justification).
 
-## NEVER INTRODUCE CEREMONY. No process, checklist, test, wrapper, ledger entry, progress log, receipt or step that exists only to be performed, recorded or satisfied, rather than to catch a defect or enforce an invariant. If something already exists that only adds ceremony or wastes time (a redundant test, a serial run that could be parallel, a cold cache that could be shared), remove it instead of working around it.
+## NEVER INTRODUCE CEREMONY. No process, checklist, test, wrapper, ledger entry, progress log, receipt or step that exists only to be performed, recorded or satisfied, rather than to catch a defect or enforce an invariant. During active implementation, do not interrupt work for bookkeeping, status notes, or handoff updates; do them only at a real phase boundary, when a milestone gate requires them, or when the owner asks. If something already exists that only adds ceremony or wastes time (a redundant test, a serial run that could be parallel, a cold cache that could be shared), remove it instead of working around it.
 
 ## SPEED TARGET: Rust parity. Anything Mettle does (compile, check, library build, tests, tools, runtime) should be as fast as the equivalent in Rust, or faster. Measure against Rust before accepting a time as normal, and treat a slower result as a defect to fix at its root cause.
 

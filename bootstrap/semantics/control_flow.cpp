@@ -5,10 +5,21 @@ namespace mettle {
 void Checker::controlFlow(Function &function) {
   std::vector<Node *> targets;
   std::set<NameKey> lexical;
+  std::vector<NameKey> introduced;
+  auto introduce = [&](NameKey name) {
+    if (lexical.insert(name).second)
+      introduced.push_back(std::move(name));
+  };
+  auto restore = [&](std::size_t mark) {
+    while (introduced.size() > mark) {
+      lexical.erase(introduced.back());
+      introduced.pop_back();
+    }
+  };
   std::function<void(const Pattern &)> bind = [&](const Pattern &pattern) {
     if (pattern.kind == PatternKind::Binding ||
         pattern.kind == PatternKind::At || pattern.kind == PatternKind::Rest)
-      lexical.insert(nameKey(pattern.text, pattern.context));
+      introduce(nameKey(pattern.text, pattern.context));
     for (const auto &child : pattern.children)
       bind(child);
   };
@@ -19,17 +30,17 @@ void Checker::controlFlow(Function &function) {
       facts(node).lexicallyBound =
           lexical.contains(nameKey(node.text, node.context));
     if (node.kind == Kind::Block) {
-      auto saved = lexical;
+      auto saved = introduced.size();
       for (auto &child : node.children)
         visit(*child);
-      lexical = std::move(saved);
+      restore(saved);
       return;
     }
     if (node.kind == Kind::Binding) {
       for (auto &child : node.children)
         visit(*child);
       if (node.patterns.empty())
-        lexical.insert(nameKey(node.text, node.context));
+        introduce(nameKey(node.text, node.context));
       else
         bind(node.patterns[0]);
       return;
@@ -42,16 +53,16 @@ void Checker::controlFlow(Function &function) {
     }
     if (node.kind == Kind::Closure) {
       auto saved = std::move(targets);
-      auto savedLexical = lexical;
+      auto savedLexical = introduced.size();
       for (const auto &parameter : node.parameters) {
-        lexical.insert(nameKey(parameter.name, parameter.context));
+        introduce(nameKey(parameter.name, parameter.context));
         if (parameter.pattern)
           bind(*parameter.pattern);
       }
       targets.clear();
       visit(*node.children[0]);
       targets = std::move(saved);
-      lexical = std::move(savedLexical);
+      restore(savedLexical);
       return;
     }
     bool loop = node.kind == Kind::Loop || node.kind == Kind::While ||
@@ -73,16 +84,16 @@ void Checker::controlFlow(Function &function) {
     }
     if ((node.kind == Kind::If || node.kind == Kind::While) &&
         node.children[0]->kind == Kind::ConditionChain) {
-      auto saved = lexical;
+      auto saved = introduced.size();
       visit(*node.children[0]);
       visit(*node.children[1]);
-      lexical = std::move(saved);
+      restore(saved);
       if (node.kind == Kind::If && node.children.size() > 2)
         visit(*node.children[2]);
     } else if (!node.patterns.empty() &&
                (node.kind == Kind::For || node.kind == Kind::If ||
                 node.kind == Kind::While || node.kind == Kind::Arm)) {
-      auto saved = lexical;
+      auto saved = introduced.size();
       std::size_t first = 0;
       if (node.kind != Kind::Arm) {
         visit(*node.children[0]);
@@ -92,7 +103,7 @@ void Checker::controlFlow(Function &function) {
       visit(*node.children[first]);
       if (node.kind == Kind::Arm && node.children.size() > 1)
         visit(*node.children[1]);
-      lexical = std::move(saved);
+      restore(saved);
       if (node.kind == Kind::If && node.children.size() > 2)
         visit(*node.children[2]);
     } else
@@ -104,12 +115,12 @@ void Checker::controlFlow(Function &function) {
   for (auto &parameter : function.parameters) {
     if (parameter.defaultValue.get())
       visit(*parameter.defaultValue);
-    lexical.insert(nameKey(parameter.name, parameter.context));
+    introduce(nameKey(parameter.name, parameter.context));
     if (parameter.pattern)
       bind(*parameter.pattern);
   }
   if (!function.variadicCursor.empty())
-    lexical.insert(nameKey(function.variadicCursor, function.variadicSpan));
+    introduce(nameKey(function.variadicCursor, function.variadicSpan));
   visit(*function.body);
 }
 

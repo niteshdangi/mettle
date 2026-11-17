@@ -223,7 +223,7 @@ void Checker::interfaceImplementations() {
         if (!syntax.negative)
           database.unpinImplementations.emplace(origin, implementation);
         checked.types->setProductLayout(origin, std::move(layout));
-        checked.types->refreshProductInstances();
+        checked.types->refreshProductInstances(std::array{origin});
       }
       popRegionParameters();
       continue;
@@ -495,7 +495,7 @@ void Checker::interfaceImplementations() {
           continue;
 
         auto *outer = genericEnvironment;
-        genericEnvironment = &functionGenerics.at(&provided);
+        genericEnvironment = &functionEnvironment(provided);
         interfaces::AssociatedValue value;
         value.value =
             annotation(provided.annotation, provided.span, provided.owner);
@@ -606,13 +606,13 @@ Checker::interfaceMethod(Type self, std::string_view name, Node &call) {
   if (checked.types->isErased(self))
     consider(self);
   else if (checked.types->isProjection(self)) {
+    auto assumptions = interfaceAssumptions();
     interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                              diagnostics, interfaceAssumptions(),
-                              regionEnvironment());
+                              diagnostics, assumptions, regionEnvironment());
     for (const auto &bound : solver.projectionBounds(self, call.span))
       if (bound.property == interfaces::Property::Interface)
         consider(bound.interfaceType);
-    for (const auto &bound : interfaceAssumptions())
+    for (const auto &bound : assumptions)
       if (bound.subject == self &&
           bound.property == interfaces::Property::Interface)
         consider(bound.interfaceType);
@@ -628,7 +628,8 @@ Checker::interfaceMethod(Type self, std::string_view name, Node &call) {
   } else {
     interfaces::Solver solver(*checked.types, *checked.interfaceData,
                               diagnostics, interfaceAssumptions());
-    for (const auto &implementation : checked.interfaceData->implementations) {
+    for (const auto &implementation :
+         std::as_const(*checked.interfaceData).implementations) {
       auto bindings = solver.applicable(implementation, self, call.span);
       if (!bindings)
         continue;
@@ -667,7 +668,8 @@ Checker::interfaceMethod(Type self, std::string_view name, Node &call) {
 }
 
 void Checker::checkAssociatedContracts() {
-  for (const auto &implementation : checked.interfaceData->implementations) {
+  for (const auto &implementation :
+       std::as_const(*checked.interfaceData).implementations) {
     if (imported(implementation.span))
       continue;
     if (!checked.types->isErased(implementation.interfaceType))
@@ -770,7 +772,8 @@ void Checker::checkAssociatedContracts() {
 
 void Checker::checkInterfaceContracts() {
   auto *saved = genericEnvironment;
-  for (const auto &implementation : checked.interfaceData->implementations) {
+  for (const auto &implementation :
+       std::as_const(*checked.interfaceData).implementations) {
     if (imported(implementation.span))
       continue;
     if (!checked.types->isErased(implementation.interfaceType))
@@ -784,13 +787,13 @@ void Checker::checkInterfaceContracts() {
       const auto &required = definition.methods[slot];
       const auto &declaration = module.functions[required.function];
       const auto &provided = module.functions[binding.function];
-      genericEnvironment = &functionGenerics.at(&provided);
+      genericEnvironment = &functionEnvironment(provided);
       const auto &regionScope = functionRegions(provided);
       interfaces::Solver solver(*checked.types, *checked.interfaceData,
                                 diagnostics, interfaceAssumptions(),
                                 regionScope.environment);
-      const auto &expected = checked.functions[required.function];
-      const auto &actual = checked.functions[binding.function];
+      const auto &expected = checked.function(required.function);
+      const auto &actual = checked.function(binding.function);
       std::vector<TypeBinding> substitutions;
       std::vector<TypeBinding> ownerBindings;
       for (std::size_t p = 0; p < implementation.parameters.size() &&
@@ -863,7 +866,7 @@ void Checker::checkInterfaceContracts() {
            ++p)
         publicBindings.push_back(
             {expected.genericParameters[p + 1], descriptor.arguments[p]});
-      genericEnvironment = &functionGenerics.at(&declaration);
+      genericEnvironment = &functionEnvironment(declaration);
       auto allowed = interfaceAssumptions();
       for (auto &obligation : allowed) {
         obligation.subject =
@@ -873,7 +876,7 @@ void Checker::checkInterfaceContracts() {
       }
       allowed.insert(allowed.end(), implementation.requirements.begin(),
                      implementation.requirements.end());
-      genericEnvironment = &functionGenerics.at(&provided);
+      genericEnvironment = &functionEnvironment(provided);
       annotationRegionScopes.push_back(regionScope);
       auto requirements = interfaceAssumptions();
       annotationRegionScopes.pop_back();
@@ -983,7 +986,9 @@ void Checker::finalizeInterfaces() {
   for (auto &definition : checked.interfaceData->definitions)
     for (auto &method : definition.methods) {
       const auto &function = module.functions[method.function];
-      const auto &facts = checked.functions[method.function];
+      if (imported(function.span))
+        continue;
+      const auto &facts = checked.function(method.function);
       method.signature.parameters.clear();
       for (std::size_t p = 0; p < function.parameters.size(); ++p)
         method.signature.parameters.push_back(

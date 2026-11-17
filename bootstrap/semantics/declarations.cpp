@@ -87,11 +87,11 @@ void Checker::declarations() {
   for (std::size_t i = 0; i < module.aliases.size(); ++i)
     if (imported(module.aliases[i].span))
       continue;
-    else if (aliasGenerics.at(&module.aliases[i]).parameters.empty())
+    else if (typeEnvironment(module.aliases[i]).parameters.empty())
       resolveAlias(i);
     else {
       auto saved = genericEnvironment;
-      genericEnvironment = &aliasGenerics.at(&module.aliases[i]);
+      genericEnvironment = &typeEnvironment(module.aliases[i]);
       annotation(module.aliases[i].target, module.aliases[i].span);
       genericEnvironment = saved;
     }

@@ -176,7 +176,10 @@ void opaqueAdapters(ir::Program &program, TypeStore &types,
       for (const auto &field : types.product(type).fields)
         visit(field.type);
   };
-  for (const auto &function : program.functions) {
+  for (std::size_t i = 0; i < program.functions.size(); ++i) {
+    if (i < program.libraryBodies.size() && program.libraryBodies[i])
+      continue;
+    const auto &function = program.functions[i];
     visit(function.result);
     for (const auto &local : function.locals)
       visit(local.type);
@@ -226,11 +229,20 @@ void opaqueAdapters(ir::Program &program, TypeStore &types,
       }
     }
   }
-  for (std::size_t f = 0; f < program.functions.size(); ++f)
-    for (auto &block : program.functions[f].blocks)
+  for (std::size_t f = 0; f < program.functions.size(); ++f) {
+    if (program.deferredFunctionIndex(f) && f < program.libraryBodies.size() &&
+        program.libraryBodies[f])
+      continue;
+    const auto &blocks = program.functions[f].blocks;
+    if (std::none_of(blocks.begin(), blocks.end(), [](const auto &block) {
+          return !block.instructions.empty();
+        }))
+      continue;
+    for (auto &block : program.functions.edit(f).blocks)
       for (auto &call : block.instructions)
         if (adapt(call) && f < program.libraryBodies.size())
           program.libraryBodies[f] = false;
+  }
   for (auto &adapter : adapters)
     program.functions.push_back(std::move(adapter));
 }
@@ -259,7 +271,10 @@ void erasedAdapters(ir::Program &program, TypeStore &types,
         visit(component);
     }
   };
-  for (const auto &function : program.functions) {
+  for (std::size_t i = 0; i < program.functions.size(); ++i) {
+    if (i < program.libraryBodies.size() && program.libraryBodies[i])
+      continue;
+    const auto &function = program.functions[i];
     visit(function.result);
     for (const auto &local : function.locals)
       visit(local.type);

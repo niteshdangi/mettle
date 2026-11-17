@@ -13,10 +13,9 @@ std::optional<int> Checker::genericUnitVariant(Node &n) {
   if (found == typeNames.end() || !checked.types->isSum(found->second))
     return std::nullopt;
   const Module::Product *declaration = nullptr;
-  for (const auto &product : module.products)
-    if (definitionName(product.span, product.name) == owner &&
-        !productGenerics.at(&product).parameters.empty())
-      declaration = &product;
+  for (const auto *product : productsNamed(owner))
+    if (!typeEnvironment(*product).parameters.empty())
+      declaration = product;
   if (!declaration)
     return std::nullopt;
   auto variantName = spelling.substr(delimiter + 2);
@@ -31,7 +30,7 @@ std::optional<int> Checker::genericUnitVariant(Node &n) {
   auto origin = found->second;
   if (checked.types->product(origin).genericOrigin != Type::Unknown)
     origin = checked.types->product(origin).genericOrigin;
-  auto &environment = productGenerics.at(declaration);
+  auto &environment = typeEnvironment(*declaration);
   const auto &explicitArguments = n.ownerGenericArguments.empty()
                                       ? n.genericArguments
                                       : n.ownerGenericArguments;
@@ -84,16 +83,17 @@ std::optional<int> Checker::genericUnitVariant(Node &n) {
   return result;
 }
 void Checker::completeGenericUnitVariant(Node &node, Type expected) {
-  const auto instance = checked.types->product(expected);
-  auto origin = instance.genericOrigin == Type::Unknown
-                    ? expected
-                    : instance.genericOrigin;
-  for (const auto &product : module.products) {
-    if (typeNames.at(definitionName(product.span, product.name)) != origin)
+  const auto genericOrigin = checked.types->product(expected).genericOrigin;
+  const auto instanceArguments =
+      checked.types->product(expected).genericArguments;
+  auto origin = genericOrigin == Type::Unknown ? expected : genericOrigin;
+  for (const auto *product :
+       productsNamed(checked.types->product(origin).name)) {
+    if (typeNames.at(definitionName(product->span, product->name)) != origin)
       continue;
-    auto &environment = productGenerics.at(&product);
+    auto &environment = typeEnvironment(*product);
     const auto arguments = facts(node).typeArguments;
-    if (instance.genericArguments.size() != environment.parameters.size() ||
+    if (instanceArguments.size() != environment.parameters.size() ||
         arguments.size() != environment.parameters.size()) {
       error("type", node.span, "generic variant argument count does not match");
       return;
@@ -101,20 +101,19 @@ void Checker::completeGenericUnitVariant(Node &node, Type expected) {
     std::vector<TypeBinding> bindings;
     for (std::size_t p = 0; p < arguments.size(); ++p) {
       if (arguments[p] != Type::Unknown &&
-          arguments[p] != instance.genericArguments[p]) {
+          arguments[p] != instanceArguments[p]) {
         error("type", node.span,
               "explicit generic variant argument does not match expected type");
         return;
       }
-      bindings.push_back(
-          {environment.parameters[p], instance.genericArguments[p]});
+      bindings.push_back({environment.parameters[p], instanceArguments[p]});
     }
     auto *caller = genericEnvironment;
     genericEnvironment = &environment;
     completeGenericBindings(environment, bindings, node.span);
     genericEnvironment = caller;
     genericObligations(environment, bindings, node.span);
-    facts(node).typeArguments = instance.genericArguments;
+    facts(node).typeArguments = instanceArguments;
     return;
   }
 }
@@ -138,18 +137,18 @@ std::optional<int> Checker::genericConstruction(Node &n, bool reachable,
   }
   const Module::Product *declaration = nullptr;
   for (const auto *product : productsNamed(owner))
-    if (!productGenerics.at(product).parameters.empty())
+    if (!typeEnvironment(*product).parameters.empty())
       declaration = product;
   GenericEnvironment *selected = nullptr;
   const std::vector<GenericParameter> *parameterSyntax = nullptr;
   Type patternType = Type::Unknown;
   if (declaration) {
-    selected = &productGenerics.at(declaration);
+    selected = &typeEnvironment(*declaration);
     parameterSyntax = &declaration->genericParameters;
     patternType = typeNames.at(owner);
   } else if (auto alias = aliases.find(owner); alias != aliases.end()) {
     const auto &syntax = module.aliases[alias->second];
-    auto &environment = aliasGenerics.at(&syntax);
+    auto &environment = typeEnvironment(syntax);
     if (environment.parameters.empty())
       return std::nullopt;
     auto saved = genericEnvironment;

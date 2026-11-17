@@ -116,7 +116,6 @@ int Checker::closure(Node &syntax, bool reachable) {
     irrefutable.emplace_back(&*parameter.pattern,
                              localVariables[current][p + 1]);
   }
-  staticLocals();
   flow(*syntax.children[0], current->owner);
   contextualize(*syntax.children[0], resultType);
   auto body = node(*syntax.children[0], true);
@@ -417,10 +416,17 @@ void Checker::finishClosures() {
                                            closure->captures[i].storedType);
     }
   }
+  std::vector<Type> defined;
+  for (const auto &product : module.products)
+    if (!imported(product.span))
+      defined.push_back(
+          typeNames.at(definitionName(product.span, product.name)));
   for (auto &closure : checked.closureBodies)
-    if (!closure->imported)
+    if (!closure->imported) {
       completeClosure(*closure, true);
-  checked.types->refreshProductInstances();
+      defined.push_back(closure->type);
+    }
+  checked.types->refreshProductInstances(defined);
   for (const auto &[syntax, node] : checked.nodes)
     if (node.callableCoercion != Type::Unknown &&
         !compatibleCallable(node.callableSource, node.callableCoercion))

@@ -405,9 +405,13 @@ struct ImportedSymbolRemap {
 };
 struct ImportedTypeIndex {
   std::span<const Type> key{}, coroutineInterior{};
+  std::span<const RegionId> callableRegionParameters{},
+      callableParameterRegions{};
+  std::span<const RegionRequirement> callableRegionRequirements{};
   Type genericOrigin = Type::Unknown, regionOrigin = Type::Unknown;
   Type payload = Type::Unknown, valueType = Type::Unknown;
   RegionId region = RegionId::Unspecified;
+  RegionUniverse regionUniverse = 0;
   ParameterMode mode = ParameterMode::Value;
   TypeParameterKind parameterKind = TypeParameterKind::Type;
   std::array<std::uint64_t, 2> magnitude{};
@@ -665,6 +669,9 @@ private:
   // Interning indices. Entries are indexed lazily by fields that are fixed
   // when an entry is created; every candidate is still checked against the
   // full identity predicate, so an index only narrows the search.
+  using CallableKey =
+      std::tuple<RegionUniverse, std::vector<RegionId>, std::vector<RegionId>,
+                 std::vector<RegionRequirement>, std::vector<Type>>;
   struct LookupData {
     std::map<Type, std::vector<std::uint32_t>> genericInstances;
     std::map<Type, std::vector<std::uint32_t>> regionInstances;
@@ -674,7 +681,7 @@ private:
     std::map<Type, std::uint32_t> slices;
     std::map<std::uint32_t, std::vector<std::uint32_t>> erased;
     std::map<std::vector<Type>, std::vector<std::uint32_t>> operands;
-    std::map<std::vector<Type>, std::vector<std::uint32_t>> callables;
+    std::map<CallableKey, std::vector<std::uint32_t>> callables;
     std::map<std::pair<Type, std::array<std::uint64_t, 2>>,
              std::vector<std::uint32_t>>
         constants;
@@ -685,7 +692,7 @@ private:
     LookupData local;
   } lookup;
   void syncLookup();
-  static std::vector<Type> callableKey(const CallableType &descriptor);
+  static CallableKey callableKey(const CallableType &descriptor);
   template <class Match>
   std::optional<Type> findIndexed(
       const std::array<const std::vector<std::uint32_t> *, 2> &candidates,

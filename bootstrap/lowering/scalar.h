@@ -9,6 +9,8 @@
 
 namespace mettle::lowering {
 struct ImportedBodies {
+  TypeRecords<ir::Function, true> headers;
+  std::vector<ir::FunctionIndex> headerIndex;
   std::map<std::size_t, ir::Function> functions;
   std::map<std::pair<std::size_t, std::size_t>, ir::Function> defaults;
   std::vector<ir::Function> support;
@@ -16,13 +18,15 @@ struct ImportedBodies {
   std::map<std::size_t, std::size_t> functionRecords;
   std::map<std::pair<std::size_t, std::size_t>, std::size_t> defaultRecords;
   std::vector<std::optional<std::size_t>> supportRecords;
+  std::vector<std::size_t> functionBodySizes;
   std::function<std::optional<ir::Function>(std::size_t, const ir::Function &,
                                             std::string &)>
       loadFunction;
 };
-// Moves the imported bodies into the program and marks them `libraryBodies`.
+// Imported headers remain immutable; concrete bodies are loaded on demand.
 ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
-                  ImportedBodies *imported = nullptr);
+                  std::shared_ptr<const ImportedBodies> imported = nullptr,
+                  const std::map<std::size_t, ir::Function> *queries = nullptr);
 void opaqueAdapters(ir::Program &program, TypeStore &types,
                     const interfaces::Database &database,
                     Diagnostics &diagnostics);

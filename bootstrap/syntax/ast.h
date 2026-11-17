@@ -1,5 +1,6 @@
 #pragma once
 
+#include "syntax/declarations.h"
 #include "syntax/token.h"
 #include <map>
 #include <memory>
@@ -14,6 +15,8 @@ class NodeOwner {
 public:
   NodeOwner();
   NodeOwner(std::unique_ptr<Node> value);
+  NodeOwner(const NodeOwner &other);
+  NodeOwner &operator=(const NodeOwner &other);
   NodeOwner(NodeOwner &&) noexcept;
   NodeOwner &operator=(NodeOwner &&) noexcept;
   ~NodeOwner();
@@ -239,6 +242,13 @@ struct Node {
 inline NodeOwner::NodeOwner() = default;
 inline NodeOwner::NodeOwner(std::unique_ptr<Node> node)
     : value(std::move(node)) {}
+inline NodeOwner::NodeOwner(const NodeOwner &other)
+    : value(other.get() ? std::make_unique<Node>(*other) : nullptr) {}
+inline NodeOwner &NodeOwner::operator=(const NodeOwner &other) {
+  if (this != &other)
+    *this = NodeOwner(other);
+  return *this;
+}
 inline NodeOwner::NodeOwner(NodeOwner &&other) noexcept
     : value(std::move(other.value)), owning(other.owning) {}
 inline NodeOwner &NodeOwner::operator=(NodeOwner &&other) noexcept {
@@ -343,7 +353,7 @@ struct Module {
   // Spans of text-literal expressions; the loader uses them to mount the
   // library that defines Text.
   std::vector<Span> textLiterals;
-  std::vector<Function> functions;
+  Declarations<Function> functions;
   struct Static {
     std::string name;
     TypeSyntax annotation;
@@ -355,7 +365,7 @@ struct Module {
     // `const` items share static storage; the flag selects value semantics.
     bool constant = false;
   };
-  std::vector<Static> statics;
+  Declarations<Static> statics;
   std::vector<NodeOwner> globalAssembly{};
   struct Associated {
     std::string name;
@@ -396,7 +406,7 @@ struct Module {
     std::vector<std::pair<std::string, Span>> deriveRequests{};
     SyntaxContextPtr nameContext{};
   };
-  std::vector<Product> products;
+  Declarations<Product> products;
   struct Alias {
     std::string name;
     TypeSyntax target;
@@ -405,7 +415,7 @@ struct Module {
     std::vector<GenericParameter> genericParameters{};
     std::vector<GenericConstraint> constraints{};
   };
-  std::vector<Alias> aliases;
+  Declarations<Alias> aliases;
   struct Interface {
     std::string name;
     Span span;
@@ -431,8 +441,8 @@ struct Module {
     bool negative = false;
     bool unsafeImplementation = false;
   };
-  std::vector<Interface> interfaces{};
-  std::vector<Implementation> implementations{};
+  Declarations<Interface> interfaces{};
+  Declarations<Implementation> implementations{};
   struct ModuleDeclaration {
     std::string name;
     Span span;

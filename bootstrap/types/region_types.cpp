@@ -76,62 +76,72 @@ Type TypeStore::declaredRegions(Type type) {
   return visit(type);
 }
 Type TypeStore::eraseRegions(Type type) {
-  if (isPointer(type)) {
-    auto descriptor = pointer(type);
-    return pointerType(eraseRegions(descriptor.payload), descriptor.mode);
-  }
-  if (isView(type)) {
-    auto descriptor = view(type);
-    return viewType(eraseRegions(descriptor.payload), descriptor.mode);
-  }
-  if (isSlice(type))
-    return sliceType(eraseRegions(slice(type).element));
-  if (isFunctionPointer(type)) {
-    auto descriptor = callable(type);
-    for (auto &parameter : descriptor.parameters)
-      parameter.type = eraseRegions(parameter.type);
-    descriptor.result = eraseRegions(descriptor.result);
-    descriptor.error = eraseRegions(descriptor.error);
-    descriptor.abiResult = eraseRegions(descriptor.abiResult);
-    descriptor.regionParameters.clear();
-    descriptor.parameterRegions.clear();
-    descriptor.regionRequirements.clear();
-    descriptor.regionUniverse = 0;
-    return callableType(std::move(descriptor));
-  }
-  if (isErased(type))
-    return erasedBound(type, RegionId::Unspecified);
-  if (!isProduct(type))
-    return type;
-  auto descriptor = product(type);
-  if (descriptor.normalizedFields) {
-    for (auto &field : descriptor.fields)
-      field.type = eraseRegions(field.type);
-    auto origin = eraseRegions(descriptor.regionOrigin);
-    return regionalProduct(origin, std::move(descriptor.fields), {}, true);
-  }
-  if (descriptor.regionOrigin != Type::Unknown)
-    return eraseRegions(descriptor.regionOrigin);
-  if (descriptor.kind == AggregateKind::Opaque)
-    return type;
-  if (descriptor.genericOrigin != Type::Unknown) {
-    for (auto &argument : descriptor.genericArguments)
-      argument = eraseRegions(argument);
-    return instantiateProduct(descriptor.genericOrigin,
-                              std::move(descriptor.genericArguments));
-  }
-  if (descriptor.kind == AggregateKind::Product ||
-      descriptor.kind == AggregateKind::Enumeration ||
-      descriptor.kind == AggregateKind::NativeVector ||
-      descriptor.kind == AggregateKind::Opaque)
-    return type;
-  for (auto &component : descriptor.components)
-    component = eraseRegions(component);
-  if (descriptor.kind == AggregateKind::Array &&
-      descriptor.arrayCount != Type::Unknown)
-    return arrayType(descriptor.components[0], descriptor.arrayCount);
-  return structural(descriptor.kind, std::move(descriptor.components),
-                    static_cast<std::uint32_t>(descriptor.fields.size()));
+  std::unordered_map<std::uint32_t, Type> known;
+  auto visit = [&](auto &&self, Type current) -> Type {
+    if (current.index() < builtinTypeCount)
+      return current;
+    if (auto found = known.find(current.index()); found != known.end())
+      return found->second;
+    auto result = current;
+    if (isPointer(current)) {
+      auto descriptor = pointer(current);
+      result = pointerType(self(self, descriptor.payload), descriptor.mode);
+    } else if (isView(current)) {
+      auto descriptor = view(current);
+      result = viewType(self(self, descriptor.payload), descriptor.mode);
+    } else if (isSlice(current))
+      result = sliceType(self(self, slice(current).element));
+    else if (isFunctionPointer(current)) {
+      auto descriptor = callable(current);
+      for (auto &parameter : descriptor.parameters)
+        parameter.type = self(self, parameter.type);
+      descriptor.result = self(self, descriptor.result);
+      descriptor.error = self(self, descriptor.error);
+      descriptor.abiResult = self(self, descriptor.abiResult);
+      descriptor.regionParameters.clear();
+      descriptor.parameterRegions.clear();
+      descriptor.regionRequirements.clear();
+      descriptor.regionUniverse = 0;
+      result = callableType(std::move(descriptor));
+    } else if (isErased(current))
+      result = erasedBound(current, RegionId::Unspecified);
+    else if (isProduct(current)) {
+      const auto &descriptor = product(current);
+      if (descriptor.normalizedFields) {
+        auto fields = descriptor.fields;
+        auto origin = descriptor.regionOrigin;
+        for (auto &field : fields)
+          field.type = self(self, field.type);
+        result =
+            regionalProduct(self(self, origin), std::move(fields), {}, true);
+      } else if (descriptor.regionOrigin != Type::Unknown)
+        result = self(self, descriptor.regionOrigin);
+      else if (descriptor.kind != AggregateKind::Opaque) {
+        if (descriptor.genericOrigin != Type::Unknown) {
+          auto origin = descriptor.genericOrigin;
+          auto arguments = descriptor.genericArguments;
+          for (auto &argument : arguments)
+            argument = self(self, argument);
+          result = instantiateProduct(origin, std::move(arguments));
+        } else if (descriptor.kind != AggregateKind::Product &&
+                   descriptor.kind != AggregateKind::Enumeration &&
+                   descriptor.kind != AggregateKind::NativeVector) {
+          auto components = descriptor.components;
+          auto kind = descriptor.kind;
+          auto count = descriptor.arrayCount;
+          auto fields = static_cast<std::uint32_t>(descriptor.fields.size());
+          for (auto &component : components)
+            component = self(self, component);
+          result = kind == AggregateKind::Array && count != Type::Unknown
+                       ? arrayType(components[0], count)
+                       : structural(kind, std::move(components), fields);
+        }
+      }
+    }
+    known.emplace(current.index(), result);
+    return result;
+  };
+  return visit(visit, type);
 }
 Type TypeStore::substituteRegions(Type type,
                                   std::span<const RegionBinding> bindings) {
@@ -294,7 +304,10 @@ Type TypeStore::substituteRegions(Type type,
             compatible = false;
         }
         // Views in arguments and associated bindings also name regions.
+        std::set<Type> visited;
         std::function<void(Type)> widen = [&](Type value) {
+          if (!visited.insert(value).second)
+            return;
           if (isView(value)) {
             auto nestedUniverse = regionStore.get(view(value).region).universe;
             if (regionStore.ancestor(universe, nestedUniverse))

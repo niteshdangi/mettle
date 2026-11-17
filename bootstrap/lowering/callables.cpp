@@ -22,18 +22,29 @@ void callableContracts(ir::Program &program) {
            (twoPhase ? ".two-phase" : "");
   };
   std::map<std::pair<std::string, std::vector<std::size_t>>, int> existing;
-  for (std::size_t f = 0; f < program.functions.size(); ++f)
+  for (std::size_t f = 0; f < program.functions.size(); ++f) {
+    if (auto index = program.deferredFunctionIndex(f);
+        index && !index->indirectContract)
+      continue;
     if (program.functions[f].indirectContract)
       existing.emplace(std::pair{program.functions[f].externalName,
                                  program.functions[f].callLocalParameters},
                        static_cast<int>(f));
+  }
   std::map<std::tuple<Type, bool, std::vector<std::size_t>>, int> contracts;
-  for (const auto &function : program.functions)
-    for (const auto &block : function.blocks)
+  std::vector<std::size_t> pending;
+  for (std::size_t f = 0; f < program.functions.size(); ++f) {
+    if (auto index = program.deferredFunctionIndex(f);
+        index && f < program.libraryBodies.size() && program.libraryBodies[f])
+      continue;
+    for (const auto &block : program.functions[f].blocks)
       for (const auto &instruction : block.instructions)
-        if (instruction.op == Op::IndirectCall && instruction.callee < 0)
+        if (instruction.op == Op::IndirectCall && instruction.callee < 0) {
           contracts.try_emplace(key(instruction), -1);
-  auto ordinary = program.functions.size();
+          if (pending.empty() || pending.back() != f)
+            pending.push_back(f);
+        }
+  }
   for (auto &[identity, index] : contracts) {
     const auto &[type, twoPhase, local] = identity;
     if (auto found = existing.find({externalName(type, twoPhase), local});
@@ -66,8 +77,8 @@ void callableContracts(ir::Program &program) {
     index = static_cast<int>(program.functions.size());
     program.functions.push_back(std::move(contract));
   }
-  for (std::size_t f = 0; f < ordinary; ++f)
-    for (auto &block : program.functions[f].blocks)
+  for (auto f : pending)
+    for (auto &block : program.functions.edit(f).blocks)
       for (auto &instruction : block.instructions)
         if (instruction.op == Op::IndirectCall && instruction.callee < 0) {
           instruction.callee = contracts.at(key(instruction));
@@ -84,11 +95,12 @@ int Builder::closureIndex(std::size_t index) const {
   for (const auto &function : module.syntax().functions)
     for (const auto &parameter : function.parameters)
       result += module.hasDefault(
-          static_cast<std::size_t>(&function -
-                                   module.syntax().functions.data()),
+          module.syntax().functions.indexOf(&function),
           static_cast<std::size_t>(&parameter - function.parameters.data()));
   if (imported)
-    result += imported->support.size() - imported->closureFunctions.size();
+    result += (imported->headers.empty() ? imported->support.size()
+                                         : imported->supportRecords.size()) -
+              imported->closureFunctions.size();
   return static_cast<int>(result + index);
 }
 std::vector<Type> Builder::closureArguments(Type type) const {

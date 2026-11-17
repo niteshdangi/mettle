@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <iterator>
 #include <map>
+#include <optional>
+#include <set>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -83,7 +85,7 @@ void check(const ir::Function &function, const ir::Program &program,
     external.insert(id);
   }
   for (const auto &block : info.points)
-    for (const auto &point : block)
+    for (const auto &[instruction, point] : block)
       for (auto id : point.defines)
         external.erase(id);
   std::vector<std::set<int>> liveValues(count);
@@ -95,7 +97,7 @@ void check(const ir::Function &function, const ir::Program &program,
         continue;
       std::set<int> live;
       auto use = [&](ir::Value value) {
-        if (value.id >= 0 && !info.values[value.id].empty())
+        if (value.id >= 0 && !info.value(value.id).empty())
           live.insert(value.id);
       };
       for (auto next : successors[b]) {
@@ -132,14 +134,14 @@ void check(const ir::Function &function, const ir::Program &program,
     held = external;
     join(held, info.storedIn[b]);
     for (auto value : liveValues[b])
-      for (const auto &[path, sources] : info.values[value]) {
+      for (const auto &[path, sources] : info.value(value)) {
         (void)path;
         join(held, sources);
       }
     for (const auto &instruction : function.blocks[b].instructions)
       if (instruction.op == ir::Op::Phi)
         for (auto operand : instruction.operands)
-          for (const auto &[path, sources] : info.values[operand.id]) {
+          for (const auto &[path, sources] : info.value(operand.id)) {
             (void)path;
             join(held, sources);
           }
@@ -160,17 +162,17 @@ void check(const ir::Function &function, const ir::Program &program,
       availableIn[b] = available;
       activeIn[b] = active;
       pendingIn[b] = pending;
-      for (std::size_t i = 0; i < info.points[b].size(); ++i) {
-        join(available, info.points[b][i].defines);
+      for (std::size_t i = 0; i < function.blocks[b].instructions.size(); ++i) {
+        join(available, info.point(b, i).defines);
         const auto &instruction = function.blocks[b].instructions[i];
         if (instruction.op == ir::Op::ReserveMut)
-          for (auto id : info.points[b][i].defines) {
+          for (auto id : info.point(b, i).defines) {
             active.erase(id);
             pending.insert(id);
           }
         if (instruction.op == ir::Op::Activate)
           for (auto operand : instruction.operands)
-            for (const auto &[path, sources] : info.values[operand.id]) {
+            for (const auto &[path, sources] : info.value(operand.id)) {
               (void)path;
               join(active, sources);
               for (auto id : sources)
@@ -192,35 +194,41 @@ void check(const ir::Function &function, const ir::Program &program,
                           std::inserter(available, available.end()));
     availableIn[b] = std::move(available);
     availableOut[b] = availableIn[b];
-    for (const auto &point : info.points[b])
+    for (const auto &[instruction, point] : info.points[b])
       join(availableOut[b], point.defines);
   }
-  std::vector<std::vector<Origins>> activeBefore(count);
-  std::vector<std::vector<Origins>> pendingBefore(count);
+  struct ActivationState {
+    std::size_t instruction;
+    Origins active, pending;
+  };
+  std::vector<std::vector<ActivationState>> activations(count);
   for (std::size_t b = 0; b < count; ++b) {
     auto active = activeIn[b], pending = pendingIn[b];
-    for (std::size_t i = 0; i < info.points[b].size(); ++i) {
-      activeBefore[b].push_back(active);
-      pendingBefore[b].push_back(pending);
+    for (std::size_t i = 0; i < function.blocks[b].instructions.size(); ++i) {
       const auto &instruction = function.blocks[b].instructions[i];
+      if (instruction.op != ir::Op::ReserveMut &&
+          instruction.op != ir::Op::Activate)
+        continue;
       if (instruction.op == ir::Op::ReserveMut)
-        for (auto id : info.points[b][i].defines) {
+        for (auto id : info.point(b, i).defines) {
           active.erase(id);
           pending.insert(id);
         }
       if (instruction.op == ir::Op::Activate)
         for (auto operand : instruction.operands)
-          for (const auto &[path, sources] : info.values[operand.id]) {
+          for (const auto &[path, sources] : info.value(operand.id)) {
             (void)path;
             join(active, sources);
             for (auto id : sources)
               pending.erase(id);
           }
+      if (i + 1 < function.blocks[b].instructions.size())
+        activations[b].push_back({i + 1, active, pending});
     }
   }
   std::vector<std::map<int, std::size_t>> definitionCounts(count);
   for (std::size_t b = 0; b < count; ++b)
-    for (const auto &point : info.points[b])
+    for (const auto &[instruction, point] : info.points[b])
       for (auto id : point.defines)
         ++definitionCounts[b][id];
   // Rebuild point availability backward from the fixed-point block output,
@@ -228,7 +236,7 @@ void check(const ir::Function &function, const ir::Program &program,
   auto rewindAvailability = [&](Origins &available,
                                 std::map<int, std::size_t> &remaining,
                                 std::size_t b, std::size_t i) {
-    for (auto id : info.points[b][i].defines) {
+    for (auto id : info.point(b, i).defines) {
       auto found = remaining.find(id);
       if (found != remaining.end() && --found->second == 0 &&
           !availableIn[b].contains(id))
@@ -253,9 +261,9 @@ void check(const ir::Function &function, const ir::Program &program,
   auto before = [&](Origins live, const Origins &available, std::size_t b,
                     std::size_t i, bool includeParents) {
     retainAvailable(live, available);
-    for (auto id : info.points[b][i].defines)
+    for (auto id : info.point(b, i).defines)
       live.erase(id);
-    join(live, info.points[b][i].uses);
+    join(live, info.point(b, i).uses);
     return includeParents ? ancestors(live, info.loans) : live;
   };
   std::vector<Origins> inputs(count), outputs(count), directInputs(count),
@@ -274,7 +282,7 @@ void check(const ir::Function &function, const ir::Program &program,
       directOutputs[b] = direct;
       Origins available = availableOut[b];
       auto remaining = definitionCounts[b];
-      for (std::size_t i = info.points[b].size(); i-- > 0;) {
+      for (std::size_t i = function.blocks[b].instructions.size(); i-- > 0;) {
         live = before(std::move(live), available, b, i, true);
         direct = before(std::move(direct), available, b, i, false);
         rewindAvailability(available, remaining, b, i);
@@ -316,19 +324,28 @@ void check(const ir::Function &function, const ir::Program &program,
     auto live = outputs[b], direct = directOutputs[b];
     Origins available = availableOut[b];
     auto remaining = definitionCounts[b];
-    for (std::size_t i = info.points[b].size(); i-- > 0;) {
+    auto activationState = activations[b].size();
+    for (std::size_t i = function.blocks[b].instructions.size(); i-- > 0;) {
+      while (activationState &&
+             activations[b][activationState - 1].instruction > i)
+        --activationState;
+      const auto &active = activationState
+                               ? activations[b][activationState - 1].active
+                               : activeIn[b];
+      const auto &pending = activationState
+                                ? activations[b][activationState - 1].pending
+                                : pendingIn[b];
       const auto &instruction = function.blocks[b].instructions[i];
-      const auto &point = info.points[b][i];
+      const auto &point = info.point(b, i);
       if (instruction.op == ir::Op::Call ||
           instruction.op == ir::Op::IndirectCall ||
           instruction.op == ir::Op::CatchCall)
         for (auto operand : instruction.operands)
-          for (const auto &[path, sources] : info.values[operand.id]) {
+          for (const auto &[path, sources] : info.value(operand.id)) {
             (void)path;
             for (auto id : sources)
               if (info.loans.at(id).reserved &&
-                  (pendingBefore[b][i].contains(id) ||
-                   !activeBefore[b][i].contains(id)))
+                  (pending.contains(id) || !active.contains(id)))
                 diagnostics.error("internal", instruction.span,
                                   "receiver reservation was not activated on "
                                   "every incoming path");
@@ -391,12 +408,12 @@ void check(const ir::Function &function, const ir::Program &program,
       Origins activating;
       if (activation) {
         for (auto operand : instruction.operands)
-          for (const auto &[path, sources] : info.values[operand.id]) {
+          for (const auto &[path, sources] : info.value(operand.id)) {
             (void)path;
             join(activating, sources);
           }
         for (auto id : activating) {
-          if (!info.loans.at(id).reserved || activeBefore[b][i].contains(id)) {
+          if (!info.loans.at(id).reserved || active.contains(id)) {
             diagnostics.error("internal", instruction.span,
                               "invalid receiver reservation activation");
             continue;
@@ -445,35 +462,42 @@ void check(const ir::Function &function, const ir::Program &program,
             (program.types->product(*type).kind == AggregateKind::Cell ||
              program.types->product(*type).kind == AggregateKind::RefCell);
       }
+      std::vector<Origins> accessAuthorities;
+      if (!current.empty() && (read || write)) {
+        accessAuthorities.reserve(targets.size());
+        for (const auto &access : targets)
+          accessAuthorities.push_back(ancestors(access.authority, info.loans));
+      }
       for (auto id : current) {
         bool priorConflict = conflict;
         const auto &loan = info.loans.at(id);
         bool introduced = point.defines.contains(id) || activating.contains(id);
         bool exclusive = loan.mode == ParameterMode::Mut &&
-                         (!loan.reserved || activeBefore[b][i].contains(id));
-        if ((read || write) && !introduced)
+                         (!loan.reserved || active.contains(id));
+        if ((read || write) && !introduced) {
+          std::size_t accessIndex = 0;
           for (const auto &access : targets) {
-            auto authority = ancestors(access.authority, info.loans);
+            const auto &authority = accessAuthorities[accessIndex++];
             if (authority.contains(id) ||
                 disjointLoans(authority, id, info.loans))
               continue;
-            auto referents = loan.targets;
-            referents.insert(loan.frozen.begin(), loan.frozen.end());
-            for (const auto &referent : referents)
-              if (overlapping(access.place, referent.place) &&
-                  (write || exclusive ||
-                   (reservation && loan.mode == ParameterMode::Mut))) {
-                // A shared cell handle freezes its lifetime, not its payload.
-                // Only a checked guard can authorize the interior write.
-                bool interior = loan.interiorRoot &&
-                                dynamicPayload(access.authority) &&
-                                containsPlace(referent.place, access.place);
-                interior |= interiorRead && dynamicPayload({id}) &&
-                            containsPlace(access.place, referent.place);
-                if (!interior)
-                  conflict = true;
-              }
+            for (const auto *referents : {&loan.targets, &loan.frozen})
+              for (const auto &referent : *referents)
+                if (overlapping(access.place, referent.place) &&
+                    (write || exclusive ||
+                     (reservation && loan.mode == ParameterMode::Mut))) {
+                  // A shared cell handle freezes its lifetime, not its payload.
+                  // Only a checked guard can authorize the interior write.
+                  bool interior = loan.interiorRoot &&
+                                  dynamicPayload(access.authority) &&
+                                  containsPlace(referent.place, access.place);
+                  interior |= interiorRead && dynamicPayload({id}) &&
+                              containsPlace(access.place, referent.place);
+                  if (!interior)
+                    conflict = true;
+                }
           }
+        }
         for (const auto &dead : point.dead)
           for (const auto &referent : loan.targets)
             if (overlapping(dead, referent.place) && !shadowed(id))
@@ -520,12 +544,75 @@ void check(const ir::Function &function, const ir::Program &program,
     }
   }
 }
+const ir::Function &withStaticOrigins(const ir::Function &source,
+                                      const ir::Program &program,
+                                      const EffectSummaries &summaries,
+                                      std::optional<ir::Function> &expanded) {
+  std::set<int> roots;
+  std::vector<int> pending;
+  const auto &initial = expanded ? *expanded : source;
+  for (const auto &local : initial.locals)
+    if (local.storage == StorageDuration::Static &&
+        roots.insert(local.staticIndex).second)
+      pending.push_back(local.staticIndex);
+
+  auto include = [&](int identity) {
+    if (!roots.insert(identity).second)
+      return;
+    const auto &storage =
+        program.statics.at(static_cast<std::size_t>(identity));
+    if (!expanded)
+      expanded.emplace(source);
+    if (expanded->locals.size() >= limits::locals)
+      throw std::length_error("static storage root limit exceeded");
+    expanded->locals.push_back(
+        {storage.name, storage.type, storage.mutableBinding, storage.span,
+         ParameterMode::Value, 0, 0, StorageDuration::Static, identity});
+    pending.push_back(identity);
+  };
+  for (const auto &block : source.blocks)
+    for (const auto &instruction : block.instructions)
+      if (instruction.op == ir::Op::Call ||
+          instruction.op == ir::Op::IndirectCall ||
+          instruction.op == ir::Op::CatchCall)
+        for (const auto &[path, places] :
+             summaries[instruction.callee].staticReturns) {
+          (void)path;
+          for (const auto &place : places)
+            include(place.root);
+        }
+
+  auto includeConstant = [&](auto &&self,
+                             const StaticConstant &constant) -> void {
+    if (!program.types->containsViews(constant.type, true))
+      return;
+    if (constant.kind == StaticConstant::Kind::Address &&
+        program.types->isView(constant.type))
+      include(constant.symbol);
+    if (constant.kind == StaticConstant::Kind::Aggregate ||
+        constant.kind == StaticConstant::Kind::Repeat)
+      for (const auto &field : constant.fields)
+        self(self, field);
+  };
+  for (std::size_t i = 0; i < pending.size(); ++i)
+    if (const auto &storage =
+            program.statics.at(static_cast<std::size_t>(pending[i]));
+        storage.initializer)
+      includeConstant(includeConstant, *storage.initializer);
+  return expanded ? *expanded : source;
+}
+
 // Post-order position of every function in the call graph, callees first.
 std::vector<std::size_t> calleeFirstRank(const ir::Program &program) {
   const auto count = program.functions.size();
   std::vector<std::size_t> rank(count, 0);
   std::vector<bool> seen(count, false);
   std::size_t next = 0;
+  for (std::size_t f = 0; f < count; ++f)
+    if (program.deferredFunctionIndex(f)) {
+      seen[f] = true;
+      rank[f] = next++;
+    }
   for (std::size_t root = 0; root < count; ++root) {
     if (seen[root])
       continue;
@@ -568,12 +655,17 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
                   const std::vector<bool> *trusted) {
   LoanResults result;
   try {
+    auto isTrusted = [&](std::size_t f) {
+      return trusted && f < trusted->size() && (*trusted)[f];
+    };
     EffectSummaries summaries(program.functions.size());
     std::vector<std::set<std::size_t>> dependents(program.functions.size());
     std::vector<bool> reusable(program.functions.size(), false);
     if (prepared && previous &&
         previous->effects.size() == prepared->functions.size()) {
       for (std::size_t f = 0; f < program.functions.size(); ++f) {
+        if (isTrusted(f) && program.deferredFunctionIndex(f))
+          continue;
         const auto &function = program.functions[f];
         reusable[f] = f < prepared->functions.size() &&
                       f < previous->analyzed.size() && previous->analyzed[f] &&
@@ -611,23 +703,22 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
     // visit instead of re-running every caller after each callee changes.
     const auto rank = calleeFirstRank(program);
     std::set<std::pair<std::size_t, std::size_t>> pending;
-    auto isTrusted = [&](std::size_t f) {
-      return trusted && f < trusted->size() && (*trusted)[f];
-    };
     std::vector<bool> scheduled(program.functions.size(), false);
     for (std::size_t f = 0; f < program.functions.size(); ++f)
       if (!reusable[f] && !isTrusted(f)) {
         pending.emplace(rank[f], f);
         scheduled[f] = true;
       }
-    std::vector<OriginInfo> final(program.functions.size());
+    std::vector<std::optional<ir::Function>> expanded(program.functions.size());
     std::size_t steps = 0;
     while (!pending.empty()) {
       auto f = pending.begin()->second;
       pending.erase(pending.begin());
       std::set<std::size_t> reads;
       summaries.record(&reads);
-      auto info = origins(program.functions[f], program, summaries);
+      auto &function = withStaticOrigins(program.functions[f], program,
+                                         summaries, expanded[f]);
+      auto info = origins(function, program, summaries);
       summaries.record(nullptr);
       for (auto callee : reads) {
         dependents[callee].insert(f);
@@ -637,20 +728,21 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
         }
       }
       const bool stable = info.effects == summaries.slot(f);
-      // The last run of a function saw its final callee summaries, so it is
-      // the analysis the ownership check needs.
-      final[f] = std::move(info);
       if (!stable) {
         if (++steps > limits::activeLoans)
           throw std::length_error("view effect analysis limit exceeded");
-        summaries.slot(f) = final[f].effects;
+        summaries.slot(f) = std::move(info.effects);
         for (auto dependent : dependents[f])
           pending.emplace(rank[dependent], dependent);
       }
     }
     for (std::size_t f = 0; f < program.functions.size(); ++f)
-      if (!reusable[f] && !isTrusted(f))
-        check(program.functions[f], program, final[f], diagnostics);
+      if (!reusable[f] && !isTrusted(f)) {
+        const auto &function =
+            expanded[f] ? *expanded[f] : program.functions[f];
+        auto info = origins(function, program, summaries);
+        check(function, program, info, diagnostics);
+      }
     if (diagnostics.empty()) {
       result.analyzed.assign(program.functions.size(), true);
       for (std::size_t f = 0; f < program.functions.size(); ++f)

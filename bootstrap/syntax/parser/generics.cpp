@@ -86,7 +86,23 @@ bool Parser::genericApplication(std::vector<GenericArgument> &arguments) {
   const auto savedParens = parens, savedNesting = nesting,
              savedLevel = genericExpressionLevel;
   const auto savedFailure = failedAt;
-  const auto savedRejected = rejectedNames;
+  struct RestoreRejectedNames {
+    Parser &parser;
+    std::size_t mark;
+    bool previous;
+    bool committed = false;
+    ~RestoreRejectedNames() {
+      if (!committed)
+        while (parser.rejectedNameEdits.size() > mark) {
+          parser.rejectedNames.erase(parser.rejectedNameEdits.back());
+          parser.rejectedNameEdits.pop_back();
+        }
+      if (!previous)
+        parser.rejectedNameEdits.clear();
+      parser.recordRejectedNames = previous;
+    }
+  } rejected{*this, rejectedNameEdits.size(), recordRejectedNames};
+  recordRejectedNames = true;
   const auto savedText = textSpans.size();
   const auto savedEdits = tokenEdits.size();
   const auto savedSpeculating = speculating;
@@ -103,6 +119,7 @@ bool Parser::genericApplication(std::vector<GenericArgument> &arguments) {
   }
   speculating = savedSpeculating;
   if (applied) {
+    rejected.committed = true;
     if (!speculating)
       tokenEdits.clear();
     return true;
@@ -112,7 +129,6 @@ bool Parser::genericApplication(std::vector<GenericArgument> &arguments) {
   nesting = savedNesting;
   genericExpressionLevel = savedLevel;
   failedAt = savedFailure;
-  rejectedNames = savedRejected;
   textSpans.resize(savedText);
   inAsyncBody = savedAsync;
   pendingAsync = savedPending;
@@ -178,12 +194,13 @@ Parser::genericParameters(std::vector<std::string> *regions) {
   --parens;
   return result;
 }
-std::vector<GenericArgument> Parser::genericArguments() {
+std::vector<GenericArgument> Parser::genericArguments(unsigned *depth) {
   if (!genericOpen())
     fail("expected '<'");
   ++position;
   ++parens;
   std::vector<GenericArgument> result;
+  unsigned maximumDepth = 0;
   do {
     if (is(">") || is(">>"))
       break;
@@ -211,13 +228,17 @@ std::vector<GenericArgument> Parser::genericArguments() {
                  is("true") || is("false") || is("{")))) {
       argument.value = genericValue();
     } else {
-      argument.type = std::make_shared<const TypeSyntax>(type(false));
+      unsigned argumentDepth;
+      argument.type =
+          std::make_shared<const TypeSyntax>(type(false, &argumentDepth));
       if (!explicitType && !is(">>") && !is(">>=") &&
           binaryPrecedence(peek().text) >= 6) {
         position = payload;
         argument.type.reset();
         argument.value = genericValue();
       }
+      if (argument.type)
+        maximumDepth = std::max(maximumDepth, argumentDepth);
     }
     argument.span.end = tokens[position - 1].span.end;
     result.push_back(std::move(argument));
@@ -227,6 +248,8 @@ std::vector<GenericArgument> Parser::genericArguments() {
   if (!genericClose())
     fail("expected '>' after generic arguments");
   --parens;
+  if (depth)
+    *depth = maximumDepth;
   return result;
 }
 std::vector<GenericConstraint> Parser::genericConstraints() {

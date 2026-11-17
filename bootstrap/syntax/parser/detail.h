@@ -10,8 +10,9 @@ struct ParseFailure {};
 
 class Parser {
 public:
-  Parser(const std::vector<Token> &raw, Diagnostics &diagnostics)
-      : diagnostics(diagnostics) {
+  Parser(const std::vector<Token> &raw, Diagnostics &diagnostics,
+         ParseDepth *parseDepth = nullptr)
+      : diagnostics(diagnostics), parseDepth(parseDepth) {
     for (const auto &token : raw) {
       if (token.kind == TokenKind::Space)
         continue;
@@ -43,12 +44,15 @@ public:
 private:
   std::vector<Token> tokens;
   Diagnostics &diagnostics;
+  ParseDepth *parseDepth;
   std::size_t position = 0;
   unsigned parens = 0, nesting = 0;
   // Paren depth of the enclosing `for` head, whose body block ends a range.
   std::optional<unsigned> loopHeadParens{};
   // Reserved words already rejected as names, so later uses stay silent.
   std::set<std::string> rejectedNames;
+  std::vector<std::set<std::string>::iterator> rejectedNameEdits;
+  bool recordRejectedNames = false;
   std::optional<std::size_t> failedAt;
   std::vector<Span> textSpans;
   unsigned genericExpressionLevel = 0;
@@ -79,8 +83,15 @@ private:
     explicit StateGuard(Parser &parser)
         : parser(parser), parens(parser.parens), nesting(parser.nesting),
           genericExpressionLevel(parser.genericExpressionLevel),
-          loopHeadParens(parser.loopHeadParens) {}
+          loopHeadParens(parser.loopHeadParens) {
+      if (parser.parseDepth)
+        parser.parseDepth->nesting =
+            std::max(parser.parseDepth->nesting, parser.nesting + 1);
+    }
     ~StateGuard() {
+      if (parser.parseDepth)
+        parser.parseDepth->nesting =
+            std::max(parser.parseDepth->nesting, parser.nesting);
       parser.parens = parens;
       parser.loopHeadParens = loopHeadParens;
       parser.nesting = nesting;
@@ -182,8 +193,11 @@ private:
     if ((result.kind != TokenKind::Word &&
          result.kind != TokenKind::QuotedWord) ||
         (result.kind != TokenKind::QuotedWord && isReservedWord(result.text))) {
-      if (result.kind == TokenKind::Word)
-        rejectedNames.insert(result.text);
+      if (result.kind == TokenKind::Word) {
+        auto [found, inserted] = rejectedNames.insert(result.text);
+        if (inserted && recordRejectedNames)
+          rejectedNameEdits.push_back(found);
+      }
       fail("expected an identifier");
     }
     ++position;
@@ -191,9 +205,9 @@ private:
       result.text = result.text.substr(1, result.text.size() - 2);
     return result;
   }
-  TypeSyntax type(bool effect = true);
-  TypeSyntax boundType();
-  TypeSyntax callableType();
+  TypeSyntax type(bool effect = true, unsigned *depth = nullptr);
+  TypeSyntax boundType(unsigned *depth = nullptr);
+  TypeSyntax callableType(unsigned *depth = nullptr);
   std::unique_ptr<Node> closure();
   std::unique_ptr<Node> interfaceMember(std::unique_ptr<Node> subject);
   bool sliceInterfaceMember() const;
@@ -205,7 +219,7 @@ private:
   }
   std::vector<GenericParameter>
   genericParameters(std::vector<std::string> *regions = nullptr);
-  std::vector<GenericArgument> genericArguments();
+  std::vector<GenericArgument> genericArguments(unsigned *depth = nullptr);
   std::vector<GenericConstraint> genericConstraints();
   bool genericApplication(std::vector<GenericArgument> &arguments);
   bool followsGenericApplication();
@@ -226,6 +240,8 @@ private:
       value.depth = std::max(value.depth, child->depth + 1);
       value.span.end = std::max(value.span.end, child->span.end);
     }
+    if (parseDepth)
+      parseDepth->syntax = std::max(parseDepth->syntax, value.depth);
     if (value.depth > limits::syntaxDepth)
       fail("syntax nesting limit exceeded", "limit");
   }

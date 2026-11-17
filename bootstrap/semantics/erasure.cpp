@@ -84,7 +84,7 @@ void Checker::finalizeErasure() {
         owners.push_back(bound);
         slots.push_back(slot);
         const auto &source = module.functions[method.function];
-        const auto &function = checked.functions[method.function];
+        const auto &function = checked.function(method.function);
         // An async method's future type differs per implementation; erased
         // calls go through its `async(heap)` companion instead.
         if (source.asynchronous) {

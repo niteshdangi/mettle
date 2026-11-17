@@ -255,7 +255,9 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
     llvm::FunctionAnalysisManager functions;
     llvm::CGSCCAnalysisManager calls;
     llvm::ModuleAnalysisManager modules;
-    llvm::PassBuilder builder(machine.get());
+    llvm::PipelineTuningOptions tuning;
+    tuning.SLPVectorization = true;
+    llvm::PassBuilder builder(machine.get(), tuning);
     builder.registerLoopAnalyses(loops);
     builder.registerFunctionAnalyses(functions);
     builder.registerCGSCCAnalyses(calls);

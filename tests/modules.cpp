@@ -3,9 +3,13 @@
 #include "resolution/load.h"
 #include "resolution/resolve.h"
 #include "semantics/check.h"
+#include "semantics/interfaces.h"
+#include "semantics/library.h"
 #include "semantics/region_solver.h"
+#include "source/positions.h"
 #include "syntax/parser.h"
 #include <algorithm>
+#include <charconv>
 #include <iostream>
 #include <map>
 #include <sstream>
@@ -20,6 +24,15 @@ void require(bool condition, const char *message) {
 }
 
 void inMemorySources() {
+  mettle::Source positions{"positions.mt",
+                           "a\r\n\xc3\xa9\nz\r\xf0\x9f\x98\x80"};
+  mettle::SourcePositions indexed(positions.text);
+  for (std::size_t offset = 0; offset <= positions.text.size() + 1; ++offset) {
+    auto expected = mettle::sourcePosition(positions, offset);
+    auto actual = indexed.position(offset);
+    require(actual.line == expected.line && actual.column == expected.column,
+            "indexed source positions changed UTF-8 or newline semantics");
+  }
   std::vector<mettle::Source> sources{
       {"memory/root.mt", "module math;\nimport math.{answer as result};\n"
                          "fn main() { result() - 42 }\n"},
@@ -37,6 +50,322 @@ void inMemorySources() {
   require(
       mettle::pipeline::compile(sources, compilationDiagnostics).has_value(),
       "in-memory multi-source pipeline failed");
+}
+
+void demandLoadedFunctionContracts() {
+  using namespace mettle;
+  const std::string source =
+      "pub const fn answer(value: i32 = 7): i32 { value + 1 }\n"
+      "pub const fn unused(): i32 { 987654321 }\n";
+  Diagnostics diagnostics;
+  auto checked =
+      check(parse({"demand.mt", source}, diagnostics), diagnostics, false);
+  require(bool(checked), "demand-loaded contract fixture did not check");
+  auto types = std::const_pointer_cast<TypeStore>(checked->typeStore());
+  metadata::EncodeReferences encode;
+  encode.type = [](Type type) { return std::optional(type.index()); };
+  encode.source = [&](Span span) {
+    return std::optional(metadata::SourceReference{
+        span.begin == source.find("987654321") ? "missing" : "fixture",
+        static_cast<std::uint32_t>(span.begin),
+        static_cast<std::uint32_t>(span.end)});
+  };
+  encode.symbol = [](metadata::SymbolKind, std::uint32_t index) {
+    return std::optional(std::to_string(index));
+  };
+  auto exported = exportLibraryDeclarations(*checked, encode);
+  require(bool(exported), "demand-loaded contract fixture did not export");
+  checked.reset();
+  auto bytes = std::make_shared<const std::vector<std::uint8_t>>(
+      std::move(exported.contracts));
+  auto references = std::make_shared<metadata::DecodeReferences>();
+  references->type = [types](std::uint32_t index) -> std::optional<Type> {
+    if (index >= builtinTypeCount + types->storedTypeCount())
+      return std::nullopt;
+    return types->typeAt(index);
+  };
+  references->source =
+      [](const metadata::SourceReference &reference) -> std::optional<Span> {
+    if (reference.revision != "fixture")
+      return std::nullopt;
+    return Span{reference.begin, reference.end, 42};
+  };
+  references->symbol =
+      [](metadata::SymbolKind,
+         std::string_view name) -> std::optional<std::uint32_t> {
+    std::uint32_t index = 0;
+    auto parsed =
+        std::from_chars(name.data(), name.data() + name.size(), index);
+    if (parsed.ec != std::errc{} || parsed.ptr != name.data() + name.size())
+      return std::nullopt;
+    return index;
+  };
+  require(!importLibraryDeclarations(*bytes, types, *references),
+          "eager import accepted an unresolved expression source");
+  auto mounted = decodeLibraryHeader(exported.header, *references);
+  require(bool(mounted), "demand-loaded declaration header did not decode");
+  auto imported = importLibraryDeclarations(*bytes, types, *references,
+                                            &*mounted.module, bytes, references,
+                                            metadata::ValidationMode::OnDemand);
+  require(bool(imported), imported.error.c_str());
+  for (const auto &[index, function] : imported.declarations->functions) {
+    (void)index;
+    require(!function.isMaterialized(),
+            "mounting a declaration materialized its unused function contract");
+  }
+  auto resolved = resolution::resolve(*mounted.module, diagnostics);
+  auto consumer =
+      check(std::move(*mounted.module), diagnostics, std::move(resolved), false,
+            {}, nullptr, imported.declarations);
+  require(bool(consumer),
+          "demand-loaded declarations failed consumer semantic admission");
+  for (const auto &[index, function] : imported.declarations->functions) {
+    (void)index;
+    require(!function.isMaterialized(),
+            "semantic admission expanded an unused function contract");
+  }
+  references.reset();
+  bytes.reset();
+  const auto &answer = *imported.declarations->functions.at(0);
+  require(answer.resultType() == Type::I32 && answer.defaults.at(0),
+          "demand-loaded function lost its signature or default");
+  answer.defaults[0]->materialize();
+  answer.body->materialize();
+  require(answer.defaults[0]->syntax.get() && answer.body->syntax.get() &&
+              answer.contract().facts.result == Type::I32,
+          "demand-loaded expressions did not survive resolver destruction");
+  require(!imported.declarations->functions.at(1).isMaterialized(),
+          "using one function materialized an unrelated function contract");
+  bool rejected = false;
+  try {
+    imported.declarations->functions.at(1)->body->materialize();
+  } catch (const metadata::InvalidMetadata &) {
+    rejected = true;
+  }
+  require(rejected,
+          "demanded malformed function was published without validation");
+}
+
+void residentFunctionQueries() {
+  mettle::pipeline::FunctionQueries queries;
+  auto prepare = [&](const std::string &text, mettle::Diagnostics &diagnostics,
+                     mettle::pipeline::FunctionQueries *cache) {
+    auto tree = mettle::parse({"memory/query.mt", text}, diagnostics);
+    return mettle::pipeline::prepare(std::move(tree), diagnostics, true, {}, {},
+                                     {}, nullptr, {}, {}, cache);
+  };
+  auto query = [&](const std::string &text, std::size_t hits,
+                   bool valid = true) {
+    mettle::Diagnostics diagnostics, freshDiagnostics;
+    auto before = queries.hits();
+    auto result = prepare(text, diagnostics, &queries);
+    auto fresh = prepare(text, freshDiagnostics, nullptr);
+    if (bool(result) != valid || bool(fresh) != valid) {
+      diagnostics.print({"memory/query.mt", text}, std::cerr);
+      freshDiagnostics.print({"memory/query.mt", text}, std::cerr);
+      throw std::runtime_error(
+          "resident function query changed source acceptance:\n" + text);
+    }
+    require(queries.hits() - before == hits,
+            "resident function query invalidated the wrong dependents");
+    std::size_t specialized = 0;
+    if (valid) {
+      std::ostringstream reused, uncached;
+      mettle::ir::print(result->program(), reused);
+      mettle::ir::print(fresh->program(), uncached);
+      require(reused.str() == uncached.str(),
+              "resident function query changed prepared IR");
+      auto previousSpecializations = queries.specializationHits();
+      auto executable = mettle::pipeline::compile(*result, diagnostics);
+      auto freshExecutable =
+          mettle::pipeline::compile(*fresh, freshDiagnostics);
+      if (!executable || !freshExecutable) {
+        diagnostics.print({"memory/query.mt", text}, std::cerr);
+        freshDiagnostics.print({"memory/query.mt", text}, std::cerr);
+        throw std::runtime_error(
+            "resident function query failed executable admission");
+      }
+      reused.str({});
+      uncached.str({});
+      mettle::ir::print(executable->program(), reused);
+      mettle::ir::print(freshExecutable->program(), uncached);
+      require(reused.str() == uncached.str(),
+              "resident specialization changed concrete IR");
+      specialized = queries.specializationHits() - previousSpecializations;
+    } else {
+      require(!diagnostics.empty() && !freshDiagnostics.empty() &&
+                  diagnostics.items.front().phase ==
+                      freshDiagnostics.items.front().phase,
+              "resident function query lost the fresh diagnostic phase");
+    }
+    return specialized;
+  };
+  const std::string source = "fn leaf() { 1i32 }\n"
+                             "fn caller(): i32 { leaf() }\n"
+                             "fn independent(): i32 { 9 }\n"
+                             "fn main(): i32 { caller() + independent() }\n";
+  query(source, 0);
+  query(source, 4);
+  auto changed = source;
+  changed.replace(changed.find("1i32"), 4, "2i32");
+  query(changed, 2);
+  query(changed, 4);
+  changed.replace(changed.find("2i32"), 4, "true");
+  query(changed, 2, false);
+  query(source, 2);
+  query(source, 4);
+
+  const std::string fixed = "fn leaf(): i32 { 1 }\n"
+                            "fn caller(): i32 { leaf() }\n"
+                            "fn main(): i32 { caller() }\n";
+  query(fixed, 0);
+  changed = fixed;
+  changed.replace(changed.find("{ 1 }"), 5, "{ 2 }");
+  require(query(changed, 2) == 2,
+          "fixed call contracts invalidated callers or lost current binding");
+
+  const std::string unreachable =
+      "fn leaf() { 1i32 }\n"
+      "fn unused(): i32 { return 0; let value: i32 = leaf(); value }\n"
+      "fn main(): i32 { 0 }\n";
+  query(unreachable, 0);
+  changed = unreachable;
+  changed.replace(changed.find("1i32"), 4, "true");
+  query(changed, 1, false);
+
+  const std::string generic = "fn identity<T>(take value: T): T { value }\n"
+                              "fn main(): i32 { identity(7) }\n";
+  query(generic, 0);
+  require(query(generic, 2) > 0, "resident generic instances were not reused");
+  changed = generic;
+  changed.replace(changed.find("identity(7)"), 11, "identity(8)");
+  require(query(changed, 1) > 0,
+          "edited callers discarded unchanged generic specializations");
+
+  const std::string structural =
+      "fn identity<T>(take value: T): T { value }\n"
+      "fn noise(): i32 { let unused = ([0;2], 0); 0 }\n"
+      "fn main(): i32 { identity([7, 8])[0] }\n";
+  query(structural, 0);
+  changed = structural;
+  changed.replace(changed.find("([0;2], 0)"), 10, "(0, 0, 0 )");
+  changed.replace(changed.find("[7, 8]"), 6, "[8, 9]");
+  require(query(changed, 1) > 0,
+          "structural specialization was not remapped after type renumbering");
+  changed.replace(changed.find("[8, 9]"), 6, "[8; 3]");
+  require(query(changed, 2) == 1,
+          "changed array arguments must reuse only the independent function");
+
+  const std::string nominal =
+      "copy type Item { value: i32 }\n"
+      "type Box<T> { value: T }\n"
+      "fn identity<T>(take value: T): T { value }\n"
+      "fn noise(): i32 { let unused = ([0;2], 0); 0 }\n"
+      "fn main(): i32 { identity(Box(Item(7))).value.value }\n";
+  query(nominal, 0);
+  changed = nominal;
+  changed.replace(changed.find("([0;2], 0)"), 10, "(0, 0, 0 )");
+  changed.replace(changed.find("Item(7)"), 7, "Item(8)");
+  require(query(changed, 1) > 0,
+          "nominal specialization was not remapped after type renumbering");
+  changed.replace(changed.find("value: i32"), 10, "value: i64");
+  changed.replace(changed.find(".value.value }"), 14, ".value.value as i32 }");
+  query(changed, 0);
+
+  const std::string reordered = "fn first(): i32 { 1 }\n"
+                                "fn leaf(): i32 { 2 }\n"
+                                "fn independent(): i32 { leaf() }\n"
+                                "fn main(): i32 { first() + independent() }\n";
+  query(reordered, 0);
+  changed = reordered;
+  changed.replace(changed.find("first() + independent()"), 23,
+                  "independent() + first()");
+  require(query(changed, 3) > 0,
+          "reordered demand discarded unchanged specializations");
+
+  const std::string indirect =
+      "fn apply(callback: fn(i32): i32, value: i32): i32 { callback(value) }\n"
+      "fn increment(value: i32): i32 { value + 1 }\n"
+      "fn main(): i32 { apply(increment, 6) }\n";
+  query(indirect, 0);
+  query(indirect, 3);
+  changed = indirect;
+  changed.replace(changed.find("value + 1"), 9, "value + 2");
+  query(changed, 1);
+
+  const std::string initialized =
+      "fn leaf(): i32 { var value: i32; var other: i32; value = 1; value }\n"
+      "fn independent(): i32 { 9 }\n"
+      "fn main(): i32 { leaf() + independent() }\n";
+  query(initialized, 0);
+  changed = initialized;
+  changed.replace(changed.find("value = 1"), 9, "other = 1");
+  query(changed, 2, false);
+  query(initialized, 3);
+
+  const std::string interfaces = "interface Marker {}\n"
+                                 "extend i32 implements Marker {}\n"
+                                 "fn leaf(): i32 { 1 }\n"
+                                 "fn independent(): i32 { 7 }\n"
+                                 "fn main(): i32 { leaf() + independent() }\n";
+  query(interfaces, 0);
+  query(interfaces, 3);
+  changed = interfaces;
+  changed.replace(changed.find("{ 1 }"), 5, "{ 2 }");
+  query(changed, 2);
+
+  const std::string closures =
+      "fn noise(): i32 { let unused = (0, 0);            "
+      "let call = fn(): i32 { 3 }; call() }\n"
+      "fn independent(): i32 { 7 }\n"
+      "fn main(): i32 { noise() + independent() }\n";
+  query(closures, 0);
+  query(closures, 1);
+  changed = closures;
+  const std::string oldClosure = "let unused = (0, 0);            ";
+  std::string newClosure = "let unused = fn(): i32 { 0 };";
+  newClosure.resize(oldClosure.size(), ' ');
+  changed.replace(changed.find(oldClosure), oldClosure.size(), newClosure);
+  query(changed, 1);
+
+  const std::string statics =
+      "static VALUE: i32 = 7\n"
+      "fn cached_value(): i32 { VALUE }\n"
+      "fn independent(): i32 { 3 }\n"
+      "fn main(): i32 { cached_value() + independent() }\n";
+  query(statics, 0);
+  query(statics, 3);
+  changed = statics;
+  changed.replace(changed.find("= 7"), 3, "= 9");
+  query(changed, 0);
+  query(changed, 3);
+
+  query("type Guard<T> { value: T; drop {} }\n"
+        "fn accept(p: ptr<mut Guard<i32>>): i32 { 0 }\n"
+        "fn main(): i32 { 0 }\n",
+        0);
+
+  mettle::pipeline::FunctionQueries edited;
+  std::size_t retainedTypes = 0;
+  for (unsigned iteration = 0; iteration < 8; ++iteration) {
+    auto text = "fn independent(): i32 { 7 }\n"
+                "fn leaf(): i32 { let values = [0; " +
+                std::to_string(1000 + iteration) +
+                "]; values[0] }\n"
+                "fn main(): i32 { independent() + leaf() }\n";
+    mettle::Diagnostics diagnostics;
+    auto before = edited.hits();
+    auto result = prepare(text, diagnostics, &edited);
+    require(result.has_value(), "resident array edit failed preparation");
+    require(edited.hits() - before == (iteration ? 2u : 0u),
+            "array edits lost unchanged fixed-contract callers");
+    auto count = result->program().types->storedTypes().size();
+    if (iteration == 2)
+      retainedTypes = count;
+    else if (iteration > 2)
+      require(count <= retainedTypes,
+              "resident edits retained types from obsolete function bodies");
+  }
 }
 
 void ordinaryImportsDoNotLoadMacroModules() {
@@ -681,8 +1010,7 @@ void macroDefinitionSiteReplaysQualifiedRootSource() {
     diagnostics.print(root, std::cerr);
   require(tree && diagnostics.empty(),
           "qualified macro definition-site replay failed loading");
-  require(decoyReads == 0,
-          "qualified macro replay probed the main.mt decoy");
+  require(decoyReads == 0, "qualified macro replay probed the main.mt decoy");
   for (const auto *catalog : {&sourceModules, &allSources}) {
     auto source =
         std::find_if(catalog->begin(), catalog->end(), [](const auto &entry) {
@@ -1012,12 +1340,70 @@ void recursiveRegionCoercionKeepsTypeDescriptors() {
             "higher-ranked slice coercion accepted a static-only payload");
   }
 }
+
+void interfaceSolversRespectTypeStoresAndMutations() {
+  using namespace mettle;
+  TypeStore base;
+  auto self = base.declareParameter("Self", false);
+  auto parameter = base.declareParameter("T", false);
+  ErasedType descriptor;
+  descriptor.name = "Marker";
+  auto interface = base.erasedType(descriptor);
+
+  interfaces::Database database;
+  interfaces::Definition definition;
+  definition.name = "Marker";
+  definition.self = self;
+  database.definitions.push_back(std::move(definition));
+  interfaces::Implementation implementation;
+  implementation.target = parameter;
+  implementation.interfaceType = interface;
+  implementation.parameters.push_back(parameter);
+  implementation.requirements.push_back(
+      {parameter, Type::Unknown, interfaces::Property::Copy});
+  database.implementations.push_back(std::move(implementation));
+  database.argumentsReady = true;
+
+  TypeStore first = base;
+  TypeStore second = base;
+  auto copy = first.declareProduct("Copy", true);
+  auto noncopy = second.declareProduct("NonCopy", false);
+  require(copy == noncopy, "type-store cache fixture did not collide");
+  Diagnostics diagnostics;
+  interfaces::Solver firstSolver(first, database, diagnostics);
+  interfaces::Solver secondSolver(second, database, diagnostics);
+  require(firstSolver.prove({copy, interface}, {}, false),
+          "Copy-constrained implementation was not selected");
+  require(!secondSolver.prove({noncopy, interface}, {}, false),
+          "interface cache reused a result from a different type store");
+
+  database.implementations[0].requirements.clear();
+  interfaces::Solver updatedSolver(second, database, diagnostics);
+  require(updatedSolver.prove({noncopy, interface}, {}, false),
+          "interface solver reused a result after the implementation changed");
+
+  database.implementations[0].requirements.push_back(
+      {parameter, Type::Unknown, interfaces::Property::Copy});
+  TypeStore third = base;
+  auto changing = third.declareProduct("Changing", true);
+  auto member = third.declareProduct("Member", false);
+  third.setGenericParameters(changing, {member});
+  interfaces::Solver beforeMutation(third, database, diagnostics);
+  require(beforeMutation.prove({changing, interface}, {}, false),
+          "unconditional Copy implementation was not selected");
+  third.setConditionalCopy(changing, {0});
+  interfaces::Solver afterMutation(third, database, diagnostics);
+  require(!afterMutation.prove({changing, interface}, {}, false),
+          "interface solver reused a result after the type store changed");
+}
 } // namespace
 
 int main() {
   try {
+    demandLoadedFunctionContracts();
     unitLiteralKeepsSource();
     inMemorySources();
+    residentFunctionQueries();
     ordinaryImportsDoNotLoadMacroModules();
     localMacroDoesNotDiscoverOrdinaryImports();
     demandedMacroReexportSkipsValueImportCycle();
@@ -1039,6 +1425,7 @@ int main() {
     missingMacroDefinitionNamespaceCannotAccessPrivateField();
     macroRegionOccurrencesRetainBindingIdentity();
     recursiveRegionCoercionKeepsTypeDescriptors();
+    interfaceSolversRespectTypeStoresAndMutations();
     catalogLibrary();
     compiledClosuresReplaceHeadersAndRespectShadows();
   } catch (const std::exception &error) {

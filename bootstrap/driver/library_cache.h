@@ -18,6 +18,7 @@ struct LibraryCacheConfiguration {
 struct LibraryInputs {
   std::string key;
   std::map<std::string, Source> sources;
+  std::map<std::string, std::string> digests;
 };
 
 std::optional<LibraryInputs>

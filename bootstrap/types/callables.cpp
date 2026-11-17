@@ -28,11 +28,13 @@ bool sameSignature(const CallableType &a, const CallableType &b) {
   return true;
 }
 } // namespace
-std::vector<Type> TypeStore::callableKey(const CallableType &descriptor) {
+TypeStore::CallableKey TypeStore::callableKey(const CallableType &descriptor) {
   std::vector<Type> key{descriptor.result, descriptor.error};
   for (const auto &parameter : descriptor.parameters)
     key.push_back(parameter.type);
-  return key;
+  return {descriptor.regionUniverse, descriptor.regionParameters,
+          descriptor.parameterRegions, descriptor.regionRequirements,
+          std::move(key)};
 }
 Type TypeStore::callableType(CallableType descriptor) {
   syncLookup();

@@ -8,6 +8,7 @@
 #include <functional>
 #include <numeric>
 #include <set>
+#include <tuple>
 #include <unordered_set>
 
 namespace mettle::ir {
@@ -1305,155 +1306,261 @@ bool function(const Function &f, const Program &program,
 } // namespace
 bool verify(const Program &program, Diagnostics &diagnostics,
             const TypeNormalizer &normalize, const UnpinProof &unpinProof,
-            const std::vector<bool> *trusted) {
+            const std::vector<bool> *trusted,
+            TypeVerificationCache *typeCache) {
   if (!program.types) {
     diagnostics.error("internal", {}, "CFG has no owned type store");
     return false;
   }
+  if (program.availableExternally.size() > program.functions.size()) {
+    diagnostics.error("internal", {}, "invalid external optimization bodies");
+    return false;
+  }
+  if (program.genericInstances.size() > program.functions.size()) {
+    diagnostics.error("internal", {}, "invalid generic instance inventory");
+    return false;
+  }
+  for (std::size_t i = 0; i < program.genericInstances.size(); ++i)
+    if (program.genericInstances[i] &&
+        (i >= program.functionPackages.size() ||
+         !program.functionPackages[i].empty() ||
+         !program.functions[i].genericParameters.empty())) {
+      diagnostics.error("internal", program.functions[i].span,
+                        "invalid generic instance ownership");
+      return false;
+    }
+  for (std::size_t i = 0; i < program.availableExternally.size(); ++i)
+    if (program.availableExternally[i]) {
+      const auto &function = program.functions[i];
+      if (i >= program.functionPackages.size() ||
+          !program.functionPackages[i].starts_with("native:") ||
+          function.blocks.empty() || !function.abi.empty() ||
+          function.coroutine || function.nakedAssembly ||
+          function.inlineHint == InlineHint::Never ||
+          !function.externalName.empty()) {
+        diagnostics.error("internal", function.span,
+                          "invalid external optimization body");
+        return false;
+      }
+    }
   bool valid = true;
-  std::set<std::uint32_t> seen;
-  std::function<void(Type, std::set<std::uint32_t>)> type =
-      [&](Type current, std::set<std::uint32_t> owned) {
-        auto invalid = [&](std::string message) {
-          diagnostics.error("internal", {}, "invalid CFG type: " + message);
-          valid = false;
-        };
-        if (!program.types->contains(current) ||
-            program.types->isConstant(current)) {
-          invalid("unresolved type");
-          return;
+  const auto typeCount = builtinTypeCount + program.types->storedTypeCount();
+  std::vector<bool> seen(typeCount);
+  std::vector<unsigned char> layouts(typeCount);
+  auto previous = typeCache ? typeCache->state : nullptr;
+  auto targetIdentity = [](const TargetFacts &value) {
+    return std::tie(value.arch, value.system, value.pointerBits,
+                    value.littleEndian, value.triple, value.baseline);
+  };
+  if (previous &&
+      (targetIdentity(previous->target) != targetIdentity(program.target) ||
+       previous->pointerBits != program.types->targetPointerBits() ||
+       previous->variadicAbi != program.types->vaListAbi()))
+    previous.reset();
+  std::vector<bool> stale(previous ? previous->nodes.size() : 0);
+  if (previous) {
+    std::vector<std::uint32_t> changed;
+    for (std::size_t i = 0; i < previous->nodes.size(); ++i) {
+      if (i >= typeCount || !previous->nodes[i] ||
+          !program.types->sharesDefinition(program.types->typeAt(i),
+                                           *previous->types) ||
+          (previous->nodes[i]->destructor &&
+           !previous->nodes[i]->destructor->matches(program))) {
+        stale[i] = true;
+        changed.push_back(static_cast<std::uint32_t>(i));
+      }
+    }
+    for (std::size_t next = 0; next < changed.size(); ++next) {
+      const auto changedType = changed[next];
+      for (auto edge = previous->offsets[changedType];
+           edge < previous->offsets[changedType + 1]; ++edge) {
+        const auto dependent = previous->dependents[edge];
+        if (!stale[dependent]) {
+          stale[dependent] = true;
+          changed.push_back(dependent);
         }
-        if (owned.contains(current.index())) {
-          invalid("recursive by-value layout");
-          return;
+      }
+    }
+    for (std::size_t i = 0; i < typeCount && i < stale.size(); ++i)
+      if (!stale[i] && previous->checked[i]) {
+        seen[i] = true;
+        layouts[i] = 2;
+      }
+  }
+  std::function<void(Type)> layout = [&](Type current) {
+    if (!program.types->isProduct(current) && !program.types->isSlice(current))
+      return;
+    if (current.index() >= layouts.size())
+      layouts.resize(builtinTypeCount + program.types->storedTypeCount());
+    if (layouts[current.index()] == 2)
+      return;
+    if (layouts[current.index()] == 1) {
+      diagnostics.error("internal", {},
+                        "invalid CFG type: recursive by-value layout");
+      valid = false;
+      return;
+    }
+    layouts[current.index()] = 1;
+    if (program.types->isSlice(current))
+      layout(program.types->slice(current).element);
+    else
+      program.types->inspectProduct(current, [&](const auto &record) {
+        if (record.kind == AggregateKind::Array && !record.components.empty())
+          layout(record.components.front());
+        else
+          for (const auto &field : record.fields)
+            layout(field.type);
+      });
+    layouts[current.index()] = 2;
+  };
+  std::function<void(Type)> type = [&](Type current) {
+    auto invalid = [&](std::string message) {
+      diagnostics.error("internal", {}, "invalid CFG type: " + message);
+      valid = false;
+    };
+    if (!program.types->contains(current) ||
+        program.types->isConstant(current)) {
+      invalid("unresolved type");
+      return;
+    }
+    if (current.index() >= seen.size())
+      seen.resize(builtinTypeCount + program.types->storedTypeCount());
+    if (seen[current.index()])
+      return;
+    seen[current.index()] = true;
+    if (program.types->isView(current)) {
+      program.types->inspectView(current, [&](const auto &view) {
+        if (view.mode != ParameterMode::Read && view.mode != ParameterMode::Mut)
+          invalid("invalid view access");
+        type(view.payload);
+      });
+    } else if (program.types->isSlice(current)) {
+      auto element = program.types->slice(current).element;
+      type(element);
+      if (valid && !program.types->isSized(element))
+        invalid("unsized slice element");
+    } else if (program.types->isFunctionPointer(current)) {
+      const auto &signature = program.types->callable(current);
+      if (signature.resultFromEnvironment)
+        invalid("thin callable result refers to a captured environment");
+      type(signature.result);
+      type(signature.abiResult);
+      if (signature.error == Type::Unknown) {
+        if (signature.abiResult != signature.result)
+          invalid("callable ABI result does not match success type");
+      } else if (!program.types->isProduct(signature.abiResult) ||
+                 program.types->product(signature.abiResult).kind !=
+                     AggregateKind::Outcome ||
+                 program.types->product(signature.abiResult).components !=
+                     std::vector<Type>{signature.result, signature.error})
+        invalid("callable ABI result does not preserve typed failure");
+      if (signature.error != Type::Unknown)
+        type(signature.error);
+      if (signature.mode != ParameterMode::Read &&
+          signature.mode != ParameterMode::Mut &&
+          signature.mode != ParameterMode::Take)
+        invalid("invalid callable capability");
+      for (const auto &parameter : signature.parameters) {
+        type(parameter.type);
+        if (parameter.mode == ParameterMode::Value &&
+            !program.types->isCopy(parameter.type))
+          invalid("non-Copy callable value parameter");
+      }
+      for (auto source : signature.resultSources)
+        if (source >= signature.parameters.size())
+          invalid("invalid callable result source");
+    } else if (program.types->isProduct(current)) {
+      layout(current);
+      if (!valid)
+        return;
+      program.types->inspectProduct(current, [&](const auto &product) {
+        if (product.kind == AggregateKind::Array && !product.components.empty())
+          type(product.components.front());
+        if (product.vector) {
+          auto descriptor = targetVector(product.name);
+          if (!descriptor || product.kind != AggregateKind::NativeVector ||
+              !product.fields.empty() || !product.copyRequested ||
+              product.hasDestructor ||
+              descriptor->element != product.vector->element ||
+              descriptor->lanes != product.vector->lanes ||
+              descriptor->alignment != product.vector->alignment)
+            invalid("invalid native target vector descriptor");
+          else if (!program.target.initialProfile() ||
+                   descriptor->arch != program.target.arch)
+            invalid("native vector is unavailable on the selected target");
+        } else if (product.kind == AggregateKind::NativeVector)
+          invalid("native vector is missing its element/lane shape");
+        for (std::size_t index = 0; index < product.fields.size(); ++index) {
+          const auto &field = product.fields[index];
+          type(field.type);
+          if (valid && !program.types->isSized(field.type) &&
+              index + 1 != product.fields.size())
+            invalid("unsized field is not the final field");
+          if (program.types->isCopy(current) &&
+              !program.types->isCopy(field.type))
+            invalid("non-Copy field in Copy product");
         }
-        if (!seen.insert(current.index()).second)
-          return;
-        if (program.types->isView(current)) {
-          const auto &view = program.types->view(current);
-          if (view.mode != ParameterMode::Read &&
-              view.mode != ParameterMode::Mut)
-            invalid("invalid view access");
-          type(view.payload, {});
-        } else if (program.types->isSlice(current)) {
-          auto element = program.types->slice(current).element;
-          type(element, {});
-          if (valid && !program.types->isSized(element))
-            invalid("unsized slice element");
-        } else if (program.types->isFunctionPointer(current)) {
-          const auto &signature = program.types->callable(current);
-          if (signature.resultFromEnvironment)
-            invalid("thin callable result refers to a captured environment");
-          type(signature.result, {});
-          type(signature.abiResult, {});
-          if (signature.error == Type::Unknown) {
-            if (signature.abiResult != signature.result)
-              invalid("callable ABI result does not match success type");
-          } else if (!program.types->isProduct(signature.abiResult) ||
-                     program.types->product(signature.abiResult).kind !=
-                         AggregateKind::Outcome ||
-                     program.types->product(signature.abiResult).components !=
-                         std::vector<Type>{signature.result, signature.error})
-            invalid("callable ABI result does not preserve typed failure");
-          if (signature.error != Type::Unknown)
-            type(signature.error, {});
-          if (signature.mode != ParameterMode::Read &&
-              signature.mode != ParameterMode::Mut &&
-              signature.mode != ParameterMode::Take)
-            invalid("invalid callable capability");
-          for (const auto &parameter : signature.parameters) {
-            type(parameter.type, {});
-            if (parameter.mode == ParameterMode::Value &&
-                !program.types->isCopy(parameter.type))
-              invalid("non-Copy callable value parameter");
-          }
-          for (auto source : signature.resultSources)
-            if (source >= signature.parameters.size())
-              invalid("invalid callable result source");
-        } else if (program.types->isProduct(current)) {
-          owned.insert(current.index());
-          const auto product = program.types->product(current);
-          if (product.vector) {
-            auto descriptor = targetVector(product.name);
-            if (!descriptor || product.kind != AggregateKind::NativeVector ||
-                !product.fields.empty() || !product.copyRequested ||
-                product.hasDestructor ||
-                descriptor->element != product.vector->element ||
-                descriptor->lanes != product.vector->lanes ||
-                descriptor->alignment != product.vector->alignment)
-              invalid("invalid native target vector descriptor");
-            else if (!program.target.initialProfile() ||
-                     descriptor->arch != program.target.arch)
-              invalid("native vector is unavailable on the selected target");
-          } else if (product.kind == AggregateKind::NativeVector)
-            invalid("native vector is missing its element/lane shape");
-          for (std::size_t index = 0; index < product.fields.size(); ++index) {
-            const auto &field = product.fields[index];
-            type(field.type, owned);
-            if (valid && !program.types->isSized(field.type) &&
-                index + 1 != product.fields.size())
-              invalid("unsized field is not the final field");
-            if (program.types->isCopy(current) &&
-                !program.types->isCopy(field.type))
-              invalid("non-Copy field in Copy product");
-          }
-          if (product.hasDestructor) {
-            if (product.copyRequested)
-              invalid("Copy product has a user destructor");
-            if (product.destructor < 0 ||
-                static_cast<std::size_t>(product.destructor) >=
-                    program.functions.size())
-              invalid("invalid user destructor");
-            else {
-              const auto &destructor = program.functions[product.destructor];
-              Type parameter = destructor.locals.empty()
-                                   ? Type::Unknown
-                                   : destructor.locals[0].type;
-              if (normalize && !destructor.genericParameters.empty()) {
-                const auto &arguments = product.genericArguments.empty()
-                                            ? product.genericParameters
-                                            : product.genericArguments;
-                std::vector<TypeBinding> bindings;
-                if (arguments.size() == destructor.genericParameters.size())
-                  for (std::size_t p = 0; p < arguments.size(); ++p)
-                    bindings.push_back(
-                        {destructor.genericParameters[p], arguments[p]});
-                parameter = normalize(parameter, bindings, destructor);
-              }
-              bool self = !destructor.locals.empty() && parameter == current;
-              if (!destructor.locals.empty() &&
-                  !product.layout.pinnedFields.empty()) {
-                self = program.types->isProduct(parameter) &&
-                       program.types->product(parameter).kind ==
-                           AggregateKind::Pin;
-                if (self) {
-                  auto view = program.types->product(parameter).components[0];
-                  self = program.types->isView(view) &&
-                         program.types->view(view).mode == ParameterMode::Mut &&
-                         program.types->view(view).payload == current;
-                }
-              }
-              if (destructor.result != Type::Unit ||
-                  destructor.parameters != 1 || destructor.locals.empty() ||
-                  !self || destructor.locals[0].mode != ParameterMode::Mut)
-                invalid("invalid user destructor signature");
+        if (product.hasDestructor) {
+          if (product.copyRequested)
+            invalid("Copy product has a user destructor");
+          if (product.destructor < 0 ||
+              static_cast<std::size_t>(product.destructor) >=
+                  program.functions.size())
+            invalid("invalid user destructor");
+          else {
+            const auto &destructor = program.functions[product.destructor];
+            Type parameter = destructor.locals.empty()
+                                 ? Type::Unknown
+                                 : destructor.locals[0].type;
+            if (normalize && !destructor.genericParameters.empty()) {
+              const auto &arguments = product.genericArguments.empty()
+                                          ? product.genericParameters
+                                          : product.genericArguments;
+              std::vector<TypeBinding> bindings;
+              if (arguments.size() == destructor.genericParameters.size())
+                for (std::size_t p = 0; p < arguments.size(); ++p)
+                  bindings.push_back(
+                      {destructor.genericParameters[p], arguments[p]});
+              parameter = normalize(parameter, bindings, destructor);
             }
+            bool self = !destructor.locals.empty() && parameter == current;
+            if (!destructor.locals.empty() &&
+                !product.layout.pinnedFields.empty()) {
+              self =
+                  program.types->isProduct(parameter) &&
+                  program.types->product(parameter).kind == AggregateKind::Pin;
+              if (self) {
+                auto view = program.types->product(parameter).components[0];
+                self = program.types->isView(view) &&
+                       program.types->view(view).mode == ParameterMode::Mut &&
+                       program.types->view(view).payload == current;
+              }
+            }
+            if (destructor.result != Type::Unit || destructor.parameters != 1 ||
+                destructor.locals.empty() || !self ||
+                destructor.locals[0].mode != ParameterMode::Mut)
+              invalid("invalid user destructor signature");
           }
         }
-      };
-  for (const auto &f : program.functions) {
-    type(f.result, {});
+      });
+    }
+  };
+  for (std::size_t i = 0; i < program.functions.size(); ++i) {
+    if (trusted && i < trusted->size() && (*trusted)[i])
+      continue;
+    const auto &f = program.functions[i];
+    type(f.result);
     for (const auto &local : f.locals)
-      type(local.type, {});
+      type(local.type);
     for (const auto &block : f.blocks)
       for (const auto &instruction : block.instructions) {
-        type(instruction.result.type, {});
+        type(instruction.result.type);
         if (instruction.op == Op::DropPlace && instruction.place.root >= 0 &&
             static_cast<std::size_t>(instruction.place.root) < f.locals.size())
           if (auto payload = projectedType(
                   *program.types, f.locals[instruction.place.root].type,
                   instruction.place.fields))
-            type(*payload, {});
+            type(*payload);
       }
   }
   std::function<bool(const StaticConstant &, Type)> constant =
@@ -1615,7 +1722,7 @@ bool verify(const Program &program, Diagnostics &diagnostics,
         return expected == Type::Unit && value.scalar == NumericLiteral{};
       };
   for (const auto &storage : program.statics) {
-    type(storage.type, {});
+    type(storage.type);
     if (!program.types->isSized(storage.type) ||
         program.types->uninhabited(storage.type) ||
         storage.foreignDeclaration == storage.initializer.has_value() ||
@@ -1631,6 +1738,16 @@ bool verify(const Program &program, Diagnostics &diagnostics,
   bool entry = false;
   std::unordered_set<std::string> names;
   for (std::size_t i = 0; i < program.functions.size(); ++i) {
+    if (auto index = program.deferredFunctionIndex(i);
+        index && trusted && i < trusted->size() && (*trusted)[i]) {
+      if (!names.insert(index->name).second) {
+        diagnostics.error("internal", {}, "duplicate CFG function");
+        valid = false;
+      }
+      if (index->name == "main")
+        entry = index->parameters == 0 && index->result == Type::I32;
+      continue;
+    }
     const auto &f = program.functions[i];
     if (!names.insert(f.name).second) {
       diagnostics.error("internal", {}, "duplicate CFG function");
@@ -1646,6 +1763,102 @@ bool verify(const Program &program, Diagnostics &diagnostics,
     diagnostics.error("internal", {}, "invalid or absent CFG entry function");
     valid = false;
   }
-  return valid && verifyTarget(program, diagnostics);
+  if (!valid || !verifyTarget(program, diagnostics))
+    return false;
+  if (typeCache) {
+    auto next = std::make_shared<TypeVerificationCache::State>();
+    next->types = program.types->snapshotDefinitions();
+    next->pointerBits = program.types->targetPointerBits();
+    next->variadicAbi = program.types->vaListAbi();
+    next->target = program.target;
+    const auto count = builtinTypeCount + program.types->storedTypeCount();
+    seen.resize(count);
+    next->checked = std::move(seen);
+    next->nodes.resize(count);
+    next->offsets.resize(count + 1);
+    std::vector<std::size_t> pending;
+    std::vector<bool> queued = next->checked;
+    for (std::size_t i = 0; i < count; ++i)
+      if (queued[i])
+        pending.push_back(i);
+    for (std::size_t n = 0; n < pending.size(); ++n) {
+      const auto i = pending[n];
+      const auto current = program.types->typeAt(i);
+      if (!program.types->contains(current))
+        continue;
+      if (previous && i < previous->nodes.size() && previous->nodes[i] &&
+          program.types->sharesDefinition(current, *previous->types) &&
+          (!previous->nodes[i]->destructor ||
+           previous->nodes[i]->destructor->matches(program)))
+        next->nodes[i] = previous->nodes[i];
+      else {
+        auto node = std::make_shared<TypeVerificationCache::Node>();
+        node->dependencies = program.types->referencedTypes(current);
+        if (program.types->isProduct(current)) {
+          const auto &product = program.types->product(current);
+          if (product.hasDestructor && product.destructor >= 0 &&
+              static_cast<std::size_t>(product.destructor) <
+                  program.functions.size()) {
+            const auto &function = program.functions[product.destructor];
+            if (!function.locals.empty()) {
+              node->destructor =
+                  std::make_shared<const TypeVerificationCache::Destructor>(
+                      TypeVerificationCache::Destructor{
+                          product.destructor, function.result,
+                          function.locals.front().type, function.parameters,
+                          function.locals.front().mode,
+                          function.genericParameters, function.interfaceBounds,
+                          function.genericEqualities});
+              node->dependencies.push_back(function.result);
+              node->dependencies.push_back(function.locals.front().type);
+              node->dependencies.insert(node->dependencies.end(),
+                                        function.genericParameters.begin(),
+                                        function.genericParameters.end());
+              for (auto [subject, interface] : function.interfaceBounds) {
+                node->dependencies.push_back(subject);
+                node->dependencies.push_back(interface);
+              }
+              for (auto [parameter, argument] : function.genericEqualities) {
+                node->dependencies.push_back(parameter);
+                node->dependencies.push_back(argument);
+              }
+              auto &dependencies = node->dependencies;
+              std::sort(dependencies.begin(), dependencies.end());
+              dependencies.erase(
+                  std::unique(dependencies.begin(), dependencies.end()),
+                  dependencies.end());
+            }
+          }
+        }
+        next->nodes[i] = std::move(node);
+      }
+      if (std::any_of(next->nodes[i]->dependencies.begin(),
+                      next->nodes[i]->dependencies.end(), [&](Type dependency) {
+                        return !program.types->contains(dependency);
+                      })) {
+        next->nodes[i].reset();
+        next->checked[i] = false;
+        continue;
+      }
+      for (auto dependency : next->nodes[i]->dependencies) {
+        ++next->offsets[dependency.index() + 1];
+        if (!queued[dependency.index()]) {
+          queued[dependency.index()] = true;
+          pending.push_back(dependency.index());
+        }
+      }
+    }
+    std::partial_sum(next->offsets.begin(), next->offsets.end(),
+                     next->offsets.begin());
+    next->dependents.resize(next->offsets.back());
+    auto cursor = next->offsets;
+    for (std::size_t i = 0; i < count; ++i)
+      if (const auto &node = next->nodes[i])
+        for (auto dependency : node->dependencies)
+          next->dependents[cursor[dependency.index()]++] =
+              static_cast<std::uint32_t>(i);
+    typeCache->state = std::move(next);
+  }
+  return true;
 }
 } // namespace mettle::ir

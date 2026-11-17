@@ -19,6 +19,7 @@ struct DecodeResult {
   // Records retain archive order; destination indices select consumer tables.
   std::vector<std::string> functionIdentities, staticIdentities;
   std::vector<std::uint32_t> functionDestinations, staticDestinations;
+  std::vector<std::size_t> functionBodySizes;
   // Sparse assignments from consumer closure slots to consumer functions.
   std::vector<std::pair<std::uint32_t, int>> closureFunctions;
   std::shared_ptr<LazyFunctionBodies> lazyFunctions;
@@ -44,7 +45,9 @@ private:
   std::shared_ptr<State> state;
   friend DecodeResult
   decodeProgramLazy(std::span<const std::uint8_t>,
-                    const metadata::DecodeReferences &references);
+                    const metadata::DecodeReferences &references, bool,
+                    std::shared_ptr<const metadata::DecodeReferences>,
+                    std::shared_ptr<const void>);
 };
 
 EncodeResult encodeProgram(const Program &program,
@@ -54,6 +57,12 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
                            const metadata::DecodeReferences &references);
 // Decodes and validates headers and record extents. Function bodies are
 // validated when loaded; `bytes` must outlive the returned body loader.
+// Compact headers retain call contracts; body-local metadata loads with the
+// CFG.
 DecodeResult decodeProgramLazy(std::span<const std::uint8_t> bytes,
-                               const metadata::DecodeReferences &references);
+                               const metadata::DecodeReferences &references,
+                               bool compactHeaders = false,
+                               std::shared_ptr<const metadata::DecodeReferences>
+                                   retainedReferences = nullptr,
+                               std::shared_ptr<const void> backing = nullptr);
 } // namespace mettle::ir

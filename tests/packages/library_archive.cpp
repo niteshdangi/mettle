@@ -87,6 +87,11 @@ int main() {
   archive.header = {5, 6, 7};
   archive.declarations = {8, 9, 0, 10};
   archive.ir = {4, 3, 2, 1};
+  auto cyclic = original;
+  cyclic.generated({first.id, {0, 1, generated.id}, "cycle", {}});
+  auto recaptured = archive.sources;
+  expect(!recaptured.capture(cyclic, error),
+         "recapturing validated sources must still reject cyclic provenance");
   auto bytes = driver::encodeLibraryArchive(archive, error);
   expect(bytes.has_value(), error.c_str());
   auto imported =
@@ -105,6 +110,7 @@ int main() {
     Diagnostics::SourceContext registerConsumer(consumer, occupied);
   }
   consumer.makeSyntaxContext({}, {});
+  const auto retainedSources = imported->sources;
   SourceId next = 80;
   expect(imported->sources.mount(
              consumer, [&] { return next++; }, error),
@@ -120,8 +126,59 @@ int main() {
   auto debug = consumer.debugSpan(*span);
   expect(debug.source == 80 && debug.begin == 0,
          "generated debug locations must retain their invocation");
+  {
+    Diagnostics replay;
+    replay.makeSyntaxContext({}, {});
+    auto sources = retainedSources;
+    SourceId id = 80;
+    expect(sources.mount(replay, [&] { return id++; }, error), error.c_str());
+    expect(
+        replay.syntaxContext(*span) == remappedContext &&
+            sources.source(reference->revision) ==
+                imported->sources.source(reference->revision) &&
+            replay.makeSyntaxContext({}, {})->identity ==
+                remappedContext->identity + 1,
+        "reused provenance must retain its snapshot and reserve hygiene IDs");
+    Diagnostics differentHygiene;
+    differentHygiene.makeSyntaxContext({}, {});
+    differentHygiene.makeSyntaxContext({}, {});
+    auto rebased = retainedSources;
+    id = 80;
+    expect(rebased.mount(
+               differentHygiene, [&] { return id++; }, error),
+           error.c_str());
+    const auto rebasedContext = differentHygiene.syntaxContext(*span);
+    expect(rebasedContext && rebasedContext->identity == 3 &&
+               rebasedContext->definition.source == 80,
+           "matching source IDs must not reuse a different hygiene allocation");
+    auto shifted = retainedSources;
+    id = 90;
+    expect(shifted.mount(replay, [&] { return id++; }, error), error.c_str());
+    const auto shiftedSpan = shifted.resolve(*reference);
+    auto shiftedContext = replay.syntaxContext(*shiftedSpan);
+    expect(shiftedSpan->source == 91 && shiftedContext &&
+               shiftedContext->identity != remappedContext->identity &&
+               shiftedContext->definition.source == 90 &&
+               replay.debugSpan(*shiftedSpan).source == 90,
+           "different source and hygiene allocations must remount provenance");
+  }
+  {
+    Diagnostics surviving;
+    {
+      auto temporary =
+          driver::decodeLibraryArchive(*bytes, "library-revision", error);
+      SourceId id = 80;
+      expect(temporary && temporary->sources.mount(
+                              surviving, [&] { return id++; }, error),
+             error.c_str());
+    }
+    expect(surviving.registeredSources()[1].text == generated.text &&
+               surviving.syntaxContext(*span)->definition.source == 80 &&
+               surviving.debugSpan(*span).source == 80,
+           "diagnostic source and provenance must outlive the mounted archive");
+  }
   expect(!driver::encodeLibraryArchive(*imported, error),
-         "a mounted archive has moved its generations and must not encode");
+         "a mounted archive must not encode");
   expect(!driver::decodeLibraryArchive(*bytes, "other-revision", error),
          "a different compiler/content/config identity must reject");
   for (auto size : {std::size_t(0), bytes->size() / 2, bytes->size() - 1})
@@ -320,6 +377,7 @@ int main() {
       driver::collectLibraryInputs(libraryRoot, configuration, error);
   expect(addition && addition->key != compiler->key,
          "a formerly absent module appearing must invalidate the library");
+
   driver::LibraryInputSnapshots snapshots;
   std::string fallback;
   auto snapshot = [&]() {

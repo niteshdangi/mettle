@@ -1,5 +1,6 @@
 #include "syntax/token.h"
 #include <algorithm>
+#include <array>
 #include <initializer_list>
 
 namespace mettle {
@@ -10,18 +11,22 @@ bool contains(std::initializer_list<std::string_view> values,
 }
 } // namespace
 bool isReservedWord(std::string_view word) {
-  return contains(
-      {"fn",     "type",      "copy",    "let",     "var",        "read",
-       "mut",    "take",      "if",      "else",    "while",      "loop",
-       "break",  "continue",  "return",  "true",    "false",      "pub",
-       "enum",   "interface", "throws",  "throw",   "try",        "capture",
-       "match",  "none",      "present", "success", "failure",    "async",
-       "await",  "for",       "in",      "module",  "import",     "unsafe",
-       "extern", "static",    "const",   "init",    "drop",       "heap",
-       "shared", "weak",      "local",   "pinned",  "as",         "alias",
-       "label",  "union",     "where",   "region",  "implements", "receiver",
-       "macro",  "internal",  "_"},
-      word);
+  static constexpr auto words = [] {
+    auto result = std::to_array<std::string_view>(
+        {"fn",     "type",      "copy",    "let",     "var",        "read",
+         "mut",    "take",      "if",      "else",    "while",      "loop",
+         "break",  "continue",  "return",  "true",    "false",      "pub",
+         "enum",   "interface", "throws",  "throw",   "try",        "capture",
+         "match",  "none",      "present", "success", "failure",    "async",
+         "await",  "for",       "in",      "module",  "import",     "unsafe",
+         "extern", "static",    "const",   "init",    "drop",       "heap",
+         "shared", "weak",      "local",   "pinned",  "as",         "alias",
+         "label",  "union",     "where",   "region",  "implements", "receiver",
+         "macro",  "internal",  "_"});
+    std::sort(result.begin(), result.end());
+    return result;
+  }();
+  return std::binary_search(words.begin(), words.end(), word);
 }
 bool isUnsupportedExpressionWord(std::string_view word) {
   return contains({"read",      "mut",     "take",    "heap",   "shared",

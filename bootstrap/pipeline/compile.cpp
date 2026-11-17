@@ -10,6 +10,7 @@
 #include "semantics/check.h"
 #include "semantics/interfaces.h"
 #include "syntax/parser.h"
+#include "types/project.h"
 #include <map>
 #include <tuple>
 
@@ -165,7 +166,8 @@ public:
           const PackageOwners &packageOwners = {},
           NumericEvaluator numericEvaluator = nullptr,
           const resolution::SourcePackages &sourcePackages = {},
-          const LibraryImporter &importLibrary = {}) {
+          const LibraryImporter &importLibrary = {},
+          FunctionQueries *queries = nullptr) {
     if (!diagnostics.empty())
       return std::nullopt;
     auto resolved = resolution::resolve(tree, diagnostics, sourcePackages);
@@ -182,6 +184,105 @@ public:
       }
       imported = library->declarations;
     }
+    std::optional<FunctionQueries::State> nextQueries;
+    bool retainedInstanceQueries = false;
+    const std::map<std::size_t, ir::Function> *reusedBodies = nullptr;
+    const auto native = imported;
+    bool queryable = queries && !observe && tree.globalAssembly.empty();
+    if (queryable) {
+      nextQueries.emplace();
+      nextQueries->inputs = declarationQueryInputs(tree, native.get());
+      if (!nextQueries->inputs.error.empty()) {
+        diagnostics.error("internal", {},
+                          "cannot identify declaration queries: " +
+                              nextQueries->inputs.error);
+        return std::nullopt;
+      }
+      nextQueries->native = native;
+      nextQueries->target = target;
+      nextQueries->numericEvaluator = numericEvaluator;
+      nextQueries->requireEntry = requireEntry;
+      nextQueries->packages = sourcePackages;
+      nextQueries->instances = std::make_shared<instances::Queries>(
+          native ? native->types : nullptr, tree.functions.size(),
+          tree.statics.size());
+      const auto &previous = queries->state;
+      auto targetIdentity = [](const TargetFacts &value) {
+        return std::tie(value.arch, value.system, value.pointerBits,
+                        value.littleEndian, value.triple, value.baseline);
+      };
+      if (previous && previous->native == native &&
+          previous->numericEvaluator == numericEvaluator &&
+          previous->inputs.context == nextQueries->inputs.context &&
+          previous->packages == sourcePackages &&
+          previous->requireEntry == requireEntry &&
+          targetIdentity(previous->target) == targetIdentity(target)) {
+        nextQueries->typeVerification = previous->typeVerification;
+        std::vector<std::uint8_t> invalid(tree.functions.size());
+        std::vector<std::vector<std::size_t>> callers(tree.functions.size());
+        std::vector<std::size_t> changed;
+        for (const auto &[index, body] : nextQueries->inputs.bodies) {
+          auto old = previous->inputs.bodies.find(index);
+          if (old == previous->inputs.bodies.end() || old->second != body ||
+              !previous->functions.contains(index)) {
+            invalid[index] = true;
+            changed.push_back(index);
+          }
+        }
+        for (const auto &[caller, dependencies] : previous->dependencies)
+          for (auto dependency : dependencies)
+            if (dependency < callers.size())
+              callers[dependency].push_back(caller);
+        auto fixedCallContract = [&](std::size_t index) {
+          const auto &function = tree.functions[index];
+          const auto &result = function.annotation;
+          return function.parameters.empty() &&
+                 function.genericParameters.empty() &&
+                 function.regions.empty() && function.error.empty() &&
+                 !function.asynchronous && result.form == TypeForm::Named &&
+                 result.view.empty() && !result.nested &&
+                 result.arguments.empty() && result.binders.empty() &&
+                 builtinType(result.name) != Type::Unknown;
+        };
+        for (std::size_t i = 0; i < changed.size(); ++i) {
+          // These bodies cannot change any type or flow exposed to callers.
+          if (previous->functions.contains(changed[i]) &&
+              fixedCallContract(changed[i]))
+            continue;
+          for (auto caller : callers[changed[i]])
+            if (!invalid[caller]) {
+              invalid[caller] = true;
+              changed.push_back(caller);
+            }
+        }
+        if (previous->instances) {
+          nextQueries->instances =
+              std::make_shared<instances::Queries>(*previous->instances);
+          nextQueries->instances->invalidate(invalid);
+          retainedInstanceQueries = true;
+        }
+        auto reused = std::count_if(
+            previous->functions.begin(), previous->functions.end(),
+            [&](const auto &entry) { return !invalid[entry.first]; });
+        if (reused) {
+          auto declarations =
+              std::make_shared<ImportedDeclarations>(*previous->declarations);
+          for (const auto &[index, function] : previous->functions) {
+            (void)function;
+            if (invalid[index]) {
+              declarations->functions.erase(static_cast<std::uint32_t>(index));
+              continue;
+            }
+            tree.functions.edit(index).body = {};
+            nextQueries->dependencies.emplace(index,
+                                              previous->dependencies.at(index));
+          }
+          imported = std::move(declarations);
+          reusedBodies = &previous->functions;
+          queries->reused += reused;
+        }
+      }
+    }
     auto checked =
         check(std::move(tree), diagnostics, std::move(resolved), requireEntry,
               std::move(target), numericEvaluator, std::move(imported));
@@ -189,10 +290,155 @@ public:
       return std::nullopt;
     if (observe)
       observe(*checked);
-    auto program = lowering::lower(*checked, diagnostics,
-                                   library ? library->bodies.get() : nullptr);
+    auto program =
+        lowering::lower(*checked, diagnostics,
+                        library ? library->bodies : nullptr, reusedBodies);
     if (!diagnostics.empty())
       return std::nullopt;
+    if (nextQueries) {
+      {
+        TypeProjection projection(*program.types,
+                                  native ? native->types.get() : nullptr);
+        std::map<Type, bool> reusableTypes;
+        std::function<bool(Type)> reusableType = [&](Type type) {
+          const auto &types = *program.types;
+          std::vector<Type> pending{type};
+          std::set<Type> visited;
+          for (std::size_t i = 0; i < pending.size(); ++i) {
+            auto current = pending[i];
+            if (current.index() < builtinTypeCount ||
+                (native && native->types && native->types->contains(current)) ||
+                !visited.insert(current).second)
+              continue;
+            if (auto known = reusableTypes.find(current);
+                known != reusableTypes.end()) {
+              if (!known->second)
+                return reusableTypes[type] = false;
+              continue;
+            }
+            if (types.isErased(current) || types.isProjection(current) ||
+                (types.isCallable(current) &&
+                 !types.isFunctionPointer(current)))
+              return reusableTypes[type] = false;
+            auto children = types.referencedTypes(current);
+            pending.insert(pending.end(), children.begin(), children.end());
+          }
+          for (auto current : visited)
+            reusableTypes[current] = true;
+          return true;
+        };
+        auto stableSymbol = [&](int symbol, bool function) {
+          return symbol < 0 ||
+                 static_cast<std::size_t>(symbol) <
+                     (function ? checked->syntax().functions.size()
+                               : checked->syntax().statics.size());
+        };
+        std::vector<std::size_t> retained;
+        for (const auto &[index, body] : nextQueries->inputs.bodies) {
+          (void)body;
+          auto function = program.functions.at(index);
+          const auto &syntax = checked->syntax().functions[index];
+          bool cacheable =
+              syntax.interfaceOwner.empty() && syntax.implementation < 0;
+          for (const auto &local : function.locals)
+            if (local.storage == StorageDuration::Static)
+              cacheable &= stableSymbol(local.staticIndex, false);
+          auto assembly = [&](const Assembly &value) {
+            for (const auto &operand : value.operands)
+              if (operand.mode == AssemblyMode::Sym)
+                cacheable &= stableSymbol(
+                    operand.symbol, operand.symbolKind ==
+                                        AssemblyOperand::SymbolKind::Function);
+          };
+          if (function.nakedAssembly)
+            assembly(*function.nakedAssembly);
+          for (auto &block : function.blocks)
+            for (auto &instruction : block.instructions) {
+              if (instruction.op == ir::Op::IndirectCall) {
+                instruction.callee = -1;
+                instruction.typeArguments.clear();
+              }
+              cacheable &= stableSymbol(instruction.callee, true) &&
+                           stableSymbol(instruction.dropFunction, true);
+              if (instruction.assembly)
+                assembly(*instruction.assembly);
+            }
+          ir::remapTypes(function, [&](Type type) {
+            cacheable &= reusableType(type);
+            return type;
+          });
+          if (!cacheable)
+            continue;
+          retained.push_back(index);
+          ir::remapTypes(function,
+                         [&](Type type) { return projection.type(type); });
+          nextQueries->functions.emplace(index, std::move(function));
+        }
+        auto dependencies = [&](std::size_t caller,
+                                const ir::Function &function) {
+          auto &result = nextQueries->dependencies[caller];
+          const auto &semantic = checked->dependencies(caller);
+          result.insert(result.end(), semantic.begin(), semantic.end());
+          auto assembly = [&](const Assembly &value) {
+            for (const auto &operand : value.operands)
+              if (operand.mode == AssemblyMode::Sym &&
+                  operand.symbolKind == AssemblyOperand::SymbolKind::Function &&
+                  operand.symbol >= 0)
+                result.push_back(static_cast<std::size_t>(operand.symbol));
+          };
+          if (function.nakedAssembly)
+            assembly(*function.nakedAssembly);
+          for (const auto &block : function.blocks)
+            for (const auto &instruction : block.instructions) {
+              for (auto callee : {instruction.callee, instruction.dropFunction})
+                if (callee >= 0)
+                  result.push_back(static_cast<std::size_t>(callee));
+              if (instruction.assembly)
+                assembly(*instruction.assembly);
+            }
+          std::sort(result.begin(), result.end());
+          result.erase(std::unique(result.begin(), result.end()), result.end());
+        };
+        const auto count = checked->syntax().functions.size();
+        for (std::size_t i = 0; i < count; ++i)
+          if (!native || !native->functions.contains(i))
+            dependencies(i, program.functions.at(i));
+        std::size_t helper = count;
+        for (std::size_t i = 0; i < count; ++i)
+          for (std::size_t p = 0;
+               p < checked->syntax().functions[i].parameters.size(); ++p)
+            if (checked->hasDefault(i, p)) {
+              if (!native || !native->functions.contains(i))
+                dependencies(i, program.functions.at(helper));
+              ++helper;
+            }
+        std::vector<std::vector<std::size_t>> callers(count);
+        std::vector<std::size_t> unsupported;
+        for (const auto &[caller, dependencies] : nextQueries->dependencies) {
+          if (!nextQueries->functions.contains(caller))
+            continue;
+          for (auto dependency : dependencies)
+            if (dependency < count &&
+                (!native || !native->functions.contains(dependency))) {
+              callers[dependency].push_back(caller);
+              if (!nextQueries->functions.contains(dependency))
+                unsupported.push_back(caller);
+            }
+        }
+        for (std::size_t i = 0; i < unsupported.size(); ++i)
+          if (nextQueries->functions.erase(unsupported[i]))
+            unsupported.insert(unsupported.end(),
+                               callers[unsupported[i]].begin(),
+                               callers[unsupported[i]].end());
+        retained.clear();
+        for (const auto &[index, function] : nextQueries->functions) {
+          (void)function;
+          retained.push_back(index);
+        }
+        nextQueries->declarations = retainQueryDeclarations(
+            *checked, native.get(), retained, projection, reusableType);
+      }
+    }
     program.requireEntry = requireEntry;
     if (library && library->metadata &&
         !mergeImportedMetadata(program, *library->metadata, diagnostics))
@@ -256,7 +502,7 @@ public:
     for (std::size_t i = 0; i < program.functions.size(); ++i) {
       if (trusted[i])
         continue;
-      auto &function = program.functions[i];
+      auto &function = program.functions.edit(i);
       auto valueType = [&](ir::Value &value) {
         value.type = normalize(value.type, {}, function);
       };
@@ -297,19 +543,37 @@ public:
         valueType(block.exit.value);
       }
     }
-    if (!diagnostics.empty() || !ir::verify(program, diagnostics, normalize,
-                                            declarationProof, &trusted))
+    if (!diagnostics.empty() ||
+        !ir::verify(program, diagnostics, normalize, declarationProof, &trusted,
+                    nextQueries ? &nextQueries->typeVerification : nullptr))
       return std::nullopt;
-    analysis::initialization(program, diagnostics, nullptr, &trusted);
+    auto analyzed = trusted;
+    // Published queries have passed body analysis under these same
+    // dependencies.
+    if (reusedBodies)
+      for (const auto &[index, function] : *reusedBodies) {
+        (void)function;
+        if (checked->imported(index))
+          analyzed[index] = true;
+      }
+    analysis::initialization(program, diagnostics, nullptr, &analyzed);
     if (!diagnostics.empty())
       return std::nullopt;
     auto loans =
-        analysis::loans(program, diagnostics, nullptr, nullptr, &trusted);
+        analysis::loans(program, diagnostics, nullptr, nullptr, &analyzed);
     if (!diagnostics.empty())
       return std::nullopt;
+    auto instanceQueries = nextQueries ? nextQueries->instances : nullptr;
+    if (nextQueries) {
+      if (!retainedInstanceQueries && queries->state &&
+          queries->state->instances)
+        queries->specialized += queries->state->instances->hits();
+      queries->state = std::move(nextQueries);
+    }
     return PreparedProgram(std::move(program), std::move(database),
                            std::move(loans),
-                           library ? std::move(library->bodies) : nullptr);
+                           library ? std::move(library->bodies) : nullptr,
+                           std::move(instanceQueries));
   }
 
   static std::optional<ir::VerifiedProgram>
@@ -351,6 +615,7 @@ public:
         };
     if (prepared.importedBodies && prepared.importedBodies->loadFunction) {
       auto importedBodies = prepared.importedBodies;
+      hooks.libraryBodySizes = importedBodies->functionBodySizes;
       hooks.loadLibraryBody = [importedBodies](std::size_t record,
                                                const ir::Function &header,
                                                Diagnostics &errors) {
@@ -467,7 +732,12 @@ public:
       call.interfaceType = call.erasedDispatch ? interface : Type::Unknown;
       return true;
     };
-    auto concrete = instances::specialize(program, diagnostics, hooks, scope);
+    std::optional<instances::Queries> instanceQueries;
+    if (prepared.instances && scope != instances::Scope::Library)
+      instanceQueries = *prepared.instances;
+    auto concrete =
+        instances::specialize(program, diagnostics, hooks, scope,
+                              instanceQueries ? &*instanceQueries : nullptr);
     if (!concrete)
       return std::nullopt;
     auto concreteTypes = std::make_shared<TypeStore>(*concrete->types);
@@ -479,19 +749,32 @@ public:
     };
     // Specialization extends type identities; remapped destructor IDs do not
     // change initialization or loan facts for otherwise identical functions.
-    return admit(std::move(*concrete), diagnostics, concreteProof, &program,
-                 &prepared.loans);
+    auto verified = admit(std::move(*concrete), diagnostics, concreteProof,
+                          &program, &prepared.loans);
+    if (verified && instanceQueries)
+      *prepared.instances = std::move(*instanceQueries);
+    return verified;
   }
 };
+std::size_t FunctionQueries::specializationHits() const {
+  return specialized +
+         (state && state->instances ? state->instances->hits() : 0);
+}
 std::optional<PreparedProgram>
 prepare(Module module, Diagnostics &diagnostics, bool requireEntry,
         TargetFacts target, const CheckedObserver &observe,
         const PackageOwners &packageOwners, NumericEvaluator numericEvaluator,
         const resolution::SourcePackages &sourcePackages,
-        const LibraryImporter &importLibrary) {
-  return Compiler::prepare(std::move(module), diagnostics, requireEntry,
-                           std::move(target), observe, packageOwners,
-                           numericEvaluator, sourcePackages, importLibrary);
+        const LibraryImporter &importLibrary, FunctionQueries *queries) {
+  try {
+    return Compiler::prepare(std::move(module), diagnostics, requireEntry,
+                             std::move(target), observe, packageOwners,
+                             numericEvaluator, sourcePackages, importLibrary,
+                             queries);
+  } catch (const metadata::InvalidMetadata &failure) {
+    diagnostics.error("metadata", {}, failure.what());
+    return std::nullopt;
+  }
 }
 std::optional<ir::VerifiedProgram> compile(const PreparedProgram &program,
                                            Diagnostics &diagnostics) {
@@ -499,9 +782,11 @@ std::optional<ir::VerifiedProgram> compile(const PreparedProgram &program,
 }
 std::optional<ir::VerifiedProgram>
 compileWithLibraryObjects(const PreparedProgram &program,
-                          Diagnostics &diagnostics) {
-  return Compiler::specialize(program, diagnostics,
-                              instances::Scope::ProgramWithLibraryObjects);
+                          Diagnostics &diagnostics, bool optimize) {
+  return Compiler::specialize(
+      program, diagnostics,
+      optimize ? instances::Scope::OptimizedProgramWithLibraryObjects
+               : instances::Scope::ProgramWithLibraryObjects);
 }
 std::optional<ir::VerifiedProgram>
 compileLibrary(const PreparedProgram &program, Diagnostics &diagnostics) {

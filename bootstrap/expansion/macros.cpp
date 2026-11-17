@@ -803,7 +803,7 @@ private:
           registered.begin(), registered.end(),
           [&](const Source &entry) { return entry.id == span.source; });
       if (source == registered.end() ||
-          source->text.size() > limits::sourceBytes) {
+          (*source).text.size() > limits::sourceBytes) {
         fail("macro export requires registered source provenance");
         return {};
       }
@@ -816,11 +816,11 @@ private:
       auto [existing, inserted] = sourceIdentities.emplace(identity, index);
       if (inserted) {
         library.sources.push_back(
-            {std::move(identity), source->path,
-             static_cast<std::uint32_t>(source->text.size())});
+            {std::move(identity), (*source).path,
+             static_cast<std::uint32_t>((*source).text.size())});
       } else {
         index = existing->second;
-        if (library.sources[index].bytes != source->text.size())
+        if (library.sources[index].bytes != (*source).text.size())
           fail("macro source identity has conflicting byte extents");
       }
       known = sources.emplace(span.source, index).first;
@@ -1137,13 +1137,22 @@ bool parses(const std::string &fragment, const Pieces &tokens) {
   return scratch.empty();
 }
 
-bool parsesExpression(const Pieces &tokens) {
+bool parsesExpression(const Pieces &tokens, std::optional<ParseDepth> &proven) {
+  if (proven && proven->nesting <= limits::parserNesting &&
+      proven->syntax <= limits::syntaxDepth)
+    return true;
   auto text =
       "async fn __fragment() { let __value = (" + render(tokens) + ")\n}";
   Source probe{"<macro expression>", std::move(text), 0};
   Diagnostics scratch;
-  parseDeclarations(probe, scratch);
-  return scratch.empty();
+  ParseDepth depth;
+  parseDeclarations(probe, scratch, &depth);
+  if (!scratch.empty()) {
+    proven.reset();
+    return false;
+  }
+  proven = depth;
+  return true;
 }
 
 class Recognizer {
@@ -2414,7 +2423,8 @@ private:
 
   bool invokeBuiltin(const std::string &name, const Pieces &in,
                      const std::vector<std::size_t> &inner, std::size_t at,
-                     std::size_t last, Pieces &out, unsigned depth, Span use) {
+                     std::size_t last, Pieces &out, unsigned depth, Span use,
+                     std::optional<ParseDepth> *expression = nullptr) {
     auto site = invocationSpan(in, at, last, use);
     auto context = diagnostics.syntaxContext(site);
     if (!context)
@@ -2696,12 +2706,18 @@ private:
         return false;
       }
       Pieces expanded;
-      if (!expandPieces(*selected, expanded, depth + 1, site))
+      std::optional<ParseDepth> proven;
+      if (!expandPieces(*selected, expanded, depth + 1, site, &proven))
         return false;
-      if (parsesExpression(expanded)) {
+      if (parsesExpression(expanded, proven)) {
         out.push_back(generated(TokenKind::Symbol, "(", site, context));
         out.insert(out.end(), expanded.begin(), expanded.end());
         out.push_back(generated(TokenKind::Symbol, ")", site, context));
+        if (expression) {
+          proven->nesting += 2;
+          ++proven->syntax;
+          *expression = proven;
+        }
       } else {
         out.insert(out.end(), expanded.begin(), expanded.end());
       }
@@ -2772,16 +2788,20 @@ private:
     return false;
   }
 
-  bool expandPieces(const Pieces &in, Pieces &out, unsigned depth, Span use) {
+  bool expandPieces(const Pieces &in, Pieces &out, unsigned depth, Span use,
+                    std::optional<ParseDepth> *expression = nullptr) {
     if (configuration) {
       if (auto active = configure(in, *configuration, diagnostics))
-        return expandPieces(*active, out, depth, use);
+        return expandPieces(*active, out, depth, use, expression);
     }
     std::vector<std::size_t> inner;
     if (!pairing(in, inner)) {
       error(use, "a macro expansion produced unbalanced delimiters");
       return false;
     }
+    const auto outputBegin = out.size();
+    std::size_t expressionBegin = 0, expressionEnd = 0;
+    std::optional<ParseDepth> proven;
     bool ok = true;
     for (std::size_t i = 0; i < in.size();) {
       auto invocation = invoked(in, i);
@@ -2818,24 +2838,43 @@ private:
         ok = false;
         continue;
       }
+      auto begin = out.size();
+      std::optional<ParseDepth> invocationProof;
       if (host)
-        ok &= invokeProcedure(in, i, last, out, depth, use);
+        ok &= invokeProcedure(in, i, last, out, depth, use,
+                              expression ? &invocationProof : nullptr);
       else if (intrinsic)
-        ok &=
-            invokeBuiltin(intrinsic->name, in, inner, i, last, out, depth, use);
+        ok &= invokeBuiltin(intrinsic->name, in, inner, i, last, out, depth,
+                            use, expression ? &invocationProof : nullptr);
       else if (!broken.contains(macroKey(macro->definitionScope, macro->name)))
-        ok &= invoke(*macro, in, i, last, out, depth, use);
+        ok &= invoke(*macro, in, i, last, out, depth, use,
+                     expression ? &invocationProof : nullptr);
+      if (invocationProof) {
+        proven = invocationProof;
+        expressionBegin = begin;
+        expressionEnd = out.size();
+      }
       i = last + 1;
       if (out.size() > limits::tokens) {
         error(use, "macro expansion limit exceeded");
         return false;
       }
     }
+    if (expression) {
+      expression->reset();
+      if (ok && proven && expressionBegin >= outputBegin &&
+          expressionEnd <= out.size() &&
+          std::all_of(out.begin() + outputBegin, out.begin() + expressionBegin,
+                      newline) &&
+          std::all_of(out.begin() + expressionEnd, out.end(), newline))
+        *expression = proven;
+    }
     return ok;
   }
 
   bool invoke(const Macro &macro, const Pieces &in, std::size_t at,
-              std::size_t last, Pieces &out, unsigned depth, Span use) {
+              std::size_t last, Pieces &out, unsigned depth, Span use,
+              std::optional<ParseDepth> *expression = nullptr) {
     if (depth >= recursionLimit) {
       error(use, "macro recursion limit of " + std::to_string(recursionLimit) +
                      " exceeded while expanding '" + macro.name +
@@ -2878,12 +2917,18 @@ private:
         if (piece.authored)
           piece.context = context;
       Pieces expanded;
-      if (!expandPieces(produced, expanded, depth + 1, use))
+      std::optional<ParseDepth> proven;
+      if (!expandPieces(produced, expanded, depth + 1, use, &proven))
         return false;
-      if (parsesExpression(expanded)) {
+      if (parsesExpression(expanded, proven)) {
         out.push_back({TokenKind::Symbol, "(", use, false});
         out.insert(out.end(), expanded.begin(), expanded.end());
         out.push_back({TokenKind::Symbol, ")", use, false});
+        if (expression) {
+          proven->nesting += 2;
+          ++proven->syntax;
+          *expression = proven;
+        }
       } else {
         out.insert(out.end(), expanded.begin(), expanded.end());
       }
@@ -2935,7 +2980,8 @@ private:
   // Runs a host-program macro on the invocation `in[at..last]` and expands the
   // tokens it produced. Every produced token is attributed to the invocation.
   bool invokeProcedure(const Pieces &in, std::size_t at, std::size_t last,
-                       Pieces &out, unsigned depth, Span use) {
+                       Pieces &out, unsigned depth, Span use,
+                       std::optional<ParseDepth> *expression = nullptr) {
     const auto &name = in[at].text;
     if (depth >= recursionLimit) {
       error(use, "macro recursion limit of " + std::to_string(recursionLimit) +
@@ -2983,11 +3029,11 @@ private:
     }
     if (!generated.empty())
       generated.front().glued = false;
-    return expandPieces(generated, out, depth + 1, use);
+    return expandPieces(generated, out, depth + 1, use, expression);
   }
 
   bool instantiate(const Macro &macro, const std::vector<Node> &nodes,
-                   const Environment &environment, Pieces &out, Span use,
+                   Environment &environment, Pieces &out, Span use,
                    const SyntaxContextPtr &invocationContext) {
     bool ok = true;
     for (const auto &node : nodes) {
@@ -3035,24 +3081,28 @@ private:
     return ok;
   }
 
-  bool repeat(const Macro &macro, const Node &node,
-              const Environment &environment, Pieces &out, Span use,
+  bool repeat(const Macro &macro, const Node &node, Environment &environment,
+              Pieces &out, Span use,
               const SyntaxContextPtr &invocationContext) {
     std::set<std::string> used;
     names(node.body, used);
-    std::vector<std::string> repeating;
+    struct RepeatedBinding {
+      Environment::iterator entry;
+      const Binding *original;
+    };
+    std::vector<RepeatedBinding> repeating;
     std::size_t count = none;
     for (const auto &name : used) {
       auto found = environment.find(name);
       if (found == environment.end() || !found->second->list)
         continue;
-      repeating.push_back(name);
+      repeating.push_back({found, found->second});
       auto size = found->second->items.size();
       if (count == none)
         count = size;
       else if (count != size) {
         error(use, "macro '" + macro.name + "': metavariables '$" +
-                       repeating.front() + "' and '$" + name +
+                       repeating.front().entry->first + "' and '$" + name +
                        "' repeat a different number of times (" +
                        std::to_string(count) + " and " + std::to_string(size) +
                        ")");
@@ -3073,17 +3123,26 @@ private:
       error(use, "nonempty macro repetition has no elements");
       return false;
     }
+    if (count == 0)
+      return true;
+    struct Restore {
+      std::vector<RepeatedBinding> &bindings;
+      ~Restore() {
+        for (const auto &binding : bindings)
+          binding.entry->second = binding.original;
+      }
+    } restore{repeating};
     bool ok = true;
     for (std::size_t k = 0; k < count; ++k) {
-      Environment inner = environment;
-      for (const auto &name : repeating)
-        inner[name] = &environment.at(name)->items[k];
+      for (const auto &binding : repeating)
+        binding.entry->second = &binding.original->items[k];
       if (k > 0 && node.separator) {
         Piece separator = *node.separator;
         separator.authored = true;
         out.push_back(std::move(separator));
       }
-      ok &= instantiate(macro, node.body, inner, out, use, invocationContext);
+      ok &= instantiate(macro, node.body, environment, out, use,
+                        invocationContext);
     }
     return ok;
   }

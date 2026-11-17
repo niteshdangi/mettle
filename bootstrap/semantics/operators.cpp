@@ -219,7 +219,7 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
   if (!proven && !interfaceObligation(self, bound, node.span))
     return inference.fresh();
   auto &callee = module.functions[method->function];
-  auto &environment = functionGenerics.at(&callee);
+  auto &environment = functionEnvironment(callee);
   const auto count = ranged ? 3u : right < 0 ? 1u : 2u;
   if (callee.parameters.size() != count) {
     error("type", node.span, "native operator method has incompatible arity");
@@ -241,8 +241,8 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
           ? Type::Unknown
           : annotation(callee.error, callee.span, callee.owner);
   genericEnvironment = saved;
-  auto result = normalizeGenericType(
-      inference.value(functionVariables.at(&callee)), bindings, node.span);
+  auto result =
+      normalizeGenericType(functionResult(callee), bindings, node.span);
   auto effect = declaredEffect == Type::Unknown
                     ? Type::Unknown
                     : normalizeGenericType(declaredEffect, bindings, node.span);

@@ -3,31 +3,12 @@
 #include <charconv>
 
 namespace mettle::parsing {
-namespace {
-unsigned typeDepth(const TypeSyntax &type) {
-  unsigned depth = 0;
-  if (type.nested)
-    depth = typeDepth(*type.nested);
-  for (const auto &element : type.elements)
-    depth = std::max(depth, typeDepth(element));
-  for (const auto &argument : type.arguments)
-    if (argument.type)
-      depth = std::max(depth, typeDepth(*argument.type));
-  if (type.callable) {
-    for (const auto &parameter : type.callable->parameters)
-      depth = std::max(depth, typeDepth(parameter.annotation));
-    depth = std::max(depth, typeDepth(type.callable->result));
-    depth = std::max(depth, typeDepth(type.callable->error));
-  }
-  return depth + 1;
-}
-} // namespace
-
-TypeSyntax Parser::type(bool effect) {
+TypeSyntax Parser::type(bool effect, unsigned *parsedDepth) {
   StateGuard guard(*this);
   if (++nesting > limits::parserNesting)
     fail("type nesting limit exceeded", "limit");
   TypeSyntax result;
+  unsigned depth = 1;
   std::string view;
   if (is("read") || (is("mut") && peek(1).text != "fn"))
     view = tokens[position++].text;
@@ -55,7 +36,7 @@ TypeSyntax Parser::type(bool effect) {
   }
   if (is("fn") || is("for") || is("unsafe") || is("extern") || is("async") ||
       ((is("mut") || is("take")) && peek(1).text == "fn"))
-    result = callableType();
+    result = callableType(&depth);
   else if (is("heap") || is("shared") || is("weak") || is("local")) {
     auto owner = tokens[position++];
     result.form = TypeForm::Owner;
@@ -74,36 +55,44 @@ TypeSyntax Parser::type(bool effect) {
       } else
         result.ownerKind = OwnerKind::Weak;
     }
-    auto payload = std::make_shared<const TypeSyntax>(type(false));
+    auto payload = std::make_shared<const TypeSyntax>(type(false, &depth));
     result.nested = payload;
+    ++depth;
   } else if (take("pinned")) {
     result.form = TypeForm::Pinned;
-    result.elements.push_back(type(false));
+    result.elements.push_back(type(false, &depth));
+    ++depth;
   } else if (take("ptr")) {
     result.form = TypeForm::Pointer;
     expect("<");
     if (!is("read") && !is("mut"))
       fail("raw pointers require read or mut access");
     result.name = tokens[position++].text;
-    result.elements.push_back(type(false));
+    result.elements.push_back(type(false, &depth));
+    ++depth;
     if (!genericClose())
       fail("expected '>' after a raw pointer type");
   } else if (take("any") || take("some")) {
     result.form = tokens[position - 1].text == "any" ? TypeForm::Erased
                                                      : TypeForm::Opaque;
     do {
-      result.elements.push_back(boundType());
+      unsigned boundDepth;
+      result.elements.push_back(boundType(&boundDepth));
+      depth = std::max(depth, boundDepth + 1);
     } while (take("+"));
   } else if (take("_")) {
     result.name = "_";
   } else if (take("(")) {
     ++parens;
-    auto first = type();
+    auto first = type(true, &depth);
     if (take(",")) {
+      ++depth;
       result.form = TypeForm::Tuple;
       result.elements.push_back(std::move(first));
       while (!is(")")) {
-        result.elements.push_back(type());
+        unsigned elementDepth;
+        result.elements.push_back(type(true, &elementDepth));
+        depth = std::max(depth, elementDepth + 1);
         if (!take(","))
           break;
       }
@@ -114,7 +103,8 @@ TypeSyntax Parser::type(bool effect) {
   } else if (take("[")) {
     ++parens;
     result.form = TypeForm::Array;
-    result.elements.push_back(type());
+    result.elements.push_back(type(true, &depth));
+    ++depth;
     if (take(";"))
       result.countExpression = std::shared_ptr<const Node>(expr());
     else
@@ -132,7 +122,9 @@ TypeSyntax Parser::type(bool effect) {
       result.name += component;
     }
     if (genericOpen()) {
-      result.arguments = genericArguments();
+      unsigned argumentDepth;
+      result.arguments = genericArguments(&argumentDepth);
+      depth = argumentDepth + 1;
       for (const auto &argument : result.arguments)
         if (!argument.region.empty())
           result.regions.push_back(argument.region);
@@ -151,7 +143,6 @@ TypeSyntax Parser::type(bool effect) {
     }
   }
   result.binders = std::move(binders);
-  auto depth = typeDepth(result);
   if (depth > limits::parserNesting)
     fail("type nesting limit exceeded", "limit");
   while (is(".") && peek(1).text == "(") {
@@ -161,16 +152,18 @@ TypeSyntax Parser::type(bool effect) {
     ++position;
     expect("(");
     ++parens;
-    projection.elements.push_back(type(false));
+    unsigned interfaceDepth;
+    projection.elements.push_back(type(false, &interfaceDepth));
     expect(")");
     --parens;
     expect(".");
     projection.name = name().text;
+    unsigned argumentDepth = 0;
     if (genericOpen())
-      projection.arguments = genericArguments();
+      projection.arguments = genericArguments(&argumentDepth);
+    depth = std::max({depth, interfaceDepth, argumentDepth});
     result = std::move(projection);
-    depth = typeDepth(result);
-    if (depth > limits::parserNesting)
+    if (++depth > limits::parserNesting)
       fail("type nesting limit exceeded", "limit");
   }
   while (is("?") || is("??")) {
@@ -208,6 +201,8 @@ TypeSyntax Parser::type(bool effect) {
     fail(
         "stored outcomes use Outcome<T, E>; throws declares a callable effect");
   --nesting;
+  if (parsedDepth)
+    *parsedDepth = depth;
   return result;
 }
 } // namespace mettle::parsing

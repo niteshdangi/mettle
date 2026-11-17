@@ -10,13 +10,53 @@
 #include <memory>
 
 namespace mettle::driver {
+class BuildInputs;
+class LibraryQueries {
+public:
+  LibraryInputSnapshots snapshots;
+  std::optional<LibraryArchive> findArchive(const std::string &unit,
+                                            const std::string &key,
+                                            std::string &content) const;
+  void publishArchive(std::string unit, std::string key, std::string content,
+                      LibraryArchive archive);
+  std::shared_ptr<const LibraryHeaderImport>
+  findHeader(const std::string &unit, const std::string &content,
+             std::span<const SourceId> sources) const;
+  void publishHeader(std::string unit, std::string content,
+                     std::vector<SourceId> sources,
+                     std::shared_ptr<const LibraryHeaderImport> header);
+  std::optional<pipeline::ImportedProgram>
+  find(const std::string &unit, const std::string &identity) const;
+  void publish(std::string unit, std::string identity,
+               pipeline::ImportedProgram program);
+  std::size_t hits() const { return reused; }
+
+private:
+  struct ArchiveEntry {
+    std::string key, content;
+    LibraryArchive archive;
+  };
+  struct Entry {
+    std::string identity;
+    pipeline::ImportedProgram program;
+  };
+  struct HeaderEntry {
+    std::string content;
+    std::vector<SourceId> sources;
+    std::shared_ptr<const LibraryHeaderImport> header;
+  };
+  std::map<std::string, Entry> imports;
+  std::map<std::string, ArchiveEntry> archives;
+  std::map<std::string, HeaderEntry> headers;
+  mutable std::size_t reused = 0;
+};
+
 class CheckedLibrary {
 public:
   bool mount(resolution::Library &library, Diagnostics &diagnostics,
              const expansion::SourceAllocator &allocate, std::string &error);
   pipeline::LibraryImporter importer();
   const std::string &key() const { return archiveKey; }
-  const std::map<std::string, Source> &inputs() const { return sourceInputs; }
   pipeline::PackageOwners packageOwners() const;
   std::string sourcePath() const;
   bool active() const { return used; }
@@ -30,13 +70,18 @@ private:
   CheckedLibrary(const Options &options, packages::Store &store,
                  expansion::Configuration configuration, TargetFacts target);
   bool prepareArchive(std::string &error);
+  bool prepareInputs(std::string &error);
+  const Source *input(const std::string &path) const;
   bool ensureMounted(std::string &error);
   std::optional<pipeline::ImportedProgram>
   import(const Module &module, const resolution::Resolution &resolution,
          Diagnostics &diagnostics);
   LibraryArchive archive;
   std::string archiveKey;
-  std::map<std::string, Source> sourceInputs;
+  std::string archiveContent;
+  std::shared_ptr<const LibraryInputs> sourceInputs;
+  LibraryCacheConfiguration cacheConfiguration;
+  CheckedLibrary *dependency = nullptr;
   packages::Store::Lease lease;
   expansion::Configuration configuration;
   TargetFacts target;
@@ -51,7 +96,8 @@ private:
   Diagnostics *receiverDiagnostics = nullptr;
   expansion::SourceAllocator allocate;
   std::string root;
-  bool mounted = false, used = false, unavailable = false;
+  bool inputsPrepared = false, ineligible = false, mounted = false,
+       used = false, unavailable = false;
 };
 
 class CheckedLibraries {
@@ -64,7 +110,8 @@ public:
   pipeline::LibraryImporter importer();
   bool active() const { return selected != nullptr; }
   const std::string &key() const { return selected->key(); }
-  const std::map<std::string, Source> &inputs() const;
+  bool containsInput(const std::string &path) const;
+  void recordInputs(BuildInputs &inputs) const;
   pipeline::PackageOwners packageOwners() const;
   std::map<std::string, std::vector<std::string>> packageSources() const;
   std::map<std::string, std::string> packageKeys() const;

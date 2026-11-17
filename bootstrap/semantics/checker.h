@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <span>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -24,7 +25,8 @@ public:
           NumericEvaluator numericEvaluator = nullptr,
           std::shared_ptr<const ImportedDeclarations> imported = nullptr)
       : checked(std::move(module), std::move(symbols),
-                imported ? imported->types : nullptr),
+                imported ? std::make_shared<TypeStore>(*imported->types)
+                         : nullptr),
         module(checked.tree), diagnostics(diagnostics),
         inference(diagnostics, *checked.types), requireEntry(requireEntry),
         numericEvaluator(numericEvaluator) {
@@ -38,15 +40,21 @@ public:
 private:
   void importDeclarations();
   void retainDeclarations();
+  Type functionResult(const Function &function);
   interfaces::Database checkingInterfaces;
   bool imported(Span span) const;
   std::set<std::tuple<SourceId, std::size_t, std::size_t>> importedSpans;
   std::unordered_map<const Node *, const CheckedExpression *>
       importedExpressions;
   std::unordered_map<const TypeSyntax *, Type> importedAnnotations;
-  const ImportedTypeDeclaration *
-  importedType(Span span,
-               const std::vector<ImportedTypeDeclaration> &items) const;
+  const CheckedExpression *importedExpression(const Node &node) const;
+  const CheckedExpression &
+  importExpression(const std::shared_ptr<CheckedExpression> &expression);
+  const evaluation::CheckedFunction &
+  evaluationContract(const ImportedFunction &function);
+  std::optional<Type> importedAnnotation(const TypeSyntax &syntax) const;
+  std::shared_ptr<const ImportedTypeDeclaration>
+  importedType(Span span, const ImportedDeclarations::TypeTable &items) const;
   friend class ConstantHost;
   TypeStore &typeStore() { return *checked.types; }
   // usize/isize width of the selected target; an unspecified target is 64.
@@ -72,7 +80,7 @@ private:
   struct Binding {
     int variable;
     int slot;
-    Function *owner = nullptr;
+    const Function *owner = nullptr;
   };
   using NameKey = std::pair<std::string, std::uint64_t>;
   static NameKey nameKey(std::string_view name,
@@ -103,7 +111,6 @@ private:
   Type staticType(std::size_t index);
   void inherentConstantNamesAndTypes();
   void staticDeclarations();
-  void staticLocals();
   void staticInitializers();
   // Type of a text or byte-text literal; records its bytes. A malformed
   // literal is diagnosed and still typed so its uses do not cascade.
@@ -183,14 +190,14 @@ private:
       {"usize", Type::Usize}, {"f32", Type::F32},     {"f64", Type::F64}};
   std::vector<std::map<NameKey, Binding>> scopes;
   std::map<Type, NameKey> genericNames;
-  std::unordered_map<Function *, std::vector<int>> localVariables;
+  std::unordered_map<const Function *, std::vector<int>> localVariables;
   std::unordered_map<const Function *, int> functionVariables;
   std::unordered_set<const Function *> preparedFunctions;
   std::unordered_set<const Function *> checkingFunctions;
   std::unordered_set<const Function *> checkedFunctions;
   void prepareFunction(Function &function);
   void inferFunctionResult(Function &function);
-  std::vector<std::size_t> functionDependencies(Function &function);
+  std::vector<std::size_t> functionDependencies(const Function &function);
   std::unordered_map<const Function *, int> asyncDefaultBodyVariables;
   std::unordered_map<const Node *, int> nodeVariables;
   // Expression results whose evaluation already reported an error.
@@ -206,7 +213,7 @@ private:
   std::unordered_set<const Node *> permittedRecipes;
   bool formatMessage(Type type) const;
   bool formatArguments(Node &call, const Function &callee, std::size_t offset);
-  Function *current = nullptr;
+  const Function *current = nullptr;
   std::unordered_map<int, int> loopResults;
   std::vector<std::pair<int, Span>> integerOrBoolean;
   std::vector<std::pair<int, Span>> comparisons;
@@ -235,15 +242,20 @@ private:
   };
   std::unordered_map<const Function *, std::vector<CaptureBinding>>
       captureBindings;
-  std::vector<std::pair<Function *, std::size_t>> closureScopes;
+  std::vector<std::pair<const Function *, std::size_t>> closureScopes;
 
   NodeFacts &facts(const Node &node) { return checked.nodes[&node]; }
   FunctionFacts &facts(const Function &function) {
     if (auto found = closureFunctions.find(&function);
         found != closureFunctions.end())
       return checked.closureBodies.at(found->second)->function;
-    return checked.functions.at(
-        static_cast<std::size_t>(&function - module.functions.data()));
+    return checked.functions.at(module.functions.indexOf(&function));
+  }
+  const FunctionFacts &facts(const Function &function) const {
+    if (auto found = closureFunctions.find(&function);
+        found != closureFunctions.end())
+      return checked.closureBodies.at(found->second)->function;
+    return checked.function(module.functions.indexOf(&function));
   }
   void error(std::string phase, Span span, std::string message,
              std::vector<DiagnosticMessage> related = {});
@@ -282,6 +294,7 @@ private:
   RegionId annotationRegion(const TypeSyntax &syntax, Span span);
   RegionId regionReference(const LexicalNameSyntax &name, Span span);
   AnnotationRegions &functionRegions(const Function &function);
+  AnnotationRegions importedRegions(const DeclarationRegions &declaration);
   void
   assumeRegionConstraints(const std::vector<GenericConstraint> &constraints,
                           Span span);
@@ -307,7 +320,7 @@ private:
   bool callableObligation(Type actual, Type contract, Span span);
   std::optional<Type> genericAnnotation(const TypeSyntax &syntax, Span span,
                                         std::string_view owner = {});
-  const std::vector<Type> &genericBindings(Function &function);
+  const std::vector<Type> &genericBindings(const Function &function);
   std::optional<int>
   genericCall(Node &node, bool reachable, std::size_t callee,
               std::size_t receiverOffset,
@@ -361,6 +374,37 @@ private:
   bool implementationsRegistered = false;
   void proveDeferredObligations();
   std::unordered_map<const Function *, GenericEnvironment> functionGenerics;
+  GenericEnvironment &functionEnvironment(const Function &function);
+  template <typename Declaration>
+  GenericEnvironment &typeEnvironment(const Declaration &declaration) {
+    auto tables = [&] {
+      if constexpr (std::is_same_v<Declaration, Module::Product>)
+        return std::pair{&productGenerics, &ImportedDeclarations::products};
+      else if constexpr (std::is_same_v<Declaration, Module::Alias>)
+        return std::pair{&aliasGenerics, &ImportedDeclarations::aliases};
+      else if constexpr (std::is_same_v<Declaration, Module::Interface>)
+        return std::pair{&interfaceGenerics, &ImportedDeclarations::interfaces};
+      else if constexpr (std::is_same_v<Declaration, Module::Implementation>)
+        return std::pair{&implementationGenerics,
+                         &ImportedDeclarations::implementations};
+      else
+        return std::pair{&associatedGenerics,
+                         &ImportedDeclarations::associated};
+    }();
+    auto &environments = *tables.first;
+    if (auto found = environments.find(&declaration);
+        found != environments.end())
+      return found->second;
+    if (const auto &imports = checked.importedDeclarations)
+      if (auto contract =
+              importedType(declaration.span, imports.get()->*tables.second))
+        return environments
+            .emplace(&declaration, declarationEnvironment(contract->generics))
+            .first->second;
+    return environments.at(&declaration);
+  }
+  GenericEnvironment
+  declarationEnvironment(const DeclarationEnvironment &declaration);
   std::unordered_map<const Module::Product *, GenericEnvironment>
       productGenerics;
   std::unordered_map<const Module::Alias *, GenericEnvironment> aliasGenerics;
@@ -520,11 +564,11 @@ private:
   std::set<std::pair<std::size_t, std::vector<Type>>> activeGenericAliases;
   struct GenericCallRequest {
     Node *node;
-    Function *function;
+    const Function *function;
     int result;
     std::vector<TypeBinding> bindings;
     GenericEnvironment *environment;
-    Function *caller;
+    const Function *caller;
     // Declaration result last resolved; an unchanged one needs no rework.
     Type resolvedDeclaration = Type::Unknown;
   };
@@ -534,14 +578,14 @@ private:
   // such a call) may leave parameters that only the other branches fix, as in
   // `if c { left(a) } else { right(b) }`; the join completes it.
   struct DeferredCall {
-    Function *function;
+    const Function *function;
     std::vector<TypeBinding> bindings;
     std::vector<Type> signature;
     Type resultPattern, errorPattern;
     int variable;
     std::size_t request;
     GenericEnvironment *environment, *caller;
-    Function *owner;
+    const Function *owner;
     std::vector<RegionBinding> explicitRegions;
   };
   std::unordered_set<const Node *> deferrableCalls;
@@ -604,7 +648,7 @@ private:
   constructorApplicability(const ConstructorCandidate &candidate, Type type,
                            Span span, interfaces::Solver &solver,
                            std::span<const TypeBinding> seed = {});
-  void completeArguments(Node &node, Function &function,
+  void completeArguments(Node &node, const Function &function,
                          const std::vector<bool> &used,
                          bool reportMissing = true);
   int node(Node &node, bool reachable);
@@ -622,7 +666,8 @@ private:
   std::optional<int> variantCall(Node &node, std::string_view name,
                                  bool reachable);
   int match(Node &node, bool reachable);
-  void pattern(Pattern &pattern, int variable, ParameterMode mode);
+  void pattern(Pattern &pattern, int variable, ParameterMode mode,
+               std::optional<std::size_t> bindingScope = {});
   void resolvePatterns();
   void exhaustiveness();
   PatternFacts &facts(const Pattern &pattern) {

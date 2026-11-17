@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ir/ir.h"
+#include "types/layout.h"
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
@@ -16,7 +17,7 @@ namespace mettle::backend {
 // What the backend needs to describe source positions: every source a span
 // may name and the directory recorded as the compilation directory.
 struct DebugInfoRequest {
-  const std::vector<Source> &sources;
+  std::vector<const Source *> sources;
   std::string directory;
   std::function<Span(Span)> sourceSpan;
 };
@@ -74,6 +75,7 @@ private:
   std::map<std::pair<llvm::DILocalScope *, SourceId>, llvm::DILocalScope *>
       scopes;
   std::unordered_map<std::uint32_t, llvm::DIType *> types;
+  std::unordered_map<std::uint32_t, ObjectLayout> layouts;
   std::unordered_map<std::size_t, llvm::DILocalVariable *> variables;
   // Entry allocas holding each variable's current address, or null.
   std::unordered_map<std::size_t, llvm::AllocaInst *> slots;
@@ -88,6 +90,7 @@ private:
   llvm::DILocalScope *scope(int index) const;
   llvm::DILocation *location(Span span, int scope);
   llvm::DIType *describe(Type type);
+  const ObjectLayout *layoutFor(Type type);
   llvm::DIType *build(Type type);
 };
 } // namespace mettle::backend
