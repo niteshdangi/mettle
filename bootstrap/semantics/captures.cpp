@@ -417,7 +417,7 @@ void Checker::finishClosures() {
     }
   }
   std::vector<Type> defined;
-  for (const auto &product : module.products)
+  for (const auto &product : module.products.headers())
     if (!imported(product.span))
       defined.push_back(
           typeNames.at(definitionName(product.span, product.name)));

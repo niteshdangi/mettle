@@ -49,7 +49,7 @@ public:
   }
 
 private:
-  const std::string &text;
+  std::string_view text;
   SourceId id;
   std::size_t pos = 0, values = 0;
 
@@ -202,7 +202,7 @@ private:
       fail(pos, "expected an identifier or quoted key");
     while (identifierPart(peek()) || peek() == '-')
       ++pos;
-    return text.substr(begin, pos - begin);
+    return std::string(text.substr(begin, pos - begin));
   }
 
   Value object(unsigned depth, bool braced) {

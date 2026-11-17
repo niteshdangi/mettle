@@ -2,12 +2,26 @@
 
 #include "ir/ir.h"
 #include "metadata/references.h"
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
 
 namespace mettle::ir {
 class LazyFunctionBodies;
+using FunctionBodyVerifier =
+    std::function<bool(std::size_t, std::span<const std::uint8_t>)>;
+
+struct FunctionBodyRange {
+  std::size_t offset = 0, size = 0;
+};
+struct ProgramLayout {
+  std::vector<FunctionBodyRange> bodies;
+  std::string error;
+  explicit operator bool() const { return error.empty(); }
+};
+
+ProgramLayout programLayout(std::span<const std::uint8_t> bytes);
 
 struct EncodeResult {
   std::vector<std::uint8_t> bytes;
@@ -47,7 +61,7 @@ private:
   decodeProgramLazy(std::span<const std::uint8_t>,
                     const metadata::DecodeReferences &references, bool,
                     std::shared_ptr<const metadata::DecodeReferences>,
-                    std::shared_ptr<const void>);
+                    std::shared_ptr<const void>, FunctionBodyVerifier);
 };
 
 EncodeResult encodeProgram(const Program &program,
@@ -64,5 +78,6 @@ DecodeResult decodeProgramLazy(std::span<const std::uint8_t> bytes,
                                bool compactHeaders = false,
                                std::shared_ptr<const metadata::DecodeReferences>
                                    retainedReferences = nullptr,
-                               std::shared_ptr<const void> backing = nullptr);
+                               std::shared_ptr<const void> backing = nullptr,
+                               FunctionBodyVerifier verifyBody = {});
 } // namespace mettle::ir

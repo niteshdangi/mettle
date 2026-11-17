@@ -1,6 +1,7 @@
 #include "semantics/interfaces.h"
 #include "support/limits.h"
 #include <functional>
+#include <utility>
 
 namespace mettle::interfaces {
 namespace {
@@ -943,7 +944,7 @@ Database::implementationsFor(const TypeStore &types,
     index[owner].push_back(i);
   }
   static const std::vector<std::size_t> none;
-  return declaration < index.size() ? index[declaration] : none;
+  return declaration < index.size() ? std::as_const(index)[declaration] : none;
 }
 
 std::optional<Type> Solver::inferredSubject(Type partial, Type interfaceType,

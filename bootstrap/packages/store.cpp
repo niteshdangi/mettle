@@ -522,10 +522,6 @@ bool Store::putMany(const std::vector<Artifact> &artifacts) {
     }
   }
   discardTemporaries();
-  std::set<std::string> keep;
-  for (const auto &artifact : artifacts)
-    keep.insert(artifact.key);
-  pruneLocked(keep);
   return true;
 }
 
@@ -661,12 +657,16 @@ void Store::note(const std::string &key) const {
 }
 
 std::vector<std::string> Store::commitProject(const std::string &project,
-                                              const fs::path &path) {
+                                              const fs::path &path,
+                                              const std::string &keep) {
   if (project.empty() || !prepare())
     return {};
   StoreLock lock(directory);
   if (!lock)
     return {};
+  std::set<std::string> retained;
+  if (!keep.empty())
+    retained.insert(keep);
   Sha256 name;
   name.update(project);
   const auto rootsDirectory = directory / "roots";
@@ -710,7 +710,7 @@ std::vector<std::string> Store::commitProject(const std::string &project,
   for (const auto &key : current)
     content += key + "\n";
   if (!publishLocked(mine, content))
-    return {};
+    return pruneLocked(retained, liveLeaseKeys(directory));
   const auto now = fs::file_time_type::clock::now();
   std::set<std::string> claimed = current;
   for (fs::directory_iterator it(rootsDirectory, error), end;
@@ -732,7 +732,7 @@ std::vector<std::string> Store::commitProject(const std::string &project,
       claimed.insert(other->keys.begin(), other->keys.end());
   }
   std::vector<std::string> notes;
-  const auto leased = liveLeaseKeys(directory);
+  auto leased = liveLeaseKeys(directory);
   for (const auto &key : released)
     if (!claimed.contains(key) && !leased.contains(key) && key.size() >= 2) {
       std::error_code removed;
@@ -740,7 +740,7 @@ std::vector<std::string> Store::commitProject(const std::string &project,
         notes.push_back("evicted " + key.substr(0, 12) +
                         ": no live project build uses it");
     }
-  for (auto &note : pruneLocked({}))
+  for (auto &note : pruneLocked(retained, std::move(leased)))
     notes.push_back(std::move(note));
   return notes;
 }
@@ -754,14 +754,14 @@ std::vector<std::string> Store::prune(const std::string &keep) {
   std::set<std::string> retained;
   if (!keep.empty())
     retained.insert(keep);
-  return pruneLocked(retained);
+  return pruneLocked(retained, liveLeaseKeys(directory));
 }
 
-std::vector<std::string> Store::pruneLocked(const std::set<std::string> &keep) {
+std::vector<std::string> Store::pruneLocked(const std::set<std::string> &keep,
+                                            std::set<std::string> leased) {
   std::vector<std::string> notes;
   // The caller's own output is already published, so its lease only protects
   // the entry from other builds' pruning, not from this budget.
-  auto leased = liveLeaseKeys(directory);
   for (const auto &key : keep)
     leased.erase(key);
   std::error_code error;
@@ -822,12 +822,13 @@ std::vector<std::string> Store::pruneLocked(const std::set<std::string> &keep) {
     else
       live.push_back(std::move(record));
   }
-  std::stable_sort(live.begin(), live.end(),
-                   [&](const Record &a, const Record &b) {
-                     if (keep.contains(a.key) != keep.contains(b.key))
-                       return keep.contains(b.key);
-                     return a.used < b.used;
-                   });
+  if (bounds.bytes && total > bounds.bytes)
+    std::stable_sort(live.begin(), live.end(),
+                     [&](const Record &a, const Record &b) {
+                       if (keep.contains(a.key) != keep.contains(b.key))
+                         return keep.contains(b.key);
+                       return a.used < b.used;
+                     });
   std::size_t next = 0;
   while (bounds.bytes && total > bounds.bytes && next < live.size()) {
     const auto &record = live[next++];

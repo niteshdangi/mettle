@@ -427,10 +427,11 @@ archive content and the exact mounted source-ID order. Top-level checked
 declarations share stable, read-only records; source declarations own their
 syntax. Explicit consumer edits detach a record before borrowing its addresses,
 and package composition changes only declarations requiring index/scope remaps.
-Archive admission verifies owned immutable bytes, not
-a mutable file mapping. Matching source/configuration identities reuse that
-snapshot without rereading the persistent blob; later file edits cannot change
-its bytes. Consumers copy source/remap state before mounting. Source-provenance
+Archive admission retains immutable Store mappings: published blobs are replaced
+atomically, never rewritten in place. Matching source/configuration identities
+reuse that snapshot without rereading the persistent blob; Store replacement or
+pruning cannot change its bytes. Consumers copy source/remap state before
+mounting. Source-provenance
 validation survives these copies; source recording or recapture invalidates it.
 Archive sections share immutable storage. Replacing an entry releases its
 backing when no active import still owns it.
@@ -450,8 +451,15 @@ lookups preserve full identity checks and canonical ordering across both.
 Changing an imported identity key invalidates the consumer's index, not its
 shared prefix in other consumers. Generic function and type environments are
 materialized on first use rather than recreated for every imported declaration.
+Declaration archives persist compact query projections separately from framed
+syntax. Admission decodes the projection without traversing discarded type
+syntax; demanded syntax must reproduce its admitted projection. Item attributes
+remain in query records, so driver linkage discovery does not materialize
+functions or statics. Interface phases share unchanged immutable records and
+encode only phase replacements, retaining phase-specific selection contracts.
 Compact IR admission streams and validates all locals and lexical scopes,
-retaining only the parameter/special-slot prefix. Nested readers borrow their
+retaining only the parameter/special-slot prefix without temporary full
+functions or repeated demanded-header decoding. Nested readers borrow their
 record's string table. The indexed body loader restores body-local storage,
 scopes and loop metadata before CFG validation. Archive storage and remap tables
 remain owned by the shared import.
@@ -477,8 +485,8 @@ Source query eligibility currently excludes const/default/constructor/destructor
 and async bodies; source interfaces/implementations, closures, static locals and
 global assembly conservatively fall back to ordinary checking. Exact spans
 participate in fingerprints, so shifted declarations can invalidate more than
-the edited function. First-load type and function-signature materialization
-remains whole-inventory.
+the edited function. First-load admission still validates the complete type and
+signature inventories; full records need not materialize for unused declarations.
 Focused sustained-edit coverage establishes
 discarding obsolete body types, not general bounded RSS or lifetime/sanitizer
 qualification.
@@ -504,17 +512,20 @@ loading their executable bodies. Demanded generic bodies still specialize and
 pass concrete IR admission; executable builds retain the native object and
 cross-object optimization policy.
 
-Fresh graph admission validates arena-backed borrowed descriptors before
-publishing a transactional typed store. Owned and borrowed records share one
-wire schema and semantic validator; schema-derived minimum sizes bound
+Fresh graph admission retains validated serialized record slices, compact
+indexes and normalized canonical identity keys before publishing a transactional
+typed store, not a whole-graph descriptor arena. Owned and borrowed records share
+one wire schema and semantic validator; schema-derived minimum sizes bound
 allocations before shell creation and sequence reservation. Symbol callbacks run
-only after structural admission. Unique canonical keys populate interning
-indexes without expanding owned definitions. Reads materialize individual
-records from retained immutable bytes and resolved ordinal tables; canonical
-fallback keeps ordinary eager admission. The destination remains unchanged on
-failure.
+only after structural admission. Flat graph edges retain cycle/depth validation.
+Imported interning shares immutable borrowed-key tables with consumer-local
+additions and exact identity comparisons. Reads materialize individual descriptors
+from retained immutable bytes and resolved ordinal tables; canonical fallback
+keeps ordinary eager admission. Dense identities, region tables and complete
+structural validation remain eager. The destination remains unchanged on failure.
 
-The admitted graph retains its borrowed descriptor arena over owned wire bytes.
+The admitted graph retains its immutable archive owner or snapshots caller bytes.
+Borrowed descriptors are constructed only when inspected.
 Parameter classification, interface ordinals, region carriers and variadic
 escape checks read those descriptors without expanding owned records. A
 materialized or modified slot uses its current owned definition instead; copies
@@ -531,6 +542,20 @@ and region contracts materialize once through `ImportedFunction::contract()`;
 mutable consumers detach shared contracts. Global annotation and return checks
 use signature indexes rather than forcing every contract. Structural scanning
 still validates discarded syntax, collection inventories and logical references.
+Declaration tables expose explicit metadata headers; ordinary indexed
+access always supplies complete syntax, materialized once from retained immutable
+bytes and frozen remaps. Metadata rebasing updates both the immediate header and
+its deferred complete record without expanding syntax. Compact signature admission avoids temporary parameter
+and default vectors. Stable declaration IDs link signatures to demand-installed
+syntax annotations. Imported function names retain one immutable index with a
+consumer-local overlay, including cross-boundary constructor/name conflicts.
+
+Interface admission decodes the checking database once and applies finalized
+record differences, sharing unchanged definitions, projections, implementations,
+maps and implementation-candidate indexes. Consumer changes detach records or
+enter ordered map overlays; checking and finalized region contracts remain
+distinct. Initial checking metadata validation and complete coherence/selection
+visibility are not deferred away.
 
 Checked-expression admission validates every encoded syntax node, operand
 inventory, fact, reference and interface dispatch without retaining an AST or
@@ -539,7 +564,7 @@ admission; owned encoded slices materialize once on demand. Deferred readers
 retain frozen successful remaps or explicitly retained immutable driver-owned
 resolver tables, never caller-borrowing callbacks. Function-relative slices
 translate deferred expression offsets back to the enclosing archive. Header
-schema 2 and contract schema 14 encode each source revision once, followed by
+schema 3 and contract schema 16 encode each source revision once, followed by
 ordinal references. Admission rejects forward or conflicting definitions before
 source resolution; deferred readers retain the completed revision table.
 Span extents still pass through the admitted source resolver. The driver
@@ -554,8 +579,13 @@ Constant-evaluator callable shapes are also created once on demand.
 
 Native source inventories and generated-source provenance are immutable shared
 snapshots. Diagnostics retain their owners, and archive edits detach before
-mutation. A resident mount reuses a snapshot only when every allocated source
-ID and the initial hygiene allocator position match; replay reserves the same
+mutation. Source text and encoded revisions retain slices of the immutable
+archive snapshot; text mutation first acquires owned storage. Admission validates
+UTF-8 and binds each encoded revision to its package identity, source ordinal,
+path and text without reconstructing the text. Sections independently retain
+their backing, so copied archives and surviving diagnostics never borrow a
+destroyed envelope. A resident mount reuses a snapshot only when every allocated
+source ID and the initial hygiene allocator position match; replay reserves the same
 hygiene range. Otherwise provenance is remapped normally. Each archive retains
 one mutex-protected mounted snapshot; diagnostics can outlive its archive.
 
@@ -574,9 +604,11 @@ IR function tables share immutable native headers with their archive owner.
 Reads do not detach pages; mutations use explicit indexed edits. Fixed page
 storage and release/acquire publication keep deferred record references stable
 while different readers materialize records. Page copying and first
-materialization serialize on the page mutex. Native IR header decoding and
-the verifier's header-type inventory remain eager; this is not complete
-random-access archive admission or a demand-only verifier.
+materialization serialize on the page mutex. Native IR admission validates the
+shared header schema directly into compact indexes, without constructing
+disposable full functions. Demanded executable records decode locals, scopes and
+loops without decoding their admitted headers again. The verifier's header-type
+inventory remains eager; this is not a demand-only verifier.
 
 The constant evaluator accepts either an existing source declaration or a
 checked callable descriptor with resolved parameter/result shapes and borrowed
@@ -647,7 +679,14 @@ package-relative path and source-text revision, independent of archive keys and
 source insertion order; import and definition equality retain that identity.
 Header and IR source references remain archive-relative. The envelope
 checks format, expected compiler/content/configuration identity and a SHA-256
-checksum; its sections still require their owning semantic decoders.
+commitment; its sections still require their owning semantic decoders.
+Envelope v4 authenticates every metadata byte and ordered, section-specific
+function payload digests, excluding the owning codecs' framed checked-function
+and IR body payloads. Its root commitment therefore changes when a payload
+digest changes. Source text and encoded
+revisions remain retained slices; admission still validates source UTF-8 and
+revision binding to the library identity, ordinal, path and exact text, followed
+by complete generation provenance validation.
 Library discovery snapshots source bytes and the module inventory, including
 in-root source links, rather than trusting timestamps. Links outside the
 declared library root make that snapshot ineligible; the driver reports the
@@ -662,15 +701,37 @@ The checked-library coordinator connects these sections through lazy native
 providers and a post-resolution pipeline importer. Unused native roots are not
 prepared, and user roots retain shadowing priority. Imported declarations and
 bodies still pass ordinary specialization and concrete admission.
-Checked IR v11 records separate function headers from CFG bodies. Import
-preflights every record extent and definition identity, decodes all headers and
-statics, and rejects trailing data while leaving CFG bodies encoded. A body is
-decoded and fully validated before specialization; its symbol bindings are
-merged against the archive and previously loaded bodies. The checked archive
-owner remains live through compilation. Library-object misses load every body
+Checked IR v12 records independently frame and intern function headers and CFG
+bodies, so body-only strings are deferred with their bodies. The codec owns the
+shared frame index used by envelope integrity and semantic decoding; checked
+declarations likewise expose their existing function-block extents. The driver
+does not parse either schema. Import preflights every record extent and
+definition identity, decodes all headers and
+statics, and rejects trailing data while leaving CFG bodies encoded. Native
+imports require the envelope's immutable retained payload verifiers. Each demanded
+checked-function block or IR body passes its committed digest check before its
+contents enter semantic decoding, then is fully validated before specialization.
+Body-private string tables are included in those checks; each body's symbol
+bindings are merged against the archive and previously loaded bodies. The
+checked archive owner remains live through compilation. Library-object misses load every body
 they emit, while object hits need not load bodies referenced as external
 declarations. The ordinary `decodeProgram` path remains eager and validates all
 bodies.
+First admission retains the Store's read-only mapping without copying or
+explicitly reading unused payload bytes. Store writers atomically publish new
+read-only blob inodes; replacement and pruning cannot modify a live mapping.
+External in-place mutation of published blobs is outside that storage contract.
+Admission hashes only metadata, including eager source bytes,
+checked-function summaries, type-graph storage, IR headers, statics and the
+program tail, plus the payload commitments. Included fragments form logical
+1 MiB digest blocks hashed on up to eight workers, matching contiguous archive
+digests without concatenating the metadata stream.
+Source revision hashing and UTF-8 validation still traverse source bytes
+separately. Unused checked-function blocks, IR body bytes and body-private string
+tables are not hashed at admission. Demand hashes only the selected payload;
+no whole-archive payload digest is repeated. The blob store delegates
+these authenticated deferred checks to the native importer instead of adding
+an eager full-blob hash.
 Mounting archives checks their registered physical source paths against loaded
 sources; later source reads also reject an already-mounted path with the same
 module-identity diagnostic. Generated-source provenance is not a physical module
@@ -816,6 +877,13 @@ Never serialize
 node addresses, use offsets as globally stable declaration identities, or carry
 semantic side tables across source revisions.
 
+Import resolution schedules declarations from the module/name dependencies
+observed by successful and failed lookups. Binding changes, explicit-name
+reservation release and associated-item discovery wake only dependent tasks.
+Glob propagation borrows source bindings, snapshotting self-globs before mutation.
+Macro discovery indexes pending imports by requested qualified alias and retires
+resolved entries instead of rescanning unrelated imports.
+
 Builtin, view and nominal product types use opaque `TypeId` handles interpreted in
 their compilation's `TypeStore`. Checking owns the mutable declaration-building
 phase; published checked syntax and CFG retain a shared const store owner.
@@ -827,6 +895,9 @@ not the source namespace resolver. Generic/region identities must extend that
 ownership model; serialization/query identities are separate from in-memory IDs.
 Refreshing generic instances preserves regional/normalized fields while
 propagating declaration layout, variant and cleanup metadata.
+Drop and uninhabited queries retain query-local graph state so shared children
+are traversed once; uninhabited proofs propagate monotonically through cycles.
+Later type-store mutations cannot reuse stale query results.
 
 Diagnostics format `TypeId`s through the types component's source-oriented
 display function rather than `TypeStore::name`, which remains an internal
@@ -1638,8 +1709,10 @@ Product coercions and branch joins normalize associated projections before
 strict inference comparison; region relationships and invariance remain
 separately enforced.
 Erasing regions preserves those normalized field identities. Pipeline admission
-also preflights the compiler-owned cleanup plan, so its resource limits are
-source diagnostics during both checking and building, not backend failures.
+also constructs and retains each compiler-owned cleanup plan in the verified
+program, so its resource limits are source diagnostics during both checking and
+building, not backend failures. Native frames borrow those immutable plans for
+the lifetime of lowering rather than reconstructing them.
 
 Keep LLVM headers/libraries in the LLVM backend and its driver integration.
 The current adapter implements the specified scalar arithmetic profiles;

@@ -55,5 +55,6 @@ TypeGraphImport
 importTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
                 const TypeGraphSymbols &symbols,
                 ValidationMode validation = ValidationMode::Eager,
-                std::shared_ptr<const TypeGraphSymbols> retainedSymbols = {});
+                std::shared_ptr<const TypeGraphSymbols> retainedSymbols = {},
+                std::shared_ptr<const void> backing = {});
 } // namespace mettle::metadata

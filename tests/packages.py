@@ -254,7 +254,10 @@ def library_entries():
     for profile in ("debug", "release"):
         prefix = evidence / ("native-" + profile)
         manifest.write_text(original + 'emit: ["static", "shared", "llvm"]\n')
-        invoke(["build", app, "-o", prefix, "--profile", profile])
+        text = invoke(["build", app, "-o", prefix, "--profile", profile,
+                       "--explain"])
+        assert text.count("mettle: backend lowering ") == 1, text
+        assert text.count("mettle: backend object ") == 1, text
         for suffix in (".a", shared_suffix):
             executable = evidence / ("caller-" + profile + suffix)
             result = processes.run([cxx, "-fuse-ld=lld", *consumer_link_flags(), str(caller), str(prefix) + suffix,
@@ -298,6 +301,54 @@ def library_entries():
         manifest.write_text('name: "native-library"\nversion: "1.0.0"\n' +
                             ('kind: "library"\n' if not field.startswith('kind:') else '') + field + '\n')
         invoke(["check", app], 1, "error[package]")
+
+
+def multi_output_objects():
+    app = packages("incremental/app")
+    manifest = app / "package.mettle"
+    original = manifest.read_text()
+    main = app / "src/main.mt"
+    original_source = main.read_text()
+    for profile, sanitizer, formats in (
+            ("debug", [], ["object", "llvm", "executable", "ir"]),
+            ("release", [], ["llvm", "executable", "object", "ir"]),
+            ("debug", ["--sanitize", "address"],
+             ["executable", "llvm", "object"])):
+        manifest.write_text(original + "emit: " + json.dumps(formats) + "\n")
+        global_assembly = profile == "debug" and not sanitizer
+        main.write_text(
+            'module math\n'
+            'static VALUE: i32 = 42\n'
+            'extern "C" { static ADDRESS: ptr<read i32>; }\n'
+            'global_asm!(".data\\n.globl {address}\\n.p2align 3\\n'
+            '{address}:\\n.quad {value}\\n.text", '
+            'address = sym ADDRESS, value = sym VALUE)\n'
+            'fn main(): i32 {\n'
+            '    let answer = core.hint.black_box(math.answer())\n'
+            '    unsafe { *ADDRESS - answer }\n'
+            '}\n' if global_assembly else original_source)
+        prefix = evidence / ("outputs-" + profile + ("-asan" if sanitizer else ""))
+        arguments = ["--profile", profile, *sanitizer, "--no-cache"]
+        text = invoke(["build", app, "-o", prefix, *arguments, "--explain"])
+        assert text.count("mettle: backend lowering ") == 1, text
+        assert text.count("mettle: backend object ") == 1, text
+        assert exit_code(prefix) == 0
+        if global_assembly:
+            assert "module asm " in Path(str(prefix) + ".ll").read_text()
+        for format, suffix in (("object", ".o"), ("llvm", ".ll")):
+            standalone = evidence / ("standalone" + suffix)
+            invoke(["build", app, "--emit", format, "-o", standalone,
+                    *arguments])
+            assert Path(str(prefix) + suffix).read_bytes() == standalone.read_bytes()
+        if "ir" in formats:
+            assert Path(str(prefix) + ".ir").is_file()
+    before = {suffix: Path(str(prefix) + suffix).read_bytes()
+              for suffix in ("", ".o", ".ll")}
+    manifest.write_text(original + 'emit: ["object", "llvm", "executable"]\n')
+    invoke(["build", app, "-o", prefix, "--cc", "missing-mettle-linker",
+            "--no-cache"], 1, "error[link]")
+    for suffix, content in before.items():
+        assert Path(str(prefix) + suffix).read_bytes() == content
 
 
 def development_dependencies():
@@ -1265,6 +1316,24 @@ def cache_follows_live_project_builds():
     explained(app)
     final = {path.name for path in cache_files("entries")}
     assert not ((both - second) & final), (both, second, final)
+
+
+def cache_project_budget():
+    first = evidence / "first.mt"
+    second = evidence / "second.mt"
+    first.write_text("fn main(): i32 { 11 }\n")
+    second.write_text("fn main(): i32 { 12 }\n")
+    arguments = ["--emit", "object", "--explain"]
+    invoke(["build", first, "-o", evidence / "first.o", *arguments])
+    retained = {path.name for path in cache_files("entries")}
+    invoke(["build", second, "-o", evidence / "second.o", *arguments])
+    limit = (cache_bytes() + 1023) // 1024
+    second.write_text("fn main(): i32 { 13 }\n")
+    text = invoke(["build", second, "-o", evidence / "second.o", *arguments,
+                   "--cache-limit-kib", limit])
+    assert "no live project build uses it" in text, text
+    assert retained <= {path.name for path in cache_files("entries")}
+    assert cache_bytes() <= limit * 1024
 
 
 def cache_corruption_and_clean():
@@ -3397,7 +3466,8 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          driver_noop_changes_keep_checked_index, package_ownership,
          cyclic_module_macro_definition,
          path_dependency, restricted_dependency_visibility, nested_dependency_imports,
-         package_name_roots_own_modules, configured_entry, mettle_version, library_entries, development_dependencies,
+         package_name_roots_own_modules, configured_entry, mettle_version,
+         library_entries, multi_output_objects, development_dependencies,
          missing_lock_locked, lock_corruption,
          registry_resolution, version_conflict, wildcard_version_bounds,
          backtracking, cycle_backtracking, lock_publication_isolated, offline, features,
@@ -3412,6 +3482,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          object_cache_integrity,
          sanitizer_cache_key, edit_invalidation, comment_newline_invalidates_cache,
          cache_dedup_and_bound, cache_follows_live_project_builds,
+         cache_project_budget,
          cache_corruption_and_clean, cache_corrupt_digest_preserves_other_files,
          cache_publication_failure_is_reported, cache_clean_failure, cache_clean_preserves_sources,
          security_output_paths,

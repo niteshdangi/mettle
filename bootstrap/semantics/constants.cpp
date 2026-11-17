@@ -182,7 +182,7 @@ public:
         cached != destructorCache.end())
       return cached->second;
     const Function *found = nullptr;
-    for (const auto &function : checker.module.functions) {
+    for (const auto &function : checker.module.functions.headers()) {
       if (!function.destructor)
         continue;
       auto name = checker.typeName(function.owner, function.span);
@@ -1588,6 +1588,7 @@ std::optional<Type> Checker::inherentConstantValue(std::size_t index,
                                                    Type subject,
                                                    const Node *use) {
   auto &constant = inherentConstants.at(index);
+  constant.materializeSyntax();
   auto &environment = typeEnvironment(*constant.implementation);
   const bool genericNominal =
       checked.types->isProduct(constant.declaredType) &&

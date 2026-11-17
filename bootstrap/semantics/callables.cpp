@@ -59,7 +59,7 @@ std::vector<std::size_t> Checker::carriedResultSources(
       if (auto found = scope.names.find(name); found != scope.names.end())
         return found->second;
     }
-    for (const auto &function : module.functions)
+    for (const auto &function : module.functions.headers())
       if (function.span.source == span.source &&
           function.span.begin <= span.begin && span.end <= function.span.end) {
         const auto &scope = functionRegions(function);
@@ -354,10 +354,11 @@ Type Checker::callableRegionAnnotation(const TypeSyntax &syntax, Span span,
   return checked.types->callableType(std::move(descriptor));
 }
 CallableType Checker::functionSignature(std::size_t index) {
-  auto &function = module.functions[index];
-  auto resultSources = resultSourceNames(function.annotation, function.error);
+  const auto &function = module.functions.header(index);
+  const bool importedFunction = imported(function.span);
   auto saved = genericEnvironment;
-  genericEnvironment = &functionEnvironment(function);
+  if (!importedFunction)
+    genericEnvironment = &functionEnvironment(function);
   const auto &declaration = std::as_const(*this).facts(function);
   CallableType result;
   result.unsafeCall = function.unsafeFunction;
@@ -375,22 +376,29 @@ CallableType Checker::functionSignature(std::size_t index) {
   result.resultSources = declaration.resultSources;
   for (std::size_t p = 0; p < function.parameters.size(); ++p) {
     const auto &parameter = function.parameters[p];
-    auto type =
-        p < declaration.locals.size()
-            ? (imported(function.span)
-                   ? declaration.locals[p].type
-                   : inference.value(localVariables.at(&function)[p]))
-            : annotation(parameter.annotation, parameter.span, function.owner);
+    auto type = p < declaration.locals.size()
+                    ? (importedFunction
+                           ? declaration.locals[p].type
+                           : inference.value(localVariables.at(&function)[p]))
+                    : [&] {
+                        const auto &syntax = module.functions[index];
+                        genericEnvironment = &functionEnvironment(syntax);
+                        return annotation(syntax.parameters[p].annotation,
+                                          parameter.span, function.owner);
+                      }();
     auto mode = p < declaration.locals.size()
                     ? declaration.locals[p].mode
                     : parameterMode(parameter.mode, type, *checked.types);
     result.parameters.push_back({type, mode, parameter.name});
   }
-  if (result.resultSources.empty() &&
+  if (!importedFunction && result.resultSources.empty() &&
       checked.types->containsViews(result.abiResult)) {
+    const auto &syntax = module.functions[index];
+    genericEnvironment = &functionEnvironment(syntax);
+    auto resultSources = resultSourceNames(syntax.annotation, syntax.error);
     for (std::size_t p = 0; p < function.parameters.size(); ++p) {
       auto parameterSources =
-          resultSourceNames(function.parameters[p].annotation);
+          resultSourceNames(syntax.parameters[p].annotation);
       for (const auto &source : resultSources) {
         const auto &parameter = function.parameters[p];
         if (nameKey(source) == nameKey(parameter.name, parameter.context) ||
@@ -414,15 +422,17 @@ CallableType Checker::functionSignature(std::size_t index) {
         result.resultSources = eligible;
     }
   }
-  if (result.resultSources.empty() &&
+  if (!importedFunction && result.resultSources.empty() &&
       !checked.types->containsViews(result.abiResult) &&
       checked.types->containsViews(result.abiResult, true)) {
+    const auto &syntax = module.functions[index];
+    genericEnvironment = &functionEnvironment(syntax);
     std::vector<std::pair<NameKey, const TypeSyntax *>> parameters;
-    for (const auto &parameter : function.parameters)
+    for (const auto &parameter : syntax.parameters)
       parameters.emplace_back(nameKey(parameter.name, parameter.context),
                               &parameter.annotation);
-    annotationRegionScopes.push_back(functionRegions(function));
-    auto sources = carriedResultSources(function.annotation, function.error,
+    annotationRegionScopes.push_back(functionRegions(syntax));
+    auto sources = carriedResultSources(syntax.annotation, syntax.error,
                                         parameters, function.span);
     annotationRegionScopes.pop_back();
     for (auto p : sources)

@@ -1,5 +1,7 @@
 #include "driver/library_archive.h"
+#include "ir/codec.h"
 #include "packages/sha256.h"
+#include "semantics/library.h"
 #include "support/limits.h"
 #include <algorithm>
 #include <limits>
@@ -7,19 +9,18 @@
 #include <unordered_set>
 
 namespace mettle::driver {
-
-// SHA-256 over the SHA-256 digests of consecutive 1 MiB blocks, so large
-// archives are hashed on several cores with the same collision resistance.
-std::string archiveDigest(std::string_view bytes) {
+namespace {
+template <class HashBlock>
+std::string blockDigest(std::size_t size, HashBlock hashBlock) {
   constexpr std::size_t block = std::size_t{1} << 20;
-  const std::size_t blocks = (bytes.size() + block - 1) / block;
+  const std::size_t blocks = (size + block - 1) / block;
   std::vector<std::string> parts(blocks);
   const std::size_t workers = std::min<std::size_t>(
       blocks, std::max(1u, std::min(8u, std::thread::hardware_concurrency())));
   auto run = [&](std::size_t first) {
     for (std::size_t i = first; i < blocks; i += workers) {
       packages::Sha256 hash;
-      hash.update(bytes.substr(i * block, block));
+      hashBlock(hash, i * block, std::min(block, size - i * block));
       parts[i] = hash.finish();
     }
   };
@@ -35,9 +36,83 @@ std::string archiveDigest(std::string_view bytes) {
     total.update(part);
   return total.finish();
 }
+} // namespace
+
+std::string archiveDigest(std::string_view bytes) {
+  return blockDigest(bytes.size(), [&](packages::Sha256 &hash,
+                                       std::size_t offset, std::size_t size) {
+    hash.update(bytes.substr(offset, size));
+  });
+}
 
 namespace {
-std::string digest(std::string_view bytes) { return archiveDigest(bytes); }
+struct PayloadRange {
+  std::size_t offset, size;
+};
+
+std::string metadataDigest(std::string_view bytes,
+                           std::span<const PayloadRange> payloads) {
+  if (payloads.empty())
+    return archiveDigest(bytes);
+  std::vector<std::size_t> prefixes;
+  prefixes.reserve(payloads.size() + 2);
+  prefixes.push_back(0);
+  std::size_t offset = 0;
+  for (const auto &payload : payloads) {
+    prefixes.push_back(prefixes.back() + (payload.offset - offset));
+    offset = payload.offset + payload.size;
+  }
+  prefixes.push_back(prefixes.back() + (bytes.size() - offset));
+  return blockDigest(prefixes.back(), [&](packages::Sha256 &hash,
+                                          std::size_t position,
+                                          std::size_t size) {
+    auto fragment = static_cast<std::size_t>(
+        std::upper_bound(prefixes.begin(), prefixes.end(), position) -
+        prefixes.begin() - 1);
+    const auto end = position + size;
+    while (position < end) {
+      const auto begin =
+          fragment ? payloads[fragment - 1].offset + payloads[fragment - 1].size
+                   : 0;
+      const auto count = std::min(end, prefixes[fragment + 1]) - position;
+      hash.update(bytes.substr(begin + position - prefixes[fragment], count));
+      position += count;
+      ++fragment;
+    }
+  });
+}
+
+std::string_view textBytes(std::span<const std::uint8_t> bytes) {
+  return {reinterpret_cast<const char *>(bytes.data()), bytes.size()};
+}
+
+struct PayloadSeals {
+  std::shared_ptr<const void> backing;
+  std::vector<std::string_view> digests;
+  std::vector<std::size_t> sizes;
+};
+
+void excludePayloads(std::vector<PayloadRange> &excluded,
+                     std::size_t sectionOffset, const auto &payloads) {
+  for (const auto &payload : payloads)
+    excluded.push_back({sectionOffset + payload.offset, payload.size});
+}
+
+ir::FunctionBodyVerifier payloadVerifier(std::shared_ptr<const void> backing,
+                                         std::vector<std::string_view> digests,
+                                         const auto &payloads) {
+  std::vector<std::size_t> sizes;
+  sizes.reserve(payloads.size());
+  for (const auto &payload : payloads)
+    sizes.push_back(payload.size);
+  auto integrity = std::make_shared<const PayloadSeals>(
+      PayloadSeals{std::move(backing), std::move(digests), std::move(sizes)});
+  return [integrity](std::size_t index, std::span<const std::uint8_t> payload) {
+    return integrity->backing && index < integrity->digests.size() &&
+           payload.size() == integrity->sizes[index] &&
+           archiveDigest(textBytes(payload)) == integrity->digests[index];
+  };
+}
 
 class Writer {
 public:
@@ -61,6 +136,7 @@ public:
   Reader(std::string_view bytes, std::string &error)
       : bytes(bytes), error(error) {}
   bool good() const { return error.empty(); }
+  std::size_t position() const { return offset; }
   std::size_t remaining() const { return bytes.size() - offset; }
   void fail(std::string_view message) {
     if (good())
@@ -88,24 +164,26 @@ public:
       fail("invalid boolean");
     return value != 0;
   }
-  std::size_t count(std::size_t minimumBytes) {
+  std::size_t count(std::size_t minimumBytes,
+                    std::size_t limit = limits::tokens) {
     auto value = integer();
-    if (value > limits::tokens || value > remaining() / minimumBytes) {
+    if (value > limit || value > remaining() / minimumBytes) {
       fail("invalid table size");
       return 0;
     }
     return value;
   }
-  std::string text() {
+  std::string_view textView() {
     auto size = integer();
     if (!good() || size > remaining()) {
       fail("truncated string");
       return {};
     }
-    auto result = std::string(bytes.substr(offset, size));
+    auto result = bytes.substr(offset, size);
     offset += size;
     return result;
   }
+  std::string text() { return std::string(textView()); }
   std::span<const std::uint8_t> data() {
     auto size = integer();
     if (!good() || size > remaining()) {
@@ -147,10 +225,17 @@ void LibrarySources::edit() {
 
 std::optional<std::string> LibrarySources::record(const Source &source,
                                                   std::string &error) {
+  return record(source, error, std::nullopt);
+}
+
+std::optional<std::string>
+LibrarySources::record(const Source &source, std::string &error,
+                       std::optional<SourceText> revision) {
   if (auto found = data->sourceIndex.find(source.id);
       found != data->sourceIndex.end()) {
     const auto &previous = data->sources[found->second];
-    if (previous.path != source.path || previous.text != source.text) {
+    if (previous.path != source.path || previous.text != source.text ||
+        (revision && *revision != data->revisions[found->second])) {
       error = "compiled library source ID names conflicting revisions";
       return std::nullopt;
     }
@@ -163,19 +248,24 @@ std::optional<std::string> LibrarySources::record(const Source &source,
     error = "invalid compiled library source identity, size or encoding";
     return std::nullopt;
   }
-  Writer revision;
-  revision.text(data->identity);
-  revision.integer(static_cast<std::uint32_t>(data->sources.size()));
-  revision.text(source.path);
-  revision.integer(static_cast<std::uint32_t>(source.text.size()));
+  Writer prefix;
+  prefix.text(data->identity);
+  prefix.integer(static_cast<std::uint32_t>(data->sources.size()));
+  prefix.text(source.path);
+  prefix.integer(static_cast<std::uint32_t>(source.text.size()));
   packages::Sha256 hash;
-  hash.update(revision.bytes);
+  hash.update(prefix.bytes);
   hash.update(source.text);
   auto name = hash.finish();
+  if (revision && *revision != name) {
+    error = "invalid compiled library archive: source revision does not match "
+            "its identity and contents";
+    return std::nullopt;
+  }
   edit();
   data->sourceIndex.emplace(source.id, data->sources.size());
   data->revisionIndex.emplace(name, data->sources.size());
-  data->revisions.push_back(name);
+  data->revisions.push_back(revision ? std::move(*revision) : SourceText(name));
   data->sources.push_back(source);
   return name;
 }
@@ -424,13 +514,28 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
       error = "invalid compiled library source-module reference";
       return std::nullopt;
     }
+  auto irLayout = ir::programLayout(archive.ir);
+  if (!irLayout) {
+    error = "invalid compiled library IR framing: " + irLayout.error;
+    return std::nullopt;
+  }
+  auto declarationsLayout = archive.declarations.size()
+                                ? declarationPayloadLayout(archive.declarations)
+                                : DeclarationPayloadLayout{};
+  if (!declarationsLayout) {
+    error = "invalid compiled library declaration framing: " +
+            declarationsLayout.error;
+    return std::nullopt;
+  }
   Writer out;
-  out.text("mettle-checked-library-2");
+  out.text("mettle-checked-library-4");
   out.text(data.identity);
   out.integer(static_cast<std::uint32_t>(data.sources.size()));
-  for (const auto &source : data.sources) {
+  for (std::size_t i = 0; i < data.sources.size(); ++i) {
+    const auto &source = data.sources[i];
     out.text(source.path);
     out.text(source.text);
+    out.text(data.revisions[i]);
   }
   auto span = [&](Span value) {
     out.integer(static_cast<std::uint32_t>(data.sourceIndex.at(value.source)));
@@ -485,13 +590,27 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
   out.text(archive.macros);
   out.data(archive.header);
   out.data(archive.types);
+  const auto declarationsOffset = out.bytes.size() + 4;
   out.data(archive.declarations);
+  out.integer(static_cast<std::uint32_t>(declarationsLayout.payloads.size()));
+  for (const auto &payload : declarationsLayout.payloads)
+    out.text(archiveDigest(textBytes(
+        archive.declarations.bytes().subspan(payload.offset, payload.size))));
+  out.integer(static_cast<std::uint32_t>(irLayout.bodies.size()));
+  for (const auto &body : irLayout.bodies)
+    out.text(archiveDigest(
+        textBytes(archive.ir.bytes().subspan(body.offset, body.size))));
+  const auto irOffset = out.bytes.size() + 4;
   out.data(archive.ir);
   if (out.bytes.size() > limits::sourceBytes - 64) {
     error = "compiled library archive exceeds the compiler data-file limit";
     return std::nullopt;
   }
-  out.bytes += digest(out.bytes);
+  std::vector<PayloadRange> excluded;
+  excluded.reserve(declarationsLayout.payloads.size() + irLayout.bodies.size());
+  excludePayloads(excluded, declarationsOffset, declarationsLayout.payloads);
+  excludePayloads(excluded, irOffset, irLayout.bodies);
+  out.bytes += metadataDigest(out.bytes, excluded);
   return std::move(out.bytes);
 }
 
@@ -499,26 +618,32 @@ std::optional<LibraryArchive>
 decodeLibraryArchive(std::string_view bytes, std::string_view identity,
                      std::string &error, std::shared_ptr<const void> backing) {
   error.clear();
-  if (bytes.size() > limits::sourceBytes || bytes.size() < 64 ||
-      digest(bytes.substr(0, bytes.size() - 64)) !=
-          bytes.substr(bytes.size() - 64)) {
+  if (bytes.size() > limits::sourceBytes || bytes.size() < 64) {
     error = "invalid compiled library archive size or checksum";
     return std::nullopt;
   }
+  if (!backing) {
+    auto snapshot = std::make_shared<const std::string>(bytes);
+    bytes = *snapshot;
+    backing = std::move(snapshot);
+  }
   Reader in(bytes.substr(0, bytes.size() - 64), error);
-  if (in.text() != "mettle-checked-library-2")
+  if (in.textView() != "mettle-checked-library-4")
     in.fail("unsupported format");
   auto revision = in.text();
   if (revision != identity || revision.empty())
     in.fail("compiler, content or configuration identity mismatch");
   LibraryArchive archive(std::move(revision));
-  auto count = in.count(8);
+  auto count = in.count(12);
   for (std::size_t i = 0; in.good() && i < count; ++i) {
     auto path = in.text();
-    auto text = in.text();
+    auto text = in.textView();
+    auto revision = in.textView();
     if (in.good())
-      archive.sources.record(
-          {std::move(path), std::move(text), static_cast<SourceId>(i)}, error);
+      archive.sources.record({std::move(path),
+                              SourceText::retain(text, backing),
+                              static_cast<SourceId>(i)},
+                             error, SourceText::retain(revision, backing));
   }
   auto generationCount = in.count(24);
   if (generationCount > count)
@@ -573,24 +698,65 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
       in.fail("invalid or duplicate source-module reference");
   }
   archive.macros = in.text();
-  // Borrowed sections need the mapping that holds `bytes`; without one they
-  // are copied.
-  auto section = [&](Section &target) {
-    auto view = in.data();
-    if (backing)
-      target.borrow(view);
-    else
-      target = std::vector<std::uint8_t>(view.begin(), view.end());
-  };
+  auto section = [&](Section &target) { target.borrow(in.data(), backing); };
   section(archive.header);
   section(archive.types);
+  const auto declarationsOffset = in.position() + 4;
   section(archive.declarations);
+  auto readSeals = [&] {
+    const auto count = in.count(68, limits::functions);
+    std::vector<std::string_view> seals;
+    seals.reserve(count);
+    for (std::size_t i = 0; in.good() && i < count; ++i) {
+      auto seal = in.textView();
+      if (seal.size() != 64 ||
+          std::any_of(seal.begin(), seal.end(), [](unsigned char byte) {
+            return !(byte >= '0' && byte <= '9') &&
+                   !(byte >= 'a' && byte <= 'f');
+          }))
+        in.fail("invalid deferred payload seal");
+      seals.push_back(seal);
+    }
+    return seals;
+  };
+  auto declarationSeals = readSeals();
+  auto irSeals = readSeals();
+  const auto irOffset = in.position() + 4;
   section(archive.ir);
-  archive.backing = std::move(backing);
   if (in.remaining())
     in.fail("trailing data");
-  if (!in.good() || !archive.sources.validate(error))
+  if (!in.good())
     return std::nullopt;
+  auto declarationsLayout = archive.declarations.size()
+                                ? declarationPayloadLayout(archive.declarations)
+                                : DeclarationPayloadLayout{};
+  if (!declarationsLayout ||
+      declarationsLayout.payloads.size() != declarationSeals.size()) {
+    error =
+        "invalid compiled library declaration framing or payload seal count";
+    return std::nullopt;
+  }
+  auto irLayout = ir::programLayout(archive.ir);
+  if (!irLayout || irLayout.bodies.size() != irSeals.size()) {
+    error = "invalid compiled library IR framing or body seal count";
+    return std::nullopt;
+  }
+  std::vector<PayloadRange> excluded;
+  excluded.reserve(declarationsLayout.payloads.size() + irLayout.bodies.size());
+  excludePayloads(excluded, declarationsOffset, declarationsLayout.payloads);
+  excludePayloads(excluded, irOffset, irLayout.bodies);
+  if (metadataDigest(bytes.substr(0, bytes.size() - 64), excluded) !=
+      bytes.substr(bytes.size() - 64)) {
+    error = "invalid compiled library archive metadata checksum";
+    return std::nullopt;
+  }
+  if (!archive.sources.validate(error))
+    return std::nullopt;
+  archive.verifyDeclarationPayload = payloadVerifier(
+      backing, std::move(declarationSeals), declarationsLayout.payloads);
+  archive.verifyIRBody =
+      payloadVerifier(backing, std::move(irSeals), irLayout.bodies);
+  archive.backing = std::move(backing);
   archive.sources.validated = true;
   return archive;
 }

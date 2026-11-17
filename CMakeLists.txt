@@ -230,7 +230,7 @@ if(BUILD_TESTING)
   add_executable(mettle-library-archive-tests
     tests/packages/library_archive.cpp bootstrap/driver/library_archive.cpp
     bootstrap/driver/library_cache.cpp)
-  target_link_libraries(mettle-library-archive-tests PRIVATE mettle_metadata mettle_packages mettle_diagnostics)
+  target_link_libraries(mettle-library-archive-tests PRIVATE mettle_ir mettle_semantics mettle_metadata mettle_packages mettle_diagnostics)
   target_compile_options(mettle-library-archive-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
   add_test(NAME compiler.library-archive COMMAND mettle-library-archive-tests)
   add_executable(mettle-type-graph-tests tests/types/type_graph.cpp)

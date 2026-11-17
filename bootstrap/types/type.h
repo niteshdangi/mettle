@@ -2,6 +2,7 @@
 
 #include "types/records.h"
 #include "types/regions.h"
+#include <algorithm>
 #include <array>
 #include <compare>
 #include <cstdint>
@@ -14,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -431,7 +433,8 @@ public:
   void deferImportedDefinitions(
       std::span<const Type> ids, std::span<const ImportedTypeIndex> index,
       std::shared_ptr<const ImportedDefinitionLoader> loader,
-      std::shared_ptr<const BorrowedDefinitionLoader> borrowed = {});
+      std::shared_ptr<const BorrowedDefinitionLoader> borrowed = {},
+      std::shared_ptr<const void> indexOwner = {});
   void remapImportedSymbols(std::span<const Type> types,
                             const ImportedSymbolRemap &symbols);
   ImportedTypeDefinition importedDefinition(Type type) const;
@@ -686,16 +689,70 @@ private:
              std::vector<std::uint32_t>>
         constants;
   };
+  template <class T> struct LookupSequence {
+    std::span<const T> values;
+    LookupSequence(std::span<const T> values) : values(values) {}
+    LookupSequence(const std::vector<T> &values) : values(values) {}
+    auto operator<=>(const LookupSequence &other) const {
+      return std::lexicographical_compare_three_way(
+          values.begin(), values.end(), other.values.begin(),
+          other.values.end());
+    }
+    bool operator==(const LookupSequence &other) const {
+      return std::equal(values.begin(), values.end(), other.values.begin(),
+                        other.values.end());
+    }
+  };
+  template <class Key> struct ImportedLookupTable {
+    std::vector<std::pair<Key, std::uint32_t>> pending;
+    std::vector<std::pair<Key, std::vector<std::uint32_t>>> groups;
+    void add(Key key, std::uint32_t ordinal) {
+      pending.emplace_back(std::move(key), ordinal);
+    }
+    void seal() {
+      std::sort(pending.begin(), pending.end());
+      for (const auto &[key, ordinal] : pending) {
+        if (groups.empty() || groups.back().first != key)
+          groups.emplace_back(key, std::vector<std::uint32_t>{});
+        groups.back().second.push_back(ordinal);
+      }
+      decltype(pending){}.swap(pending);
+    }
+    const std::vector<std::uint32_t> *find(const Key &key) const {
+      auto entry = std::lower_bound(groups.begin(), groups.end(), key,
+                                    [](const auto &group, const Key &value) {
+                                      return group.first < value;
+                                    });
+      return entry != groups.end() && entry->first == key ? &entry->second
+                                                          : nullptr;
+    }
+  };
+  using ImportedCallableKey =
+      std::tuple<RegionUniverse, LookupSequence<RegionId>,
+                 LookupSequence<RegionId>, LookupSequence<RegionRequirement>,
+                 LookupSequence<Type>>;
+  struct ImportedLookupData {
+    std::shared_ptr<const void> owner;
+    ImportedLookupTable<Type> genericInstances, regionInstances, slices;
+    ImportedLookupTable<LookupSequence<Type>> aggregates, operands;
+    ImportedLookupTable<std::tuple<Type, int, RegionId>> views;
+    ImportedLookupTable<std::pair<Type, int>> pointers;
+    ImportedLookupTable<std::uint32_t> erased;
+    ImportedLookupTable<ImportedCallableKey> callables;
+    ImportedLookupTable<std::pair<Type, std::array<std::uint64_t, 2>>>
+        constants;
+  };
   struct Lookup {
     std::size_t synced = 0;
     std::shared_ptr<const LookupData> base;
+    std::shared_ptr<const ImportedLookupData> imported;
     LookupData local;
   } lookup;
   void syncLookup();
   static CallableKey callableKey(const CallableType &descriptor);
   template <class Match>
   std::optional<Type> findIndexed(
-      const std::array<const std::vector<std::uint32_t> *, 2> &candidates,
+      const std::array<const std::vector<std::uint32_t> *, 3> &candidates,
       Match &&match) const {
     std::optional<Type> result;
     for (const auto *part : candidates)
@@ -705,10 +762,38 @@ private:
     return result;
   }
   template <class Key>
-  std::array<const std::vector<std::uint32_t> *, 2>
+  const auto &importedTable(const std::map<Key, std::vector<std::uint32_t>>
+                                LookupData::*table) const {
+    if constexpr (std::is_same_v<Key, Type>)
+      return table == &LookupData::genericInstances
+                 ? lookup.imported->genericInstances
+                 : lookup.imported->regionInstances;
+    else if constexpr (std::is_same_v<Key, std::vector<Type>>)
+      return table == &LookupData::aggregates ? lookup.imported->aggregates
+                                              : lookup.imported->operands;
+    else if constexpr (std::is_same_v<Key, CallableKey>)
+      return lookup.imported->callables;
+    else if constexpr (std::is_same_v<Key, std::uint32_t>)
+      return lookup.imported->erased;
+    else
+      return lookup.imported->constants;
+  }
+  template <class Key>
+  const auto &
+  importedTable(const std::map<Key, std::uint32_t> LookupData::*) const {
+    if constexpr (std::is_same_v<Key, Type>)
+      return lookup.imported->slices;
+    else if constexpr (std::is_same_v<Key, std::pair<Type, int>>)
+      return lookup.imported->pointers;
+    else
+      return lookup.imported->views;
+  }
+  template <class Key>
+  std::array<const std::vector<std::uint32_t> *, 3>
   candidates(const std::map<Key, std::vector<std::uint32_t>> LookupData::*table,
              const Key &key) const {
-    return {lookup.base ? found(lookup.base.get()->*table, key) : nullptr,
+    return {lookup.imported ? importedTable(table).find(key) : nullptr,
+            lookup.base ? found(lookup.base.get()->*table, key) : nullptr,
             found(lookup.local.*table, key)};
   }
   template <class Key>
@@ -718,9 +803,15 @@ private:
     const auto *local = found(lookup.local.*table, key);
     const auto *base =
         lookup.base ? found(lookup.base.get()->*table, key) : nullptr;
-    if (base && (!local || *base < *local))
-      return *base;
-    return local ? std::optional(*local) : std::nullopt;
+    const auto *imported =
+        lookup.imported ? importedTable(table).find(key) : nullptr;
+    std::optional<std::uint32_t> result;
+    if (imported)
+      result = imported->front();
+    for (const auto *part : {base, local})
+      if (part && (!result || *part < *result))
+        result = *part;
+    return result;
   }
   template <class Match>
   std::optional<Type> findIndexed(const std::vector<std::uint32_t> *candidates,

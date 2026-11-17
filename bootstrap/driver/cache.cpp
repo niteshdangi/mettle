@@ -36,7 +36,7 @@ std::string compilerStamp(const fs::path &path) {
   return fileStamp(path);
 }
 
-std::string digest(const std::string &text) {
+std::string digest(std::string_view text) {
   packages::Sha256 hash;
   hash.update(text);
   return hash.finish();
@@ -47,8 +47,12 @@ std::string digest(const std::string &text) {
 std::string tokenDigest(const Source &source) {
   Diagnostics scratch;
   auto tokens = tokenize(source, scratch);
-  if (!scratch.empty())
-    return digest("text:" + source.text);
+  if (!scratch.empty()) {
+    packages::Sha256 hash;
+    hash.update("text:");
+    hash.update(source.text);
+    return hash.finish();
+  }
   packages::Sha256 hash;
   // A run of line breaks counts once, and only between two tokens.
   bool started = false, newline = false;

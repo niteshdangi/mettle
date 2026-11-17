@@ -87,12 +87,13 @@ void applyInlineHint(llvm::Function &function, ir::InlineHint hint) {
 
 class Lowerer {
 public:
-  Lowerer(const ir::Program &program, llvm::LLVMContext &context,
+  Lowerer(const ir::VerifiedProgram &verified, llvm::LLVMContext &context,
           llvm::StringRef target, bool freestanding,
           const DebugInfoRequest *debug, bool sanitizeAddress,
           bool sanitizeThread, CodegenPartition partition,
           const DebugInfoRequest *sourceInfo)
-      : program(program), context(context), partition(std::move(partition)),
+      : program(verified.program()), plans(verified.cleanupPlans()),
+        context(context), partition(std::move(partition)),
         module(std::make_unique<llvm::Module>("mettle", context)),
         builder(context),
         lowering{program, context, *module, builder, functions, {}},
@@ -367,6 +368,7 @@ public:
 
 private:
   const ir::Program &program;
+  const std::vector<cleanup::Plan> &plans;
   llvm::LLVMContext &context;
   bool sanitizeAddress = false, sanitizeThread = false;
   CodegenPartition partition;
@@ -445,7 +447,7 @@ private:
     if (!buildingFrames.insert(body).second)
       llvm::report_fatal_error("async body contains its own state");
     auto frame = std::make_unique<CleanupFrame>(
-        lowering, program.functions[body],
+        lowering, program.functions[body], plans.at(body),
         "mettle.coroutine." + program.functions[body].name);
     if (partition.split && !partition.library)
       for (auto *callback : {frame->body(), frame->unwind()}) {
@@ -3424,7 +3426,8 @@ private:
       debugInfo->clear(builder);
     std::unique_ptr<CleanupFrame> ownFrame;
     if (!source.coroutine)
-      ownFrame = std::make_unique<CleanupFrame>(lowering, source, target);
+      ownFrame = std::make_unique<CleanupFrame>(lowering, source,
+                                                plans.at(sourceIndex), target);
     auto &frame = source.coroutine
                       ? coroutineFrame(static_cast<int>(sourceIndex))
                       : *ownFrame;
@@ -4306,7 +4309,7 @@ lower(const ir::VerifiedProgram &program, llvm::LLVMContext &context,
   auto selected = program.program().target.triple.empty()
                       ? target
                       : llvm::StringRef(program.program().target.triple);
-  Lowerer lowerer(program.program(), context, selected, freestanding, debug,
+  Lowerer lowerer(program, context, selected, freestanding, debug,
                   sanitizeAddress, sanitizeThread, std::move(partition),
                   sourceInfo);
   lowerer.checked = checked;

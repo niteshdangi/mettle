@@ -73,7 +73,7 @@ void Checker::registerConstructors() {
   auto *savedCurrent = current;
   auto *savedEnvironment = genericEnvironment;
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
-    auto &function = module.functions[i];
+    auto &function = module.functions.header(i);
     if (!function.constructor)
       continue;
     current = &function;
@@ -103,7 +103,7 @@ void Checker::registerConstructors() {
   genericEnvironment = savedEnvironment;
   current = savedCurrent;
 
-  for (const auto &product : module.products) {
+  for (const auto &product : module.products.headers()) {
     auto origin = typeNames.find(definitionName(product.span, product.name));
     if (origin == typeNames.end() || !constructors.contains(origin->second))
       continue;
@@ -117,8 +117,8 @@ void Checker::registerConstructors() {
   for (auto &[origin, candidates] : constructors) {
     std::sort(candidates.begin(), candidates.end(),
               [&](const auto &a, const auto &b) {
-                auto left = module.functions[a.function].span;
-                auto right = module.functions[b.function].span;
+                auto left = module.functions.header(a.function).span;
+                auto right = module.functions.header(b.function).span;
                 return left.source == right.source ? left.begin < right.begin
                                                    : left.source < right.source;
               });
@@ -126,8 +126,9 @@ void Checker::registerConstructors() {
       for (std::size_t j = 0; j < i; ++j) {
         const auto &later = candidates[i];
         const auto &earlier = candidates[j];
-        if (!constructorShapesOverlap(module.functions[later.function],
-                                      module.functions[earlier.function]))
+        if (!constructorShapesOverlap(
+                module.functions.header(later.function),
+                module.functions.header(earlier.function)))
           continue;
         interfaces::Solver solver(*checked.types, *checked.interfaceData,
                                   diagnostics);
@@ -147,8 +148,9 @@ void Checker::registerConstructors() {
             earlier.applicability.requirements.begin(),
             earlier.applicability.requirements.end());
         if (solver.constraints(intersection, *bindings,
-                               module.functions[later.function].span, {}, true))
-          error("type", module.functions[later.function].span,
+                               module.functions.header(later.function).span, {},
+                               true))
+          error("type", module.functions.header(later.function).span,
                 "overlapping constructor argument shapes for '" +
                     displayType(*checked.types, origin) + "'");
       }

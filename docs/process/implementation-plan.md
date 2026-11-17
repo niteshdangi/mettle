@@ -1089,21 +1089,36 @@ also builds and runs P05 with the latest borrowed-view/build-ID compiler.
 Evidence: `~/w/anal/perf-three-final-20261117-1701/runtime-root/direct-buckets/`;
 integration: `perf-native-build-id-20261117-r1/hash-integration.json`.
 
-Still missing: first-load type and function-signature materialization remains
-whole-inventory;
-specialization recipes do not cover every consumer-local type.
+The indexed-admission follow-up uses persisted compact declaration queries,
+archive-backed type/signature records, demand-loaded generic environments,
+shared checking/finalized interface records and consumer-local overlays.
+IR admission extracts compact headers directly. Independently authenticated
+checked-function and IR payloads load on demand; source slices retain their
+backing and eager identity/provenance validation. Driver linkage discovery uses
+query headers rather than reconstructing imported syntax. Actual P04 demand
+fell from 8,205 function/56 static trees to 26 function/no static trees.
+Compiler `2ddb0217b2350bc40809df0e66e5201bced2247a0709e1021403ce38254ec5a9`,
+against frozen `dd956087...`, measured fresh P03/P04/P05 checks at
+454.806 / 385.805, 451.060 / 396.445 and 493.541 / 446.736 ms
+(9.5-15.2% lower). Their fresh builds were 733.216 / 709.378,
+757.474 / 689.661 and 904.460 / 901.810 ms. All six outputs matched Rust.
+These are three-triple engineering timings, not I14 qualification; native fresh
+checks remain 21-27 times Rust. Reverse re-export chains at 2,048 imports fell
+from 6,929.121 to 45.190 ms (Rust 152.955 ms). Affected archive, declaration,
+module, codec and cleanup cases pass optimized and ASan/UBSan builds; focused
+type, wildcard and package/cache/output cases also pass.
+Evidence: `~/w/anal/perf-compact-query-six-20261117-234049/results.json`
+and `~/w/anal/perf-indexed-import-scaling/results.json`.
+
+Still missing: specialization recipes do not cover every consumer-local type.
 Source queries conservatively fall back for unsupported cache shapes and shifted
-spans. Lifetime/sanitizer and consolidated memory/storage/performance gates
-remain open, as do source freeze and I14. Temporary profiling was removed.
-Next action: finish compact validated first-load type and function-signature
-views and their consumer-side materialization boundary; the current cache work
-has not removed the dominant fresh-import gap.
-Checked-expression
-admission is separated, not a completed lazy type graph. Retaining a decoded
-body merely to avoid
-parsing is not sufficient; full semantic/identity validation must not force a
-second heavyweight object graph, and implementation-selection closure remains
-mandatory. Broader specialization reuse needs explicit canonical type remapping,
+spans. Consolidated memory/storage/performance gates and whole-milestone
+lifetime/sanitizer qualification remain open, as do source freeze and I14.
+Initial canonical type/index validation and checking-database admission remain
+eager; the dominant fresh-import gap is reduced, not eliminated.
+Next action: reduce those remaining admission costs without dropping graph
+validation or implementation-selection closure. Broader specialization reuse
+needs explicit canonical type remapping,
 not reused numeric consumer TypeIds.
 Preserve frozen candidates and reuse unchanged-input evidence rather than
 rerunning broad passing groups.

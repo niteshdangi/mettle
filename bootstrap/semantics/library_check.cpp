@@ -9,7 +9,7 @@ bool CheckedModule::imported(std::size_t function) const {
 }
 
 bool CheckedModule::hasBody(std::size_t function) const {
-  if (tree.functions.at(function).body.get())
+  if (tree.functions.header(function).body.get())
     return true;
   return imported(function) && importedDeclarations->functions
                                    .at(static_cast<std::uint32_t>(function))
@@ -18,7 +18,9 @@ bool CheckedModule::hasBody(std::size_t function) const {
 
 bool CheckedModule::hasDefault(std::size_t function,
                                std::size_t parameter) const {
-  if (tree.functions.at(function).parameters.at(parameter).defaultValue.get())
+  if (tree.functions.header(function)
+          .parameters.at(parameter)
+          .defaultValue.get())
     return true;
   return imported(function) && importedDeclarations->functions
                                    .at(static_cast<std::uint32_t>(function))
@@ -29,7 +31,9 @@ bool Checker::imported(Span span) const {
   const auto key = std::tuple{span.source, span.begin, span.end};
   const auto &imports = checked.importedDeclarations;
   return importedSpans.contains(key) ||
-         (imports && imports->index && imports->index->spans.contains(key));
+         (imports && imports->index &&
+          std::binary_search(imports->index->spans.begin(),
+                             imports->index->spans.end(), key));
 }
 
 Type Checker::functionResult(const Function &function) {
@@ -123,11 +127,19 @@ Checker::importedAnnotation(const TypeSyntax &syntax) const {
   if (auto found = importedAnnotations.find(&syntax);
       found != importedAnnotations.end())
     return found->second;
+  if (importedSyntaxIndex) {
+    std::lock_guard lock(importedSyntaxIndex->annotationMutex);
+    if (auto found = importedSyntaxIndex->annotations.find(&syntax);
+        found != importedSyntaxIndex->annotations.end())
+      return found->second;
+  }
   const auto &imports = checked.importedDeclarations;
-  if (imports && imports->index)
+  if (imports && imports->index) {
+    std::lock_guard lock(imports->index->annotationMutex);
     if (auto found = imports->index->annotations.find(&syntax);
         found != imports->index->annotations.end())
       return found->second;
+  }
   return std::nullopt;
 }
 
@@ -144,58 +156,74 @@ void Checker::importDeclarations() {
       return;
     importExpression(expression);
   };
+  auto syntaxIndex = [&] {
+    if (!importedSyntaxIndex)
+      importedSyntaxIndex = std::make_shared<ImportedDeclarations::Index>();
+    return std::weak_ptr(importedSyntaxIndex);
+  };
   for (const auto &[index, retained] : imports->functions) {
     if (imports->index && index < module.functions.size())
-      if (auto validated = imports->index->functions.find(index);
-          validated != imports->index->functions.end() &&
-          validated->second.get() == &module.functions[index])
+      if (index < imports->index->functions.size() &&
+          imports->index->functions[index].declaration.get() ==
+              &module.functions.header(index))
         continue;
-    const auto &contract = *retained;
+    const auto span = retained.span();
     if (index >= module.functions.size() ||
-        module.functions[index].span.source != contract.span.source ||
-        module.functions[index].span.begin != contract.span.begin ||
-        module.functions[index].span.end != contract.span.end) {
-      error("metadata", contract.span,
+        module.functions.header(index).span.source != span.source ||
+        module.functions.header(index).span.begin != span.begin ||
+        module.functions.header(index).span.end != span.end) {
+      error("metadata", span,
             "checked function does not match its mounted declaration");
       continue;
     }
-    if (!module.functions[index].item.checkedImport)
-      module.functions.edit(index).item.checkedImport = true;
-    const auto &function = module.functions[index];
+    if (!module.functions.header(index).item.checkedImport)
+      module.functions.transformHeader(
+          index, [](auto &function) { function.item.checkedImport = true; });
+    const auto &function = module.functions.header(index);
     if (function.body.get()) {
       error("metadata", function.span,
             "imported runtime declaration unexpectedly has a source body");
       continue;
     }
     remember(function.span);
-    if (!importedAnnotation(function.annotation)) {
-      importedAnnotations.emplace(&function.annotation, contract.resultType());
-      importedAnnotations.emplace(&function.error, contract.errorType());
-      for (std::size_t p = 0;
-           p < function.parameters.size() && p < contract.localCount(); ++p)
-        importedAnnotations.emplace(&function.parameters[p].annotation,
-                                    contract.parameterType(p));
-    }
-    if (contract.defaults.size() != function.parameters.size() ||
-        contract.localCount() < function.parameters.size()) {
+    if (retained.defaultCount() != function.parameters.size() ||
+        retained.parameterCount() < function.parameters.size()) {
       error("metadata", function.span, "checked parameter contract is invalid");
       continue;
     }
-    for (std::size_t p = 0; p < contract.defaults.size(); ++p)
-      if (bool(contract.defaults[p]) != function.parameters[p].compiledDefault)
+    for (std::size_t p = 0; p < retained.defaultCount(); ++p)
+      if (retained.hasDefault(p) != function.parameters[p].compiledDefault)
         error("metadata", function.parameters[p].span,
               "checked default does not match its mounted declaration");
-    expressions(contract.body);
-    for (const auto &value : contract.defaults)
-      expressions(value);
+    module.functions.onMaterialize(
+        index, [owner = syntaxIndex(), retained,
+                index](std::shared_ptr<const Function> function) {
+          if (auto syntax = owner.lock()) {
+            std::lock_guard lock(syntax->annotationMutex);
+            syntax->materializedFunctions.emplace(index, function);
+            syntax->annotations.emplace(&function->annotation,
+                                        retained.resultType());
+            syntax->annotations.emplace(&function->error, retained.errorType());
+            for (std::size_t p = 0; p < function->parameters.size(); ++p)
+              syntax->annotations.emplace(&function->parameters[p].annotation,
+                                          retained.parameterType(p));
+          }
+        });
+    if (retained.isMaterialized()) {
+      const auto &contract = *retained;
+      expressions(contract.body);
+      for (const auto &value : contract.defaults)
+        expressions(value);
+    }
   }
   auto seed = [&](auto &syntax, const auto &contracts) {
     for (std::size_t i = 0; i < syntax.size(); ++i) {
-      const auto &item = syntax[i];
+      const auto &item = syntax.header(i);
       if (importedType(item.span, contracts)) {
         remember(item.span);
         if (!item.item.checkedImport)
-          syntax.edit(i).item.checkedImport = true;
+          syntax.transformHeader(
+              i, [](auto &item) { item.item.checkedImport = true; });
       }
     }
   };
@@ -207,15 +235,27 @@ void Checker::importDeclarations() {
     typeNames.emplace(item->name, item->type);
   for (const auto &item : imports->aliases)
     typeNames.emplace(item->name, item->type);
-  for (const auto &alias : module.aliases)
-    if (!importedAnnotation(alias.target))
-      if (auto contract = importedType(alias.span, imports->aliases))
-        importedAnnotations.emplace(&alias.target, contract->type);
+  for (std::size_t i = 0; i < module.aliases.size(); ++i)
+    if (!imports->index || i >= imports->index->aliasHeaders.size() ||
+        imports->index->aliasHeaders[i].get() != &module.aliases.header(i))
+      if (auto contract =
+              importedType(module.aliases.header(i).span, imports->aliases)) {
+        module.aliases.onMaterialize(
+            i, [owner = syntaxIndex(), type = contract->type](
+                   std::shared_ptr<const Module::Alias> alias) {
+              if (auto syntax = owner.lock()) {
+                std::lock_guard lock(syntax->annotationMutex);
+                syntax->annotations.emplace(&alias->target, type);
+                syntax->aliases.push_back(std::move(alias));
+              }
+            });
+      }
   for (const auto &constant : imports->inherentConstants)
     expressions(constant.initializer);
   auto bindConstant = [&](const ImportedInherentConstant &constant,
-                          const Module::Implementation &owner,
-                          const Module::Associated &declaration) {
+                          std::size_t implementation, std::size_t associated) {
+    const auto &owner = module.implementations.header(implementation);
+    const auto &declaration = owner.associated.at(associated);
     inherentConstantNames.emplace(constant.name, inherentConstants.size());
     inherentConstants.push_back(
         {&owner,
@@ -227,6 +267,13 @@ void Checker::importDeclarations() {
          constant.materialized,
          constant.initializer,
          {}});
+    auto &mounted = inherentConstants.back();
+    mounted.importedContract = &constant;
+    mounted.loadSyntax = [this, implementation, associated](auto &value) {
+      const auto &syntax = module.implementations[implementation];
+      value.implementation = &syntax;
+      value.declaration = &syntax.associated.at(associated);
+    };
   };
   for (std::size_t c = 0; c < imports->inherentConstants.size(); ++c) {
     const auto &constant = imports->inherentConstants[c];
@@ -235,19 +282,19 @@ void Checker::importDeclarations() {
       if (binding.owner &&
           binding.implementation < module.implementations.size() &&
           binding.owner.get() ==
-              &module.implementations[binding.implementation]) {
-        bindConstant(constant, *binding.owner,
-                     binding.owner->associated[binding.declaration]);
+              &module.implementations.header(binding.implementation)) {
+        bindConstant(constant, binding.implementation, binding.declaration);
         continue;
       }
     }
     for (std::size_t o = 0; o < module.implementations.size(); ++o)
-      if (module.implementations[o].span.source ==
+      if (module.implementations.header(o).span.source ==
               constant.implementation.source &&
-          module.implementations[o].span.begin ==
+          module.implementations.header(o).span.begin ==
               constant.implementation.begin &&
-          module.implementations[o].span.end == constant.implementation.end) {
-        const auto &owner = module.implementations[o];
+          module.implementations.header(o).span.end ==
+              constant.implementation.end) {
+        const auto &owner = module.implementations.header(o);
         for (const auto &declaration : owner.associated)
           if (declaration.span.source == constant.declaration.source &&
               declaration.span.begin == constant.declaration.begin &&
@@ -266,7 +313,9 @@ void Checker::importDeclarations() {
                     "its initializer");
               continue;
             }
-            bindConstant(constant, owner, declaration);
+            bindConstant(constant, o,
+                         static_cast<std::size_t>(&declaration -
+                                                  owner.associated.data()));
           }
       }
   }
@@ -275,9 +324,10 @@ void Checker::importDeclarations() {
       error("metadata", {}, "checked static index is invalid");
       continue;
     }
-    remember(module.statics[index].span);
-    if (!module.statics[index].item.checkedImport)
-      module.statics.edit(index).item.checkedImport = true;
+    remember(module.statics.header(index).span);
+    if (!module.statics.header(index).item.checkedImport)
+      module.statics.transformHeader(
+          index, [](auto &storage) { storage.item.checkedImport = true; });
     checked.staticStorage[index] = facts;
     staticStates[index] = 2;
     staticTypeStates[index] = 2;
@@ -299,33 +349,49 @@ void Checker::importDeclarations() {
                   [](const auto &closure) { return !closure; }))
     error("metadata", {}, "imported closure inventory is not contiguous");
   *checked.interfaceData = imports->checkingDatabase;
-  std::map<std::tuple<SourceId, std::size_t, std::size_t>, std::size_t>
-      implementationIndices;
-  for (std::size_t i = 0; i < module.implementations.size(); ++i) {
-    auto span = module.implementations[i].span;
-    implementationIndices.emplace(std::tuple{span.source, span.begin, span.end},
-                                  i);
-  }
-  for (std::size_t i = 0; i < checked.interfaceData->implementations.size();
-       ++i) {
-    const auto &rule = std::as_const(*checked.interfaceData).implementations[i];
-    if (auto found = implementationIndices.find(
-            {rule.span.source, rule.span.begin, rule.span.end});
-        found != implementationIndices.end()) {
-      if (!rule.checkedImport || rule.declaration != found->second) {
-        auto &local = checked.interfaceData->implementations[i];
-        local.checkedImport = true;
-        local.declaration = found->second;
+  bool mountedImplementations =
+      imports->index && imports->index->implementationHeaders.size() <=
+                            module.implementations.size();
+  if (mountedImplementations)
+    for (std::size_t i = 0; i < imports->index->implementationHeaders.size();
+         ++i)
+      if (imports->index->implementationHeaders[i].get() !=
+          &module.implementations.header(i)) {
+        mountedImplementations = false;
+        break;
+      }
+  if (!mountedImplementations) {
+    std::map<std::tuple<SourceId, std::size_t, std::size_t>, std::size_t>
+        implementationIndices;
+    for (std::size_t i = 0; i < module.implementations.size(); ++i) {
+      auto span = module.implementations.header(i).span;
+      implementationIndices.emplace(
+          std::tuple{span.source, span.begin, span.end}, i);
+    }
+    for (std::size_t i = 0; i < checked.interfaceData->implementations.size();
+         ++i) {
+      const auto &rule =
+          std::as_const(*checked.interfaceData).implementations[i];
+      if (auto found = implementationIndices.find(
+              {rule.span.source, rule.span.begin, rule.span.end});
+          found != implementationIndices.end()) {
+        if (!rule.checkedImport || rule.declaration != found->second) {
+          auto &local = checked.interfaceData->implementations[i];
+          local.checkedImport = true;
+          local.declaration = found->second;
+        }
       }
     }
   }
   for (std::size_t i = 0; i < module.interfaces.size(); ++i)
-    if (imported(module.interfaces[i].span) &&
+    if (imported(module.interfaces.header(i).span) &&
         (i >= checked.interfaceData->definitions.size() ||
-         checked.interfaceData->definitions[i].name !=
-             definitionName(module.interfaces[i].span,
-                            module.interfaces[i].name)))
-      error("metadata", module.interfaces[i].span,
+         (imports->index && i < imports->index->interfaceNames.size()
+              ? imports->index->interfaceNames[i]
+              : std::as_const(*checked.interfaceData).definitions[i].name) !=
+             definitionName(module.interfaces.header(i).span,
+                            module.interfaces.header(i).name)))
+      error("metadata", module.interfaces.header(i).span,
             "checked interface does not match its resolved declaration index");
 }
 
@@ -377,12 +443,12 @@ void Checker::retainDeclarations() {
     return result;
   };
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
-    const auto &source = module.functions[i];
-    // Imported contracts remain owned by checked.importedDeclarations.
     if (checked.imported(i))
       continue;
+    const auto &source = module.functions[i];
     ImportedFunction contract;
     contract.span = source.span;
+    contract.symbolName = checked.functions[i].canonicalName;
     contract.unsafeFunction = source.unsafeFunction;
     contract.hasBody = source.body.get() != nullptr;
     contract.contract().facts = checked.functions[i];
@@ -423,7 +489,13 @@ void Checker::retainDeclarations() {
   auto retain = [&](const auto &syntax, const auto &environments,
                     auto &destination, bool named,
                     const ImportedDeclarations::TypeTable *imported) {
-    for (const auto &item : syntax) {
+    auto &&headers = [&]() -> decltype(auto) {
+      if constexpr (requires { syntax.headers(); })
+        return syntax.headers();
+      else
+        return (syntax);
+    }();
+    for (const auto &item : headers) {
       if (imported)
         if (auto contract = importedType(item.span, *imported)) {
           destination.push_back(std::move(contract));
@@ -466,14 +538,22 @@ void Checker::retainDeclarations() {
   retain(module.implementations, implementationGenerics,
          result->implementations, false,
          imports ? &imports->implementations : nullptr);
-  for (const auto &owner : module.interfaces)
+  for (const auto &owner : module.interfaces.headers())
     retain(owner.associated, associatedGenerics, result->associated, false,
            imports ? &imports->associated : nullptr);
-  for (const auto &owner : module.implementations)
+  for (const auto &owner : module.implementations.headers())
     retain(owner.associated, associatedGenerics, result->associated, false,
            imports ? &imports->associated : nullptr);
   for (const auto &[name, index] : inherentConstantNames) {
     const auto &constant = inherentConstants[index];
+    if (constant.importedContract) {
+      auto retained = *constant.importedContract;
+      retained.value = constant.value;
+      retained.materialized = constant.materialized;
+      retained.initializer = constant.initializer;
+      result->inherentConstants.push_back(std::move(retained));
+      continue;
+    }
     const auto &implementation = typeEnvironment(*constant.implementation);
     const bool genericNominal =
         checked.types->isProduct(constant.declaredType) &&

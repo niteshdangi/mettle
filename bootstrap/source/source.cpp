@@ -3,6 +3,51 @@
 #include <algorithm>
 
 namespace mettle {
+SourceText::SourceText(SourceText &&other) noexcept
+    : storage(std::move(other.storage)) {
+  other.storage = std::string{};
+}
+
+SourceText &SourceText::operator=(SourceText &&other) noexcept {
+  if (this != &other) {
+    storage = std::move(other.storage);
+    other.storage = std::string{};
+  }
+  return *this;
+}
+
+SourceText SourceText::retain(std::string_view text,
+                              std::shared_ptr<const void> owner) {
+  if (!owner)
+    return SourceText(text);
+  SourceText result;
+  result.storage = Retained{std::move(owner), text};
+  return result;
+}
+
+std::string_view SourceText::view() const {
+  if (const auto *owned = std::get_if<std::string>(&storage))
+    return *owned;
+  return std::get<Retained>(storage).text;
+}
+
+std::string &SourceText::edit() {
+  if (!std::holds_alternative<std::string>(storage))
+    storage = std::string(std::get<Retained>(storage).text);
+  return std::get<std::string>(storage);
+}
+
+SourceText &SourceText::operator+=(std::string_view text) {
+  if (auto *owned = std::get_if<std::string>(&storage)) {
+    owned->append(text);
+  } else {
+    std::string result(view());
+    result.append(text);
+    storage = std::move(result);
+  }
+  return *this;
+}
+
 namespace {
 std::size_t width(std::string_view text, std::size_t offset) {
   auto byte = [&](std::size_t index) {

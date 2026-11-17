@@ -92,7 +92,7 @@ int Builder::closureIndex(std::size_t index) const {
   if (imported && index < imported->closureFunctions.size())
     return imported->closureFunctions[index];
   auto result = module.syntax().functions.size();
-  for (const auto &function : module.syntax().functions)
+  for (const auto &function : module.syntax().functions.headers())
     for (const auto &parameter : function.parameters)
       result += module.hasDefault(
           module.syntax().functions.indexOf(&function),

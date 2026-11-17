@@ -1253,10 +1253,11 @@ int build(const Options &requested,
         [](const auto &attribute) { return attribute.name == "link"; });
   };
   bool externalLibraries =
-      tree &&
-      (!options.extraLibraries.empty() ||
-       std::any_of(tree->functions.begin(), tree->functions.end(), linked) ||
-       std::any_of(tree->statics.begin(), tree->statics.end(), linked));
+      tree && (!options.extraLibraries.empty() ||
+               std::any_of(tree->functions.headers().begin(),
+                           tree->functions.headers().end(), linked) ||
+               std::any_of(tree->statics.headers().begin(),
+                           tree->statics.headers().end(), linked));
   // `-g` builds are never cached: paths and the Darwin dSYM are outputs that
   // the cache does not store.
   if (tree && options.command == "build" && !options.debugInfo &&
@@ -1487,9 +1488,6 @@ int build(const Options &requested,
     if (options.explain)
       std::cerr << "mettle: cache " << (stored ? "stored " : "could not store ")
                 << cacheKey->substr(0, 12) << '\n';
-    for (const auto &note : store->prune(*cacheKey))
-      if (options.explain)
-        std::cerr << "mettle: cache " << note << '\n';
     std::error_code absolute;
     auto root = std::filesystem::absolute(source.path, absolute);
     if (!absolute) {
@@ -1513,10 +1511,19 @@ int build(const Options &requested,
         project.update(std::string_view("\0", 1));
         project.update(feature);
       }
-      for (const auto &note : store->commitProject(project.finish(), root))
+      for (const auto &note :
+           store->commitProject(project.finish(), root, *cacheKey))
+        if (options.explain)
+          std::cerr << "mettle: cache " << note << '\n';
+    } else {
+      for (const auto &note : store->prune(*cacheKey))
         if (options.explain)
           std::cerr << "mettle: cache " << note << '\n';
     }
+  } else if (status == 0 && store && !packageObjects.empty()) {
+    for (const auto &note : store->prune())
+      if (options.explain)
+        std::cerr << "mettle: cache " << note << '\n';
   }
   return status;
 }

@@ -8,11 +8,11 @@ bool wordStart(unsigned char c) {
 }
 bool digit(unsigned char c) { return c >= '0' && c <= '9'; }
 bool horizontalSpace(char c) { return c == ' ' || c == '\t'; }
-bool lineEnd(const std::string &s, std::size_t i) {
+bool lineEnd(std::string_view s, std::size_t i) {
   return i >= s.size() || s[i] == '\n' || s[i] == '\r';
 }
 // Position of the `"""` that follows an optional `b` or `f` prefix at `i`.
-std::optional<std::size_t> blockQuote(const std::string &s, std::size_t i) {
+std::optional<std::size_t> blockQuote(std::string_view s, std::size_t i) {
   if (s[i] == 'b' || s[i] == 'f')
     ++i;
   if (s.compare(i, 3, "\"\"\"") == 0)
@@ -20,7 +20,7 @@ std::optional<std::size_t> blockQuote(const std::string &s, std::size_t i) {
   return std::nullopt;
 }
 // Whether a removed `r"`, `r#"`, `br"` or `br#"` literal starts at `i`.
-bool removedRawText(const std::string &s, std::size_t i) {
+bool removedRawText(std::string_view s, std::size_t i) {
   if (s[i] == 'b')
     ++i;
   if (i >= s.size() || s[i] != 'r')
@@ -41,7 +41,7 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
                       "source is not valid UTF-8");
     return {{TokenKind::End, {*invalid, *invalid, source.id}, ""}};
   }
-  const auto &s = source.text;
+  const std::string_view s = source.text;
   std::vector<Token> tokens;
   std::size_t i = 0;
   bool afterDot = false;
@@ -49,7 +49,8 @@ std::vector<Token> tokenize(const Source &source, Diagnostics &diagnostics) {
   // braces nested inside the hole so only the matching `}` ends it.
   std::vector<std::size_t> holes;
   auto add = [&](TokenKind kind, std::size_t start) {
-    tokens.push_back({kind, {start, i, source.id}, s.substr(start, i - start)});
+    tokens.push_back(
+        {kind, {start, i, source.id}, std::string(s.substr(start, i - start))});
     if (kind != TokenKind::Space && kind != TokenKind::Newline &&
         kind != TokenKind::Comment)
       afterDot = kind == TokenKind::Symbol && tokens.back().text == ".";

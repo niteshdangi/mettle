@@ -1,11 +1,16 @@
 #include "driver/library_archive.h"
 #include "driver/library_cache.h"
+#include "ir/codec.h"
 #include "packages/sha256.h"
 #include "packages/store.h"
+#include "semantics/check.h"
+#include "semantics/library.h"
+#include "syntax/parser.h"
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -85,8 +90,9 @@ int main() {
   archive.macros = std::string("macro\0rules", 11);
   archive.types = {0, 1, 2, 255};
   archive.header = {5, 6, 7};
-  archive.declarations = {8, 9, 0, 10};
-  archive.ir = {4, 3, 2, 1};
+  auto emptyIR = ir::encodeProgram({}, {});
+  expect(bool(emptyIR), emptyIR.error.c_str());
+  archive.ir = std::move(emptyIR.bytes);
   auto cyclic = original;
   cyclic.generated({first.id, {0, 1, generated.id}, "cycle", {}});
   auto recaptured = archive.sources;
@@ -104,6 +110,78 @@ int main() {
              imported->ir == archive.ir &&
              imported->sourceModules == archive.sourceModules,
          "all independent compilation sections must survive");
+  std::weak_ptr<const std::string> sourceBacking;
+  {
+    Diagnostics surviving;
+    const char *retainedText = nullptr;
+    {
+      auto snapshot = std::make_shared<const std::string>(*bytes);
+      sourceBacking = snapshot;
+      auto retained = driver::decodeLibraryArchive(
+          *snapshot, "library-revision", error, snapshot);
+      expect(retained.has_value(), error.c_str());
+      const auto *source = retained->sources.source(reference->revision);
+      const auto offset = snapshot->find("generated");
+      expect(offset != std::string::npos, "source slice fixture must exist");
+      retainedText = snapshot->data() + offset;
+      expect(source && source->text.data() == retainedText,
+             "admitted source text must remain a slice of immutable backing");
+      Source edited = *source;
+      edited.text[0] = 'G';
+      expect(edited.text == "Generated" && source->text == generated.text &&
+                 source->text.data() == retainedText,
+             "editing a copied source must detach its retained text");
+      SourceId id = 80;
+      expect(retained->sources.mount(
+                 surviving, [&] { return id++; }, error),
+             error.c_str());
+      expect(retained->sources.source(reference->revision)->text.data() ==
+                 retainedText,
+             "source mounting must not materialize retained text");
+    }
+    expect(!sourceBacking.expired() &&
+               surviving.registeredSources()[1].text.data() == retainedText,
+           "diagnostics must retain source backing after archive destruction");
+    surviving.error("retained", {2, 3, 80}, "retained source");
+    std::ostringstream rendered;
+    surviving.print({"fallback.mt", "", 0}, rendered);
+    expect(rendered.str().find("core/main.mt:1:3:") != std::string::npos &&
+               rendered.str().find("macro value") != std::string::npos,
+           "diagnostics must render retained source slices after import ends");
+  }
+  expect(sourceBacking.expired(),
+         "source backing must release after its final diagnostic owner");
+  {
+    driver::Section retained;
+    {
+      auto temporary =
+          driver::decodeLibraryArchive(*bytes, "library-revision", error);
+      expect(temporary.has_value(), error.c_str());
+      retained = temporary->types;
+    }
+    expect(retained == archive.types,
+           "retained sections must own their bytes after archive destruction");
+    auto moved = std::move(retained);
+    expect(moved == archive.types && retained.bytes().empty(),
+           "moving a retained section must not leave an unowned byte view");
+  }
+  {
+    SourceText text;
+    {
+      auto snapshot = std::make_shared<const std::string>(std::string(80, 'x'));
+      text = SourceText::retain(*snapshot, snapshot);
+    }
+    SourceText moved;
+    moved = std::move(text);
+    expect(text.empty(), "moved retained text must not retain an unowned view");
+    moved += std::string_view(moved).substr(1);
+    expect(moved == std::string(159, 'x'),
+           "self-appending a retained slice must preserve its backing");
+    auto owned = moved;
+    moved[0] = 'y';
+    expect(owned == std::string(159, 'x'),
+           "ordinary source-text copies must retain value mutation semantics");
+  }
   Diagnostics consumer;
   Source occupied{"consumer.mt", "consumer source", 50};
   {
@@ -165,8 +243,10 @@ int main() {
   {
     Diagnostics surviving;
     {
+      auto mutableBytes = *bytes;
       auto temporary =
-          driver::decodeLibraryArchive(*bytes, "library-revision", error);
+          driver::decodeLibraryArchive(mutableBytes, "library-revision", error);
+      mutableBytes.assign(mutableBytes.size(), 'x');
       SourceId id = 80;
       expect(temporary && temporary->sources.mount(
                               surviving, [&] { return id++; }, error),
@@ -200,6 +280,266 @@ int main() {
   expect(
       !driver::decodeLibraryArchive(invalidSource, "library-revision", error),
       "well-checksummed invalid source encoding must reject");
+  auto reseal = [](std::string &value) {
+    value.resize(value.size() - 64);
+    value += driver::archiveDigest(value);
+  };
+  for (const auto &field : {std::string("library-revision"), first.path,
+                            std::string("generated"), reference->revision}) {
+    auto changed = *bytes;
+    auto offset = changed.find(field);
+    expect(offset != std::string::npos, "source identity fixture must exist");
+    changed[offset] ^= 1;
+    auto identity = std::string("library-revision");
+    if (field == identity)
+      identity[0] ^= 1;
+    reseal(changed);
+    expect(
+        !driver::decodeLibraryArchive(changed, identity, error) &&
+            error.find("source revision") != std::string::npos,
+        "source revisions must bind identity, path, text and encoded digest");
+  }
+  auto firstPath = bytes->find(first.path);
+  auto secondPath = bytes->find(generated.path, firstPath + first.path.size());
+  auto secondRevision = bytes->find(reference->revision, secondPath);
+  expect(firstPath != std::string::npos && secondPath != std::string::npos &&
+             secondRevision != std::string::npos,
+         "source order fixture must contain both complete records");
+  auto firstRecord = firstPath - 4;
+  auto secondRecord = secondPath - 4;
+  auto secondEnd = secondRevision + reference->revision.size();
+  auto reordered = bytes->substr(0, firstRecord) +
+                   bytes->substr(secondRecord, secondEnd - secondRecord) +
+                   bytes->substr(firstRecord, secondRecord - firstRecord) +
+                   bytes->substr(secondEnd);
+  reseal(reordered);
+  expect(!driver::decodeLibraryArchive(reordered, "library-revision", error) &&
+             error.find("source revision") != std::string::npos,
+         "source revisions must bind each source's archive ordinal");
+  {
+    ir::Program program;
+    for (const auto &[name, literal] :
+         {std::pair{"first", "17392451"}, std::pair{"other", "19613861"}}) {
+      ir::Instruction value{};
+      value.op = ir::Op::Constant;
+      value.result = {0, Type::I32};
+      value.text = literal;
+      program.functions.push_back(
+          {name,
+           Type::I32,
+           0,
+           {},
+           {{{value}, {ir::Exit::Return, {0, Type::I32}}}},
+           1});
+    }
+    metadata::EncodeReferences encode;
+    encode.type = [](Type type) { return std::optional{type.index()}; };
+    encode.symbol = [](metadata::SymbolKind, std::uint32_t index) {
+      return std::optional{"function/" + std::to_string(index)};
+    };
+    encode.source = [&](Span) {
+      return archive.sources.reference({0, 0, first.id});
+    };
+    program.functions.edit(1).name.append(std::size_t{1} << 20, 'n');
+    auto encodedIR = ir::encodeProgram(program, encode);
+    expect(bool(encodedIR), encodedIR.error.c_str());
+    auto layout = ir::programLayout(encodedIR.bytes);
+    expect(layout && layout.bodies.size() == 2,
+           "IR framing must identify both independently sealed bodies");
+    auto deferred = archive;
+    deferred.ir = std::move(encodedIR.bytes);
+    deferred.macros.append(std::size_t{1} << 20, 'm');
+    auto sealed = driver::encodeLibraryArchive(deferred, error);
+    expect(sealed.has_value(), error.c_str());
+    const auto irOffset = sealed->size() - 64 - deferred.ir.size();
+    auto metadata = sealed->substr(0, sealed->size() - 64);
+    for (auto body = layout.bodies.rbegin(); body != layout.bodies.rend();
+         ++body)
+      metadata.erase(irOffset + body->offset, body->size);
+    expect(driver::archiveDigest(metadata) ==
+               sealed->substr(sealed->size() - 64),
+           "fragmented parallel metadata hashing must preserve logical chunks");
+    auto replacementProgram = program;
+    replacementProgram.functions.edit(1).blocks[0].instructions[0].text =
+        "19613862";
+    auto replacementIR = ir::encodeProgram(replacementProgram, encode);
+    expect(bool(replacementIR), replacementIR.error.c_str());
+    auto replacementArchive = deferred;
+    replacementArchive.ir = std::move(replacementIR.bytes);
+    auto replacement = driver::encodeLibraryArchive(replacementArchive, error);
+    expect(
+        replacement && replacement->substr(replacement->size() - 64) !=
+                           sealed->substr(sealed->size() - 64),
+        "changed body commitments must invalidate resident archive identity");
+    auto changed = *sealed;
+    const auto body = layout.bodies[1];
+    const auto literal =
+        std::search(deferred.ir.bytes().begin() + body.offset,
+                    deferred.ir.bytes().begin() + body.offset + body.size,
+                    std::string_view("19613861").begin(),
+                    std::string_view("19613861").end());
+    expect(literal != deferred.ir.bytes().begin() + body.offset + body.size,
+           "body-only string must be stored inside its deferred payload");
+    const auto literalOffset =
+        static_cast<std::size_t>(literal - deferred.ir.bytes().begin());
+    changed[irOffset + literalOffset] ^= 1;
+    auto snapshot = std::make_shared<const std::string>(std::move(changed));
+    auto admitted = driver::decodeLibraryArchive(*snapshot, "library-revision",
+                                                 error, snapshot);
+    expect(admitted.has_value(), error.c_str());
+    metadata::DecodeReferences decode;
+    decode.type = [](std::uint32_t index) -> std::optional<Type> {
+      for (auto type : {Type::Unknown, Type::Never, Type::I32})
+        if (type.index() == index)
+          return type;
+      return std::nullopt;
+    };
+    decode.symbol = [](metadata::SymbolKind,
+                       std::string_view name) -> std::optional<std::uint32_t> {
+      for (std::uint32_t i = 0; i < 2; ++i)
+        if (name == "function/" + std::to_string(i))
+          return i;
+      return std::nullopt;
+    };
+    decode.source = [sources = admitted->sources](const auto &reference) {
+      return sources.resolve(reference);
+    };
+    auto references =
+        std::make_shared<const metadata::DecodeReferences>(decode);
+    auto pending =
+        ir::decodeProgramLazy(admitted->ir, *references, true, references,
+                              admitted->backing, admitted->verifyIRBody);
+    expect(bool(pending), pending.error.c_str());
+    admitted.reset();
+    snapshot.reset();
+    auto firstBody =
+        pending.lazyFunctions->load(0, pending.program.functions[0], decode);
+    expect(bool(firstBody), firstBody.error.c_str());
+    auto corruptBody =
+        pending.lazyFunctions->load(1, pending.program.functions[1], decode);
+    expect(!corruptBody &&
+               corruptBody.error == "IR function body checksum mismatch",
+           "unused body corruption must reject before demanded decoding");
+    changed = *sealed;
+    changed[irOffset + layout.bodies[0].offset - 1] ^= 1;
+    expect(!driver::decodeLibraryArchive(changed, "library-revision", error),
+           "header corruption must reject before deferred body use");
+    changed = *sealed;
+    const auto digest =
+        driver::archiveDigest({reinterpret_cast<const char *>(
+                                   deferred.ir.bytes().data() + body.offset),
+                               body.size});
+    const auto sealOffset = changed.find(digest);
+    expect(sealOffset != std::string::npos,
+           "body commitment must be embedded in query metadata");
+    changed[sealOffset] = changed[sealOffset] == '0' ? '1' : '0';
+    expect(!driver::decodeLibraryArchive(changed, "library-revision", error) &&
+               error.find("metadata checksum") != std::string::npos,
+           "body commitment corruption must reject at archive admission");
+  }
+  {
+    Source source{"checked-seal.mt",
+                  "const fn first(): i32 { 17392451 }\n"
+                  "const fn other(): i32 { 19613861 }\n",
+                  0};
+    Diagnostics diagnostics;
+    auto checked = check(parse(source, diagnostics), diagnostics, false);
+    expect(checked.has_value(), "checked payload fixture must type-check");
+    auto deferred = archive;
+    expect(deferred.sources.capture(diagnostics, error), error.c_str());
+    std::map<std::uint32_t, Type> typeReferences;
+    metadata::EncodeReferences encode;
+    encode.type = [&](Type type) {
+      typeReferences.emplace(type.index(), type);
+      return std::optional{type.index()};
+    };
+    encode.source = [&](Span span) { return deferred.sources.reference(span); };
+    encode.symbol = [](metadata::SymbolKind kind, std::uint32_t index) {
+      return std::optional{std::to_string(static_cast<unsigned>(kind)) + "/" +
+                           std::to_string(index)};
+    };
+    auto contracts = exportLibraryDeclarations(*checked, encode);
+    expect(bool(contracts), contracts.error.c_str());
+    deferred.declarations = std::move(contracts.contracts);
+    auto layout = declarationPayloadLayout(deferred.declarations);
+    expect(layout && layout.payloads.size() == 2,
+           "declaration codec must index independently sealed function blocks");
+    auto sealed = driver::encodeLibraryArchive(deferred, error);
+    expect(sealed.has_value(), error.c_str());
+    auto changed = *sealed;
+    const auto declarationsOffset = changed.find(
+        {reinterpret_cast<const char *>(deferred.declarations.bytes().data()),
+         deferred.declarations.size()});
+    expect(declarationsOffset != std::string::npos,
+           "checked declaration section must be embedded unchanged");
+    const auto payload = layout.payloads[1];
+    expect(payload.size != 0, "checked function block must not be empty");
+    changed[declarationsOffset + payload.offset] ^= 0x40;
+    auto snapshot = std::make_shared<const std::string>(std::move(changed));
+    auto admitted = driver::decodeLibraryArchive(*snapshot, "library-revision",
+                                                 error, snapshot);
+    expect(admitted.has_value(), error.c_str());
+    metadata::DecodeReferences decode;
+    decode.type = [types = std::move(typeReferences)](
+                      std::uint32_t index) -> std::optional<Type> {
+      auto found = types.find(index);
+      return found == types.end() ? std::nullopt : std::optional{found->second};
+    };
+    decode.source = [sources = admitted->sources](const auto &reference) {
+      return sources.resolve(reference);
+    };
+    decode.symbol = [](metadata::SymbolKind kind,
+                       std::string_view name) -> std::optional<std::uint32_t> {
+      for (std::uint32_t i = 0; i < 2; ++i)
+        if (name == std::to_string(static_cast<unsigned>(kind)) + "/" +
+                        std::to_string(i))
+          return i;
+      return std::nullopt;
+    };
+    auto references =
+        std::make_shared<const metadata::DecodeReferences>(decode);
+    auto types = std::make_shared<TypeStore>(*checked->typeStore());
+    auto pending = importLibraryDeclarations(
+        admitted->declarations, types, *references, nullptr, admitted->backing,
+        references, metadata::ValidationMode::OnDemand, {},
+        admitted->verifyDeclarationPayload);
+    expect(bool(pending), pending.error.c_str());
+    admitted.reset();
+    snapshot.reset();
+    const auto &firstFunction =
+        pending.declarations->functions.at(0)->materialize();
+    expect(firstFunction.body != nullptr,
+           "checked fixture must retain its compile-time expression");
+    firstFunction.body->materialize();
+    expect(firstFunction.body->syntax.get() != nullptr,
+           "demanded checked expression must outlive its archive and caller");
+    bool rejected = false;
+    try {
+      pending.declarations->functions.at(1)->materialize();
+    } catch (const metadata::InvalidMetadata &failure) {
+      rejected =
+          std::string_view(failure.what()).find("payload integrity mismatch") !=
+          std::string::npos;
+    }
+    expect(rejected,
+           "unused checked payload corruption must reject before demanded use");
+    changed = *sealed;
+    changed[declarationsOffset + layout.payloads[0].offset - 1] ^= 1;
+    expect(!driver::decodeLibraryArchive(changed, "library-revision", error),
+           "checked summary corruption must reject at archive admission");
+    const auto commitment = driver::archiveDigest(
+        {reinterpret_cast<const char *>(deferred.declarations.bytes().data() +
+                                        payload.offset),
+         payload.size});
+    changed = *sealed;
+    const auto sealOffset = changed.find(commitment);
+    expect(sealOffset != std::string::npos,
+           "checked payload commitment must be embedded in query metadata");
+    changed[sealOffset] = changed[sealOffset] == '0' ? '1' : '0';
+    expect(!driver::decodeLibraryArchive(changed, "library-revision", error) &&
+               error.find("metadata checksum") != std::string::npos,
+           "checked commitment corruption must reject at archive admission");
+  }
   auto before = consumer.registeredSources().size();
   auto collision =
       driver::decodeLibraryArchive(*bytes, "library-revision", error);
@@ -229,6 +569,50 @@ int main() {
   expect(read.status == packages::Store::Lookup::Hit && read.bytes == *bytes,
          "stored archive bytes must be verified before decoding");
   expect(store.usage().blobs == 1, "equal interfaces must share a blob");
+  {
+    std::optional<driver::LibraryArchive> retained;
+    auto mapped = store.mapped(key, bytes->size(), [&](const auto &mapping) {
+      retained = driver::decodeLibraryArchive(
+          mapping->bytes(), "library-revision", error, mapping);
+      return retained.has_value();
+    });
+    expect(mapped.status == packages::Store::Lookup::Hit && retained,
+           "archive admission must retain the Store mapping");
+    const auto *source = retained->sources.source(reference->revision);
+    expect(source &&
+               reinterpret_cast<const char *>(retained->ir.bytes().data()) ==
+                   mapped.mapping->bytes().data() +
+                       mapped.mapping->bytes().size() - 64 -
+                       retained->ir.size() &&
+               source->text.data() ==
+                   mapped.mapping->bytes().data() +
+                       mapped.mapping->bytes().find("generated"),
+           "mapped admission must retain source and section slices");
+    Source surviving = *source;
+    auto section = retained->ir;
+    std::weak_ptr<const packages::Store::Mapping> lifetime = mapped.mapping;
+    mapped.mapping.reset();
+    retained.reset();
+    expect(store.putData(key, *bytes),
+           "same-content atomic publication must preserve mapped readers");
+    auto replacement = archive;
+    replacement.macros += "replacement";
+    auto changed = driver::encodeLibraryArchive(replacement, error);
+    expect(changed && store.putData(key, *changed) &&
+               store.putData(other, *changed),
+           "new archive publication must preserve old mapped readers");
+    store.prune();
+    expect(
+        !lifetime.expired() && surviving.text == generated.text &&
+            section == archive.ir,
+        "source and section owners must survive blob replacement and pruning");
+    surviving.text = "";
+    section = std::vector<std::uint8_t>{};
+    expect(lifetime.expired(),
+           "mapped archive storage must release after its final slice owner");
+    expect(store.putData(key, *bytes) && store.putData(other, *bytes),
+           "must restore original entries after mapped lifetime regression");
+  }
   store.prune();
   expect(store.data(key, bytes->size()).status == packages::Store::Lookup::Hit,
          "active checked library must survive byte-limit pruning");

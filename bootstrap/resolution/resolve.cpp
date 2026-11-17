@@ -1,5 +1,7 @@
 #include "resolution/resolve.h"
 #include <algorithm>
+#include <array>
+#include <deque>
 #include <limits>
 #include <unordered_set>
 
@@ -167,7 +169,10 @@ std::vector<std::size_t> Resolution::find(ModuleId module,
                                           Namespace space,
                                           ModuleId from) const {
   std::vector<std::size_t> result;
-  auto found = scopes[module].bindings.find(key(space, name));
+  auto bindingKey = key(space, name);
+  if (dependencies)
+    dependencies->emplace_back(module, bindingKey);
+  auto found = scopes[module].bindings.find(bindingKey);
   if (found == scopes[module].bindings.end())
     return result;
   bool explicitPresent = std::any_of(
@@ -222,6 +227,8 @@ std::vector<std::size_t> Resolution::associated(std::string canonical,
   auto type = associatedType(std::move(canonical));
   if (!type)
     return {};
+  if (dependencies)
+    dependencies->emplace_back(publicBoundary, *type);
   auto found = associatedItems.find(*type);
   if (found == associatedItems.end())
     return {};
@@ -372,13 +379,14 @@ public:
     collectModules();
     collectItems();
     collectBuiltins();
-    collectAssociatedConstants();
     imports();
     if (!diagnostics.empty())
       return {};
     prelude();
-    collectAssociatedFunctions();
-    collectAssociatedConstants();
+    for (auto &entry : associatedFunctions)
+      collectAssociatedFunction(entry);
+    for (const auto &implementation : tree.implementations.headers())
+      collectAssociatedConstants(implementation);
     if (!diagnostics.empty())
       return {};
     result.index();
@@ -399,6 +407,40 @@ private:
     std::string owner;
   };
   std::vector<AssociatedFunction> associatedFunctions;
+  using Dependency = std::pair<ModuleId, std::string>;
+  std::map<Dependency, std::vector<std::size_t>> dependents;
+  std::vector<std::set<Dependency>> registeredDependencies;
+  std::deque<std::size_t> readyImports;
+  std::vector<bool> queuedImports;
+  std::array<std::unordered_multimap<std::string, std::size_t>, 4>
+      canonicalDefinitions;
+  std::size_t indexedDefinitions = 0;
+
+  void indexDefinitions() {
+    for (; indexedDefinitions < result.definitions.size();
+         ++indexedDefinitions) {
+      const auto &definition = result.definitions[indexedDefinitions];
+      canonicalDefinitions[static_cast<std::size_t>(definition.space)].emplace(
+          definition.canonical, indexedDefinitions);
+    }
+  }
+
+  void enqueue(std::size_t task) {
+    if (!queuedImports[task]) {
+      queuedImports[task] = true;
+      readyImports.push_back(task);
+    }
+  }
+  void changed(ModuleId module, std::string_view name) {
+    if (auto found = dependents.find({module, std::string(name)});
+        found != dependents.end())
+      for (auto task : found->second)
+        enqueue(task);
+    if (!name.empty())
+      if (auto found = dependents.find({module, {}}); found != dependents.end())
+        for (auto task : found->second)
+          enqueue(task);
+  }
 
   ModuleId scope(const std::vector<std::string> &path) {
     std::vector<std::string> prefix;
@@ -495,7 +537,7 @@ private:
       result.items.push_back({macro.span, module, name, visible});
       define(Namespace::Macro, module, visible, macro.name, name, macro.span);
     }
-    for (const auto &storage : tree.statics) {
+    for (const auto &storage : tree.statics.headers()) {
       auto module = scope(storage.item.scope);
       auto visible = boundary(storage.item, module, storage.span);
       auto name = itemName(module, storage.name);
@@ -503,7 +545,7 @@ private:
       define(Namespace::Value, module, visible, storage.name, name,
              storage.span);
     }
-    for (const auto &interface : tree.interfaces) {
+    for (const auto &interface : tree.interfaces.headers()) {
       auto module = scope(interface.item.scope);
       auto visible = boundary(interface.item, module, interface.span);
       auto name = itemName(module, interface.name);
@@ -513,7 +555,7 @@ private:
       result.associatedItems.try_emplace(name);
     }
     for (std::size_t i = 0; i < tree.implementations.size(); ++i) {
-      const auto &implementation = tree.implementations[i];
+      const auto &implementation = tree.implementations.header(i);
       if (implementation.shorthand)
         continue;
       auto module = scope(implementation.item.scope);
@@ -522,7 +564,7 @@ private:
            itemName(module, "<impl." + std::to_string(i) + ">"),
            boundary(implementation.item, module, implementation.span)});
     }
-    for (const auto &product : tree.products) {
+    for (const auto &product : tree.products.headers()) {
       auto module = scope(product.item.scope);
       auto visible = boundary(product.item, module, product.span);
       auto name = itemName(module, product.name);
@@ -552,7 +594,7 @@ private:
             {field.span, module, {}, boundary(item, module, field.span)});
       }
     }
-    for (const auto &alias : tree.aliases) {
+    for (const auto &alias : tree.aliases.headers()) {
       auto module = scope(alias.item.scope);
       auto name = itemName(module, alias.name);
       auto visible = boundary(alias.item, module, alias.span);
@@ -562,7 +604,7 @@ private:
           alias.target.view.empty() && alias.target.form == TypeForm::Named)
         result.aliasTargets.emplace(name, std::pair{module, alias.target.name});
     }
-    for (const auto &function : tree.functions) {
+    for (const auto &function : tree.functions.headers()) {
       auto module = scope(function.item.scope);
       auto name = itemName(module, function.name);
       auto visible = boundary(function.item, module, function.span);
@@ -574,8 +616,8 @@ private:
       else if (!function.destructor && !function.constructor &&
                (function.implementation < 0 ||
                 (function.receiver == "static" &&
-                 tree.implementations[static_cast<std::size_t>(
-                                          function.implementation)]
+                 tree.implementations
+                     .header(static_cast<std::size_t>(function.implementation))
                      .interface.name.empty()))) {
         auto delimiter = function.name.rfind('.');
         auto member = function.name.substr(delimiter + 1);
@@ -615,81 +657,86 @@ private:
     }
   }
 
-  bool collectAssociatedFunctions() {
-    bool changed = false;
-    for (auto &entry : associatedFunctions) {
-      auto module = scope(entry.function->item.scope);
-      auto owner = result.lookup(module, entry.function->owner, Namespace::Type,
-                                 entry.function->span, nullptr);
-      if (!owner)
-        continue;
-      auto canonical = result.associatedType(*owner);
-      if (!canonical || *canonical == entry.owner)
-        continue;
-      auto &old = result.associatedItems[entry.owner];
-      std::erase(old, entry.definition);
-      for (auto index : result.associatedItems[*canonical])
-        if (associatedConstantDefinitions.contains(index) &&
-            result.definitions[index].name ==
-                result.definitions[entry.definition].name)
-          diagnostics.error("name", result.definitions[index].span,
-                            "duplicate associated item '" +
-                                result.definitions[index].name + "'");
-      result.associatedItems[*canonical].push_back(entry.definition);
-      auto &definition = result.definitions[entry.definition];
-      definition.canonical = *canonical + "::" + definition.name;
-      result.items[entry.item].canonical = definition.canonical;
-      entry.owner = *canonical;
-      changed = true;
-    }
-    return changed;
+  void collectAssociatedFunction(AssociatedFunction &entry) {
+    auto module = scope(entry.function->item.scope);
+    auto owner = result.lookup(module, entry.function->owner, Namespace::Type,
+                               entry.function->span, nullptr);
+    if (!owner)
+      return;
+    auto canonical = result.associatedType(*owner);
+    if (!canonical || *canonical == entry.owner)
+      return;
+    auto &old = result.associatedItems[entry.owner];
+    std::erase(old, entry.definition);
+    for (auto index : result.associatedItems[*canonical])
+      if (associatedConstantDefinitions.contains(index) &&
+          result.definitions[index].name ==
+              result.definitions[entry.definition].name)
+        diagnostics.error("name", result.definitions[index].span,
+                          "duplicate associated item '" +
+                              result.definitions[index].name + "'");
+    result.associatedItems[*canonical].push_back(entry.definition);
+    auto &definition = result.definitions[entry.definition];
+    auto oldCanonical = definition.canonical;
+    indexDefinitions();
+    definition.canonical = *canonical + "::" + definition.name;
+    auto &definitions =
+        canonicalDefinitions[static_cast<std::size_t>(definition.space)];
+    auto [first, last] = definitions.equal_range(oldCanonical);
+    for (; first != last; ++first)
+      if (first->second == entry.definition) {
+        definitions.erase(first);
+        break;
+      }
+    definitions.emplace(definition.canonical, entry.definition);
+    result.items[entry.item].canonical = definition.canonical;
+    this->changed(publicBoundary, entry.owner);
+    this->changed(publicBoundary, *canonical);
+    entry.owner = *canonical;
   }
 
-  bool collectAssociatedConstants() {
-    bool changed = false;
-    for (const auto &implementation : tree.implementations) {
-      if (!implementation.interface.empty() || implementation.negative)
+  void
+  collectAssociatedConstants(const Module::Implementation &implementation) {
+    if (!implementation.interface.empty() || implementation.negative)
+      return;
+    auto module = scope(implementation.item.scope);
+    auto owner = result.lookup(module, implementation.target.name,
+                               Namespace::Type, implementation.span, nullptr);
+    if (!owner)
+      return;
+    auto canonicalOwner = result.associatedType(*owner);
+    if (!canonicalOwner)
+      return;
+    auto &members = result.associatedItems[*canonicalOwner];
+    for (const auto &associated : implementation.associated) {
+      if (!associated.constant ||
+          !collectedAssociatedConstants.insert(&associated).second)
         continue;
-      auto module = scope(implementation.item.scope);
-      auto owner = result.lookup(module, implementation.target.name,
-                                 Namespace::Type, implementation.span, nullptr);
-      if (!owner)
+      if (std::any_of(members.begin(), members.end(), [&](auto index) {
+            return result.definitions[index].name == associated.name;
+          })) {
+        diagnostics.error("name", associated.span,
+                          "duplicate associated item '" + associated.name +
+                              "'");
         continue;
-      auto canonicalOwner = result.associatedType(*owner);
-      if (!canonicalOwner)
-        continue;
-      auto &members = result.associatedItems[*canonicalOwner];
-      for (const auto &associated : implementation.associated) {
-        if (!associated.constant ||
-            !collectedAssociatedConstants.insert(&associated).second)
-          continue;
-        if (std::any_of(members.begin(), members.end(), [&](auto index) {
-              return result.definitions[index].name == associated.name;
-            })) {
-          diagnostics.error("name", associated.span,
-                            "duplicate associated item '" + associated.name +
-                                "'");
-          continue;
-        }
-        ItemSyntax item{implementation.item.scope, associated.visibility, {}};
-        auto visible = boundary(item, module, associated.span);
-        auto canonical = *canonicalOwner + "::" + associated.name;
-        auto index = result.definitions.size();
-        result.definitions.push_back({Namespace::Value,
-                                      module,
-                                      visible,
-                                      associated.name,
-                                      canonical,
-                                      associated.span,
-                                      {}});
-        associatedConstantDefinitions.insert(index);
-        members.push_back(index);
-        result.items.push_back(
-            {associated.span, module, std::move(canonical), visible});
-        changed = true;
       }
+      ItemSyntax item{implementation.item.scope, associated.visibility, {}};
+      auto visible = boundary(item, module, associated.span);
+      auto canonical = *canonicalOwner + "::" + associated.name;
+      auto index = result.definitions.size();
+      result.definitions.push_back({Namespace::Value,
+                                    module,
+                                    visible,
+                                    associated.name,
+                                    canonical,
+                                    associated.span,
+                                    {}});
+      associatedConstantDefinitions.insert(index);
+      members.push_back(index);
+      result.items.push_back(
+          {associated.span, module, std::move(canonical), visible});
+      this->changed(publicBoundary, *canonicalOwner);
     }
-    return changed;
   }
 
   struct Target {
@@ -701,6 +748,7 @@ private:
                               bool moduleOnly = false) {
     std::vector<Target> resultTargets;
     auto spelling = join(path);
+    indexDefinitions();
     for (auto space : {Namespace::Type, Namespace::Value, Namespace::Module,
                        Namespace::Macro}) {
       if (moduleOnly && space != Namespace::Module)
@@ -708,12 +756,14 @@ private:
       auto canonical = result.lookup(from, spelling, space, {}, nullptr);
       if (!canonical)
         continue;
-      for (std::size_t i = 0; i < result.definitions.size(); ++i) {
-        const auto &definition = result.definitions[i];
-        if (definition.space == space && definition.canonical == *canonical) {
-          resultTargets.push_back({i, definition.boundary});
-          break;
-        }
+      const auto &definitions =
+          canonicalDefinitions[static_cast<std::size_t>(space)];
+      auto [first, last] = definitions.equal_range(*canonical);
+      if (first != last) {
+        auto index = first->second;
+        for (++first; first != last; ++first)
+          index = std::min(index, first->second);
+        resultTargets.push_back({index, result.definitions[index].boundary});
       }
     }
     return resultTargets;
@@ -743,6 +793,7 @@ private:
           !binding.import) {
         binding.boundary = visible;
         binding.import = importIndex;
+        changed(module, key(definition.space, name));
         return true;
       }
     for (const auto &binding : bindings)
@@ -773,6 +824,7 @@ private:
     }
     bindings.push_back(
         {target.definition, visible, explicitBinding, importIndex, prelude});
+    changed(module, key(definition.space, name));
     return true;
   }
 
@@ -787,7 +839,11 @@ private:
         auto type = result.lookup(module, join(declaration.path),
                                   Namespace::Type, declaration.span);
         auto canonical = type ? result.associatedType(*type) : std::nullopt;
-        if (!canonical || !result.associatedItems.contains(*canonical))
+        if (!canonical)
+          return false;
+        if (result.dependencies)
+          result.dependencies->emplace_back(publicBoundary, *canonical);
+        if (!result.associatedItems.contains(*canonical))
           return false;
         resolved = true;
         for (auto definition : result.associatedItems.at(*canonical)) {
@@ -800,9 +856,11 @@ private:
       }
       resolved = true;
       auto imported = *result.definitions[target[0].definition].target;
-      // Copy before insertion: self/glob cycles may mutate this same scope.
-      auto entries = result.scopes[imported].bindings;
-      for (const auto &[bindingKey, bindings] : entries) {
+      if (result.dependencies)
+        result.dependencies->emplace_back(imported, std::string{});
+      std::vector<std::pair<std::string_view, Target>> selfBindings;
+      for (const auto &[bindingKey, bindings] :
+           result.scopes[imported].bindings) {
         auto name = std::string_view(bindingKey).substr(2);
         bool explicitPresent = std::any_of(
             bindings.begin(), bindings.end(),
@@ -810,12 +868,21 @@ private:
         if (!explicitPresent &&
             result.scopes[imported].pendingExplicit.contains(std::string(name)))
           continue;
-        for (const auto &entry : bindings)
+        for (const auto &entry : bindings) {
           if ((!explicitPresent || entry.explicitBinding) &&
-              result.inside(module, entry.boundary))
-            changed |= bind(module, name, {entry.definition, entry.boundary},
-                            visible, false, declaration.span, index);
+              result.inside(module, entry.boundary)) {
+            if (imported == module)
+              selfBindings.push_back(
+                  {name, {entry.definition, entry.boundary}});
+            else
+              changed |= bind(module, name, {entry.definition, entry.boundary},
+                              visible, false, declaration.span, index);
+          }
+        }
       }
+      for (auto [name, target] : selfBindings)
+        changed |=
+            bind(module, name, target, visible, false, declaration.span, index);
     } else if (!declaration.names.empty()) {
       resolved = true;
       for (const auto &entry : declaration.names) {
@@ -875,8 +942,12 @@ private:
       auto update = [&](const std::string &name) {
         if (add)
           ++pending[name];
-        else if (--pending.at(name) == 0)
+        else if (--pending.at(name) == 0) {
           pending.erase(name);
+          for (auto space :
+               {Namespace::Type, Namespace::Value, Namespace::Macro})
+            changed(module, key(space, name));
+        }
       };
       if (declaration.names.empty())
         update(declaration.alias.empty() ? declaration.path.back()
@@ -887,20 +958,41 @@ private:
     };
     for (const auto &declaration : tree.imports)
       reserve(declaration, true);
-    bool changed;
-    do {
-      changed = collectAssociatedFunctions();
-      changed |= collectAssociatedConstants();
-      for (std::size_t i = 0; i < tree.imports.size(); ++i) {
+    const auto functionsBegin = tree.imports.size();
+    const auto constantsBegin = functionsBegin + associatedFunctions.size();
+    queuedImports.resize(constantsBegin + tree.implementations.size());
+    registeredDependencies.resize(queuedImports.size());
+    for (std::size_t i = constantsBegin; i < queuedImports.size(); ++i)
+      enqueue(i);
+    for (std::size_t i = functionsBegin; i < constantsBegin; ++i)
+      enqueue(i);
+    for (std::size_t i = 0; i < tree.imports.size(); ++i)
+      enqueue(i);
+    std::vector<Dependency> dependencies;
+    while (!readyImports.empty()) {
+      auto i = readyImports.front();
+      readyImports.pop_front();
+      queuedImports[i] = false;
+      dependencies.clear();
+      result.dependencies = &dependencies;
+      if (i >= constantsBegin)
+        collectAssociatedConstants(
+            tree.implementations.header(i - constantsBegin));
+      else if (i >= functionsBegin)
+        collectAssociatedFunction(associatedFunctions[i - functionsBegin]);
+      else {
         bool complete = false;
-        changed |= import(tree.imports[i], i, complete);
+        import(tree.imports[i], i, complete);
         if (complete && !resolved[i]) {
           reserve(tree.imports[i], false);
           resolved[i] = true;
-          changed = true;
         }
       }
-    } while (changed);
+      result.dependencies = nullptr;
+      for (auto &dependency : dependencies)
+        if (registeredDependencies[i].insert(dependency).second)
+          dependents[std::move(dependency)].push_back(i);
+    }
     for (std::size_t i = 0; i < tree.imports.size(); ++i) {
       if (resolved[i])
         continue;

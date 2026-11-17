@@ -9,11 +9,13 @@
 #include "source/positions.h"
 #include "syntax/parser.h"
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <iostream>
 #include <map>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 #include <tuple>
 #include <utility>
 
@@ -144,6 +146,345 @@ void demandLoadedFunctionContracts() {
   }
   require(rejected,
           "demanded malformed function was published without validation");
+}
+
+void demandLoadedDeclarationHeaders() {
+  using namespace mettle;
+  std::vector<Source> sources{{"headers.mt", R"(
+macro packet { () => { pub type Packet<T> { pub item: T? } }; }
+packet!();
+pub alias Word = i32;
+pub interface Marker {}
+pub interface Borrowed { fn value(): read i32 from self; }
+pub type Scalar { pub item: i32; pub data: [i32; 2 + 3] }
+pub type ClosureHolder<F> { pub callback: F }
+extend Scalar implements Borrowed {
+  fn value(): read i32 from self { read self.item }
+}
+extend<F: take fn(mut i32): Unit> ClosureHolder<F> implements Marker {}
+pub const DEFAULT: i32 = 7;
+pub const fn answer(value: i32 = 7): i32 { value }
+extern "C" fn native(value: i32): i32 { value }
+@link("archive_dependency")
+extern "C" fn linked_native(): i32;
+)"}};
+  Diagnostics diagnostics;
+  auto tree = resolution::load(sources, diagnostics);
+  auto symbols = tree ? resolution::resolve(*tree, diagnostics) : nullptr;
+  auto checked =
+      symbols ? check(std::move(*tree), diagnostics, std::move(symbols), false)
+              : std::nullopt;
+  require(bool(checked), "deferred declaration fixture did not check");
+  auto types = std::const_pointer_cast<TypeStore>(checked->typeStore());
+  metadata::EncodeReferences encode;
+  encode.type = [](Type type) { return std::optional(type.index()); };
+  encode.source = [](Span span) {
+    return std::optional(metadata::SourceReference{
+        std::to_string(span.source), static_cast<std::uint32_t>(span.begin),
+        static_cast<std::uint32_t>(span.end)});
+  };
+  encode.symbol = [](metadata::SymbolKind, std::uint32_t index) {
+    return std::optional(std::to_string(index));
+  };
+  auto exported = exportLibraryDeclarations(*checked, encode);
+  require(bool(exported), "deferred declaration fixture did not export");
+  auto references = std::make_shared<metadata::DecodeReferences>();
+  references->type = [types](std::uint32_t index) -> std::optional<Type> {
+    return index < builtinTypeCount + types->storedTypeCount()
+               ? std::optional(types->typeAt(index))
+               : std::nullopt;
+  };
+  references->source =
+      [](const metadata::SourceReference &source) -> std::optional<Span> {
+    SourceId id = 0;
+    auto parsed =
+        std::from_chars(source.revision.data(),
+                        source.revision.data() + source.revision.size(), id);
+    if (parsed.ec != std::errc{} ||
+        parsed.ptr != source.revision.data() + source.revision.size())
+      return std::nullopt;
+    return Span{source.begin, source.end, id};
+  };
+  references->symbol =
+      [](metadata::SymbolKind,
+         std::string_view name) -> std::optional<std::uint32_t> {
+    std::uint32_t index = 0;
+    auto parsed =
+        std::from_chars(name.data(), name.data() + name.size(), index);
+    return parsed.ec == std::errc{} && parsed.ptr == name.data() + name.size()
+               ? std::optional(index)
+               : std::nullopt;
+  };
+  LibraryHeaderImport header;
+  std::weak_ptr<int> resolverLifetime;
+  {
+    auto lifetime = std::make_shared<int>(0);
+    resolverLifetime = lifetime;
+    auto transient = *references;
+    transient.source = [resolve = references->source,
+                        lifetime](const auto &source) {
+      (void)*lifetime;
+      return resolve(source);
+    };
+    header = decodeLibraryHeader(exported.header, transient);
+  }
+  require(bool(header) && resolverLifetime.expired(),
+          "deferred header retained its caller's resolver");
+  exported.header.clear();
+  exported.header.shrink_to_fit();
+  auto retained = copyLibraryHeader(header);
+  header.module.reset();
+  auto &module = *retained.module;
+  auto productIndex = [&](std::string_view name) {
+    auto headers = module.products.headers();
+    auto found =
+        std::find_if(headers.begin(), headers.end(),
+                     [&](const auto &item) { return item.name == name; });
+    require(found != headers.end(), "deferred product fixture is missing");
+    return static_cast<std::size_t>(found - headers.begin());
+  };
+  const auto packet = productIndex("Packet");
+  const auto scalar = productIndex("Scalar");
+  auto unexpanded = [&](const auto &items) {
+    for (std::size_t i = 0; i < items.size(); ++i)
+      require(!items.isMaterialized(i),
+              "metadata-only admission reconstructed complete syntax");
+  };
+  unexpanded(module.products);
+  unexpanded(module.aliases);
+  unexpanded(module.interfaces);
+  unexpanded(module.implementations);
+  unexpanded(module.statics);
+  auto functionHeaders = module.functions.headers();
+  auto linked = std::find_if(
+      functionHeaders.begin(), functionHeaders.end(),
+      [](const auto &function) { return function.name == "linked_native"; });
+  require(
+      linked != functionHeaders.end() &&
+          !module.functions.isMaterialized(linked - functionHeaders.begin()) &&
+          linked->item.attributes.size() == 1 &&
+          linked->item.attributes[0].name == "link" &&
+          linked->item.attributes[0].arguments.size() == 1 &&
+          linked->item.attributes[0].arguments[0].text ==
+              "\"archive_dependency\"",
+      "compact declaration lookup lost deferred external linkage");
+  require(module.products.header(packet).fields[0].name == "item" &&
+              module.products.header(packet).fields[0].visibility.publicItem &&
+              module.aliases.header(0).target.name == "i32" &&
+              module.implementations.header(0).target.name == "Scalar" &&
+              module.implementations.header(0).interface.name == "Borrowed" &&
+              !module.implementations.header(0).methodFunctions.empty(),
+          "compact declaration headers lost resolution metadata");
+  auto resolved = resolution::resolve(module, diagnostics);
+  require(bool(resolved), "compact declaration headers did not resolve");
+  unexpanded(module.products);
+  unexpanded(module.aliases);
+  unexpanded(module.interfaces);
+  unexpanded(module.implementations);
+  auto layout = declarationPayloadLayout(exported.contracts);
+  require(bool(layout) && layout.payloads.size() == module.functions.size() &&
+              !layout.payloads.empty() && layout.payloads[0].size,
+          "checked function payload framing lost a declaration");
+  auto damaged = exported.contracts;
+  damaged[layout.payloads[0].offset] ^= 0x7f;
+  auto reversed = std::make_shared<metadata::DecodeReferences>(*references);
+  reversed->symbol = [resolve = references->symbol,
+                      count = layout.payloads.size()](metadata::SymbolKind kind,
+                                                      std::string_view name) {
+    auto index = resolve(kind, name);
+    if (kind == metadata::SymbolKind::Function && index && *index < count)
+      *index = static_cast<std::uint32_t>(count - *index - 1);
+    return index;
+  };
+  unsigned verified = 0;
+  auto rejectedPayload = importLibraryDeclarations(
+      damaged, types, *reversed, nullptr, {}, reversed,
+      metadata::ValidationMode::OnDemand, {},
+      [&](std::size_t ordinal, std::span<const std::uint8_t> payload) {
+        ++verified;
+        require(
+            ordinal == 0 && payload.size() == layout.payloads[ordinal].size &&
+                std::equal(payload.begin(), payload.end(),
+                           damaged.begin() + layout.payloads[ordinal].offset),
+            "payload verification used a consumer index or wrong bytes");
+        return false;
+      });
+  require(bool(rejectedPayload) && verified == 0,
+          "admission read an undemanded checked function payload");
+  bool rejected = false;
+  try {
+    rejectedPayload.declarations->functions
+        .at(static_cast<std::uint32_t>(layout.payloads.size() - 1))
+        ->contract();
+  } catch (const metadata::InvalidMetadata &error) {
+    rejected = std::string_view(error.what()).find("integrity") !=
+               std::string_view::npos;
+  }
+  require(rejected && verified == 1,
+          "demanded checked payload bypassed integrity verification");
+  verified = 0;
+  auto eagerRejection = importLibraryDeclarations(
+      damaged, types, *references, nullptr, {}, references,
+      metadata::ValidationMode::Eager, {},
+      [&](std::size_t ordinal, std::span<const std::uint8_t>) {
+        ++verified;
+        return ordinal != 0;
+      });
+  require(!eagerRejection && verified == 1 &&
+              eagerRejection.error.find("integrity") != std::string::npos,
+          "eager checked payload bypassed integrity verification");
+  auto imported = importLibraryDeclarations(
+      exported.contracts, types, *references, &module, {}, references,
+      metadata::ValidationMode::OnDemand);
+  require(bool(imported), imported.error.c_str());
+  unexpanded(module.products);
+  unexpanded(module.aliases);
+  unexpanded(module.interfaces);
+  unexpanded(module.implementations);
+  require(imported.declarations->index->annotations.empty(),
+          "admission populated annotations for undemanded syntax");
+  auto consumerSyntax = module;
+  auto consumerResolution = resolution::resolve(consumerSyntax, diagnostics);
+  auto consumer = check(std::move(consumerSyntax), diagnostics,
+                        std::move(consumerResolution), false, {}, nullptr,
+                        imported.declarations);
+  require(bool(consumer),
+          "metadata-only imported declarations failed consumer checking");
+  unexpanded(consumer->syntax().products);
+  unexpanded(consumer->syntax().aliases);
+  unexpanded(consumer->syntax().interfaces);
+  unexpanded(consumer->syntax().implementations);
+  unexpanded(consumer->syntax().statics);
+  unexpanded(consumer->syntax().functions);
+  auto copy = module;
+  std::atomic<unsigned> loads = 0;
+  module.products.onMaterialize(packet, [&](auto) { ++loads; });
+  const Module::Product *first = nullptr, *second = nullptr;
+  std::thread a([&] { first = &module.products[packet]; });
+  std::thread b([&] { second = &copy.products[packet]; });
+  a.join();
+  b.join();
+  require(first == second && loads == 1 && first->fields[0].annotation.nested &&
+              first->fields[0].annotation.nested->name == "T" &&
+              first->genericParameters[0].context &&
+              first->fields[0].annotation.nested->context &&
+              first->genericParameters[0].context->identity ==
+                  first->fields[0].annotation.nested->context->identity,
+          "deferred syntax lost shared loading, nested types or hygiene");
+  copy.products.edit(packet).fields[0].name = "changed";
+  require(module.products[packet].fields[0].name == "item",
+          "consumer syntax mutation changed another mounted archive");
+  Declarations<Module::Product> mounted;
+  mounted.push_back({});
+  mounted.append(module.products);
+  std::vector<std::size_t> notifications;
+  mounted.onMaterializeAll([&](std::size_t index, auto declaration) {
+    if (index) {
+      require(declaration->name == mounted.header(index).name,
+              "mounted syntax observer used an archive-local index");
+      notifications.push_back(index);
+    }
+  });
+  require(notifications == std::vector<std::size_t>{packet + 1},
+          "batch syntax observer missed an already materialized declaration");
+  (void)mounted[scalar + 1];
+  require(notifications == std::vector<std::size_t>{packet + 1, scalar + 1} &&
+              module.products.isMaterialized(scalar),
+          "batch syntax observer lost shared deferred materialization");
+  auto method = module.implementations.header(0).methodFunctions.at(0);
+  auto rebased = module.functions;
+  rebased.transformHeader(
+      method, [](Function &function) { function.implementation += 5; });
+  require(!rebased.isMaterialized(method) &&
+              rebased.header(method).implementation == 5 &&
+              rebased[method].implementation == 5 &&
+              module.functions.header(method).implementation == 0,
+          "header rebasing forced syntax or missed its deferred record");
+  const auto &alias = module.aliases[0];
+  require(imported.declarations->index->annotations.contains(&alias.target),
+          "demanded alias syntax did not receive its checked annotation");
+  const auto &checking = imported.declarations->checkingDatabase;
+  const auto &finalized = imported.declarations->database;
+  const auto &expected = checked->declarations()->checkingDatabase;
+  const auto &expectedFinalized = checked->interfaceDatabase();
+  require(&checking.definitions[0] == &finalized.definitions[0] &&
+              checking.definitions[1].methods[0].signature.result ==
+                  expected.definitions[1].methods[0].signature.result &&
+              finalized.definitions[1].methods[0].signature.result ==
+                  expectedFinalized.definitions[1].methods[0].signature.result,
+          "phase differences lost immutable sharing or region contracts");
+  require(checking.callableContracts.empty() &&
+              !finalized.callableContracts.empty() &&
+              finalized.callableContracts.size() ==
+                  expectedFinalized.callableContracts.size(),
+          "finalized callable region contracts were merged into checking");
+  for (const auto &[parameter, contract] : expectedFinalized.callableContracts)
+    require(finalized.callableContracts.at(parameter) == contract,
+            "finalized callable region contract did not survive admission");
+  auto generic = std::find_if(
+      imported.declarations->implementations.begin(),
+      imported.declarations->implementations.end(),
+      [](const auto &item) { return !item->generics.parameters.empty(); });
+  require(generic != imported.declarations->implementations.end(),
+          "generic environment fixture is missing");
+  const DeclarationEnvironment *firstEnvironment = nullptr;
+  const DeclarationEnvironment *secondEnvironment = nullptr;
+  std::thread firstDemand(
+      [&] { firstEnvironment = &(*generic)->environment(); });
+  std::thread secondDemand(
+      [&] { secondEnvironment = &(*generic)->environment(); });
+  firstDemand.join();
+  secondDemand.join();
+  auto expectedEnvironment = checked->declarations()->findType(
+      (*generic)->span, checked->declarations()->implementations);
+  require(expectedEnvironment && firstEnvironment == secondEnvironment &&
+              firstEnvironment->parameters ==
+                  expectedEnvironment->generics.parameters &&
+              !firstEnvironment->names.empty() &&
+              firstEnvironment->names.size() ==
+                  expectedEnvironment->generics.names.size() &&
+              firstEnvironment->bounds.size() ==
+                  expectedEnvironment->generics.bounds.size(),
+          "demanded generic environment lost names, bounds or shared loading");
+  auto changed = finalized;
+  changed.definitions[0].name = "Changed";
+  require(checking.definitions[0].name == "Marker" &&
+              finalized.definitions[0].name == "Marker",
+          "consumer database mutation changed a retained phase");
+  auto &annotation = const_cast<Module &>(checked->syntax())
+                         .products.edit(scalar)
+                         .fields[1]
+                         .annotation;
+  auto form = annotation.form;
+  annotation.form = static_cast<TypeForm>(unsigned(TypeForm::Owner) + 1);
+  auto invalidSyntax = exportLibraryDeclarations(*checked, encode);
+  annotation.form = form;
+  auto deferredInvalid = decodeLibraryHeader(invalidSyntax.header, *references);
+  require(bool(invalidSyntax) && bool(deferredInvalid) &&
+              !deferredInvalid.module->products.isMaterialized(scalar),
+          "compact queries traversed an unused syntax record");
+  rejected = false;
+  try {
+    (void)deferredInvalid.module->products[scalar];
+  } catch (const metadata::InvalidMetadata &) {
+    rejected = true;
+  }
+  require(rejected, "demanded syntax bypassed enumeration validation");
+  auto expression =
+      checked->syntax().products[scalar].fields[1].annotation.countExpression;
+  require(bool(expression), "type-expression corruption fixture is missing");
+  auto originalSource = encode.source;
+  encode.source = [originalSource, rejected = expression->span](Span span) {
+    auto reference = originalSource(span);
+    if (span.source == rejected.source && span.begin == rejected.begin &&
+        span.end == rejected.end)
+      reference->revision = "missing";
+    return reference;
+  };
+  auto corrupted = exportLibraryDeclarations(*checked, encode);
+  require(bool(corrupted) &&
+              !decodeLibraryHeader(corrupted.header, *references),
+          "discarded type syntax bypassed source-reference validation");
 }
 
 void residentFunctionQueries() {
@@ -770,6 +1111,24 @@ void delayedExplicitImport() {
   require(resolved->lookup(0, "answer", mettle::resolution::Namespace::Value,
                            {}) == "b::answer",
           "import order changed explicit binding selection");
+}
+
+void dependentImportWorklist() {
+  std::string source;
+  for (unsigned i = 0; i < 128; ++i)
+    source += "module relay" + std::to_string(i) + " { pub import main.relay" +
+              std::to_string(i + 1) + ".*; }\n";
+  source += "module relay128 { pub fn answer() { 42 } "
+            "pub import main.relay128.*; }\n"
+            "import relay0.answer;\nfn main() { answer() }\n";
+  mettle::Diagnostics diagnostics;
+  auto tree = mettle::parse({"memory/reexports.mt", source}, diagnostics);
+  auto resolved = mettle::resolution::resolve(tree, diagnostics);
+  require(resolved && diagnostics.empty(),
+          "reverse reexports and a self glob did not reach a fixed point");
+  require(resolved->lookup(0, "answer", mettle::resolution::Namespace::Value,
+                           {}) == "relay128::answer",
+          "dependent reexports lost their canonical declaration");
 }
 
 void sourceDiagnostic() {
@@ -1399,8 +1758,10 @@ void interfaceSolversRespectTypeStoresAndMutations() {
 } // namespace
 
 int main() {
+  dependentImportWorklist();
   try {
     demandLoadedFunctionContracts();
+    demandLoadedDeclarationHeaders();
     unitLiteralKeepsSource();
     inMemorySources();
     residentFunctionQueries();

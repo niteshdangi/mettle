@@ -203,9 +203,10 @@ ProductLayout Checker::productLayout(const Module::Product &product) {
   return layout;
 }
 void Checker::machineDeclarations() {
-  for (const auto &declaration : module.products) {
-    if (imported(declaration.span))
+  for (std::size_t i = 0; i < module.products.size(); ++i) {
+    if (imported(module.products.header(i).span))
       continue;
+    const auto &declaration = module.products[i];
     auto type =
         typeNames.at(definitionName(declaration.span, declaration.name));
     const auto &record = checked.types->product(type);
@@ -282,14 +283,15 @@ void Checker::machineDeclarations() {
       validateLayout(type, syntax->span);
   }
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
-    if (imported(module.functions[i].span))
+    if (imported(module.functions.header(i).span))
       continue;
     validateLayout(checked.functions[i].result, module.functions[i].span);
     for (const auto &local : checked.functions[i].locals)
       validateLayout(local.type, local.span);
   }
   for (std::size_t i = 0; i < checked.staticStorage.size(); ++i)
-    validateLayout(checked.staticStorage[i].type, module.statics[i].span);
+    validateLayout(checked.staticStorage[i].type,
+                   module.statics.header(i).span);
   auto floatingPolicy = [&](const Attribute &attribute,
                             FloatingPolicy &policy) {
     std::set<std::string> seen;
@@ -355,9 +357,8 @@ void Checker::machineDeclarations() {
   };
   std::map<std::string, std::pair<Type, bool>> symbols;
   std::set<std::string> functionSymbols;
-  for (auto &function : module.functions) {
-    if (imported(function.span)) {
-      const auto index = module.functions.indexOf(&function);
+  for (std::size_t index = 0; index < module.functions.size(); ++index) {
+    if (imported(module.functions.header(index).span)) {
       const auto symbol =
           checked.importedDeclarations->functions.at(index).externalSymbol();
       if (!symbol.empty()) {
@@ -369,6 +370,7 @@ void Checker::machineDeclarations() {
       }
       continue;
     }
+    const auto &function = module.functions[index];
     for (const auto &[scope, policy] : modulePolicies)
       if (function.item.scope.size() >= scope.size() &&
           std::equal(scope.begin(), scope.end(), function.item.scope.begin()))
@@ -550,21 +552,21 @@ void Checker::machineDeclarations() {
     if (storage.externalName.empty())
       continue;
     if (functionSymbols.contains(storage.externalName)) {
-      error("signature", module.statics[i].span,
+      error("signature", module.statics.header(i).span,
             "conflicting external function and storage symbol '" +
                 storage.externalName + "'");
       continue;
     }
     if (requireEntry && storage.externalName == "main")
-      error("signature", module.statics[i].span,
+      error("signature", module.statics.header(i).span,
             "static symbol conflicts with the hosted entry point");
-    bool definition = !module.statics[i].foreignDeclaration;
+    bool definition = !module.statics.header(i).foreignDeclaration;
     auto [found, inserted] = symbols.emplace(
         storage.externalName, std::pair{storage.type, definition});
     if (!inserted) {
       if (found->second.first != storage.type ||
           (found->second.second && definition))
-        error("signature", module.statics[i].span,
+        error("signature", module.statics.header(i).span,
               "conflicting external symbol '" + storage.externalName + "'");
       found->second.second |= definition;
     }

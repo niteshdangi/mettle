@@ -103,9 +103,10 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
   return result;
 }
 void Checker::prepareGenerics() {
-  for (const auto &product : module.products) {
-    if (imported(product.span))
+  for (std::size_t i = 0; i < module.products.size(); ++i) {
+    if (imported(module.products.header(i).span))
       continue;
+    const auto &product = module.products[i];
     auto environment =
         makeGenericEnvironment(product.genericParameters, product.constraints);
     environment.declarationSpan = product.span;
@@ -113,18 +114,19 @@ void Checker::prepareGenerics() {
     checked.types->setGenericParameters(type, environment.parameters);
     productGenerics.emplace(&product, std::move(environment));
   }
-  for (const auto &alias : module.aliases) {
-    if (imported(alias.span))
+  for (std::size_t i = 0; i < module.aliases.size(); ++i) {
+    if (imported(module.aliases.header(i).span))
       continue;
+    const auto &alias = module.aliases[i];
     auto environment =
         makeGenericEnvironment(alias.genericParameters, alias.constraints);
     environment.declarationSpan = alias.span;
     aliasGenerics.emplace(&alias, std::move(environment));
   }
   for (std::size_t i = 0; i < module.interfaces.size(); ++i) {
-    const auto &interface = module.interfaces[i];
-    if (imported(interface.span))
+    if (imported(module.interfaces.header(i).span))
       continue;
+    const auto &interface = module.interfaces[i];
     GenericEnvironment parent;
     parent.names[nameKey("Self", interface.span)] =
         checked.interfaceData->definitions[i].self;
@@ -134,17 +136,23 @@ void Checker::prepareGenerics() {
     checked.interfaceData->definitions[i].parameters = environment.parameters;
     interfaceGenerics.emplace(&interface, std::move(environment));
   }
-  for (const auto &product : module.products)
-    if (!imported(product.span))
+  for (std::size_t i = 0; i < module.products.size(); ++i)
+    if (!imported(module.products.header(i).span)) {
+      const auto &product = module.products[i];
       validateGenericEnvironment(product.genericParameters, product.constraints,
                                  typeEnvironment(product));
-  for (const auto &alias : module.aliases)
-    if (!imported(alias.span))
+    }
+  for (std::size_t i = 0; i < module.aliases.size(); ++i)
+    if (!imported(module.aliases.header(i).span)) {
+      const auto &alias = module.aliases[i];
       validateGenericEnvironment(alias.genericParameters, alias.constraints,
                                  typeEnvironment(alias));
-  for (const auto &interface : module.interfaces)
-    if (!imported(interface.span) &&
-        std::none_of(interface.genericParameters.begin(),
+    }
+  for (std::size_t i = 0; i < module.interfaces.size(); ++i) {
+    if (imported(module.interfaces.header(i).span))
+      continue;
+    const auto &interface = module.interfaces[i];
+    if (std::none_of(interface.genericParameters.begin(),
                      interface.genericParameters.end(),
                      [](const auto &parameter) {
                        return parameter.kind == GenericParameterKind::Region;
@@ -152,12 +160,14 @@ void Checker::prepareGenerics() {
       validateGenericEnvironment(interface.genericParameters,
                                  interface.constraints,
                                  typeEnvironment(interface));
-  for (const auto &implementation : module.implementations) {
-    if (imported(implementation.span) || implementation.negative ||
-        std::none_of(implementation.associated.begin(),
-                     implementation.associated.end(),
+  }
+  for (std::size_t i = 0; i < module.implementations.size(); ++i) {
+    const auto &header = module.implementations.header(i);
+    if (imported(header.span) || header.negative ||
+        std::none_of(header.associated.begin(), header.associated.end(),
                      [](const auto &item) { return item.constant; }))
       continue;
+    const auto &implementation = module.implementations[i];
     auto environment = makeGenericEnvironment(implementation.genericParameters,
                                               implementation.constraints);
     environment.declarationSpan = implementation.span;

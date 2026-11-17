@@ -50,7 +50,8 @@ void Checker::staticNamesAndTypes() {
   // registered; this checks unused constants and catches forward-reference
   // cycles.
   for (std::size_t i = 0; i < inherentConstants.size(); ++i)
-    (void)inherentConstantValue(i, inherentConstants[i].target);
+    if (!inherentConstants[i].importedContract)
+      (void)inherentConstantValue(i, inherentConstants[i].target);
 }
 
 Type Checker::staticType(std::size_t index) {
@@ -76,9 +77,10 @@ Type Checker::staticType(std::size_t index) {
 
 void Checker::inherentConstantNamesAndTypes() {
   auto *saved = genericEnvironment;
-  for (const auto &syntax : module.implementations) {
-    if (imported(syntax.span))
+  for (std::size_t i = 0; i < module.implementations.size(); ++i) {
+    if (imported(module.implementations.header(i).span))
       continue;
+    const auto &syntax = module.implementations[i];
     if (!syntax.interface.empty() || syntax.negative ||
         std::none_of(syntax.associated.begin(), syntax.associated.end(),
                      [](const auto &item) { return item.constant; }))
@@ -151,8 +153,16 @@ void Checker::inherentConstantNamesAndTypes() {
         continue;
       }
       auto index = inherentConstants.size();
-      inherentConstants.push_back(
-          {&syntax, &item, target, declaredType, Type::Unknown, 0, {}, {}, {}});
+      inherentConstants.push_back({&syntax,
+                                   &item,
+                                   target,
+                                   declaredType,
+                                   Type::Unknown,
+                                   0,
+                                   {},
+                                   {},
+                                   {},
+                                   {}});
       if (!inherentConstantNames.emplace(owner + "::" + item.name, index)
                .second)
         error("name", item.span, "duplicate associated constant");
@@ -165,9 +175,9 @@ void Checker::inherentConstantNamesAndTypes() {
 void Checker::staticDeclarations() {
   genericEnvironment = nullptr;
   for (std::size_t i = 0; i < module.statics.size(); ++i) {
-    const auto &source = module.statics[i];
-    if (imported(source.span))
+    if (imported(module.statics.header(i).span))
       continue;
+    const auto &source = module.statics[i];
     auto &storage = checked.staticStorage[i];
     if (!checked.types->isSized(storage.type) ||
         checked.types->isSymbolic(storage.type) ||
@@ -225,11 +235,11 @@ void Checker::staticDeclarations() {
     if (!inserted) {
       auto previous = found->second;
       if (checked.staticStorage[previous].type != storage.type ||
-          module.statics[previous].mutableBinding !=
-              module.statics[i].mutableBinding)
-        error("signature", module.statics[i].span,
+          module.statics.header(previous).mutableBinding !=
+              module.statics.header(i).mutableBinding)
+        error("signature", module.statics.header(i).span,
               "conflicting external static storage contract");
-      if (!module.statics[i].foreignDeclaration)
+      if (!module.statics.header(i).foreignDeclaration)
         found->second = i;
     }
   }
@@ -241,7 +251,7 @@ void Checker::staticInitializers() {
   genericEnvironment = nullptr;
   unsafeDepth = 0;
   for (std::size_t i = 0; i < module.statics.size(); ++i)
-    if (!module.statics[i].foreignDeclaration)
+    if (!module.statics.header(i).foreignDeclaration)
       staticValue(i);
 }
 
@@ -454,7 +464,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
   }
   if (node.kind == Kind::Name) {
     if (auto index = staticName(node.text, node.span, node.context)) {
-      if (module.statics[*index].mutableBinding)
+      if (module.statics.header(*index).mutableBinding)
         return fail("required initialization cannot read mutable storage");
       if (checked.staticStorage[*index].type != type)
         return fail("static initializer storage type does not match");
@@ -517,7 +527,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
                        : std::nullopt;
     std::optional<StaticConstant> value;
     if (storage) {
-      if (module.statics[*storage].mutableBinding)
+      if (module.statics.header(*storage).mutableBinding)
         return fail("constant projection requires immutable static storage");
       value = staticValue(*storage);
       if (!value)
@@ -670,11 +680,12 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
     if (slice)
       result.scalar.magnitude[0] = *checked.types->arrayLength(payload);
     if (mutableAddress && (!checked.types->isPointer(type) ||
-                           !module.statics[*index].mutableBinding))
+                           !module.statics.header(*index).mutableBinding))
       return fail("mutable constant addresses require mutable raw storage");
-    if (module.statics[*index].mutableBinding)
+    if (module.statics.header(*index).mutableBinding)
       requireUnsafe(node.span);
-    if (module.statics[*index].mutableBinding && checked.types->isView(type))
+    if (module.statics.header(*index).mutableBinding &&
+        checked.types->isView(type))
       return fail("constant safe view cannot target mutable static storage");
     return result;
   }
@@ -754,7 +765,7 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
         if (constructors.contains(owner))
           return fail("const-function execution is not implemented");
       } else
-        for (const auto &function : module.functions)
+        for (const auto &function : module.functions.headers())
           if (function.constructor &&
               typeName(function.owner, function.span) == origin)
             return fail("const-function execution is not implemented");

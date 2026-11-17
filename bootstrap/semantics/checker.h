@@ -48,6 +48,7 @@ private:
   std::unordered_map<const Node *, const CheckedExpression *>
       importedExpressions;
   std::unordered_map<const TypeSyntax *, Type> importedAnnotations;
+  std::shared_ptr<ImportedDeclarations::Index> importedSyntaxIndex;
   const CheckedExpression *importedExpression(const Node &node) const;
   const CheckedExpression &
   importExpression(const std::shared_ptr<CheckedExpression> &expression);
@@ -137,6 +138,14 @@ private:
     std::optional<StaticConstant> materialized{};
     std::shared_ptr<CheckedExpression> initializer{};
     std::map<std::vector<Type>, Instance> instances;
+    const ImportedInherentConstant *importedContract = nullptr;
+    std::function<void(InherentConstant &)> loadSyntax{};
+    void materializeSyntax() {
+      if (loadSyntax) {
+        loadSyntax(*this);
+        loadSyntax = {};
+      }
+    }
   };
   std::vector<InherentConstant> inherentConstants;
   unsigned constantEvaluationDepth = 0;
@@ -164,7 +173,7 @@ private:
   std::optional<NumericConstant> machineFloatingValue(Type type,
                                                       std::string_view member);
   void checkBorrowAlignment();
-  std::unordered_map<std::string, std::size_t> names;
+  OverlayMap<std::string, std::size_t> names;
   struct ConstructorCandidate {
     std::size_t function;
     interfaces::Implementation applicability;
@@ -405,7 +414,8 @@ private:
       if (auto contract =
               importedType(declaration.span, imports.get()->*tables.second))
         return environments
-            .emplace(&declaration, declarationEnvironment(contract->generics))
+            .emplace(&declaration,
+                     declarationEnvironment(contract->environment()))
             .first->second;
     return environments.at(&declaration);
   }

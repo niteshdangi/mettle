@@ -6,10 +6,12 @@ using ir::Exit;
 using ir::Op;
 Builder::Value Builder::callExpression(const Node &node) {
   const auto &facts = module.facts(node);
-  auto count = facts.constructor
-                   ? node.children.size() - 1 + (facts.method ? 1 : 0)
-                   : module.syntax().functions[facts.callee].parameters.size();
-  if (!facts.constructor && module.syntax().functions[facts.callee].variadic)
+  auto count =
+      facts.constructor
+          ? node.children.size() - 1 + (facts.method ? 1 : 0)
+          : module.syntax().functions.header(facts.callee).parameters.size();
+  if (!facts.constructor &&
+      module.syntax().functions.header(facts.callee).variadic)
     count = std::max(count, node.children.size() - 1);
   std::vector<Value> arguments(count);
   std::vector<std::optional<Place>> pending(count);

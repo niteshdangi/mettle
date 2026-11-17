@@ -43,11 +43,14 @@ std::string Checker::definitionName(Span span,
 const std::vector<const Module::Product *> &
 Checker::productsNamed(const std::string &name) const {
   if (productIndex.empty())
-    for (const auto &product : module.products)
+    for (const auto &product : module.products.headers())
       productIndex[definitionName(product.span, product.name)].push_back(
           &product);
   static const std::vector<const Module::Product *> none;
   auto found = productIndex.find(name);
+  if (found != productIndex.end())
+    for (auto *&product : found->second)
+      product = &module.products[module.products.indexOf(product)];
   return found == productIndex.end() ? none : found->second;
 }
 

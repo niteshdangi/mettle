@@ -54,6 +54,52 @@ void put32(std::vector<std::uint8_t> &bytes, std::size_t offset,
 } // namespace
 int main() {
   {
+    TypeStore types;
+    auto leaf = types.declareProduct("Leaf", true);
+    types.defineProduct(leaf, {{"value", Type::Bool}});
+    auto root = leaf;
+    for (unsigned i = 0; i < 48; ++i) {
+      auto parent = types.declareProduct("Pair" + std::to_string(i), true);
+      types.defineProduct(parent, {{"left", root}, {"right", root}});
+      root = parent;
+    }
+    auto choice = types.declareProduct("Choice", true);
+    types.defineEnumeration(choice, {{"First", {0}}, {"Second", {1}}},
+                            {{"first", root}, {"second", root}});
+    expect(!types.needsDrop(root) && !types.uninhabited(root) &&
+               !types.uninhabited(choice),
+           "shared type graphs retain inhabited, non-droppable leaves");
+    auto snapshot = types;
+    types.defineProduct(leaf, {{"value", Type::Never}});
+    types.setDestructor(leaf, 0);
+    expect(types.needsDrop(root) && types.uninhabited(root) &&
+               types.uninhabited(choice) && !snapshot.needsDrop(root) &&
+               !snapshot.uninhabited(root),
+           "type property queries follow changed definitions, not snapshots");
+    types.defineEnumeration(choice, {{"Empty", {}}, {"Value", {0}}},
+                            {{"value", root}});
+    expect(!types.uninhabited(choice),
+           "an inhabited variant keeps an otherwise empty sum inhabited");
+  }
+  {
+    TypeStore types;
+    auto first = types.declareProduct("First", true);
+    auto second = types.declareProduct("Second", true);
+    types.defineProduct(first, {{"next", second}, {"empty", Type::Never}});
+    types.defineProduct(second, {{"next", first}});
+    auto either = types.declareProduct("Either", true);
+    types.defineProduct(either, {{"first", first}, {"second", second}});
+    ProductLayout layout;
+    layout.unionType = true;
+    types.setProductLayout(either, layout);
+    expect(types.uninhabited(either) && !types.needsDrop(either),
+           "cyclic properties do not reuse an incomplete negative proof");
+    types.defineProduct(first, {{"next", second}});
+    types.setDestructor(second, 0);
+    expect(!types.uninhabited(either) && types.needsDrop(either),
+           "cyclic queries terminate and discover reachable destructors");
+  }
+  {
     TypeStore producer;
     auto payload = producer.declareProduct("Payload", true);
     producer.defineProduct(payload, {{"value", Type::I32}});
@@ -93,6 +139,100 @@ int main() {
     changed.defineProduct(imported.roots[0], {{"changed", Type::Bool}});
     expect(consumer.product(imported.roots[0]).fields[0].name == "payload",
            "demand-loaded type mutation changed its retained snapshot");
+  }
+  {
+    TypeStore producer;
+    ErasedType descriptor;
+    descriptor.name = "any Alias";
+    descriptor.declaration = 3;
+    auto first = producer.erasedType(descriptor);
+    descriptor.declaration = 7;
+    auto second = producer.erasedType(descriptor);
+    auto maps = symbolMaps();
+    maps.resolve = [](SymbolKind kind,
+                      std::string_view name) -> std::optional<std::uint32_t> {
+      if (kind == SymbolKind::Interface &&
+          (name == symbolName(kind, 3) || name == symbolName(kind, 7)))
+        return 17;
+      return {};
+    };
+    auto retained = std::make_shared<const TypeGraphSymbols>(maps);
+    auto encoded = exportTypeGraph(producer, std::array{first, second}, maps,
+                                   ValidationMode::OnDemand);
+    expect(bool(encoded), encoded.error);
+    TypeStore consumer;
+    auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
+                                    ValidationMode::OnDemand, retained);
+    expect(bool(imported), imported.error);
+    descriptor.declaration = 17;
+    expect(imported.roots[0] == imported.roots[1] &&
+               consumer.erasedType(descriptor) == imported.roots[0],
+           "resolved symbol aliases share one canonical type identity");
+  }
+  {
+    TypeStore producer;
+    auto callable = producer.callableType(CallableType{});
+    auto retained = std::make_shared<const TypeGraphSymbols>();
+    auto encoded = exportTypeGraph(producer, std::array{callable}, *retained,
+                                   ValidationMode::OnDemand);
+    expect(bool(encoded), encoded.error);
+    auto identityFrame =
+        36 + u32(encoded.bytes, 16) + 4 * u32(encoded.bytes, 24) + 1;
+    auto fullRecord = identityFrame + 4 + u32(encoded.bytes, identityFrame) + 4;
+    put32(encoded.bytes, fullRecord + 12, Type::Bool.index());
+    TypeStore consumer;
+    auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
+                                    ValidationMode::OnDemand, retained);
+    expect(bool(imported), imported.error);
+    bool rejected = false;
+    try {
+      (void)consumer.callable(imported.roots[0]);
+    } catch (const InvalidMetadata &error) {
+      rejected = std::string_view(error.what())
+                     .find("type record does not match its identity index") !=
+                 std::string_view::npos;
+    }
+    expect(rejected,
+           "demanded ABI results must match identity fields outside the index");
+  }
+  {
+    TypeStore producer;
+    auto four = producer.structural(AggregateKind::Array, {Type::I32}, 4);
+    auto pointer = producer.pointerType(four, ParameterMode::Read);
+    auto retained = std::make_shared<const TypeGraphSymbols>();
+    auto encoded = exportTypeGraph(producer, std::array{four, pointer},
+                                   *retained, ValidationMode::OnDemand);
+    expect(bool(encoded), encoded.error);
+    TypeStore original;
+    auto imported = importTypeGraph(original, encoded.bytes, *retained,
+                                    ValidationMode::OnDemand, retained);
+    expect(bool(imported), imported.error);
+    four = imported.roots[0];
+    pointer = imported.roots[1];
+    original.shareInterning();
+    auto changed = original;
+    expect(changed.structural(AggregateKind::Array, {Type::I32}, 4) == four &&
+               changed.pointerType(four, ParameterMode::Read) == pointer,
+           "copied imports reuse borrowed sequence and scalar interning keys");
+    auto five = changed.structural(AggregateKind::Array, {Type::I32}, 5);
+    expect(changed.structural(AggregateKind::Array, {Type::I32}, 5) == five &&
+               changed.structural(AggregateKind::Array, {Type::I32}, 4) ==
+                   four &&
+               changed.storedTypeCount() == original.storedTypeCount() + 1,
+           "local interning additions preserve the immutable imported index");
+    auto definition = changed.importedDefinition(four);
+    auto &array = std::get<ImportedProduct>(definition).descriptor;
+    array.components = {Type::I64};
+    for (auto &field : array.fields)
+      field.type = Type::I64;
+    changed.defineImportedType(four, std::move(definition));
+    expect(
+        changed.structural(AggregateKind::Array, {Type::I64}, 4) == four &&
+            changed.structural(AggregateKind::Array, {Type::I32}, 4) != four &&
+            original.structural(AggregateKind::Array, {Type::I32}, 4) == four &&
+            original.product(four).fields.front().type == Type::I32 &&
+            original.pointerType(four, ParameterMode::Read) == pointer,
+        "mutating an imported key invalidates only its consumer index");
   }
   {
     TypeRecords<std::string> records;
@@ -152,6 +292,7 @@ int main() {
     types.deferImportedDefinitions(
         std::array{product}, std::array{ImportedTypeIndex{}}, loader, views);
     expect(types.isCopy(product) && types.isSized(product) &&
+               !types.needsDrop(product) && !types.uninhabited(product) &&
                !containsVarArgs(types, product) && loaded == 0,
            "read-only type proofs must not expand owned imported records");
     auto changed = types;

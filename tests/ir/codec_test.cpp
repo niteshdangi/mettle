@@ -413,9 +413,19 @@ void verifiedRemapping() {
   };
   rejected(fixture.irBytes, missing);
   auto rootsBefore = imported.roots;
+  auto retained = std::make_shared<const metadata::DecodeReferences>(refs);
   for (std::size_t offset = 0; offset < fixture.irBytes.size(); ++offset) {
     bad = fixture.irBytes;
     bad[offset] ^= 0xff;
+    auto compact = decodeProgramLazy(bad, refs, true);
+    auto indexed = decodeProgramLazy(bad, *retained, true, retained);
+    require(bool(indexed) == bool(compact),
+            "indexed header validation disagreed with decoded headers");
+    if (!indexed)
+      require(indexed.program.functions.empty() &&
+                  indexed.program.functionIndex.empty() &&
+                  indexed.functionIdentities.empty() && !indexed.lazyFunctions,
+              "indexed header failure exposed partial records");
     auto result = decodeProgram(bad, refs);
     if (!result) {
       require(result.program.functions.empty(),
@@ -509,6 +519,47 @@ void crossRecordSymbolAliases() {
       demand.lazyFunctions->load(0, demand.program.functions[0], decode);
   require(bool(demandedBody) && demandedBody.function->locals.size() == 2,
           "retained header/body metadata outlived neither input nor resolver");
+  {
+    auto layout = programLayout(encoded.bytes);
+    require(layout && layout.bodies.size() == program.functions.size(),
+            "IR framing lost its deferred body inventory");
+    auto damaged = encoded.bytes;
+    const auto body = layout.bodies[2];
+    std::fill_n(damaged.begin() + body.offset, body.size, 0xff);
+    auto snapshot =
+        std::make_shared<const std::vector<std::uint8_t>>(std::move(damaged));
+    std::size_t verifications = 0, sourceReads = 0;
+    auto checkedReferences = decode;
+    checkedReferences.source = [source = decode.source,
+                                &sourceReads](const auto &span) {
+      ++sourceReads;
+      return source(span);
+    };
+    auto retained =
+        std::make_shared<const metadata::DecodeReferences>(checkedReferences);
+    auto checked = decodeProgramLazy(
+        *snapshot, *retained, true, retained, snapshot,
+        [expected = encoded.bytes, bodies = layout.bodies, &verifications](
+            std::size_t index, std::span<const std::uint8_t> bytes) {
+          ++verifications;
+          const auto body = bodies.at(index);
+          return std::ranges::equal(
+              bytes, std::span(expected).subspan(body.offset, body.size));
+        });
+    require(bool(checked) && verifications == 0,
+            "admission read or authenticated an unused body's string storage");
+    snapshot.reset();
+    auto first = checked.lazyFunctions->load(0, checked.program.functions[0],
+                                             checkedReferences);
+    require(bool(first) && verifications == 1,
+            "demanded body was not authenticated before decoding");
+    const auto &header = checked.program.functions[2];
+    const auto reads = sourceReads;
+    auto rejected = checked.lazyFunctions->load(2, header, checkedReferences);
+    require(!rejected && verifications == 2 && sourceReads == reads &&
+                rejected.error == "IR function body checksum mismatch",
+            "corrupt body entered semantic decoding before authentication");
+  }
   auto resolve = decode.symbol;
   decode.symbol = [resolve](SymbolKind kind, std::string_view name) {
     auto index = resolve(kind, name);
@@ -627,6 +678,7 @@ void rawFieldCoverage() {
   function.genericEqualities = {{Type::I32, Type::U32}};
   function.regionSignature = Type::Bool;
   function.interfaceResult = Type::Char;
+  function.span = {19, 23, 7};
   function.abi = "C";
   function.targetFeatures = {"sse2"};
   function.inlineHint = InlineHint::Never;
@@ -718,7 +770,9 @@ void rawFieldCoverage() {
       return std::nullopt;
     return types[id - 100];
   };
-  decode.source = [](const metadata::SourceReference &r) {
+  std::size_t declarationReads = 0;
+  decode.source = [&](const metadata::SourceReference &r) {
+    declarationReads += r.begin == 19 && r.end == 23;
     return std::optional{Span{r.begin, r.end, 81}};
   };
   decode.symbol = [](SymbolKind kind,
@@ -784,6 +838,22 @@ void rawFieldCoverage() {
               c.projections == constant.projections && c.selection == 2 &&
               c.text == constant.text,
           "static exact bits/aggregate/projection/text metadata lost");
+  auto retained = std::make_shared<const metadata::DecodeReferences>(decode);
+  auto indexed = decodeProgramLazy(bytes.bytes, *retained, true, retained);
+  require(bool(indexed), indexed.error.c_str());
+  const auto *index = indexed.program.deferredFunctionIndex(0);
+  require(index && index->name == f.name && index->result == f.result &&
+              index->parameters == f.parameters && index->generic &&
+              index->declarationOnly && index->exportedDefinition &&
+              index->indirectContract && index->naked &&
+              index->targetFeatures == f.targetFeatures,
+          "indexed admission lost function dispatch or target facts");
+  const auto &indexedHeader = indexed.program.functions[0];
+  auto readsBeforeBody = declarationReads;
+  auto loaded = indexed.lazyFunctions->load(0, indexedHeader, decode);
+  require(bool(loaded) && *loaded.function == f &&
+              declarationReads == readsBeforeBody,
+          "compact body loading lost metadata or decoded its signature again");
   auto bad = bytes.bytes;
   auto marker =
       std::search(bad.begin(), bad.end(), n.text.begin(), n.text.end());

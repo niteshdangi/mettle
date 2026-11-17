@@ -6,9 +6,19 @@
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 
 namespace mettle {
+const DeclarationEnvironment &ImportedTypeDeclaration::environment() const {
+  if (!deferred)
+    return generics;
+  std::call_once(deferred->once, [&] {
+    deferred->value.emplace(deferred->load());
+    deferred->load = {};
+  });
+  return *deferred->value;
+}
 std::array<const ImportedDeclarations::TypeTable *, 5>
 ImportedDeclarations::typeTables() const {
   return {&products, &aliases, &interfaces, &implementations, &associated};
@@ -19,10 +29,12 @@ void ImportedDeclarations::indexTypes() {
   for (std::size_t i = 0; i < tables.size(); ++i) {
     auto &index = typeIndices[i];
     index.clear();
+    index.reserve(tables[i]->size());
     for (std::size_t j = 0; j < tables[i]->size(); ++j) {
       auto span = (*tables[i])[j]->span;
-      index.emplace(std::tuple{span.source, span.begin, span.end}, j);
+      index.emplace_back(std::tuple{span.source, span.begin, span.end}, j);
     }
+    std::sort(index.begin(), index.end());
   }
 }
 
@@ -32,8 +44,12 @@ ImportedDeclarations::findType(Span span, const TypeTable &items) const {
   for (std::size_t i = 0; i < tables.size(); ++i) {
     if (tables[i] != &items || typeIndices[i].empty())
       continue;
-    auto found = typeIndices[i].find({span.source, span.begin, span.end});
-    return found == typeIndices[i].end() ? nullptr : items.at(found->second);
+    auto key = std::tuple{span.source, span.begin, span.end};
+    auto found = std::lower_bound(typeIndices[i].begin(), typeIndices[i].end(),
+                                  std::pair{key, std::size_t{0}});
+    return found == typeIndices[i].end() || found->first != key
+               ? nullptr
+               : items.at(found->second);
   }
   auto found = std::find_if(items.begin(), items.end(), [&](const auto &item) {
     return item->span.source == span.source && item->span.begin == span.begin &&
@@ -44,8 +60,14 @@ ImportedDeclarations::findType(Span span, const TypeTable &items) const {
 
 std::string ImportedDeclarations::indexDeclarations(const Module *module) {
   auto result = std::make_shared<Index>();
+  std::size_t spanCount = functions.size();
+  for (const auto *items : typeTables())
+    spanCount += items->size();
+  result->spans.reserve(spanCount + statics.size());
+  if (module)
+    result->functions.resize(module->functions.size());
   auto remember = [&](Span span) {
-    result->spans.emplace(span.source, span.begin, span.end);
+    result->spans.emplace_back(span.source, span.begin, span.end);
   };
   auto expression = [&](const std::shared_ptr<CheckedExpression> &body) {
     if (!body || body->load || !body->syntax.get() ||
@@ -70,7 +92,7 @@ std::string ImportedDeclarations::indexDeclarations(const Module *module) {
       continue;
     if (position >= module->functions.size())
       return "checked function does not match its mounted declaration";
-    const auto &syntax = module->functions[position];
+    const auto &syntax = module->functions.header(position);
     if (syntax.span.source != span.source || syntax.span.begin != span.begin ||
         syntax.span.end != span.end)
       return "checked function does not match its mounted declaration";
@@ -84,17 +106,39 @@ std::string ImportedDeclarations::indexDeclarations(const Module *module) {
         return "checked default does not match its mounted declaration";
     if (!syntax.item.checkedImport)
       continue;
-    auto declaration = module->functions.shared(position);
-    result->annotations.emplace(&declaration->annotation,
-                                function.resultType());
-    result->annotations.emplace(&declaration->error, function.errorType());
-    for (std::size_t p = 0;
-         p < declaration->parameters.size() && p < function.parameterCount();
-         ++p)
-      result->annotations.emplace(&declaration->parameters[p].annotation,
-                                  function.parameterType(p));
-    result->functions.emplace(position, std::move(declaration));
+    auto declaration = module->functions.sharedHeader(position);
+    auto name = std::string(function.symbolName());
+    if (!name.empty()) {
+      if (syntax.constructor) {
+        auto suffix = name.rfind("$init");
+        if (suffix == std::string::npos)
+          return "checked constructor has no canonical ordinal";
+        name.resize(suffix);
+        ++result->constructorOrdinals[name];
+      }
+      result->functionNames.emplace(std::move(name), position);
+    }
+    result->functions[position] = {std::move(declaration), function};
   }
+  if (module)
+    module->functions.onMaterializeAll(
+        [owner = std::weak_ptr(result)](
+            std::size_t position, std::shared_ptr<const Function> declaration) {
+          auto index = owner.lock();
+          if (!index || !index->functions[position].declaration)
+            return;
+          const auto &function = index->functions[position].contract;
+          std::lock_guard lock(index->annotationMutex);
+          index->materializedFunctions.emplace(position, declaration);
+          index->annotations.emplace(&declaration->annotation,
+                                     function.resultType());
+          index->annotations.emplace(&declaration->error, function.errorType());
+          for (std::size_t p = 0; p < declaration->parameters.size() &&
+                                  p < function.parameterCount();
+               ++p)
+            index->annotations.emplace(&declaration->parameters[p].annotation,
+                                       function.parameterType(p));
+        });
   for (const auto *items : typeTables())
     for (const auto &item : *items)
       remember(item->span);
@@ -102,7 +146,7 @@ std::string ImportedDeclarations::indexDeclarations(const Module *module) {
     for (const auto &[position, facts] : statics) {
       (void)facts;
       if (position < module->statics.size())
-        remember(module->statics[position].span);
+        remember(module->statics.header(position).span);
     }
   std::multimap<std::tuple<SourceId, std::size_t, std::size_t>, std::size_t>
       implementationSpans;
@@ -110,8 +154,14 @@ std::string ImportedDeclarations::indexDeclarations(const Module *module) {
     return std::tuple{span.source, span.begin, span.end};
   };
   if (module)
-    for (std::size_t i = 0; i < module->implementations.size(); ++i)
-      implementationSpans.emplace(spanKey(module->implementations[i].span), i);
+    for (std::size_t i = 0; i < module->implementations.size(); ++i) {
+      implementationSpans.emplace(
+          spanKey(module->implementations.header(i).span), i);
+      result->implementationHeaders.push_back(
+          module->implementations.sharedHeader(i));
+    }
+  for (const auto &definition : std::as_const(checkingDatabase).definitions)
+    result->interfaceNames.push_back(definition.name);
   for (const auto &constant : inherentConstants) {
     expression(constant.initializer);
     if (!module)
@@ -124,7 +174,7 @@ std::string ImportedDeclarations::indexDeclarations(const Module *module) {
       result->constants.emplace_back();
       continue;
     }
-    const auto &owner = module->implementations[found->second];
+    const auto &owner = module->implementations.header(found->second);
     auto declaration = std::find_if(
         owner.associated.begin(), owner.associated.end(),
         [&](const auto &item) {
@@ -139,17 +189,34 @@ std::string ImportedDeclarations::indexDeclarations(const Module *module) {
         {found->second,
          static_cast<std::size_t>(declaration - owner.associated.begin()),
          owner.item.checkedImport
-             ? module->implementations.shared(found->second)
+             ? module->implementations.sharedHeader(found->second)
              : nullptr});
   }
-  if (module)
-    for (std::size_t i = 0; i < module->aliases.size(); ++i)
-      if (module->aliases[i].item.checkedImport)
-        if (auto contract = findType(module->aliases[i].span, aliases)) {
-          auto declaration = module->aliases.shared(i);
-          result->annotations.emplace(&declaration->target, contract->type);
-          result->aliases.push_back(std::move(declaration));
-        }
+  if (module) {
+    result->aliasHeaders.reserve(module->aliases.size());
+    result->aliasTypes.resize(module->aliases.size());
+    for (std::size_t i = 0; i < module->aliases.size(); ++i) {
+      result->aliasHeaders.push_back(module->aliases.sharedHeader(i));
+      if (module->aliases.header(i).item.checkedImport)
+        if (auto contract = findType(module->aliases.header(i).span, aliases))
+          result->aliasTypes[i] = contract->type;
+    }
+    module->aliases.onMaterializeAll(
+        [owner = std::weak_ptr(result)](
+            std::size_t position,
+            std::shared_ptr<const Module::Alias> declaration) {
+          if (auto index = owner.lock(); index && index->aliasTypes[position]) {
+            std::lock_guard lock(index->annotationMutex);
+            index->annotations.emplace(&declaration->target,
+                                       *index->aliasTypes[position]);
+            index->aliases.push_back(std::move(declaration));
+          }
+        });
+  }
+  std::sort(result->spans.begin(), result->spans.end());
+  result->spans.erase(std::unique(result->spans.begin(), result->spans.end()),
+                      result->spans.end());
+  result->functionNames.freeze();
   index = std::move(result);
   return {};
 }
@@ -178,8 +245,20 @@ struct Remapping {
     return (std::uint64_t(source.begin) << 32) | source.end;
   }
 };
+struct HeaderSources {
+  std::map<std::tuple<SourceId, std::size_t, std::size_t>, std::uint64_t>
+      indices;
+  std::map<std::string, std::uint64_t, std::less<>> revisionOrdinals;
+  std::vector<std::string> revisions;
+  std::vector<std::array<std::uint64_t, 3>> references;
+  std::vector<Span> spans;
+};
 class Archive {
 public:
+  explicit Archive(const metadata::EncodeReferences &references)
+      : encode(&references),
+        ownedRevisions(std::make_shared<std::vector<std::string>>()),
+        revisions(ownedRevisions) {}
   explicit Archive(
       const metadata::EncodeReferences &references, TypeStore &types,
       std::shared_ptr<Hygiene> hygiene = std::make_shared<Hygiene>())
@@ -201,6 +280,17 @@ public:
     return revisions;
   }
   bool good() const { return error.empty(); }
+  template <class T> bool same(const T &left, const T &right) {
+    Archive first(*encode, *types, hygiene);
+    Archive second(*encode, *types, hygiene);
+    first(left);
+    second(right);
+    if (!first.good() || !second.good()) {
+      fail(first.good() ? std::move(second.error) : std::move(first.error));
+      return false;
+    }
+    return first.output == second.output;
+  }
   void fail(std::string message) {
     if (error.empty())
       error = std::move(message);
@@ -300,6 +390,11 @@ public:
           fail("invalid declaration enumeration");
         item = static_cast<T>(bits);
       }
+    } else if constexpr (std::is_same_v<T, TypeSyntax>) {
+      if (reading() && discarding)
+        scanDiscardedType();
+      else
+        record(item);
     } else
       record(item);
   }
@@ -391,12 +486,60 @@ public:
     if (!good())
       return;
     if (!reading()) {
-      for (const auto &item : items)
-        value(item);
+      for (const auto &item : items) {
+        if (!headerSources) {
+          value(item);
+          continue;
+        }
+        projectHeader(const_cast<T &>(item));
+        Archive syntax(*encode, *types, hygiene);
+        syntax.headerSources = headerSources;
+        syntax(item);
+        if (!syntax.good()) {
+          fail(std::move(syntax.error));
+          return;
+        }
+        writeBlock(syntax.output);
+      }
       return;
     }
     if (count > input.size() - offset) {
       fail("declaration collection exceeds its payload");
+      return;
+    }
+    if (readSyntax) {
+      if (count > remaining() / minimumHeaderSize<T>()) {
+        fail("declaration collection exceeds its payload");
+        return;
+      }
+      items.reserve(static_cast<std::size_t>(count));
+      struct Block {
+        std::size_t begin, size;
+        const T *header;
+      };
+      auto blocks = std::make_shared<std::vector<Block>>();
+      blocks->reserve(static_cast<std::size_t>(count));
+      auto loader = Declarations<T>::deferredLoader(
+          static_cast<std::size_t>(count),
+          [read = readSyntax, blocks](std::size_t index) {
+            const auto &block = blocks->at(index);
+            T value;
+            read(block.begin, block.size, [&](Archive &archive) {
+              archive(value);
+              if (archive.good() && !archive.sameHeader(*block.header, value))
+                archive.fail("declaration syntax does not match its query");
+            });
+            value.item.checkedImport = true;
+            return value;
+          });
+      for (std::uint64_t i = 0; i < count && good(); ++i) {
+        auto &item =
+            items.emplace_deferred(loader, static_cast<std::size_t>(i));
+        projectHeader(item);
+        item.item.checkedImport = true;
+        auto payload = readBlock();
+        blocks->push_back({position() - payload.size(), payload.size(), &item});
+      }
       return;
     }
     items.reserve(static_cast<std::size_t>(count));
@@ -468,10 +611,24 @@ public:
       value(*item);
   }
   template <typename T> void value(std::shared_ptr<const T> &item) {
+    if constexpr (std::is_same_v<T, Node>)
+      if (reading() && discarding && !scanningExpression) {
+        discarding = false;
+        scanSyntax();
+        discarding = true;
+        return;
+      }
     bool present = bool(item);
     value(present);
     if (!good())
       return;
+    if constexpr (std::is_same_v<T, TypeSyntax> ||
+                  std::is_same_v<T, CallableTypeSyntax>)
+      if (reading() && present && discarding) {
+        T ignored;
+        value(ignored);
+        return;
+      }
     if (reading() && present) {
       auto result = std::make_shared<T>();
       value(*result);
@@ -480,6 +637,14 @@ public:
       value(*item);
   }
   template <typename K, typename V> void value(std::map<K, V> &items) {
+    map(items);
+  }
+  template <typename K, typename V> void value(OverlayMap<K, V> &items) {
+    map(items);
+    if (reading())
+      items.freeze();
+  }
+  template <typename Map> void map(Map &items) {
     std::uint64_t count = items.size();
     value(count);
     if (!good())
@@ -490,8 +655,8 @@ public:
         return;
       }
       for (std::uint64_t i = 0; i < count && good(); ++i) {
-        K key{};
-        V item{};
+        typename Map::key_type key{};
+        typename Map::mapped_type item{};
         keep(key);
         value(item);
         if (!items.emplace(std::move(key), std::move(item)).second)
@@ -630,6 +795,41 @@ public:
     }
   }
   void value(Span &span) {
+    if (literalSpans) {
+      (*this)(span.source, span.begin, span.end);
+      return;
+    }
+    if (headerSources) {
+      std::uint64_t index = 0;
+      if (!reading()) {
+        auto key = std::tuple{span.source, span.begin, span.end};
+        auto [found, inserted] = headerSources->indices.try_emplace(
+            key, headerSources->references.size());
+        index = found->second;
+        if (inserted) {
+          auto resolved = encode->source ? encode->source(span) : std::nullopt;
+          if (!resolved || resolved->begin > resolved->end) {
+            fail("unresolved declaration source revision");
+            return;
+          }
+          auto [revision, newRevision] =
+              headerSources->revisionOrdinals.try_emplace(
+                  resolved->revision, headerSources->revisions.size());
+          if (newRevision)
+            headerSources->revisions.push_back(resolved->revision);
+          headerSources->references.push_back(
+              {revision->second, resolved->begin, resolved->end});
+        }
+      }
+      value(index);
+      if (reading() && good()) {
+        if (index >= headerSources->spans.size())
+          fail("unknown declaration source index");
+        else
+          span = headerSources->spans[index];
+      }
+      return;
+    }
     if (!reading()) {
       auto resolved = encode->source ? encode->source(span) : std::nullopt;
       if (!resolved) {
@@ -725,7 +925,7 @@ public:
     if (!present || !good())
       return;
     SyntaxContext result = reading() ? SyntaxContext{} : *context;
-    if (!reading() && result.identity) {
+    if (!reading() && result.identity && !literalSpans) {
       hygiene->contexts.emplace(result.identity, context);
       auto [position, inserted] = hygiene->binders.emplace(
           result.identity, hygiene->binders.size() + 1);
@@ -737,7 +937,8 @@ public:
         fail("declaration hygiene reference exceeds its representation");
       else if (result.identity)
         result.identity |= std::uint64_t(result.definition.source + 1) << 32;
-      context = std::make_shared<const SyntaxContext>(std::move(result));
+      if (!discarding)
+        context = std::make_shared<const SyntaxContext>(std::move(result));
     }
   }
   void value(NodeOwner &node) {
@@ -772,6 +973,7 @@ public:
       fail("trailing checked declaration bytes");
   }
   std::size_t position() const { return offset; }
+  std::size_t remaining() const { return input.size() - offset; }
   std::span<const std::uint8_t> readBlock() {
     std::uint64_t size = 0;
     value(size);
@@ -799,11 +1001,25 @@ public:
   }
   std::function<void(CheckedExpression &, std::size_t, std::size_t)>
       deferExpression;
+  std::function<void(ImportedTypeDeclaration &, std::span<const std::uint8_t>)>
+      deferEnvironment;
+  std::function<void(std::size_t, std::size_t,
+                     const std::function<void(Archive &)> &)>
+      readSyntax;
+  const std::map<std::tuple<SourceId, std::uint32_t, std::uint32_t>,
+                 std::size_t> *implementationIndices = nullptr;
+  template <class T> void projectHeader(T &declaration);
+  template <class T> bool sameHeader(const T &left, const T &right);
+  template <class T> std::size_t minimumHeaderSize() const;
+  void scanTypeName(TypeSyntax &syntax);
+  void scanDiscardedType();
+  void typeEnvironment(ImportedTypeDeclaration &declaration);
+  std::shared_ptr<HeaderSources> headerSources;
   const metadata::DecodeReferences *expressionReferences = nullptr;
   template <typename T> void record(T &item);
   std::vector<std::uint8_t> output;
   std::string error;
-  TypeStore *types;
+  TypeStore *types = nullptr;
 
 private:
   friend void expression(Archive &, std::shared_ptr<CheckedExpression> &);
@@ -813,6 +1029,7 @@ private:
   std::size_t offset = 0;
   unsigned depth = 0;
   bool scanningExpression = false, scanPrimary = false, discarding = false;
+  bool literalSpans = false;
   std::size_t scannedNodes = 0;
   Span scannedSpan{};
   struct ScanNode {
@@ -868,16 +1085,16 @@ private:
 #define HEADER(T, ...)                                                         \
   WIRE(T, __VA_ARGS__)                                                         \
   HEADER_FIELDS(T, __VA_ARGS__)
-WIRE(LexicalNameSyntax, v.spelling, v.span, v.context)
-WIRE(GenericArgument, v.type, v.value, v.region, v.span, v.binding)
-WIRE(TypeSyntax, v.name, v.view, v.sources, v.regions, v.nested, v.form,
-     v.ownerKind, v.elements, v.count, v.countExpression, v.arguments,
-     v.callable, v.binders, v.context)
-WIRE(CallableParameterSyntax, v.annotation, v.mode, v.name)
-WIRE(CallableTypeSyntax, v.parameters, v.result, v.error, v.mode, v.regions,
-     v.unsafeCall, v.abi, v.variadic)
-WIRE(GenericParameter, v.kind, v.name, v.span, v.bounds, v.annotation,
-     v.defaultType, v.defaultValue, v.context, v.nameSpan)
+HEADER(LexicalNameSyntax, v.spelling, v.span, v.context)
+HEADER(GenericArgument, v.type, v.value, v.region, v.span, v.binding)
+HEADER(TypeSyntax, v.name, v.view, v.sources, v.regions, v.nested, v.form,
+       v.ownerKind, v.elements, v.count, v.countExpression, v.arguments,
+       v.callable, v.binders, v.context)
+HEADER(CallableParameterSyntax, v.annotation, v.mode, v.name)
+HEADER(CallableTypeSyntax, v.parameters, v.result, v.error, v.mode, v.regions,
+       v.unsafeCall, v.abi, v.variadic)
+HEADER(GenericParameter, v.kind, v.name, v.span, v.bounds, v.annotation,
+       v.defaultType, v.defaultValue, v.context, v.nameSpan)
 WIRE(GenericConstraint, v.subject, v.bounds, v.equality, v.span, v.region)
 WIRE(Pattern, v.kind, v.span, v.text, v.field, v.children, v.inclusive, v.rest,
      v.literalKind, v.context, v.fieldContext)
@@ -894,7 +1111,7 @@ WIRE(Node, v.kind, v.span, v.text, v.name, v.label, v.annotation, v.children,
 WIRE(VisibilitySyntax, v.publicItem, v.restriction, v.span)
 WIRE(Token, v.kind, v.span, v.text, v.context)
 WIRE(Attribute, v.name, v.arguments, v.span, v.parenthesized)
-WIRE(ItemSyntax, v.scope, v.visibility, v.attributes)
+HEADER(ItemSyntax, v.scope, v.visibility, v.attributes)
 HEADER(Function, v.name, v.annotation, v.span, v.parameters, v.owner,
        v.receiver, v.destructor, v.regions, v.item, v.constructor, v.error,
        v.genericParameters, v.constraints, v.implicitGenericParameters,
@@ -905,16 +1122,16 @@ HEADER(Function, v.name, v.annotation, v.span, v.parameters, v.owner,
        v.variadicSpan, v.lexicalContext)
 HEADER(Module::Static, v.name, v.annotation, v.span, v.item, v.mutableBinding,
        v.foreignDeclaration, v.constant)
-WIRE(Module::Associated, v.name, v.span, v.visibility, v.constant,
-     v.asyncFuture, v.asyncFutureDefaultInferred, v.annotation, v.value,
-     v.genericParameters, v.bounds, v.constraints)
+HEADER(Module::Associated, v.name, v.span, v.visibility, v.constant,
+       v.asyncFuture, v.asyncFutureDefaultInferred, v.annotation, v.value,
+       v.genericParameters, v.bounds, v.constraints)
 HEADER(Module::Product::Variant, v.name, v.fields, v.span, v.attributes)
 HEADER(Module::Product, v.name, v.span, v.copyRequested, v.fields, v.regions,
        v.hasDestructor, v.enumeration, v.unionType, v.variants, v.item,
        v.genericParameters, v.constraints, v.interfaces, v.associated,
-       v.nameContext)
-WIRE(Module::Alias, v.name, v.target, v.span, v.item, v.genericParameters,
-     v.constraints)
+       v.nameContext, v.deriveRequests)
+HEADER(Module::Alias, v.name, v.target, v.span, v.item, v.genericParameters,
+       v.constraints)
 HEADER(Module::Interface, v.name, v.span, v.item, v.genericParameters,
        v.constraints, v.superinterfaces, v.associated, v.unsafeInterface,
        v.nameContext)
@@ -934,6 +1151,189 @@ HEADER_FIELDS(Parameter, v.name, v.annotation, v.span, v.mode, v.visibility,
               v.compiledDefault)
 #undef HEADER
 #undef HEADER_FIELDS
+struct DiscardedSyntaxScanner {
+  Archive &archive;
+  template <class T> void value(std::type_identity<T>) {
+    if constexpr (std::is_same_v<T, TypeSyntax>)
+      archive.scanDiscardedType();
+    else if constexpr (requires(T &item) {
+                         headerFields(std::type_identity<T>{}, item);
+                       })
+      fields<T>();
+    else {
+      T item{};
+      archive.discard(item);
+    }
+  }
+  template <class T> void value(std::type_identity<std::vector<T>>) {
+    auto count = archive.collectionSize();
+    for (std::size_t i = 0; i < count && archive.good(); ++i)
+      value(std::type_identity<T>{});
+  }
+  template <class T> void value(std::type_identity<std::shared_ptr<const T>>) {
+    if constexpr (std::is_same_v<T, TypeSyntax> ||
+                  std::is_same_v<T, CallableTypeSyntax>) {
+      bool present = false;
+      archive(present);
+      if (present && archive.good())
+        value(std::type_identity<T>{});
+    } else {
+      std::shared_ptr<const T> item;
+      archive.discard(item);
+    }
+  }
+  template <class Tuple, std::size_t... I>
+  void fields(std::index_sequence<I...>) {
+    (value(std::type_identity<
+           std::remove_cvref_t<std::tuple_element_t<I, Tuple>>>{}),
+     ...);
+  }
+  template <class T> void fields() {
+    using Fields =
+        decltype(headerFields(std::type_identity<T>{}, std::declval<T &>()));
+    fields<Fields>(std::make_index_sequence<std::tuple_size_v<Fields>>{});
+  }
+};
+void Archive::scanDiscardedType() {
+  if (depth >= limits::syntaxDepth) {
+    fail("checked declaration nesting limit exceeded");
+    return;
+  }
+  ++depth;
+  DiscardedSyntaxScanner{*this}.fields<TypeSyntax>();
+  --depth;
+}
+template <class T>
+constexpr bool omittedQueryField =
+    std::is_same_v<T, TypeSyntax> || std::is_same_v<T, GenericConstraint> ||
+    std::is_same_v<T, Attribute> ||
+    std::is_same_v<T, std::shared_ptr<const Node>> ||
+    std::is_same_v<T, std::optional<Pattern>>;
+template <class T>
+constexpr bool omittedQueryField<std::vector<T>> =
+    std::is_same_v<T, TypeSyntax> || std::is_same_v<T, GenericConstraint> ||
+    std::is_same_v<T, Attribute>;
+struct DeclarationProjection {
+  Archive &archive;
+  struct TypeName {
+    Archive &archive;
+    template <class T> void value(T &item) {
+      if constexpr (std::is_same_v<T, std::string> ||
+                    std::is_same_v<T, TypeForm> ||
+                    std::is_same_v<T, OwnerKind> ||
+                    std::is_same_v<T, SyntaxContextPtr>)
+        archive.keep(item);
+    }
+    void value(std::shared_ptr<const TypeSyntax> &item) {
+      bool present = bool(item);
+      archive(present);
+      if (present && archive.good()) {
+        if (archive.reading()) {
+          auto nested = std::make_shared<TypeSyntax>();
+          archive.scanTypeName(*nested);
+          item = std::move(nested);
+        } else
+          archive.scanTypeName(const_cast<TypeSyntax &>(*item));
+      }
+    }
+    void scan(TypeSyntax &item) {
+      std::apply([&](auto &...fields) { (value(fields), ...); },
+                 headerFields(std::type_identity<TypeSyntax>{}, item));
+    }
+  };
+  template <class T> void namedDeclaration(T &item) {
+    std::apply(
+        [&](auto &...fields) {
+          (
+              [&] {
+                if constexpr (std::is_same_v<
+                                  std::remove_cvref_t<decltype(fields)>,
+                                  TypeSyntax>)
+                  archive.scanTypeName(fields);
+                else
+                  value(fields);
+              }(),
+              ...);
+        },
+        headerFields(std::type_identity<T>{}, item));
+  }
+  void value(Module::Alias &item) { namedDeclaration(item); }
+  void value(Module::Implementation &item) { namedDeclaration(item); }
+  void value(ItemSyntax &item) { archive.keep(item); }
+  void value(Parameter &item) {
+    auto fields = headerFields(std::type_identity<Parameter>{}, item);
+    [&]<std::size_t... I>(std::index_sequence<I...>) {
+      (value(std::get<I>(fields)), ...);
+    }(std::make_index_sequence<std::tuple_size_v<decltype(fields)> - 1>{});
+    bool hasDefault = item.defaultValue.get() || item.compiledDefault;
+    archive(hasDefault);
+    if (archive.reading())
+      item.compiledDefault = hasDefault;
+  }
+  template <class T> void value(T &item) {
+    if constexpr (omittedQueryField<T>)
+      return;
+    else if constexpr (requires {
+                         headerFields(std::type_identity<T>{}, item);
+                       }) {
+      std::apply([&](auto &...fields) { (value(fields), ...); },
+                 headerFields(std::type_identity<T>{}, item));
+    } else
+      archive.keep(item);
+  }
+  template <class T> void value(std::vector<T> &items) {
+    if constexpr (!omittedQueryField<std::vector<T>>) {
+      std::uint64_t count = items.size();
+      archive(count);
+      if (!archive.good())
+        return;
+      if (archive.reading()) {
+        if (count > archive.remaining()) {
+          archive.fail("declaration query collection exceeds its payload");
+          return;
+        }
+        items.resize(static_cast<std::size_t>(count));
+      }
+      for (auto &item : items)
+        value(item);
+    }
+  }
+};
+template <class T> std::size_t Archive::minimumHeaderSize() const {
+  using Fields =
+      decltype(headerFields(std::type_identity<T>{}, std::declval<T &>()));
+  return []<std::size_t... I>(std::index_sequence<I...>) {
+    return (
+        std::size_t{0} + ... +
+        std::size_t(!omittedQueryField<
+                        std::remove_cvref_t<std::tuple_element_t<I, Fields>>> ||
+                    ((std::is_same_v<T, Module::Alias> ||
+                      std::is_same_v<T, Module::Implementation>) &&
+                     std::is_same_v<
+                         std::remove_cvref_t<std::tuple_element_t<I, Fields>>,
+                         TypeSyntax>)));
+  }(std::make_index_sequence<std::tuple_size_v<Fields>>{});
+}
+template <class T> void Archive::projectHeader(T &declaration) {
+  DeclarationProjection{*this}.value(declaration);
+}
+template <class T> bool Archive::sameHeader(const T &left, const T &right) {
+  metadata::EncodeReferences references;
+  Archive first(references), second(references);
+  first.literalSpans = second.literalSpans = true;
+  first.projectHeader(const_cast<T &>(left));
+  second.projectHeader(const_cast<T &>(right));
+  return first.good() && second.good() && first.output == second.output;
+}
+void Archive::scanTypeName(TypeSyntax &syntax) {
+  if (depth >= limits::syntaxDepth) {
+    fail("checked declaration nesting limit exceeded");
+    return;
+  }
+  ++depth;
+  DeclarationProjection::TypeName{*this}.scan(syntax);
+  --depth;
+}
 WIRE(NumericLiteral, v.magnitude, v.floating, v.negative, v.floatingBits)
 WIRE(FloatingPolicy, v.reassociate, v.contract, v.noNaNs, v.noInfinities,
      v.noSignedZeros, v.reciprocal, v.approximateFunctions)
@@ -952,15 +1352,76 @@ template <class A> void functionFacts(A &a, FunctionFacts &v) {
     v.variadicCursor, v.targetFeatures, v.naked);
 }
 void wire(Archive &a, FunctionFacts &v) { functionFacts(a, v); }
-WIRE(ImportedFunction::SignatureIndex, v.result, v.error, v.parameters,
-     v.externalName)
-WIRE(FunctionHeader, v.span, v.signature, v.unsafeFunction, v.hasBody, v.body,
-     v.defaults)
+template <class A>
+void signatureFields(A &a, ImportedFunction::SignatureIndex &v) {
+  a(v.result, v.error, v.parameters, v.externalName);
+}
+void wire(Archive &a, ImportedFunction::SignatureIndex &v) {
+  signatureFields(a, v);
+}
+template <class A> void functionHeaderFields(A &a, FunctionHeader &v) {
+  a(v.span, v.signature, v.unsafeFunction, v.hasBody, v.body, v.defaults);
+}
+void wire(Archive &a, FunctionHeader &v) { functionHeaderFields(a, v); }
+struct FunctionIndexScanner {
+  Archive &archive;
+  ImportedFunctionRecords &records;
+  std::size_t parameters = 0, defaults = 0;
+  template <class... T> void operator()(T &...items) { (value(items), ...); }
+  template <class T> void value(T &item) { archive(item); }
+  void value(ImportedFunction::SignatureIndex &signature) {
+    signatureFields(*this, signature);
+  }
+  void value(std::vector<Type> &) {
+    parameters = archive.collectionSize();
+    for (std::size_t i = 0; i < parameters && archive.good(); ++i) {
+      Type type = Type::Unknown;
+      archive(type);
+      records.parameters.push_back(type);
+    }
+  }
+  void value(std::vector<std::optional<Span>> &) {
+    defaults = archive.collectionSize();
+    for (std::size_t i = 0; i < defaults && archive.good(); ++i) {
+      std::optional<Span> span;
+      archive(span);
+      records.defaults.push_back(span.has_value());
+    }
+  }
+};
 WIRE(StaticFacts, v.name, v.externalName, v.library, v.type, v.initializer)
 WIRE(DeclarationEnvironment, v.names, v.bounds, v.parameters, v.defaults,
      v.equalities, v.declarationSpan)
 WIRE(DeclarationRegions, v.names, v.parameters, v.assumptions)
-WIRE(ImportedTypeDeclaration, v.span, v.name, v.type, v.generics)
+void wire(Archive &a, ImportedTypeDeclaration &v) { a.typeEnvironment(v); }
+void Archive::typeEnvironment(ImportedTypeDeclaration &declaration) {
+  (*this)(declaration.span, declaration.name, declaration.type,
+          declaration.generics.parameters);
+  if (!reading()) {
+    Archive record(*encode, *types, hygiene);
+    record(declaration.environment());
+    if (!record.good())
+      fail(std::move(record.error));
+    else
+      writeBlock(record.output);
+    return;
+  }
+  auto payload = readBlock();
+  if (!good())
+    return;
+  if (deferEnvironment) {
+    deferEnvironment(declaration, payload);
+    return;
+  }
+  auto parameters = std::move(declaration.generics.parameters);
+  Archive reader(payload, *decode, types);
+  reader(declaration.generics);
+  reader.finish();
+  if (!reader.good())
+    fail(std::move(reader.error));
+  else if (parameters != declaration.generics.parameters)
+    fail("declaration environment does not match its parameter index");
+}
 void expression(Archive &archive, std::shared_ptr<CheckedExpression> &value);
 void wire(Archive &a, ImportedInherentConstant &v) {
   a(v.implementation, v.declaration, v.name, v.target, v.declaredType, v.value,
@@ -1045,6 +1506,17 @@ void wire(Archive &a, interfaces::Implementation &v) {
   a.package(v.package);
   a(v.parameters, v.requirements, v.methods, v.associated, v.inherent,
     v.regions, v.regionRequirements, v.equalities, v.fallback);
+  if (a.reading()) {
+    v.checkedImport = true;
+    if (a.implementationIndices) {
+      auto found = a.implementationIndices->find(
+          {v.span.source, v.span.begin, v.span.end});
+      if (found == a.implementationIndices->end())
+        a.fail("checked implementation is absent from its header");
+      else
+        v.declaration = found->second;
+    }
+  }
 }
 void wire(Archive &a, interfaces::Database &v) {
   std::uint64_t count = v.definitions.size();
@@ -1055,7 +1527,7 @@ void wire(Archive &a, interfaces::Database &v) {
     auto index = static_cast<std::uint32_t>(i);
     a.symbol(metadata::SymbolKind::Interface, index);
     if (!a.reading()) {
-      a(v.definitions[i]);
+      a(std::as_const(v).definitions[i]);
       continue;
     }
     interfaces::Definition item;
@@ -1072,6 +1544,116 @@ void wire(Archive &a, interfaces::Database &v) {
   }
   a(v.implementations, v.projections, v.unpinImplementations,
     v.structuralDeclarations, v.argumentsReady, v.callableContracts);
+}
+template <class T>
+void phaseRecords(Archive &archive, const TypeRecords<T> &checking,
+                  TypeRecords<T> &finalized, bool interfaces = false) {
+  std::uint64_t size = finalized.size();
+  if (!interfaces)
+    archive(size);
+  if (archive.reading()) {
+    if (!interfaces) {
+      if (size > UINT32_MAX || (size > checking.size() &&
+                                size - checking.size() > archive.remaining())) {
+        archive.fail("checked phase inventory exceeds its representation");
+        return;
+      }
+    }
+    if (interfaces)
+      size = checking.size();
+  }
+  std::vector<std::uint32_t> changed;
+  if (!archive.reading())
+    for (std::size_t i = 0; i < finalized.size(); ++i)
+      if (i >= checking.size() ||
+          !archive.same(checking[i], std::as_const(finalized)[i]))
+        changed.push_back(static_cast<std::uint32_t>(i));
+  std::uint64_t count = changed.size();
+  archive(count);
+  if (count > size) {
+    archive.fail("checked phase changes exceed their inventory");
+    return;
+  }
+  if (archive.reading() && !count) {
+    finalized = checking;
+    finalized.resize(static_cast<std::size_t>(size));
+    return;
+  }
+  std::vector<std::pair<std::uint32_t, T>> replacements;
+  if (archive.reading())
+    replacements.reserve(static_cast<std::size_t>(count));
+  std::set<std::uint32_t> seen;
+  for (std::uint64_t i = 0; i < count && archive.good(); ++i) {
+    std::uint32_t index = archive.reading() ? 0 : changed[i];
+    if (interfaces)
+      archive.symbol(metadata::SymbolKind::Interface, index);
+    else
+      archive(index);
+    if (index >= size || !seen.insert(index).second) {
+      archive.fail("invalid checked phase record identity");
+      break;
+    }
+    if (archive.reading()) {
+      T item;
+      archive(item);
+      replacements.emplace_back(index, std::move(item));
+    } else
+      archive(std::as_const(finalized)[index]);
+  }
+  if (archive.reading() && archive.good()) {
+    std::sort(replacements.begin(), replacements.end(),
+              [](const auto &left, const auto &right) {
+                return left.first < right.first;
+              });
+    TypeRecords<T> records;
+    records.reserve(static_cast<std::size_t>(size));
+    auto replacement = replacements.begin();
+    for (std::size_t i = 0; i < size; ++i)
+      if (replacement != replacements.end() && replacement->first == i) {
+        records.push_back(std::move(replacement->second));
+        ++replacement;
+      } else if (i < checking.size())
+        records.push_shared(checking.retain(i));
+      else
+        records.push_uninitialized();
+    finalized = std::move(records);
+  }
+}
+template <class K, class V>
+void phaseMap(Archive &archive, const OverlayMap<K, V> &checking,
+              OverlayMap<K, V> &finalized) {
+  bool shared = !archive.reading() && archive.same(checking, finalized);
+  archive(shared);
+  if (archive.reading())
+    finalized = shared ? checking : OverlayMap<K, V>{};
+  if (!shared)
+    archive(finalized);
+}
+void databases(Archive &archive, interfaces::Database &checking,
+               interfaces::Database &finalized) {
+  if (!archive.reading() &&
+      checking.definitions.size() != finalized.definitions.size()) {
+    archive.fail("checked interface phases have conflicting inventories");
+    return;
+  }
+  archive(checking);
+  if (archive.reading())
+    finalized = checking;
+  phaseRecords(archive, checking.definitions, finalized.definitions, true);
+  phaseRecords(archive, checking.implementations, finalized.implementations);
+  phaseRecords(archive, checking.projections, finalized.projections);
+  phaseMap(archive, checking.unpinImplementations,
+           finalized.unpinImplementations);
+  phaseMap(archive, checking.structuralDeclarations,
+           finalized.structuralDeclarations);
+  archive(finalized.argumentsReady);
+  phaseMap(archive, checking.callableContracts, finalized.callableContracts);
+  if (archive.reading()) {
+    finalized.implementationsByDeclaration.clear();
+    finalized.indexedImplementations = 0;
+    finalized.projectionsByParameter.clear();
+    finalized.indexedProjections = 0;
+  }
 }
 void wire(Archive &a, ReceiverStep &v) {
   a(v.kind, v.source, v.target, v.resultView, v.count, v.mode);
@@ -1784,7 +2366,7 @@ exportLibraryDeclarations(const CheckedModule &module,
     return result;
   }
   Archive header(references, *module.types);
-  header.tag("mettle.checked-header.2");
+  header.headerSources = std::make_shared<HeaderSources>();
   const auto &tree = module.tree;
   header(tree.functions, tree.statics, tree.products, tree.aliases,
          tree.interfaces, tree.implementations, tree.modules, tree.macros);
@@ -1822,9 +2404,15 @@ exportLibraryDeclarations(const CheckedModule &module,
     result.error = std::move(header.error);
     return result;
   }
-  result.header = std::move(header.output);
+  Archive framed(references, *module.types, header.hygieneState());
+  framed.tag("mettle.checked-header.4");
+  framed(header.headerSources->revisions, header.headerSources->references);
+  framed.writeBlock(header.output);
+  result.header = std::move(framed.output);
+  decltype(header.output){}.swap(header.output);
+  header.headerSources.reset();
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.15");
+  contracts.tag("mettle.checked-contracts.17");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size() +
                         (module.importedDeclarations
@@ -1878,7 +2466,7 @@ exportLibraryDeclarations(const CheckedModule &module,
     contracts.symbol(metadata::SymbolKind::Closure, symbol);
     contracts(closure);
   }
-  contracts(value.checkingDatabase, value.database);
+  databases(contracts, value.checkingDatabase, value.database);
   result.contracts = std::move(contracts.output);
   result.error = std::move(contracts.error);
   return result;
@@ -1886,10 +2474,78 @@ exportLibraryDeclarations(const CheckedModule &module,
 
 LibraryHeaderImport
 decodeLibraryHeader(std::span<const std::uint8_t> bytes,
-                    const metadata::DecodeReferences &references) {
+                    const metadata::DecodeReferences &references,
+                    std::shared_ptr<const void> backing) {
   LibraryHeaderImport result;
-  Archive archive(bytes, references, nullptr);
-  archive.tag("mettle.checked-header.2");
+  if (!backing) {
+    auto storage = std::make_shared<const std::vector<std::uint8_t>>(
+        bytes.begin(), bytes.end());
+    bytes = *storage;
+    backing = std::move(storage);
+  }
+  auto storage =
+      std::shared_ptr<const std::uint8_t>(std::move(backing), bytes.data());
+  Archive envelope(bytes, references, nullptr);
+  envelope.tag("mettle.checked-header.4");
+  auto sources = std::make_shared<HeaderSources>();
+  envelope(sources->revisions, sources->references);
+  std::unordered_set<std::string_view> revisions;
+  for (const auto &revision : sources->revisions)
+    if (!revisions.insert(revision).second)
+      envelope.fail("duplicate declaration source revision");
+  sources->spans.reserve(sources->references.size());
+  std::vector<std::size_t> order;
+  order.reserve(sources->references.size());
+  for (const auto &source : sources->references) {
+    if (!envelope.good())
+      break;
+    if (source[0] >= sources->revisions.size() || source[1] > source[2] ||
+        source[2] > UINT32_MAX) {
+      envelope.fail("invalid declaration source reference");
+      break;
+    }
+    metadata::SourceReference reference{sources->revisions[source[0]],
+                                        static_cast<std::uint32_t>(source[1]),
+                                        static_cast<std::uint32_t>(source[2])};
+    auto span = references.source ? references.source(reference) : std::nullopt;
+    if (!span) {
+      envelope.fail("unknown declaration source revision");
+      break;
+    }
+    order.push_back(sources->spans.size());
+    sources->spans.push_back(*span);
+  }
+  if (envelope.good()) {
+    std::sort(order.begin(), order.end(), [&](auto left, auto right) {
+      return sources->references[left] < sources->references[right];
+    });
+    for (std::size_t i = 1; i < order.size(); ++i)
+      if (sources->references[order[i - 1]] == sources->references[order[i]] &&
+          sources->spans[order[i - 1]] != sources->spans[order[i]])
+        envelope.fail("conflicting declaration source binding");
+  }
+  auto payload = envelope.readBlock();
+  envelope.finish();
+  if (!envelope.good()) {
+    result.error = std::move(envelope.error);
+    return result;
+  }
+  decltype(sources->references){}.swap(sources->references);
+  decltype(sources->revisions){}.swap(sources->revisions);
+  auto frozen = std::make_shared<const metadata::DecodeReferences>();
+  Archive archive(payload, *frozen, nullptr);
+  archive.headerSources = sources;
+  archive.readSyntax = [storage, frozen, sources,
+                        payload](std::size_t begin, std::size_t size,
+                                 const std::function<void(Archive &)> &decode) {
+    Archive reader(payload.subspan(begin, size), *frozen, nullptr);
+    reader.headerSources = sources;
+    decode(reader);
+    reader.finish();
+    if (!reader.good())
+      throw metadata::InvalidMetadata("invalid checked syntax: " +
+                                      reader.error);
+  };
   Module module;
   archive(module);
   archive(result.symbols);
@@ -1898,23 +2554,43 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
   if (!archive.good())
     result.error = std::move(archive.error);
   else {
-    for (const auto &function : module.functions)
+    std::vector<std::vector<std::size_t>> methods(
+        module.implementations.size());
+    for (std::size_t i = 0; i < module.functions.size(); ++i) {
+      const auto &function = module.functions.header(i);
       if (function.implementation >= 0 &&
           std::size_t(function.implementation) >=
               module.implementations.size()) {
         result.error = "invalid declaration implementation reference";
         return result;
       }
-    auto imported = [](auto &items) {
-      for (auto &item : items.local())
-        item.item.checkedImport = true;
-    };
-    imported(module.functions);
-    imported(module.statics);
-    imported(module.products);
-    imported(module.aliases);
-    imported(module.interfaces);
-    imported(module.implementations);
+      if (function.implementation >= 0)
+        methods[function.implementation].push_back(i);
+    }
+    for (std::size_t i = 0; i < methods.size(); ++i) {
+      const auto &declared = module.implementations.header(i).methodFunctions;
+      for (auto function : declared)
+        if (function >= module.functions.size()) {
+          result.error = "invalid declaration method reference";
+          return result;
+        }
+      if (methods[i].empty())
+        continue;
+      auto indexed = declared;
+      if (declared.empty())
+        indexed = std::move(methods[i]);
+      else {
+        std::unordered_set<std::size_t> seen(declared.begin(), declared.end());
+        for (auto function : methods[i])
+          if (seen.insert(function).second)
+            indexed.push_back(function);
+      }
+      if (indexed != declared)
+        module.implementations.transformHeader(
+            i, [indexed = std::move(indexed)](auto &implementation) {
+              implementation.methodFunctions = indexed;
+            });
+    }
     result.module = std::move(module);
   }
   return result;
@@ -1957,9 +2633,16 @@ declarationQueryInputs(const Module &module,
   auto declarations = [&](const auto &items) {
     auto count = items.size();
     context(count);
-    for (std::size_t i = 0; i < items.size(); ++i)
-      if (source(items[i].span))
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      auto span = [&] {
+        if constexpr (requires { items.header(i); })
+          return items.header(i).span;
+        else
+          return items[i].span;
+      }();
+      if (source(span))
         context(i, items[i]);
+    }
   };
   declarations(module.functions);
   declarations(module.statics);
@@ -1971,7 +2654,7 @@ declarationQueryInputs(const Module &module,
   declarations(module.macros);
   declarations(module.imports);
   context(module.prelude, module.packageNames, module.globalAssembly);
-  for (const auto &storage : module.statics)
+  for (const auto &storage : module.statics.headers())
     if (source(storage.span))
       context(storage.initializer);
   auto associated = [&](const auto &owners) {
@@ -1980,16 +2663,16 @@ declarationQueryInputs(const Module &module,
         for (const auto &item : owner.associated)
           context(item.constantValue);
   };
-  associated(module.interfaces);
-  associated(module.implementations);
-  for (const auto &product : module.products)
+  associated(module.interfaces.headers());
+  associated(module.implementations.headers());
+  for (const auto &product : module.products.headers())
     if (source(product.span))
       for (const auto &variant : product.variants)
         context(variant.discriminant);
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
-    const auto &function = module.functions[i];
-    if (!source(function.span))
+    if (!source(module.functions.header(i).span))
       continue;
+    const auto &function = module.functions[i];
     for (const auto &parameter : function.parameters)
       context(parameter.defaultValue);
     const bool reusable =
@@ -2061,6 +2744,10 @@ std::shared_ptr<const ImportedDeclarations> retainQueryDeclarations(
       if (base && native->findType(item->span, *base))
         continue;
       auto projected = std::make_shared<ImportedTypeDeclaration>(*item);
+      if (projected->deferred) {
+        projected->generics = item->environment();
+        projected->deferred.reset();
+      }
       projected->type = projection.type(projected->type);
       environment(projected->generics);
       item = std::move(projected);
@@ -2122,12 +2809,46 @@ std::shared_ptr<const ImportedDeclarations> retainQueryDeclarations(
   return result;
 }
 
+DeclarationPayloadLayout
+declarationPayloadLayout(std::span<const std::uint8_t> bytes) {
+  DeclarationPayloadLayout result;
+  metadata::DecodeReferences references;
+  references.type = [](std::uint32_t) { return std::optional{Type::Unknown}; };
+  references.source = [](const metadata::SourceReference &source) {
+    return std::optional{Span{source.begin, source.end, 0}};
+  };
+  references.symbol = [](metadata::SymbolKind, std::string_view) {
+    return std::optional<std::uint32_t>{0};
+  };
+  Archive archive(bytes, references, nullptr);
+  archive.tag("mettle.checked-contracts.17");
+  std::uint64_t count = 0;
+  archive(count);
+  if (count > bytes.size())
+    archive.fail("function inventory exceeds its payload");
+  for (std::uint64_t i = 0; i < count && archive.good(); ++i) {
+    std::uint32_t index = 0;
+    archive.symbol(metadata::SymbolKind::Function, index);
+    FunctionHeader summary;
+    archive.discard(summary);
+    auto payload = archive.readBlock();
+    if (archive.good())
+      result.payloads.push_back(
+          {archive.position() - payload.size(), payload.size()});
+  }
+  result.error = std::move(archive.error);
+  return result;
+}
+
 LibraryDeclarationImport importLibraryDeclarations(
     std::span<const std::uint8_t> bytes, std::shared_ptr<TypeStore> types,
     const metadata::DecodeReferences &references, const Module *module,
     std::shared_ptr<const void> backing,
     std::shared_ptr<const metadata::DecodeReferences> retainedReferences,
-    metadata::ValidationMode validation) {
+    metadata::ValidationMode validation,
+    std::span<const std::string_view> functionNames,
+    std::function<bool(std::size_t, std::span<const std::uint8_t>)>
+        verifyPayload) {
   LibraryDeclarationImport result;
   if (!types) {
     result.error = "checked declarations require an imported type store";
@@ -2152,7 +2873,7 @@ LibraryDeclarationImport importLibraryDeclarations(
   record.type = [&](std::uint32_t id) -> std::optional<Type> {
     auto value = references.type ? references.type(id) : std::nullopt;
     if (value) {
-      auto [found, inserted] = remapping->types.emplace(id, *value);
+      auto [found, inserted] = remapping->types.try_emplace(id, *value);
       if (!inserted && found->second != *value)
         return std::nullopt;
     }
@@ -2164,7 +2885,7 @@ LibraryDeclarationImport importLibraryDeclarations(
     if (value) {
       auto &positions = remapping->sources[source.revision];
       auto [found, inserted] =
-          positions.emplace(Remapping::position(source), *value);
+          positions.try_emplace(Remapping::position(source), *value);
       if (!inserted && (found->second.source != value->source ||
                         found->second.begin != value->begin ||
                         found->second.end != value->end))
@@ -2219,6 +2940,16 @@ LibraryDeclarationImport importLibraryDeclarations(
       std::shared_ptr<const std::uint8_t>(std::move(backing), bytes.data());
   const auto &admission = retained ? references : record;
   Archive archive(bytes, admission, types.get());
+  std::map<std::tuple<SourceId, std::uint32_t, std::uint32_t>, std::size_t>
+      implementationIndices;
+  if (module)
+    for (std::size_t i = 0; i < module->implementations.size(); ++i) {
+      auto span = module->implementations.header(i).span;
+      implementationIndices.emplace(
+          std::tuple{span.source, span.begin, span.end}, i);
+    }
+  if (module)
+    archive.implementationIndices = &implementationIndices;
   auto revisions = archive.sourceRevisions();
   archive.expressionReferences = &admission;
   archive.deferExpression = [storage, length = bytes.size(), frozen, revisions,
@@ -2237,7 +2968,7 @@ LibraryDeclarationImport importLibraryDeclarations(
     target.facts = std::move(decoded->facts);
     target.constants = std::move(decoded->constants);
   };
-  archive.tag("mettle.checked-contracts.15");
+  archive.tag("mettle.checked-contracts.17");
   auto value = std::make_shared<ImportedDeclarations>();
   auto methods = std::make_shared<InterfaceMethods>();
   auto deferExpressions = [storage, frozen,
@@ -2263,9 +2994,33 @@ LibraryDeclarationImport importLibraryDeclarations(
     };
   };
   value->types = types;
+  if (validation == metadata::ValidationMode::OnDemand)
+    archive.deferEnvironment = [storage, frozen,
+                                types](ImportedTypeDeclaration &declaration,
+                                       std::span<const std::uint8_t> payload) {
+      declaration.deferred =
+          std::make_shared<ImportedTypeDeclaration::Deferred>();
+      declaration.deferred->load = [storage, frozen, types, payload,
+                                    parameters =
+                                        declaration.generics.parameters] {
+        Archive reader(payload, *frozen, types.get());
+        DeclarationEnvironment environment;
+        reader(environment);
+        reader.finish();
+        if (!reader.good())
+          throw metadata::InvalidMetadata("invalid declaration environment: " +
+                                          reader.error);
+        if (environment.parameters != parameters)
+          throw metadata::InvalidMetadata(
+              "declaration environment does not match its parameter "
+              "index");
+        return environment;
+      };
+    };
   auto compact = std::make_shared<ImportedFunctionRecords>();
   struct FunctionRecord {
     std::span<const std::uint8_t> header, payload;
+    std::size_t ordinal;
   };
   auto functionRecords = std::make_shared<std::vector<FunctionRecord>>();
   std::uint64_t count = 0;
@@ -2275,15 +3030,30 @@ LibraryDeclarationImport importLibraryDeclarations(
   for (std::uint64_t i = 0; i < count && archive.good(); ++i) {
     std::uint32_t index = 0;
     archive.symbol(metadata::SymbolKind::Function, index);
+    std::string symbolName;
+    if (!functionNames.empty()) {
+      if (index >= functionNames.size() || functionNames[index].empty()) {
+        archive.fail("checked function has no admitted canonical name");
+        break;
+      }
+      symbolName = functionNames[index];
+    }
     auto headerBegin = archive.position();
     FunctionHeader summary;
-    archive(summary);
+    auto parameterBegin = compact->parameters.size();
+    FunctionIndexScanner scanner{archive, *compact};
+    if (validation == metadata::ValidationMode::OnDemand)
+      functionHeaderFields(scanner, summary);
+    else
+      archive(summary);
     auto headerBytes =
         bytes.subspan(headerBegin, archive.position() - headerBegin);
     auto payload = archive.readBlock();
     if (!archive.good())
       break;
-    if (summary.defaults.size() != summary.signature.parameters.size()) {
+    if (validation == metadata::ValidationMode::OnDemand
+            ? scanner.defaults != scanner.parameters
+            : summary.defaults.size() != summary.signature.parameters.size()) {
       archive.fail("invalid checked function signature inventory");
       break;
     }
@@ -2291,14 +3061,10 @@ LibraryDeclarationImport importLibraryDeclarations(
       auto ordinal = compact->headers.size();
       compact->headers.push_back(
           {summary.span, summary.signature.result, summary.signature.error,
-           compact->parameters.size(), summary.signature.parameters.size(),
-           summary.hasBody, std::move(summary.signature.externalName)});
-      compact->parameters.insert(compact->parameters.end(),
-                                 summary.signature.parameters.begin(),
-                                 summary.signature.parameters.end());
-      for (const auto &argument : summary.defaults)
-        compact->defaults.push_back(argument.has_value());
-      functionRecords->push_back({headerBytes, payload});
+           parameterBegin, scanner.parameters, summary.hasBody,
+           std::move(summary.signature.externalName), std::move(symbolName)});
+      functionRecords->push_back(
+          {headerBytes, payload, static_cast<std::size_t>(i)});
       compact->functions.push_uninitialized();
       if (!value->functions
                .emplace(index, ImportedFunctionReference(compact, ordinal))
@@ -2307,7 +3073,13 @@ LibraryDeclarationImport importLibraryDeclarations(
       continue;
     }
     ImportedFunction item;
+    item.symbolName = std::move(symbolName);
     if (validation == metadata::ValidationMode::Eager) {
+      if (verifyPayload &&
+          !verifyPayload(static_cast<std::size_t>(i), payload)) {
+        archive.fail("checked function payload integrity mismatch");
+        break;
+      }
       Archive reader(payload, admission, types.get());
       reader.expressionReferences = &admission;
       deferExpressions(reader, payload);
@@ -2329,7 +3101,11 @@ LibraryDeclarationImport importLibraryDeclarations(
       }
     }
     item.defer(summary.signature, [storage, payload, frozen, types, summary,
-                                   methods, deferExpressions] {
+                                   methods, deferExpressions, verifyPayload,
+                                   ordinal = static_cast<std::size_t>(i)] {
+      if (verifyPayload && !verifyPayload(ordinal, payload))
+        throw metadata::InvalidMetadata(
+            "checked function payload integrity mismatch");
       Archive reader(payload, *frozen, types.get());
       reader.expressionReferences = frozen.get();
       deferExpressions(reader, payload);
@@ -2356,8 +3132,11 @@ LibraryDeclarationImport importLibraryDeclarations(
     auto loader = std::make_shared<
         const TypeRecords<ImportedFunction, true>::Loader>(
         [storage, functionRecords, frozen, types, methods, deferExpressions,
-         revisions](std::size_t index) {
+         revisions, verifyPayload](std::size_t index) {
           const auto &record = functionRecords->at(index);
+          if (verifyPayload && !verifyPayload(record.ordinal, record.payload))
+            throw metadata::InvalidMetadata(
+                "checked function payload integrity mismatch");
           Archive header(record.header, *frozen, types.get(), revisions);
           FunctionHeader summary;
           header(summary);
@@ -2410,7 +3189,7 @@ LibraryDeclarationImport importLibraryDeclarations(
         !value->closures.emplace(index, std::move(closure)).second)
       archive.fail("invalid checked closure identity");
   }
-  archive(value->checkingDatabase, value->database);
+  databases(archive, value->checkingDatabase, value->database);
   std::size_t phase = 0;
   for (const auto *database : {&value->checkingDatabase, &value->database}) {
     auto &counts = (*methods)[phase++];
@@ -2446,27 +3225,6 @@ LibraryDeclarationImport importLibraryDeclarations(
     result.error = std::move(archive.error);
     return result;
   }
-  std::map<std::tuple<SourceId, std::uint32_t, std::uint32_t>, std::size_t>
-      implementationIndices;
-  if (module)
-    for (std::size_t i = 0; i < module->implementations.size(); ++i) {
-      auto span = module->implementations[i].span;
-      implementationIndices.emplace(
-          std::tuple{span.source, span.begin, span.end}, i);
-    }
-  for (auto *database : {&value->checkingDatabase, &value->database})
-    for (auto &rule : database->implementations) {
-      rule.checkedImport = true;
-      if (module) {
-        auto found = implementationIndices.find(
-            {rule.span.source, rule.span.begin, rule.span.end});
-        if (found == implementationIndices.end()) {
-          result.error = "checked implementation is absent from its header";
-          return result;
-        }
-        rule.declaration = found->second;
-      }
-    }
   auto parameter = [&](Type type) {
     return value->types->isParameter(type) ||
            value->types->isConstParameter(type) ||
@@ -2476,10 +3234,19 @@ LibraryDeclarationImport importLibraryDeclarations(
     return std::all_of(items.begin(), items.end(), parameter);
   };
   for (const auto *database : {&value->checkingDatabase, &value->database}) {
-    for (auto [parameter, contract] : database->callableContracts)
+    const bool finalizedPhase = database == &value->database;
+    for (const auto &[parameter, contract] : database->callableContracts) {
+      if (finalizedPhase) {
+        auto previous =
+            value->checkingDatabase.callableContracts.find(parameter);
+        if (previous != value->checkingDatabase.callableContracts.end() &&
+            &previous->second == &contract)
+          continue;
+      }
       if (!value->types->isParameter(parameter) ||
           !value->types->isFunctionPointer(contract))
         archive.fail("invalid checked callable-bound contract");
+    }
     auto definition = [&](Type type) -> const interfaces::Definition * {
       if (!value->types->isErased(type))
         return nullptr;
@@ -2492,7 +3259,11 @@ LibraryDeclarationImport importLibraryDeclarations(
     auto functionExists = [&](int index) {
       return index >= 0 && value->functions.contains(std::uint32_t(index));
     };
-    for (const auto &item : database->definitions) {
+    for (std::size_t i = 0; i < database->definitions.size(); ++i) {
+      const auto &item = database->definitions[i];
+      if (finalizedPhase &&
+          &item == &std::as_const(value->checkingDatabase).definitions[i])
+        continue;
       if (item.name.empty())
         continue;
       if (!value->types->isParameter(item.self) || !parameters(item.parameters))
@@ -2525,17 +3296,31 @@ LibraryDeclarationImport importLibraryDeclarations(
           archive.fail("unknown checked inherent method");
       }
     };
-    for (const auto &item : database->implementations)
-      implementation(item);
+    for (std::size_t i = 0; i < database->implementations.size(); ++i) {
+      const auto &item = database->implementations[i];
+      if (!finalizedPhase ||
+          &item != &std::as_const(value->checkingDatabase).implementations[i])
+        implementation(item);
+    }
     for (const auto &[type, item] : database->unpinImplementations) {
-      (void)type;
-      implementation(item);
+      auto previous = value->checkingDatabase.unpinImplementations.find(type);
+      if (!finalizedPhase ||
+          previous == value->checkingDatabase.unpinImplementations.end() ||
+          &previous->second != &item)
+        implementation(item);
     }
     for (const auto &[key, item] : database->structuralDeclarations) {
-      (void)key;
-      implementation(item.implementation);
+      auto previous = value->checkingDatabase.structuralDeclarations.find(key);
+      if (!finalizedPhase ||
+          previous == value->checkingDatabase.structuralDeclarations.end() ||
+          &previous->second != &item)
+        implementation(item.implementation);
     }
-    for (const auto &projection : database->projections) {
+    for (std::size_t i = 0; i < database->projections.size(); ++i) {
+      const auto &projection = database->projections[i];
+      if (finalizedPhase && i < value->checkingDatabase.projections.size() &&
+          &projection == &std::as_const(value->checkingDatabase).projections[i])
+        continue;
       const auto *owner = definition(projection.interfaceType);
       if (!owner || projection.associated >= owner->associated.size() ||
           !parameter(projection.parameter) ||
@@ -2567,6 +3352,54 @@ LibraryDeclarationImport importLibraryDeclarations(
   if (!archive.good()) {
     result.error = std::move(archive.error);
     return result;
+  }
+  for (auto *database : {&value->checkingDatabase, &value->database}) {
+    const auto &snapshot = std::as_const(*database);
+    auto declaration = [&](Type interfaceType) {
+      return types->isErased(interfaceType)
+                 ? types->erasedDeclaration(interfaceType)
+                 : UINT32_MAX;
+    };
+    const auto &checking = std::as_const(value->checkingDatabase);
+    const bool sharedImplementations =
+        database == &value->database &&
+        std::equal(snapshot.implementations.begin(),
+                   snapshot.implementations.end(),
+                   checking.implementations.begin(),
+                   [&](const auto &left, const auto &right) {
+                     return declaration(left.interfaceType) ==
+                            declaration(right.interfaceType);
+                   });
+    if (sharedImplementations)
+      database->implementationsByDeclaration =
+          checking.implementationsByDeclaration;
+    else {
+      for (std::size_t i = 0; i < snapshot.implementations.size(); ++i) {
+        auto owner = declaration(snapshot.implementations[i].interfaceType);
+        if (owner == UINT32_MAX)
+          continue;
+        if (database->implementationsByDeclaration.size() <= owner)
+          database->implementationsByDeclaration.resize(owner + 1);
+        database->implementationsByDeclaration[owner].push_back(i);
+      }
+    }
+    database->indexedImplementations = snapshot.implementations.size();
+    const bool sharedProjections =
+        database == &value->database &&
+        snapshot.projections.size() == checking.projections.size() &&
+        std::equal(snapshot.projections.begin(), snapshot.projections.end(),
+                   checking.projections.begin(),
+                   [](const auto &left, const auto &right) {
+                     return left.parameter == right.parameter;
+                   });
+    if (sharedProjections)
+      database->projectionsByParameter = checking.projectionsByParameter;
+    else
+      for (std::size_t i = 0; i < snapshot.projections.size(); ++i)
+        database->projectionsByParameter.emplace(
+            snapshot.projections[i].parameter, i);
+    database->indexedProjections = snapshot.projections.size();
+    database->projectionsByParameter.freeze();
   }
   value->indexTypes();
   if (auto error = value->indexDeclarations(module); !error.empty()) {

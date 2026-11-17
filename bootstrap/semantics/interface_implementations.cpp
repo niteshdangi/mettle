@@ -99,7 +99,7 @@ void Checker::interfaceImplementations() {
   auto *saved = genericEnvironment;
   for (std::size_t function = 0; function < module.functions.size();
        ++function) {
-    const auto &syntax = module.functions[function];
+    const auto &syntax = module.functions.header(function);
     if (imported(syntax.span))
       continue;
     if (syntax.interfaceOwner.empty() || syntax.implementation >= 0)
@@ -123,9 +123,9 @@ void Checker::interfaceImplementations() {
     methods.push_back(std::move(method));
   }
   for (std::size_t i = 0; i < module.implementations.size(); ++i) {
-    const auto &syntax = module.implementations[i];
-    if (imported(syntax.span))
+    if (imported(module.implementations.header(i).span))
       continue;
+    const auto &syntax = module.implementations[i];
     auto foundEnvironment = implementationGenerics.find(&syntax);
     if (foundEnvironment == implementationGenerics.end()) {
       auto environment =
@@ -432,7 +432,7 @@ void Checker::interfaceImplementations() {
         std::optional<int> provided;
         for (std::size_t function = 0; function < module.functions.size();
              ++function) {
-          const auto &candidate = module.functions[function];
+          const auto &candidate = module.functions.header(function);
           if ((candidate.implementation == static_cast<int>(i) ||
                std::find(syntax.methodFunctions.begin(),
                          syntax.methodFunctions.end(),
@@ -468,7 +468,7 @@ void Checker::interfaceImplementations() {
       for (std::size_t method = 0; method < definition.methods.size();
            ++method) {
         const auto &required = definition.methods[method];
-        const auto &declaration = module.functions[required.function];
+        const auto &declaration = module.functions.header(required.function);
         if (!declaration.asynchronous)
           continue;
         auto associated = std::find_if(
@@ -532,9 +532,10 @@ void Checker::interfaceImplementations() {
               "unsafe extend requires an unsafe interface or native property");
       for (std::size_t function = 0; function < module.functions.size();
            ++function) {
-        const auto &method = module.functions[function];
-        if (method.implementation != static_cast<int>(i) || method.constructor)
+        const auto &header = module.functions.header(function);
+        if (header.implementation != static_cast<int>(i) || header.constructor)
           continue;
+        const auto &method = module.functions[function];
         if (std::any_of(syntax.associated.begin(), syntax.associated.end(),
                         [&](const auto &item) {
                           return item.constantValue &&
@@ -983,12 +984,20 @@ void Checker::checkInterfaceContracts() {
 }
 
 void Checker::finalizeInterfaces() {
-  for (auto &definition : checked.interfaceData->definitions)
-    for (auto &method : definition.methods) {
-      const auto &function = module.functions[method.function];
-      if (imported(function.span))
+  for (std::size_t i = 0; i < checked.interfaceData->definitions.size(); ++i)
+    for (std::size_t m = 0;
+         m <
+         std::as_const(*checked.interfaceData).definitions[i].methods.size();
+         ++m) {
+      const auto index = std::as_const(*checked.interfaceData)
+                             .definitions[i]
+                             .methods[m]
+                             .function;
+      if (imported(module.functions.header(index).span))
         continue;
-      const auto &facts = checked.function(method.function);
+      const auto &function = module.functions[index];
+      const auto &facts = checked.function(index);
+      auto &method = checked.interfaceData->definitions[i].methods[m];
       method.signature.parameters.clear();
       for (std::size_t p = 0; p < function.parameters.size(); ++p)
         method.signature.parameters.push_back(

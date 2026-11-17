@@ -62,11 +62,11 @@ struct LoweringContext {
 class CleanupFrame {
 public:
   CleanupFrame(LoweringContext &lowering, const ir::Function &source,
-               llvm::Function *wrapper);
+               const cleanup::Plan &plan, llvm::Function *wrapper);
   // A coroutine body's frame is the state of its future. Its layout is known
   // on construction; callbacks are emitted once every function is declared.
   CleanupFrame(LoweringContext &lowering, const ir::Function &source,
-               std::string name);
+               const cleanup::Plan &plan, std::string name);
   llvm::Function *body() const { return bodyFunction; }
   llvm::Function *unwind() const { return cleanupFunction; }
   llvm::StructType *structure() const { return frameType; }
@@ -111,7 +111,8 @@ public:
 
 private:
   CleanupFrame(LoweringContext &lowering, const ir::Function &source,
-               llvm::Function *wrapper, std::string name);
+               const cleanup::Plan &plan, llvm::Function *wrapper,
+               std::string name);
   struct Root {
     Type type;
     unsigned field;
@@ -152,7 +153,7 @@ private:
   bool callbacksEmitted = false;
   unsigned stateField = 0, contextField = 0;
   std::unordered_map<int, unsigned> spills;
-  cleanup::Plan plan;
+  const cleanup::Plan &plan;
   std::vector<llvm::Type *> fields;
   std::uint64_t frameSize = 0, frameAlignment = 1;
   std::vector<Root> roots;

@@ -22,6 +22,7 @@ using Symbol = std::pair<metadata::SymbolKind, std::uint32_t>;
 struct ImportedStorage {
   LibrarySources sources;
   Section ir, declarations;
+  ir::FunctionBodyVerifier verifyIRBody, verifyDeclarationPayload;
   std::shared_ptr<const void> backing;
 };
 struct SymbolNameHash {
@@ -188,21 +189,12 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
                   << archiveKey.substr(0, 12) << '\n';
       return true;
     }
-  // The archive's sealing digest covers every byte, so it replaces the
-  // store's serial blob hash; a rejected archive is evicted as corrupt.
   std::optional<LibraryArchive> decoded;
   auto stored = store.mapped(
       archiveKey, limits::sourceBytes,
       [&](const std::shared_ptr<const packages::Store::Mapping> &mapping) {
-        std::shared_ptr<const void> backing = mapping;
-        auto bytes = mapping->bytes();
-        if (options.libraryQueries) {
-          auto snapshot = std::make_shared<const std::string>(bytes);
-          bytes = *snapshot;
-          backing = std::move(snapshot);
-        }
-        decoded =
-            decodeLibraryArchive(bytes, archiveKey, error, std::move(backing));
+        const auto bytes = mapping->bytes();
+        decoded = decodeLibraryArchive(bytes, archiveKey, error, mapping);
         if (decoded)
           archiveContent = std::string(bytes.substr(bytes.size() - 64));
         return decoded.has_value();
@@ -498,7 +490,11 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
     error = "cannot publish checked " + root + " interface";
     return false;
   }
-  archive = std::move(candidate);
+  auto snapshot = std::make_shared<const std::string>(std::move(*encoded));
+  auto admitted = decodeLibraryArchive(*snapshot, archiveKey, error, snapshot);
+  if (!admitted)
+    return false;
+  archive = std::move(*admitted);
   if (options.libraryQueries)
     options.libraryQueries->publishArchive(root, archiveKey, archiveContent,
                                            archive);
@@ -697,9 +693,9 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
   statics = header.module->statics.size();
   interfaces = header.module->interfaces.size();
   for (std::size_t i = 0; i < functions; ++i)
-    for (std::size_t j = 0; j < header.module->functions[i].parameters.size();
-         ++j)
-      if (header.module->functions[i].parameters[j].compiledDefault)
+    for (std::size_t j = 0;
+         j < header.module->functions.header(i).parameters.size(); ++j)
+      if (header.module->functions.header(i).parameters[j].compiledDefault)
         defaults.emplace_back(static_cast<std::uint32_t>(i),
                               static_cast<std::uint32_t>(j));
   macros = std::make_shared<const expansion::MacroLibrary>(std::move(*rules));
@@ -756,10 +752,18 @@ CheckedLibrary::import(const Module &module,
   if (module.functions.size() < functions || module.statics.size() < statics ||
       module.interfaces.size() < interfaces)
     return fail("compiled library header was not mounted before its consumer");
+  if (!archive.verifyIRBody || !archive.verifyDeclarationPayload)
+    return fail(
+        "compiled library is missing authenticated payload commitments");
   auto symbols = std::make_shared<SymbolTable>();
   auto packageIndices =
       std::make_shared<std::map<std::string, std::uint32_t>>();
   std::vector<std::string> functionSymbols(functions);
+  std::vector<std::string_view> functionNames(functions);
+  const auto functionPrefix =
+      std::string(nativePackage) + ":" +
+      std::to_string(static_cast<unsigned>(metadata::SymbolKind::Function)) +
+      ":";
   std::size_t closureCount = 0;
   for (const auto &symbol : header.symbols) {
     if (symbol.kind == metadata::SymbolKind::Package) {
@@ -774,7 +778,12 @@ CheckedLibrary::import(const Module &module,
     case metadata::SymbolKind::Function:
       if (index >= functions)
         return fail("compiled function inventory exceeds the mounted header");
+      if (!symbol.definition.starts_with(functionPrefix) ||
+          symbol.definition.size() == functionPrefix.size())
+        return fail("invalid compiled function identity");
       functionSymbols[index] = symbol.definition;
+      functionNames[index] =
+          std::string_view(symbol.definition).substr(functionPrefix.size());
       break;
     case metadata::SymbolKind::Interface:
       if (index >= interfaces)
@@ -804,8 +813,9 @@ CheckedLibrary::import(const Module &module,
       defaultDestinations;
   std::size_t defaultCount = 0;
   for (std::size_t i = 0; i < module.functions.size(); ++i)
-    for (std::size_t j = 0; j < module.functions[i].parameters.size(); ++j) {
-      const auto &parameter = module.functions[i].parameters[j];
+    for (std::size_t j = 0; j < module.functions.header(i).parameters.size();
+         ++j) {
+      const auto &parameter = module.functions.header(i).parameters[j];
       if (!parameter.defaultValue.get() && !parameter.compiledDefault)
         continue;
       if (module.functions.size() + defaultCount >= limits::functions)
@@ -895,9 +905,9 @@ CheckedLibrary::import(const Module &module,
   if (options.libraryQueries)
     if (auto reused = options.libraryQueries->find(root, queryIdentity))
       return reused;
-  auto storage = std::make_shared<const ImportedStorage>(
-      ImportedStorage{archive.sources, std::move(archive.ir),
-                      archive.declarations, archive.backing});
+  auto storage = std::make_shared<const ImportedStorage>(ImportedStorage{
+      archive.sources, std::move(archive.ir), archive.declarations,
+      archive.verifyIRBody, archive.verifyDeclarationPayload, archive.backing});
   references.source = [storage](const auto &source) {
     return storage->sources.resolve(source);
   };
@@ -908,7 +918,7 @@ CheckedLibrary::import(const Module &module,
   typeSymbols->resolve = references.symbol;
   auto graph = metadata::importTypeGraph(*types, archive.types, *typeSymbols,
                                          metadata::ValidationMode::OnDemand,
-                                         typeSymbols);
+                                         typeSymbols, archive.backing);
   if (!graph)
     return fail(graph.error);
   auto roots = std::make_shared<std::vector<Type>>(std::move(graph.roots));
@@ -919,15 +929,17 @@ CheckedLibrary::import(const Module &module,
   };
   auto retainedReferences =
       std::make_shared<const metadata::DecodeReferences>(references);
-  auto pendingIR = std::async(std::launch::async | std::launch::deferred,
-                              [storage, retainedReferences] {
-                                return ir::decodeProgramLazy(
-                                    storage->ir, *retainedReferences, true,
-                                    retainedReferences, storage);
-                              });
+  auto pendingIR =
+      std::async(std::launch::async | std::launch::deferred,
+                 [storage, retainedReferences] {
+                   return ir::decodeProgramLazy(
+                       storage->ir, *retainedReferences, true,
+                       retainedReferences, storage, storage->verifyIRBody);
+                 });
   auto declarations = importLibraryDeclarations(
       storage->declarations, types, *retainedReferences, &module, storage,
-      retainedReferences, metadata::ValidationMode::OnDemand);
+      retainedReferences, metadata::ValidationMode::OnDemand, functionNames,
+      storage->verifyDeclarationPayload);
   if (!declarations)
     return fail(declarations.error);
   if (declarations.declarations->closures.size() != closureCount)

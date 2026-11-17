@@ -23,7 +23,7 @@ bool Builder::callHasFailure(const Node &node) const {
     return module.typeStore()->callable(type).error != Type::Unknown;
   }
   return facts.callee >= 0 &&
-         !module.syntax().functions[facts.callee].error.empty();
+         module.function(facts.callee).error != Type::Unknown;
 }
 Place Builder::receiverSource(const Node &node, bool extend) {
   if (module.facts(node).place || node.kind == Kind::Name ||

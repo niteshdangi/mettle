@@ -292,7 +292,7 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
       result.libraries.push_back(module.function(i).library);
   for (std::size_t i = 0; i < module.statics().size(); ++i) {
     const auto &facts = module.statics()[i];
-    const auto &source = module.syntax().statics[i];
+    const auto &source = module.syntax().statics.header(i);
     result.statics.push_back({facts.name, facts.externalName, facts.library,
                               facts.type, source.mutableBinding,
                               source.foreignDeclaration, source.span,
@@ -320,7 +320,8 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
             imported ? imported->functions.find(i)
                      : std::map<std::size_t, ir::Function>::const_iterator{};
         if (!imported || found == imported->functions.end()) {
-          diagnostics.error("metadata", module.syntax().functions[i].span,
+          diagnostics.error("metadata",
+                            module.syntax().functions.header(i).span,
                             "imported function has no verified symbolic body");
           return result;
         }
@@ -335,7 +336,7 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
     }
     for (std::size_t i = 0; i < module.syntax().functions.size(); ++i)
       for (std::size_t p = 0;
-           p < module.syntax().functions[i].parameters.size(); ++p)
+           p < module.syntax().functions.header(i).parameters.size(); ++p)
         if (module.hasDefault(i, p)) {
           if (module.imported(i)) {
             if (deferredHeader)
@@ -346,7 +347,7 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
               }
             if (!imported || !imported->defaults.contains({i, p})) {
               diagnostics.error(
-                  "metadata", module.syntax().functions[i].span,
+                  "metadata", module.syntax().functions.header(i).span,
                   "imported default has no verified symbolic helper");
               return result;
             }

@@ -412,19 +412,22 @@ unsigned CleanupFrame::addRoot(const cleanup::Plan &sourcePlan, int place,
 }
 
 CleanupFrame::CleanupFrame(LoweringContext &lowering,
-                           const ir::Function &source, llvm::Function *wrapper)
-    : CleanupFrame(lowering, source, wrapper, wrapper->getName().str()) {}
+                           const ir::Function &source,
+                           const cleanup::Plan &plan, llvm::Function *wrapper)
+    : CleanupFrame(lowering, source, plan, wrapper, wrapper->getName().str()) {}
 CleanupFrame::CleanupFrame(LoweringContext &lowering,
-                           const ir::Function &source, std::string name)
-    : CleanupFrame(lowering, source, nullptr, std::move(name)) {}
+                           const ir::Function &source,
+                           const cleanup::Plan &plan, std::string name)
+    : CleanupFrame(lowering, source, plan, nullptr, std::move(name)) {}
 CleanupFrame::CleanupFrame(LoweringContext &lowering,
-                           const ir::Function &source, llvm::Function *wrapper,
+                           const ir::Function &source,
+                           const cleanup::Plan &plan, llvm::Function *wrapper,
                            std::string name)
     : lowering(lowering), source(source), wrapper(wrapper),
       bodyFunction(lowering.callback(name + ".body")),
       cleanupFunction(lowering.callback(name + ".unwind", true)),
       frameType(llvm::StructType::create(lowering.context, name + ".frame")),
-      name(name), plan(cleanup::plan(source, *lowering.program.types)) {
+      name(name), plan(plan) {
   // Cleanup can outlive the body stack, so only nonescaping, unowned locals
   // move.
   std::vector<bool> bodyOnly(source.locals.size(), false);

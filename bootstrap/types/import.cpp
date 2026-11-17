@@ -204,10 +204,14 @@ Type TypeStore::declareImportedType(ImportedTypeKind kind) {
 void TypeStore::deferImportedDefinitions(
     std::span<const Type> ids, std::span<const ImportedTypeIndex> index,
     std::shared_ptr<const ImportedDefinitionLoader> loader,
-    std::shared_ptr<const BorrowedDefinitionLoader> borrowed) {
+    std::shared_ptr<const BorrowedDefinitionLoader> borrowed,
+    std::shared_ptr<const void> indexOwner) {
   if (!loader || ids.size() != entries.size() || index.size() != ids.size() ||
-      lookup.synced || lookup.base)
+      lookup.synced || lookup.base || lookup.imported)
     throw std::invalid_argument("deferred definitions require a fresh graph");
+  auto imported = indexOwner ? std::make_shared<ImportedLookupData>() : nullptr;
+  if (imported)
+    imported->owner = std::move(indexOwner);
   auto closureSlots = std::make_shared<std::vector<int>>(ids.size(), -1);
   auto productLoader = std::make_shared<const TypeRecords<ProductType>::Loader>(
       [loader, closureSlots](std::size_t i) {
@@ -263,57 +267,107 @@ void TypeStore::deferImportedDefinitions(
       if (!key.coroutineInterior.empty())
         coroutineInteriors[ids[i].index()] = {key.coroutineInterior.begin(),
                                               key.coroutineInterior.end()};
-      if (key.genericOrigin != Type::Unknown)
-        lookup.local.genericInstances[key.genericOrigin].push_back(ordinal);
-      if (key.regionOrigin != Type::Unknown)
-        lookup.local.regionInstances[key.regionOrigin].push_back(ordinal);
-      lookup.local.aggregates[{key.key.begin(), key.key.end()}].push_back(
-          ordinal);
+      if (key.genericOrigin != Type::Unknown) {
+        if (imported)
+          imported->genericInstances.add(key.genericOrigin, ordinal);
+        else
+          lookup.local.genericInstances[key.genericOrigin].push_back(ordinal);
+      }
+      if (key.regionOrigin != Type::Unknown) {
+        if (imported)
+          imported->regionInstances.add(key.regionOrigin, ordinal);
+        else
+          lookup.local.regionInstances[key.regionOrigin].push_back(ordinal);
+      }
+      if (imported)
+        imported->aggregates.add(key.key, ordinal);
+      else
+        lookup.local.aggregates[{key.key.begin(), key.key.end()}].push_back(
+            ordinal);
       break;
     case EntryKind::View:
       views.defer(entry.index, i, viewLoader);
-      lookup.local.views.try_emplace(
-          std::tuple{key.payload, static_cast<int>(key.mode), key.region},
-          ordinal);
+      if (imported)
+        imported->views.add(
+            {key.payload, static_cast<int>(key.mode), key.region}, ordinal);
+      else
+        lookup.local.views.try_emplace(
+            std::tuple{key.payload, static_cast<int>(key.mode), key.region},
+            ordinal);
       break;
     case EntryKind::Pointer:
       views.defer(entry.index, i, pointerLoader);
-      lookup.local.pointers.try_emplace(
-          std::pair{key.payload, static_cast<int>(key.mode)}, ordinal);
+      if (imported)
+        imported->pointers.add({key.payload, static_cast<int>(key.mode)},
+                               ordinal);
+      else
+        lookup.local.pointers.try_emplace(
+            std::pair{key.payload, static_cast<int>(key.mode)}, ordinal);
       break;
     case EntryKind::Slice:
       slices.defer(entry.index, i, sliceLoader);
-      lookup.local.slices.try_emplace(key.payload, ordinal);
+      if (imported)
+        imported->slices.add(key.payload, ordinal);
+      else
+        lookup.local.slices.try_emplace(key.payload, ordinal);
       break;
     case EntryKind::Parameter:
       parameters.defer(entry.index, i, parameterLoader);
-      if (key.parameterKind == TypeParameterKind::Value)
-        lookup.local.constants[{key.valueType, key.magnitude}].push_back(
-            ordinal);
+      if (key.parameterKind == TypeParameterKind::Value) {
+        if (imported)
+          imported->constants.add({key.valueType, key.magnitude}, ordinal);
+        else
+          lookup.local.constants[{key.valueType, key.magnitude}].push_back(
+              ordinal);
+      } else if (imported)
+        imported->operands.add(key.key, ordinal);
       else
         lookup.local.operands[{key.key.begin(), key.key.end()}].push_back(
             ordinal);
       break;
     case EntryKind::Callable:
       callables.defer(entry.index, i, callableLoader);
-      lookup.local
-          .callables[{key.regionUniverse,
-                      {key.callableRegionParameters.begin(),
-                       key.callableRegionParameters.end()},
-                      {key.callableParameterRegions.begin(),
-                       key.callableParameterRegions.end()},
-                      {key.callableRegionRequirements.begin(),
-                       key.callableRegionRequirements.end()},
-                      {key.key.begin(), key.key.end()}}]
-          .push_back(ordinal);
+      if (imported)
+        imported->callables.add({key.regionUniverse,
+                                 key.callableRegionParameters,
+                                 key.callableParameterRegions,
+                                 key.callableRegionRequirements, key.key},
+                                ordinal);
+      else
+        lookup.local
+            .callables[{key.regionUniverse,
+                        {key.callableRegionParameters.begin(),
+                         key.callableRegionParameters.end()},
+                        {key.callableParameterRegions.begin(),
+                         key.callableParameterRegions.end()},
+                        {key.callableRegionRequirements.begin(),
+                         key.callableRegionRequirements.end()},
+                        {key.key.begin(), key.key.end()}}]
+            .push_back(ordinal);
       break;
     case EntryKind::Erased:
       erasedTypes.defer(entry.index, i, erasedLoader);
-      lookup.local.erased[key.declaration].push_back(ordinal);
+      if (imported)
+        imported->erased.add(key.declaration, ordinal);
+      else
+        lookup.local.erased[key.declaration].push_back(ordinal);
       break;
     case EntryKind::Opaque:
       throw std::logic_error("opaque entry in an imported type graph");
     }
+  }
+  if (imported) {
+    imported->genericInstances.seal();
+    imported->regionInstances.seal();
+    imported->aggregates.seal();
+    imported->views.seal();
+    imported->pointers.seal();
+    imported->slices.seal();
+    imported->erased.seal();
+    imported->operands.seal();
+    imported->callables.seal();
+    imported->constants.seal();
+    lookup.imported = std::move(imported);
   }
   lookup.synced = entries.size();
   borrowedDefinitions = std::move(borrowed);

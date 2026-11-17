@@ -1099,6 +1099,9 @@ struct MacroDiscovery {
       std::tuple<std::vector<std::string>, std::vector<std::string>, bool>;
   std::map<Request, std::optional<std::vector<std::string>>> modules;
   std::set<std::string> requested;
+  std::map<std::string, std::vector<std::size_t>, std::less<>> importsByAlias;
+  std::set<std::size_t> unresolvedImports;
+  std::size_t indexedImports = 0;
   bool resolving = false;
 };
 
@@ -1877,8 +1880,24 @@ private:
 
   void resolveMacroImports(const std::vector<std::string> &scope,
                            std::string_view name) {
-    discovery->requested.insert(macroKey(scope, name));
-    if (discovery->resolving)
+    auto requestKey = macroKey(scope, name);
+    auto newRequest = discovery->requested.insert(requestKey).second;
+    for (; discovery->indexedImports < pendingImports->size();
+         ++discovery->indexedImports) {
+      auto index = discovery->indexedImports;
+      const auto &pending = (*pendingImports)[index];
+      auto alias = macroKey(pending.scope, pending.alias);
+      discovery->importsByAlias[alias].push_back(index);
+      if (!pending.resolved && discovery->requested.contains(alias))
+        discovery->unresolvedImports.insert(index);
+    }
+    if (newRequest)
+      if (auto imports = discovery->importsByAlias.find(requestKey);
+          imports != discovery->importsByAlias.end())
+        for (auto index : imports->second)
+          if (!(*pendingImports)[index].resolved)
+            discovery->unresolvedImports.insert(index);
+    if (discovery->resolving || discovery->unresolvedImports.empty())
       return;
     discovery->resolving = true;
     struct Restore {
@@ -1890,11 +1909,13 @@ private:
       changed = false;
       auto requested = discovery->requested.size();
       auto indexed = indexedModules->size();
-      for (std::size_t i = 0; i < pendingImports->size(); ++i) {
-        if ((*pendingImports)[i].resolved ||
-            !discovery->requested.contains(macroKey(
-                (*pendingImports)[i].scope, (*pendingImports)[i].alias)))
+      auto pendingRequests = std::vector(discovery->unresolvedImports.begin(),
+                                         discovery->unresolvedImports.end());
+      for (auto i : pendingRequests) {
+        if ((*pendingImports)[i].resolved) {
+          discovery->unresolvedImports.erase(i);
           continue;
+        }
         auto pending = (*pendingImports)[i];
         auto path = pending.path;
         auto target = bindingAtPath(path, pending.name, pending.scope, true);
@@ -1904,6 +1925,7 @@ private:
         (*importedMacros)[key].push_back(
             reexportedBinding(*target, pending.scope, pending.visibility));
         (*pendingImports)[i].resolved = true;
+        discovery->unresolvedImports.erase(i);
         changed = true;
       }
       changed |= discovery->requested.size() != requested ||

@@ -19,6 +19,8 @@ void Checker::exhaustiveness() {
   };
   std::size_t steps = 0;
   auto wildcard = [](const Pattern *pattern) {
+    while (pattern && pattern->kind == PatternKind::At)
+      pattern = &pattern->children[0];
     return !pattern || pattern->kind == PatternKind::Wildcard ||
            pattern->kind == PatternKind::Binding;
   };
@@ -33,6 +35,9 @@ void Checker::exhaustiveness() {
       throw std::length_error("pattern exhaustiveness limit exceeded");
     if (types.empty())
       return matrix.empty();
+    for (const auto &row : matrix)
+      if (std::all_of(row.begin(), row.end(), wildcard))
+        return false;
     Matrix expanded;
     std::function<void(Row)> expand = [&](Row row) {
       if (row[0] && row[0]->kind == PatternKind::At) {
@@ -66,6 +71,15 @@ void Checker::exhaustiveness() {
     Type type = types[0];
     if (checked.types->uninhabited(type))
       return false;
+    if (wildcard(query[0]) &&
+        std::all_of(matrix.begin(), matrix.end(),
+                    [&](const Row &row) { return wildcard(row[0]); })) {
+      for (auto &row : matrix)
+        row.erase(row.begin());
+      query.erase(query.begin());
+      types.erase(types.begin());
+      return useful(std::move(matrix), std::move(query), std::move(types));
+    }
     std::vector<Constructor> constructors;
     bool scalarColumn = false;
     if (checked.types->isSum(type)) {

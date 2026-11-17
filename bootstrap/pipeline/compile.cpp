@@ -14,6 +14,15 @@
 #include <map>
 #include <tuple>
 
+mettle::ir::VerifiedProgram::VerifiedProgram(
+    Program program, std::unique_ptr<const std::vector<cleanup::Plan>> plans)
+    : value(std::move(program)), plans(std::move(plans)) {}
+mettle::ir::VerifiedProgram::VerifiedProgram(VerifiedProgram &&) noexcept =
+    default;
+mettle::ir::VerifiedProgram &
+mettle::ir::VerifiedProgram::operator=(VerifiedProgram &&) noexcept = default;
+mettle::ir::VerifiedProgram::~VerifiedProgram() = default;
+
 namespace mettle::pipeline {
 class Compiler {
 public:
@@ -135,11 +144,14 @@ public:
     }
     if (!diagnostics.empty() || !ir::verify(program, diagnostics, {}, proof))
       return std::nullopt;
-    for (const auto &function : program.functions) {
+    auto plans =
+        std::make_unique<std::vector<cleanup::Plan>>(program.functions.size());
+    for (std::size_t i = 0; i < program.functions.size(); ++i) {
+      const auto &function = program.functions[i];
       if (function.blocks.empty())
         continue;
       try {
-        cleanup::plan(function, *program.types);
+        (*plans)[i] = cleanup::plan(function, *program.types);
       } catch (const std::length_error &error) {
         auto local = function.parameters < function.locals.size()
                          ? function.parameters
@@ -158,7 +170,7 @@ public:
     analysis::loans(program, diagnostics, prepared, previousLoans);
     if (!diagnostics.empty())
       return std::nullopt;
-    return ir::VerifiedProgram(std::move(program));
+    return ir::VerifiedProgram(std::move(program), std::move(plans));
   }
   static std::optional<PreparedProgram>
   prepare(Module tree, Diagnostics &diagnostics, bool requireEntry = true,
@@ -406,7 +418,7 @@ public:
         std::size_t helper = count;
         for (std::size_t i = 0; i < count; ++i)
           for (std::size_t p = 0;
-               p < checked->syntax().functions[i].parameters.size(); ++p)
+               p < checked->syntax().functions.header(i).parameters.size(); ++p)
             if (checked->hasDefault(i, p)) {
               if (!native || !native->functions.contains(i))
                 dependencies(i, program.functions.at(helper));
@@ -455,7 +467,7 @@ public:
     for (std::size_t i = 0; i < checked->syntax().functions.size() &&
                             i < program.functionPackages.size();
          ++i) {
-      auto source = checked->syntax().functions[i].span.source;
+      auto source = checked->syntax().functions.header(i).span.source;
       if (auto owner = packageOwners.find(source); owner != packageOwners.end())
         program.functionPackages[i] = owner->second;
     }
@@ -463,7 +475,7 @@ public:
     for (std::size_t i = 0; i < checked->syntax().statics.size() &&
                             i < program.staticPackages.size();
          ++i) {
-      auto source = checked->syntax().statics[i].span.source;
+      auto source = checked->syntax().statics.header(i).span.source;
       if (auto owner = packageOwners.find(source); owner != packageOwners.end())
         program.staticPackages[i] = owner->second;
     }

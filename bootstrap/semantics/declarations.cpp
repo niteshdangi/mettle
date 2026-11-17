@@ -5,7 +5,7 @@
 
 namespace mettle {
 void Checker::declarations() {
-  for (const auto &product : module.products) {
+  for (const auto &product : module.products.headers()) {
     if (imported(product.span))
       continue;
     auto name = definitionName(product.span, product.name);
@@ -28,12 +28,13 @@ void Checker::declarations() {
   }
   aliasStates.resize(module.aliases.size());
   for (std::size_t i = 0; i < module.aliases.size(); ++i) {
-    const auto &alias = module.aliases[i];
-    if (imported(alias.span)) {
-      aliases.emplace(definitionName(alias.span, alias.name), i);
+    const auto &header = module.aliases.header(i);
+    if (imported(header.span)) {
+      aliases.emplace(definitionName(header.span, header.name), i);
       aliasStates[i] = 2;
       continue;
     }
+    const auto &alias = module.aliases[i];
     std::set<NameKey> regions;
     for (const auto &parameter : alias.genericParameters)
       if (parameter.kind == GenericParameterKind::Region)
@@ -85,7 +86,7 @@ void Checker::declarations() {
     return;
   prepareGenerics();
   for (std::size_t i = 0; i < module.aliases.size(); ++i)
-    if (imported(module.aliases[i].span))
+    if (imported(module.aliases.header(i).span))
       continue;
     else if (typeEnvironment(module.aliases[i]).parameters.empty())
       resolveAlias(i);
@@ -98,10 +99,11 @@ void Checker::declarations() {
 }
 
 Type Checker::resolveAlias(std::size_t index, unsigned depth) {
-  const auto &alias = module.aliases[index];
-  auto name = definitionName(alias.span, alias.name);
+  const auto &header = module.aliases.header(index);
+  auto name = definitionName(header.span, header.name);
   if (aliasStates[index] == 2)
     return typeNames.at(name);
+  const auto &alias = module.aliases[index];
   if (aliasStates[index] == 1) {
     error("type", alias.span,
           "cyclic type alias '" + alias.name + "' has no concrete target");

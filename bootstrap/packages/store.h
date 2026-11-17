@@ -104,8 +104,6 @@ public:
     Lookup status = Lookup::Miss;
     std::shared_ptr<const Mapping> mapping;
   };
-  // `verify`, when given, replaces the blob hash check: it must reject any
-  // bytes but the stored ones (e.g. a cryptographic seal inside the artifact).
   using Verifier = std::function<bool(const std::shared_ptr<const Mapping> &)>;
   Mapped mapped(const std::string &key, std::uint64_t maximumBytes,
                 const Verifier &verify = {});
@@ -134,7 +132,8 @@ public:
   // cache stays proportional to the live projects' current builds without a
   // global size bound. Returns one explanation per removal.
   std::vector<std::string> commitProject(const std::string &project,
-                                         const std::filesystem::path &path);
+                                         const std::filesystem::path &path,
+                                         const std::string &keep = {});
   StoreUsage usage() const;
   // Deletes the store's own directories (never anything else). With `dryRun`
   // only counts. Refuses a non-empty directory that lacks the VERSION marker.
@@ -161,7 +160,8 @@ private:
   bool publish(const std::filesystem::path &path, const std::string &content);
   bool publishLocked(const std::filesystem::path &path,
                      const std::string &content);
-  std::vector<std::string> pruneLocked(const std::set<std::string> &keep);
+  std::vector<std::string> pruneLocked(const std::set<std::string> &keep,
+                                       std::set<std::string> leased);
   std::vector<Record> records() const;
   struct Touched {
     std::mutex lock;

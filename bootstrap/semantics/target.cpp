@@ -6,7 +6,9 @@ std::set<std::string> Checker::availableFeatures() const {
   auto features = guardedFeatures;
   if (current) {
     for (std::size_t index = 0; index < module.functions.size(); ++index)
-      if (current == &module.functions[index])
+      if (current == &module.functions.header(index) ||
+          (module.functions.isMaterialized(index) &&
+           current == &module.functions[index]))
         features.insert(checked.functions[index].targetFeatures.begin(),
                         checked.functions[index].targetFeatures.end());
   }
@@ -21,9 +23,10 @@ void Checker::requireFeatures(const std::set<std::string> &features,
           "availability");
 }
 void Checker::targetDeclarations() {
-  for (auto &function : module.functions) {
-    if (imported(function.span))
+  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+    if (imported(module.functions.header(i).span))
       continue;
+    const auto &function = module.functions[i];
     for (const auto &attribute : function.item.attributes) {
       if (attribute.name == "target_feature") {
         if (!checked.targetDescription.initialProfile())

@@ -9,8 +9,8 @@ using ir::Op;
 int Builder::defaultIndex(std::size_t callee, std::size_t parameter) const {
   std::size_t result = module.syntax().functions.size();
   for (std::size_t f = 0; f < module.syntax().functions.size(); ++f)
-    for (std::size_t p = 0; p < module.syntax().functions[f].parameters.size();
-         ++p)
+    for (std::size_t p = 0;
+         p < module.syntax().functions.header(f).parameters.size(); ++p)
       if (module.hasDefault(f, p)) {
         if (f == callee && p == parameter)
           return static_cast<int>(result);

@@ -25,9 +25,44 @@ void errors(const mettle::Diagnostics &diagnostics) {
     std::cerr << item.phase << "@" << item.span.begin << ": " << item.message
               << '\n';
 }
+void interfaceSnapshots() {
+  using namespace mettle;
+  interfaces::Database imported;
+  imported.definitions.push_back({});
+  imported.definitions[0].name = "Original";
+  imported.projections.push_back({Type::I32, Type::I64, Type::Unit, 0});
+  imported.callableContracts[Type::I32] = Type::I64;
+  imported.callableContracts[Type::U32] = Type::U64;
+  imported.callableContracts.freeze();
+  auto consumer = imported;
+  consumer.definitions[0].name = "Consumer";
+  consumer.projections[0].subject = Type::Bool;
+  consumer.callableContracts[Type::I32] = Type::U8;
+  consumer.callableContracts[Type::Bool] = Type::Unit;
+  const auto &original = imported;
+  expect(original.definitions[0].name == "Original" &&
+             original.projections[0].subject == Type::I64 &&
+             original.callableContracts.at(Type::I32) == Type::I64 &&
+             !original.callableContracts.contains(Type::Bool),
+         "consumer interface edits preserve the immutable imported phase");
+  std::map<Type, Type> expected(original.callableContracts.begin(),
+                                original.callableContracts.end());
+  expected[Type::I32] = Type::U8;
+  expected[Type::Bool] = Type::Unit;
+  expect(consumer.callableContracts.size() == expected.size() &&
+             std::equal(consumer.callableContracts.begin(),
+                        consumer.callableContracts.end(), expected.begin(),
+                        expected.end()),
+         "interface overlays merge new, overridden and untouched contracts");
+  auto position = consumer.callableContracts.find(expected.begin()->first);
+  expect(std::equal(position, consumer.callableContracts.end(),
+                    expected.begin(), expected.end()),
+         "interface contract lookup retains ordered overlay traversal");
+}
 } // namespace
 
 int main() {
+  interfaceSnapshots();
   using namespace mettle;
   using metadata::SymbolKind;
   const std::string source = R"(
@@ -53,10 +88,8 @@ pub module core {
     pub fn identity<T>(take value: T): T { value }
     pub const fn constIdentity<T: Copy>(value: T): T { value }
     pub fn add(x: i32 = hidden(3)): i32 { x + 1 }
-    pub fn cached(): i32 {
-        static VALUE: i32 = 7;
-        VALUE
-    }
+    static CACHED: i32 = 7;
+    pub fn cached(): i32 { CACHED }
     pub fn rangeShapes(read values: [i32]): usize {
         values[..].len() + values[1usize..].len() +
             values[..2usize].len() + values[0usize..=1usize].len()
@@ -638,12 +671,25 @@ fn main(): i32 {
   const std::string_view revision = "library-revision";
   auto revisionBytes = std::search(unknownSource.begin(), unknownSource.end(),
                                    revision.begin(), revision.end());
+  const std::string_view reexportRevision = "reexport-revision";
+  auto reexportBytes =
+      std::search(unknownSource.begin(), unknownSource.end(),
+                  reexportRevision.begin(), reexportRevision.end());
   expect(revisionBytes >= unknownSource.begin() + 2 &&
-             revisionBytes != unknownSource.end(),
+             revisionBytes != unknownSource.end() &&
+             reexportBytes != unknownSource.end(),
          "fixture contains an indexed source revision");
   if (revisionBytes >= unknownSource.begin() + 2 &&
-      revisionBytes != unknownSource.end()) {
-    *(revisionBytes - 2) = 2;
+      revisionBytes != unknownSource.end() &&
+      reexportBytes != unknownSource.end()) {
+    auto sourceIndex = std::max(revisionBytes + revision.size(),
+                                reexportBytes + reexportRevision.size());
+    while (sourceIndex != unknownSource.end() && (*sourceIndex++ & 0x80)) {
+    }
+    expect(sourceIndex != unknownSource.end(),
+           "fixture contains an indexed source reference");
+    if (sourceIndex != unknownSource.end())
+      *sourceIndex = 2;
     std::size_t sourceReads = 0;
     invalidReferences = decode;
     invalidReferences.source =
@@ -652,7 +698,8 @@ fn main(): i32 {
       return std::nullopt;
     };
     auto rejected = decodeLibraryHeader(unknownSource, invalidReferences);
-    expect(!rejected && rejected.error == "unknown declaration source index" &&
+    expect(!rejected &&
+               rejected.error == "invalid declaration source reference" &&
                sourceReads == 0,
            "unknown source indexes fail before calling external resolvers");
   }
@@ -662,7 +709,7 @@ fn main(): i32 {
          "header mounting rejects trailing bytes");
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
-      1 + std::string_view("mettle.checked-contracts.15").size();
+      1 + std::string_view("mettle.checked-contracts.17").size();
   oversized[inventoryOffset] = 0xff;
   oversized.insert(oversized.begin() + inventoryOffset + 1, 8, 0xff);
   oversized.insert(oversized.begin() + inventoryOffset + 9, 0x01);

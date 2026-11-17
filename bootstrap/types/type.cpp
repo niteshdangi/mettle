@@ -4,6 +4,8 @@
 #include <limits>
 #include <set>
 #include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace mettle {
@@ -239,34 +241,105 @@ bool TypeStore::isSum(Type type) const {
                              product(type).kind == AggregateKind::Outcome);
 }
 bool TypeStore::uninhabited(Type type) const {
-  if (type == Type::Never)
-    return true;
   if (!isProduct(type))
-    return false;
-  const auto &aggregate = product(type);
-  if (aggregate.kind == AggregateKind::Uninit)
-    return false;
-  if (aggregate.layout.unionType)
-    return std::all_of(
-        aggregate.fields.begin(), aggregate.fields.end(),
-        [&](const auto &field) { return uninhabited(field.type); });
-  if (isSum(type)) {
-    for (const auto &variant : aggregate.variants) {
-      bool impossible = false;
-      for (auto field : variant.fields)
-        impossible |= uninhabited(aggregate.fields[field].type);
-      if (!impossible)
-        return false;
+    return type == Type::Never;
+  struct Proof {
+    Type type;
+    std::size_t remaining = 0;
+    std::vector<std::size_t> dependents;
+  };
+  struct Clause {
+    std::size_t owner;
+    bool satisfied = false;
+  };
+  std::vector<Proof> proofs;
+  std::vector<Clause> clauses;
+  std::unordered_map<std::uint32_t, std::size_t> indices;
+  auto index = [&](Type current) {
+    auto [found, inserted] =
+        indices.try_emplace(current.index(), proofs.size());
+    if (inserted)
+      proofs.push_back({current, 0, {}});
+    return found->second;
+  };
+  index(type);
+  for (std::size_t owner = 0; owner < proofs.size(); ++owner) {
+    auto current = proofs[owner].type;
+    auto clause = [&] {
+      auto result = clauses.size();
+      clauses.push_back({owner});
+      ++proofs[owner].remaining;
+      return result;
+    };
+    auto depend = [&](std::size_t requirement, Type child) {
+      auto childIndex = index(child);
+      proofs[childIndex].dependents.push_back(requirement);
+    };
+    if (current == Type::Never)
+      continue;
+    if (!isProduct(current)) {
+      clause();
+      continue;
     }
-    return true;
+    inspectProduct(current, [&](const auto &aggregate) {
+      if (aggregate.kind == AggregateKind::Uninit)
+        clause();
+      else if (aggregate.layout.unionType) {
+        for (const auto &field : aggregate.fields)
+          depend(clause(), field.type);
+      } else if (aggregate.kind == AggregateKind::Enumeration ||
+                 aggregate.kind == AggregateKind::Ordering ||
+                 aggregate.kind == AggregateKind::Optional ||
+                 aggregate.kind == AggregateKind::Outcome) {
+        if (std::any_of(aggregate.variants.begin(), aggregate.variants.end(),
+                        [&](const auto &variant) {
+                          return std::all_of(
+                              variant.fields.begin(), variant.fields.end(),
+                              [&](auto field) {
+                                auto child = aggregate.fields[field].type;
+                                return child != Type::Never &&
+                                       !isProduct(child);
+                              });
+                        })) {
+          clause();
+          return;
+        }
+        for (const auto &variant : aggregate.variants) {
+          auto requirement = clause();
+          for (auto field : variant.fields)
+            depend(requirement, aggregate.fields[field].type);
+        }
+      } else if (aggregate.kind == AggregateKind::Array &&
+                 !aggregate.components.empty()) {
+        auto requirement = clause();
+        auto length = arrayLength(current);
+        if (length && *length)
+          depend(requirement, aggregate.components[0]);
+      } else {
+        auto requirement = clause();
+        for (const auto &field : aggregate.fields)
+          depend(requirement, field.type);
+      }
+    });
   }
-  if (aggregate.kind == AggregateKind::Array && !aggregate.components.empty()) {
-    auto length = arrayLength(type);
-    return length && *length && uninhabited(aggregate.components[0]);
-  }
-  for (const auto &field : aggregate.fields)
-    if (uninhabited(field.type))
+  std::vector<std::size_t> proven;
+  for (std::size_t i = 0; i < proofs.size(); ++i)
+    if (!proofs[i].remaining)
+      proven.push_back(i);
+  while (!proven.empty()) {
+    auto current = proven.back();
+    proven.pop_back();
+    if (current == 0)
       return true;
+    for (auto requirement : proofs[current].dependents) {
+      auto &clause = clauses[requirement];
+      if (!clause.satisfied) {
+        clause.satisfied = true;
+        if (!--proofs[clause.owner].remaining)
+          proven.push_back(clause.owner);
+      }
+    }
+  }
   return false;
 }
 std::vector<TypeField> TypeStore::vaListFields() {
@@ -549,32 +622,40 @@ void TypeStore::setConditionalCopy(Type type,
   record.copyConditions = std::move(parameters);
 }
 bool TypeStore::needsDrop(Type type) const {
-  if (isErased(type))
-    return true;
-  if (isSlice(type))
-    return needsDrop(slice(type).element);
-  if (isParameter(type))
-    return !parameter(type).copyRequested;
-  if (!isProduct(type))
-    return false;
-  if (product(type).kind == AggregateKind::Uninit ||
-      product(type).kind == AggregateKind::ManualDrop ||
-      product(type).kind == AggregateKind::Atomic)
-    return false;
-  const auto &record = product(type);
-  if (record.kind == AggregateKind::VarArgs ||
-      record.kind == AggregateKind::Coroutine)
-    return true;
-  if (record.kind == AggregateKind::Array &&
-      record.arrayCount != Type::Unknown && !record.components.empty() &&
-      needsDrop(record.components[0]))
-    return true;
-  if (record.hasDestructor || record.nativeCleanup != NativeCleanup::None)
-    return true;
-  for (const auto &field : record.fields)
-    if (needsDrop(field.type))
+  std::unordered_set<std::uint32_t> visited;
+  auto visit = [&](auto &&self, Type current) -> bool {
+    if (isErased(current))
       return true;
-  return false;
+    if (isParameter(current))
+      return inspectParameter(
+          current, [](const auto &record) { return !record.copyRequested; });
+    if (!isProduct(current) && !isSlice(current))
+      return false;
+    if (!visited.insert(current.index()).second)
+      return false;
+    if (isSlice(current))
+      return self(self, slice(current).element);
+    return inspectProduct(current, [&](const auto &record) {
+      if (record.kind == AggregateKind::Uninit ||
+          record.kind == AggregateKind::ManualDrop ||
+          record.kind == AggregateKind::Atomic)
+        return false;
+      if (record.kind == AggregateKind::VarArgs ||
+          record.kind == AggregateKind::Coroutine)
+        return true;
+      if (record.kind == AggregateKind::Array &&
+          record.arrayCount != Type::Unknown && !record.components.empty() &&
+          self(self, record.components[0]))
+        return true;
+      if (record.hasDestructor || record.nativeCleanup != NativeCleanup::None)
+        return true;
+      for (const auto &field : record.fields)
+        if (self(self, field.type))
+          return true;
+      return false;
+    });
+  };
+  return visit(visit, type);
 }
 bool TypeStore::containsViews(Type type, bool includeErasedPayloads) const {
   std::vector<Type> active;

@@ -12,6 +12,7 @@
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -45,6 +46,14 @@ struct TemporaryDirectory {
   std::error_code create(const std::string &prefix) {
     return llvm::sys::fs::createUniqueDirectory(prefix, path);
   }
+};
+
+struct BackendOutput {
+  std::string diagnostics;
+  bool failed = false;
+  llvm::LLVMContext context;
+  std::unique_ptr<llvm::Module> module;
+  Temporary object;
 };
 
 bool sameRuntimeTarget(llvm::StringRef requested, llvm::StringRef runtime) {
@@ -206,7 +215,8 @@ static int emitOne(const Options &options, const Source &source,
                    const ir::VerifiedProgram &program,
                    const Diagnostics &diagnostics,
                    const std::vector<PackageObject> &packageObjects,
-                   packages::Store *store) {
+                   packages::Store *store,
+                   BackendOutput *sharedBackend = nullptr) {
   std::error_code fileError;
   auto inputPath = std::filesystem::weakly_canonical(source.path, fileError);
   if (!fileError && inputPath == std::filesystem::weakly_canonical(
@@ -245,21 +255,21 @@ static int emitOne(const Options &options, const Source &source,
       return ioFailure("cannot write " + options.output, writeError);
     }
   } else {
-    struct BackendDiagnostics {
-      std::string text;
-      bool failed = false;
-    } backendDiagnostics;
-    llvm::LLVMContext context;
+    std::optional<BackendOutput> localBackend;
+    if (!sharedBackend)
+      localBackend.emplace();
+    auto &backend = sharedBackend ? *sharedBackend : *localBackend;
+    auto &context = backend.context;
     context.setDiagnosticHandlerCallBack(
         [](const llvm::DiagnosticInfo *diagnostic, void *opaque) {
-          auto &state = *static_cast<BackendDiagnostics *>(opaque);
-          llvm::raw_string_ostream text(state.text);
+          auto &state = *static_cast<BackendOutput *>(opaque);
+          llvm::raw_string_ostream text(state.diagnostics);
           llvm::DiagnosticPrinterRawOStream printer(text);
           diagnostic->print(printer);
           text << '\n';
           state.failed |= diagnostic->getSeverity() == llvm::DS_Error;
         },
-        &backendDiagnostics);
+        &backend);
     auto target = llvm::Triple(llvm::Triple::normalize(options.target));
     auto facts = targetFacts(options.target);
     if (program.program().target.arch != facts.arch ||
@@ -318,13 +328,18 @@ static int emitOne(const Options &options, const Source &source,
                     [](const auto &package) {
                       return package.identity.starts_with("native:");
                     });
-    auto module = mettle::backend::lower(
-        program, context, checked, options.target, options.freestanding,
-        options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr,
-        options.sanitizers.contains("address"),
-        options.sanitizers.contains("thread"),
-        {splitPackages, {}, !options.library, false, privateRoot},
-        &debugRequest);
+    if (!backend.module) {
+      if (options.explain)
+        std::cerr << "mettle: backend lowering " << options.target << '\n';
+      backend.module = mettle::backend::lower(
+          program, context, checked, options.target, options.freestanding,
+          options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr,
+          options.sanitizers.contains("address"),
+          options.sanitizers.contains("thread"),
+          {splitPackages, {}, !options.library, false, privateRoot},
+          &debugRequest);
+    }
+    auto &module = backend.module;
     module->setSourceFileName(source.path);
     module->setTargetTriple(
         llvm::Triple(llvm::Triple::normalize(options.target)));
@@ -333,8 +348,11 @@ static int emitOne(const Options &options, const Source &source,
       return 1;
     }
     if (options.emit == "llvm") {
+      auto instrumented =
+          !options.sanitizers.empty() ? llvm::CloneModule(*module) : nullptr;
+      auto &printed = instrumented ? *instrumented : *module;
       if (auto error = mettle::backend::instrumentModule(
-              *module, options.sanitizers.contains("address"),
+              printed, options.sanitizers.contains("address"),
               options.sanitizers.contains("thread"))) {
         std::cerr << "mettle: error[backend]: "
                   << llvm::toString(std::move(error)) << '\n';
@@ -343,7 +361,7 @@ static int emitOne(const Options &options, const Source &source,
       llvm::raw_fd_ostream out(output.path, fileError);
       if (fileError)
         return ioFailure("cannot open " + options.output, fileError);
-      module->print(out, nullptr);
+      printed.print(out, nullptr);
       out.close();
       if (out.has_error()) {
         auto writeError = out.error();
@@ -427,11 +445,11 @@ static int emitOne(const Options &options, const Source &source,
                       << llvm::toString(std::move(error)) << '\n';
             return 1;
           }
-          if (backendDiagnostics.failed) {
+          if (backend.failed) {
             std::cerr << "mettle: error[assembly]: target assembly/code "
                          "generation rejected package '"
                       << package.identity << "':\n"
-                      << backendDiagnostics.text;
+                      << backend.diagnostics;
             return 1;
           }
           if (store) {
@@ -441,19 +459,39 @@ static int emitOne(const Options &options, const Source &source,
         }
         packagePaths.push_back(std::move(packagePath));
       }
-      if (auto error = mettle::backend::emitObject(
-              *module, options.target, objectPath, release,
-              options.sanitizers.contains("address"),
-              options.sanitizers.contains("thread"))) {
-        std::cerr << "mettle: error[backend]: "
-                  << llvm::toString(std::move(error)) << '\n';
-        return 1;
+      const bool reusedObject = !backend.object.path.empty();
+      if (!reusedObject) {
+        if (sharedBackend)
+          if (auto error = backend.object.create(options.output +
+                                                 ".mettle-object-%%%%%%"))
+            return ioFailure("cannot stage reusable object", error);
+        if (options.explain)
+          std::cerr << "mettle: backend object " << options.target << '\n';
+        auto generated = sharedBackend ? llvm::CloneModule(*module) : nullptr;
+        if (auto error = mettle::backend::emitObject(
+                generated ? *generated : *module, options.target,
+                sharedBackend ? backend.object.path.str()
+                              : llvm::StringRef(objectPath),
+                release, options.sanitizers.contains("address"),
+                options.sanitizers.contains("thread"))) {
+          std::cerr << "mettle: error[backend]: "
+                    << llvm::toString(std::move(error)) << '\n';
+          return 1;
+        }
       }
-      if (backendDiagnostics.failed) {
+      if (backend.failed) {
         std::cerr << "mettle: error[assembly]: target assembly/code generation "
                      "rejected the program:\n"
-                  << backendDiagnostics.text;
+                  << backend.diagnostics;
         return 1;
+      }
+      if (sharedBackend) {
+        std::error_code error;
+        std::filesystem::copy_file(
+            backend.object.path.str().str(), objectPath,
+            std::filesystem::copy_options::overwrite_existing, error);
+        if (error)
+          return ioFailure("cannot stage object output", error);
       }
       if (archive) {
         std::vector<llvm::NewArchiveMember> members;
@@ -651,6 +689,7 @@ int emit(const Options &options, const Source &source,
     bool existed = false, directory = false;
   };
   std::vector<Artifact> artifacts;
+  BackendOutput backend;
   auto formats = options.emits;
   if (formats.empty())
     formats.push_back(options.emit);
@@ -679,7 +718,8 @@ int emit(const Options &options, const Source &source,
     Options selected = options;
     selected.emit = format;
     selected.output = artifact.staged.string();
-    if (int status = emitOne(selected, source, program, diagnostics, {}, store))
+    if (int status = emitOne(selected, source, program, diagnostics, {}, store,
+                             &backend))
       return status;
     artifacts.push_back(std::move(artifact));
     const auto bundle = selected.output + ".dSYM";

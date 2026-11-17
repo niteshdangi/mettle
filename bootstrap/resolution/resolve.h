@@ -78,6 +78,7 @@ private:
   std::vector<Definition> definitions;
   std::vector<Scope> scopes;
   std::vector<Item> items;
+  mutable std::vector<std::pair<ModuleId, std::string>> *dependencies = nullptr;
   bool rawPackageInput = true;
   std::unordered_map<SourceId, std::uint32_t> sourcePackages;
   std::unordered_map<std::string, std::uint32_t> packageInstances;

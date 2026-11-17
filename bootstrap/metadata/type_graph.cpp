@@ -585,9 +585,12 @@ using CompactDefinitionView =
 
 class CompactArena {
 public:
-  ~CompactArena() {
+  ~CompactArena() { reset(); }
+  void reset() {
     for (auto &destroy : destructors)
       destroy();
+    destructors.clear();
+    memory.release();
   }
   template <class T> std::span<T> allocate(std::size_t count) {
     static_assert(std::is_nothrow_default_constructible_v<T>);
@@ -603,7 +606,8 @@ public:
   }
 
 private:
-  std::pmr::monotonic_buffer_resource memory;
+  std::array<std::byte, 4096> buffer;
+  std::pmr::monotonic_buffer_resource memory{buffer.data(), buffer.size()};
   std::vector<std::function<void()>> destructors;
 };
 
@@ -1135,9 +1139,8 @@ template <class Derived> struct SemanticWalk : Fields<Derived> {
     (*static_cast<Derived *>(this))(item.first, item.second);
   }
 };
-std::vector<std::size_t>
-acyclic(const std::vector<std::vector<std::size_t>> &edges,
-        bool probe = false) {
+template <class Edges>
+std::vector<std::size_t> acyclic(const Edges &edges, bool probe = false) {
   std::vector<unsigned char> state(edges.size());
   std::vector<unsigned> depths(edges.size(), 1);
   std::vector<std::size_t> order;
@@ -2131,12 +2134,13 @@ template <class Definition>
 std::string canonicalKey(Graph &graph, const Definition &definition,
                          std::vector<Type> *references = nullptr,
                          const std::function<Type(Type)> *mapper = nullptr,
-                         std::uint64_t *fingerprint = nullptr) {
+                         std::uint64_t *fingerprint = nullptr,
+                         bool retainBytes = false) {
   TypeGraphSymbols symbols;
   Writer key(graph, symbols);
   key.localReferences = true;
   key.typeReferences = references;
-  key.discardBytes = references != nullptr;
+  key.discardBytes = references != nullptr && !retainBytes;
   key.typeMapper = mapper;
   key.fingerprint = fingerprint;
   key.byte(static_cast<std::uint8_t>(definition.index()));
@@ -2225,55 +2229,45 @@ std::string canonicalKey(Graph &graph, const Definition &definition,
     return {};
   return {reinterpret_cast<const char *>(key.bytes.data()), key.bytes.size()};
 }
-template <class Definitions>
-std::vector<bool>
-recursiveRegionals(const TypeStore &store, std::span<const Type> ids,
-                   const Definitions &definitions, bool *uniqueKeys = nullptr) {
-  Graph graph(store);
-  std::unordered_multimap<std::uint64_t, std::size_t> keys;
-  if (uniqueKeys) {
-    *uniqueKeys = true;
-    keys.reserve(ids.size());
+struct FlatTypeEdges {
+  std::vector<std::size_t> offsets{0}, targets;
+  std::vector<bool> removed;
+  std::size_t size() const { return offsets.size() - 1; }
+  std::span<const std::size_t> operator[](std::size_t node) const {
+    if (!removed.empty() && removed[node])
+      return {};
+    return std::span(targets).subspan(offsets[node],
+                                      offsets[node + 1] - offsets[node]);
   }
-  std::vector<std::vector<std::size_t>> edges(ids.size());
-  for (std::size_t i = 0; i < ids.size(); ++i) {
-    if (nominal(definitions[i]))
-      continue;
-    std::vector<Type> references;
-    std::uint64_t fingerprint = 14695981039346656037ull;
-    canonicalKey(graph, definitions[i], &references, nullptr,
-                 uniqueKeys ? &fingerprint : nullptr);
-    if (uniqueKeys) {
-      auto [first, last] = keys.equal_range(fingerprint);
-      if (first != last) {
-        auto key = canonicalKey(graph, definitions[i]);
-        for (auto entry = first; entry != last; ++entry)
-          if (canonicalKey(graph, definitions[entry->second]) == key) {
-            *uniqueKeys = false;
-            return {};
-          }
-      }
-      keys.emplace(fingerprint, i);
-    }
-    for (auto reference : references)
-      if (reference.index() >= builtinTypeCount) {
-        auto target = graphIndex(ids, reference);
-        edges[i].push_back(target);
-      }
+  void clear(std::size_t node) {
+    if (removed.empty())
+      removed.resize(size());
+    removed[node] = true;
   }
+};
+template <class Regional>
+std::vector<bool> recursiveRegionals(FlatTypeEdges edges, Regional regional) {
   if (acyclic(edges, true).size() == edges.size())
-    return std::vector<bool>(ids.size());
-  std::vector<std::vector<std::size_t>> reverse(ids.size());
+    return std::vector<bool>(edges.size());
+  FlatTypeEdges reverse;
+  reverse.offsets.resize(edges.size() + 1);
   for (std::size_t i = 0; i < edges.size(); ++i)
     for (auto target : edges[i])
-      reverse[target].push_back(i);
+      ++reverse.offsets[target + 1];
+  for (std::size_t i = 1; i < reverse.offsets.size(); ++i)
+    reverse.offsets[i] += reverse.offsets[i - 1];
+  reverse.targets.resize(edges.targets.size());
+  auto positions = reverse.offsets;
+  for (std::size_t i = 0; i < edges.size(); ++i)
+    for (auto target : edges[i])
+      reverse.targets[positions[target]++] = i;
   struct Frame {
     std::size_t node, next = 0;
   };
   std::vector<Frame> stack;
-  std::vector<bool> visited(ids.size()), recursive(ids.size());
+  std::vector<bool> visited(edges.size()), recursive(edges.size());
   std::vector<std::size_t> order;
-  for (std::size_t root = 0; root < ids.size(); ++root) {
+  for (std::size_t root = 0; root < edges.size(); ++root) {
     if (visited[root])
       continue;
     visited[root] = true;
@@ -2315,17 +2309,56 @@ recursiveRegionals(const TypeStore &store, std::span<const Type> ids,
                      edges[*root].end();
     if (!cycle)
       continue;
-    for (auto node : component) {
-      const auto &definition = definitions[node];
-      if (auto product = definitionRecord<ImportedProduct>(definition);
-          product && product->descriptor.regionOrigin != Type::Unknown) {
+    for (auto node : component)
+      if (regional(node)) {
         recursive[node] = true;
-        edges[node].clear();
+        edges.clear(node);
       }
-    }
   }
   acyclic(edges);
   return recursive;
+}
+template <class Definitions>
+std::vector<bool>
+recursiveRegionals(const TypeStore &store, std::span<const Type> ids,
+                   const Definitions &definitions, bool *uniqueKeys = nullptr) {
+  Graph graph(store);
+  std::unordered_multimap<std::uint64_t, std::size_t> keys;
+  if (uniqueKeys) {
+    *uniqueKeys = true;
+    keys.reserve(ids.size());
+  }
+  FlatTypeEdges edges;
+  edges.offsets.reserve(ids.size() + 1);
+  std::vector<Type> references;
+  for (std::size_t i = 0; i < ids.size(); ++i) {
+    references.clear();
+    if (!nominal(definitions[i])) {
+      std::uint64_t fingerprint = 14695981039346656037ull;
+      canonicalKey(graph, definitions[i], &references, nullptr,
+                   uniqueKeys ? &fingerprint : nullptr);
+      if (uniqueKeys) {
+        auto [first, last] = keys.equal_range(fingerprint);
+        if (first != last) {
+          auto key = canonicalKey(graph, definitions[i]);
+          for (auto entry = first; entry != last; ++entry)
+            if (canonicalKey(graph, definitions[entry->second]) == key) {
+              *uniqueKeys = false;
+              return {};
+            }
+        }
+        keys.emplace(fingerprint, i);
+      }
+      for (auto reference : references)
+        if (reference.index() >= builtinTypeCount)
+          edges.targets.push_back(graphIndex(ids, reference));
+    }
+    edges.offsets.push_back(edges.targets.size());
+  }
+  return recursiveRegionals(std::move(edges), [&](std::size_t node) {
+    auto product = definitionRecord<ImportedProduct>(definitions[node]);
+    return product && product->descriptor.regionOrigin != Type::Unknown;
+  });
 }
 class CanonicalImport {
 public:
@@ -2738,10 +2771,14 @@ namespace {
 struct DeferredTypeGraph {
   struct Record {
     std::size_t offset = 0, length = 0;
+    std::size_t identityOffset = 0, identityLength = 0;
+    std::size_t keyOffset = 0, keyLength = 0;
     std::array<std::size_t, Reader::symbolKinds> symbols{};
+    bool nominal = false;
   };
   Header header;
-  std::vector<std::uint8_t> bytes;
+  std::shared_ptr<const void> backing;
+  std::span<const std::uint8_t> bytes;
   std::vector<ImportedTypeKind> kinds;
   std::vector<Type> types;
   std::vector<RegionId> regions;
@@ -2752,16 +2789,24 @@ struct DeferredTypeGraph {
   mutable std::vector<CompactDefinitionView> definitions;
   std::shared_ptr<const TypeGraphSymbols> retainedSymbols;
   std::shared_ptr<const TypeStore> validationTypes;
-  std::vector<CompactDefinitionView> identities;
+  std::vector<ImportedTypeIndex> index;
+  std::string canonicalKeys;
   mutable std::vector<bool> loaded, validated;
-  mutable std::vector<Reader::ResolvedSymbols> recordSymbols;
+  mutable std::unordered_map<std::size_t, Reader::ResolvedSymbols>
+      recordSymbols;
   std::shared_ptr<CompactArena> demandedArena;
   mutable std::mutex validationMutex;
 
   void validate(std::size_t index) const;
+  std::string_view identityKey(std::size_t index) const {
+    const auto &record = records[index];
+    return std::string_view(canonicalKeys)
+        .substr(record.keyOffset, record.keyLength);
+  }
 
   ImportedTypeDefinition materialize(std::size_t index) const {
     validate(index);
+    std::lock_guard lock(validationMutex);
     const auto &slice = records.at(index);
     TypeGraphSymbols noCallbacks;
     Reader reader(std::span(bytes).subspan(slice.offset, slice.length),
@@ -2820,7 +2865,7 @@ void remapCompactSymbols(std::span<CompactDefinitionView> definitions,
 }
 
 ImportedTypeIndex compactIndex(const CompactDefinitionView &definition,
-                               CompactArena &arena) {
+                               CompactArena &arena, bool retain = false) {
   ImportedTypeIndex result;
   visitDefinition(
       [&](const auto &record) {
@@ -2860,6 +2905,19 @@ ImportedTypeIndex compactIndex(const CompactDefinitionView &definition,
           result.declaration = record.declaration;
       },
       definition);
+  if (retain) {
+    auto copy = [&]<class T>(std::span<const T> &items) {
+      auto storage = arena.allocate<T>(items.size());
+      std::copy(items.begin(), items.end(), storage.begin());
+      items = storage;
+    };
+    if (!std::holds_alternative<CompactCallable *>(definition))
+      copy(result.key);
+    copy(result.coroutineInterior);
+    copy(result.callableRegionParameters);
+    copy(result.callableParameterRegions);
+    copy(result.callableRegionRequirements);
+  }
   return result;
 }
 
@@ -2904,16 +2962,15 @@ void DeferredTypeGraph::validate(std::size_t index) const {
         auto resolved = reader.resolveSymbols();
         std::array<CompactDefinitionView, 1> remapped{value};
         remapCompactSymbols(remapped, resolved);
-        const auto &identity = identities[current];
-        auto expected = compactIndex(identity, *reader.arena);
+        const auto &expected = this->index[current];
         auto actual = compactIndex(value, *reader.arena);
         auto equal = [](auto left, auto right) {
           return std::equal(left.begin(), left.end(), right.begin(),
                             right.end());
         };
-        if (nominal(identity) != nominal(value) ||
-            (!nominal(identity) &&
-             canonicalKey(graph, identity) != canonicalKey(graph, value)) ||
+        if (slice.nominal != nominal(value) ||
+            (!slice.nominal &&
+             identityKey(current) != canonicalKey(graph, value)) ||
             !equal(expected.key, actual.key) ||
             !equal(expected.callableRegionParameters,
                    actual.callableRegionParameters) ||
@@ -2949,10 +3006,12 @@ void DeferredTypeGraph::validate(std::size_t index) const {
   }
 }
 
-TypeGraphImport importCompactTypeGraph(
-    TypeStore &types, std::span<const std::uint8_t> bytes,
-    const TypeGraphSymbols &symbols, ValidationMode validation,
-    std::shared_ptr<const TypeGraphSymbols> retainedSymbols) {
+TypeGraphImport
+importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
+                       const TypeGraphSymbols &symbols,
+                       ValidationMode validation,
+                       std::shared_ptr<const TypeGraphSymbols> retainedSymbols,
+                       std::shared_ptr<const void> backing) {
   try {
     auto deferred = std::make_shared<DeferredTypeGraph>();
     auto &header = deferred->header;
@@ -2971,7 +3030,14 @@ TypeGraphImport importCompactTypeGraph(
         reject("truncated type graph definitions");
       minimumBytes += required;
     }
-    deferred->bytes.assign(bytes.begin(), bytes.end());
+    if (!backing) {
+      auto owned = std::make_shared<const std::vector<std::uint8_t>>(
+          bytes.begin(), bytes.end());
+      bytes = *owned;
+      backing = std::move(owned);
+    }
+    deferred->backing = std::move(backing);
+    deferred->bytes = bytes;
     reader.bytes = deferred->bytes;
     TypeStore candidate = types;
     importRegions(candidate, tables, deferred->regions, deferred->universes);
@@ -2999,7 +3065,10 @@ TypeGraphImport importCompactTypeGraph(
       if (header.indexed) {
         std::span<const std::uint8_t> payload;
         if (demand) {
-          framedDefinition(reader, definition);
+          auto identityPayload = framedDefinition(reader, definition);
+          slice.identityOffset = static_cast<std::size_t>(
+              identityPayload.data() - reader.bytes.data());
+          slice.identityLength = identityPayload.size();
           payload = reader.block();
         } else {
           reader.block();
@@ -3012,8 +3081,9 @@ TypeGraphImport importCompactTypeGraph(
         std::visit([&](auto &record) { reader(record); }, definition);
         slice.length = reader.offset - slice.offset;
       }
+      slice.nominal = nominal(definition);
       deferred->records.push_back(slice);
-      if (nominal(definition) != identity.has_value())
+      if (slice.nominal != identity.has_value())
         reject("missing or unexpected logical definition identity");
       if (identity) {
         validIdentity(*identity,
@@ -3025,11 +3095,15 @@ TypeGraphImport importCompactTypeGraph(
       definitions.push_back(std::visit(
           [&](auto &record) -> CompactDefinitionView {
             using T = std::decay_t<decltype(record)>;
+            if (demand)
+              return static_cast<T *>(nullptr);
             auto storage = reader.arena->allocate<T>(1);
             storage.front() = std::move(record);
             return &storage.front();
           },
           definition));
+      if (demand)
+        reader.arena->reset();
     }
     result.roots.reserve(header.roots);
     for (std::uint32_t i = 0; i < header.roots; ++i) {
@@ -3040,11 +3114,66 @@ TypeGraphImport importCompactTypeGraph(
     if (reader.remaining())
       reject("trailing bytes in type graph");
     deferred->symbols = reader.resolveSymbols();
-    remapCompactSymbols(definitions, deferred->symbols);
-    if (!demand)
+    bool uniqueKeys = true;
+    deferred->index.reserve(definitions.size());
+    if (demand) {
+      auto indexArena = std::make_shared<CompactArena>();
+      std::unordered_multimap<std::uint64_t, std::size_t> keys;
+      keys.reserve(ids.size());
+      Graph graph(candidate);
+      FlatTypeEdges edges;
+      edges.offsets.reserve(ids.size() + 1);
+      std::vector<Type> references;
+      reader.resolvedSymbols = &deferred->symbols;
+      for (std::size_t i = 0; i < ids.size(); ++i) {
+        auto &slice = deferred->records[i];
+        reader.bytes =
+            bytes.subspan(slice.identityOffset, slice.identityLength);
+        reader.offset = 0;
+        reader.symbolOffsets = slice.symbols;
+        auto definition = compactDefinitionFor(tables.kinds[i]);
+        std::visit([&](auto &record) { reader(record); }, definition);
+        auto view = std::visit(
+            [](auto &record) -> CompactDefinitionView { return &record; },
+            definition);
+        deferred->index.push_back(compactIndex(view, *indexArena, true));
+        if (!slice.nominal) {
+          references.clear();
+          std::uint64_t fingerprint = 14695981039346656037ull;
+          auto key = canonicalKey(graph, view, &references, nullptr,
+                                  &fingerprint, true);
+          for (auto [entry, end] = keys.equal_range(fingerprint); entry != end;
+               ++entry)
+            if (deferred->identityKey(entry->second) == key) {
+              uniqueKeys = false;
+              break;
+            }
+          if (!uniqueKeys)
+            break;
+          keys.emplace(fingerprint, i);
+          slice.keyOffset = deferred->canonicalKeys.size();
+          slice.keyLength = key.size();
+          deferred->canonicalKeys += key;
+          for (auto reference : references)
+            if (reference.index() >= builtinTypeCount)
+              edges.targets.push_back(graphIndex(ids, reference));
+        }
+        edges.offsets.push_back(edges.targets.size());
+        reader.arena->reset();
+      }
+      if (uniqueKeys)
+        recursiveRegionals(std::move(edges), [&](std::size_t node) {
+          return deferred->index[node].regionOrigin != Type::Unknown;
+        });
+      deferred->arena = std::move(indexArena);
+    } else {
+      remapCompactSymbols(definitions, deferred->symbols);
       validateGraph(CompactTypes{candidate, definitions}, ids, definitions);
-    bool uniqueKeys = false;
-    recursiveRegionals(candidate, ids, definitions, &uniqueKeys);
+      recursiveRegionals(candidate, ids, definitions, &uniqueKeys);
+      for (const auto &definition : definitions)
+        deferred->index.push_back(compactIndex(definition, *reader.arena));
+      deferred->arena = std::move(reader.arena);
+    }
     if (!uniqueKeys) {
       if (demand)
         return importTypeGraphEager(types, bytes, symbols);
@@ -3058,20 +3187,13 @@ TypeGraphImport importCompactTypeGraph(
       };
       return importTypeGraphEager(types, bytes, resolved);
     }
-    std::vector<ImportedTypeIndex> index;
-    index.reserve(definitions.size());
-    for (const auto &definition : definitions)
-      index.push_back(compactIndex(definition, *reader.arena));
-    deferred->arena = std::move(reader.arena);
     deferred->definitions = std::move(definitions);
     deferred->kinds = std::move(tables.kinds);
     if (demand) {
       deferred->retainedSymbols = std::move(retainedSymbols);
       deferred->validationTypes = std::make_shared<const TypeStore>(candidate);
-      deferred->identities = deferred->definitions;
       deferred->loaded.resize(header.types);
       deferred->validated.resize(header.types);
-      deferred->recordSymbols.resize(header.types);
       deferred->demandedArena = std::make_shared<CompactArena>();
     }
     auto loader = std::make_shared<const TypeStore::ImportedDefinitionLoader>(
@@ -3085,8 +3207,8 @@ TypeGraphImport importCompactTypeGraph(
               },
               deferred->definitions.at(i));
         });
-    candidate.deferImportedDefinitions(ids, index, std::move(loader),
-                                       std::move(borrowed));
+    candidate.deferImportedDefinitions(ids, deferred->index, std::move(loader),
+                                       std::move(borrowed), deferred);
     types = std::move(candidate);
     return result;
   } catch (const InvalidGraph &error) {
@@ -3098,7 +3220,8 @@ TypeGraphImport importCompactTypeGraph(
 TypeGraphImport
 importTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
                 const TypeGraphSymbols &symbols, ValidationMode validation,
-                std::shared_ptr<const TypeGraphSymbols> retainedSymbols) {
+                std::shared_ptr<const TypeGraphSymbols> retainedSymbols,
+                std::shared_ptr<const void> backing) {
   if (validation == ValidationMode::OnDemand &&
       (!retainedSymbols || retainedSymbols.get() != &symbols ||
        types.storedTypeCount() || symbols.lookupDefinition))
@@ -3107,7 +3230,8 @@ importTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
             "demand-loaded types require a fresh graph and an owned resolver"};
   if (!types.storedTypeCount() && !symbols.lookupDefinition)
     return importCompactTypeGraph(types, bytes, symbols, validation,
-                                  std::move(retainedSymbols));
+                                  std::move(retainedSymbols),
+                                  std::move(backing));
   return importTypeGraphEager(types, bytes, symbols);
 }
 } // namespace mettle::metadata

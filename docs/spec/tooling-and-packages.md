@@ -215,15 +215,19 @@ all loaded library source digests participate. Cached objects are checksum
 verified; corruption causes a rebuild. A package-object hit skips that
 dependency's LLVM lowering and object emission, but parsing, expansion,
 checking and specialization still run for the whole program. Package objects
-are staged and hashed without the store lock, then batch-published and pruned
-under one lock per build, not one lease/lock per package. A concurrent eviction
+are staged and hashed without the store lock, then batch-published under one
+lock, not one lease/lock per package. Pruning follows publication at the final
+project-working-set update, or directly after an uncached whole-output build.
+A concurrent eviction
 can therefore turn a lookup into a safe miss, but cannot change build output.
 The whole-build key retains its existing live lease; `clean` refuses to remove
 a store with live leases.
 
 Each successful build records the entries it used as that project
 configuration's working set, so the store drops what edits and deleted projects
-leave behind without a global size cap. `--no-cache` disables
+leave behind without a global size cap. Working-set retirement and age/byte
+pruning share one store traversal; byte-budget eviction orders entries only
+when the remaining contents exceed that budget. `--no-cache` disables
 both whole-build and package-object caches. Storage design: performance.md
 section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
 `--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;
@@ -252,10 +256,12 @@ The process retains successful immutable native-library imports and eligible
 source-function contracts and symbolic IR. Each request checks current source
 inputs; archive content, configuration and source/symbol remaps must match
 before an import can be reused. Decoded native headers are reused only with
-matching archive content and mounted source IDs. Verified archive snapshots are retained
-in owned immutable memory, with independent per-request source mounting. A
-matching snapshot does not reread its persistent cache blob; changing or
-removing that blob cannot change an already admitted snapshot. Source content
+matching archive content and mounted source IDs. Verified archives retain their
+Store mappings, with independent per-request source mounting. Store publication
+atomically replaces read-only blob inodes and pruning unlinks them, so neither
+operation changes an admitted mapping. Arbitrary external in-place writes to
+published blobs are outside this immutable-storage contract. A matching archive
+does not reread its persistent cache blob. Source content
 changes still invalidate reuse, including same-size edits with unchanged
 timestamps. Native source snapshots are collected only for requested library
 roots. On supported Linux filesystems, resident snapshots remain reusable while
@@ -283,7 +289,21 @@ compilation's reached entries. Assembly, generated helper identities and types
 outside the immutable native prefix currently fall back to specialization.
 Region signatures are recomputed; concrete executable admission is never skipped.
 Native admission checks archive integrity, declaration/signature headers, type
-identities and canonical interning keys immediately. Function contracts and
+identities and canonical interning keys immediately. Checked-library envelope
+metadata contains compact declaration queries separately from deferred syntax;
+item attributes remain available for linkage discovery, and demanded syntax
+must agree with its query record. Checking and finalized interface databases
+share unchanged records without erasing their phase differences. The envelope
+v4 commits to query metadata and ordered, section-specific checked-function and
+IR body digests; checked IR v12 keeps body-private strings with independently
+framed bodies. Admission authenticates the metadata commitment without hashing
+unused checked-function blocks or IR bodies. Native imports retain immutable
+Store mappings without copying complete archives and verify a demanded payload's
+digest before decoding its
+string table or instructions. Changes to body commitments change the archive
+identity used by resident queries. Source slices and encoded revisions remain
+retained, with eager UTF-8, revision and generated-source provenance validation.
+Function contracts and
 type payloads are independently framed and validated when demanded, including
 the dependencies required by their validation rules. Function payloads own their
 source-revision tables; retained immutable resolvers keep delayed loads valid.
@@ -365,6 +385,12 @@ bundle; an unavailable tool remains a warning. Static libraries include the
 hosted runtime unless freestanding;
 native consumers use a compatible C++ linker and matching sanitizer runtime when
 instrumented. Shared output requires the installed runtime's target.
+
+Compatible formats in one build share LLVM lowering and native object generation.
+LLVM text remains the unoptimized requested representation, with sanitizer
+instrumentation applied independently of native code generation. Object reuse
+does not cross build requests or package partitions. Global assembly remains
+part of the shared module and object.
 
 `mettle-version` is an optional minimum compiler version, not an edition or the
 package's own version. The planner checks the root and every selected dependency

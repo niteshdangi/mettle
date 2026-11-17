@@ -9,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <span>
+#include <string_view>
 #include <tuple>
 
 namespace mettle {
@@ -47,6 +48,7 @@ private:
 };
 struct ImportedFunction {
   Span span;
+  std::string symbolName;
   struct Contract {
     FunctionFacts facts;
     DeclarationEnvironment generics;
@@ -106,10 +108,17 @@ private:
   std::shared_ptr<Contract> owned;
 };
 struct ImportedTypeDeclaration {
+  struct Deferred {
+    std::once_flag once;
+    std::function<DeclarationEnvironment()> load;
+    std::optional<DeclarationEnvironment> value;
+  };
   Span span;
   std::string name;
   Type type = Type::Unknown;
   DeclarationEnvironment generics;
+  std::shared_ptr<Deferred> deferred;
+  const DeclarationEnvironment &environment() const;
 };
 struct ImportedInherentConstant {
   Span implementation, declaration;
@@ -132,6 +141,7 @@ struct ImportedFunctionRecords {
     std::size_t parameters = 0, count = 0;
     bool hasBody = false;
     std::string externalName;
+    std::string symbolName;
   };
   std::vector<Header> headers;
   std::vector<Type> parameters;
@@ -196,6 +206,9 @@ public:
   bool isMaterialized() const {
     return !records || records->functions.isMaterialized(index);
   }
+  std::string_view symbolName() const {
+    return records ? records->headers[index].symbolName : value->symbolName;
+  }
 
 private:
   std::shared_ptr<const ImportedFunction> value;
@@ -212,11 +225,24 @@ struct ImportedDeclarations {
   interfaces::Database checkingDatabase, database;
   std::shared_ptr<const TypeStore> types;
   struct Index {
+    struct FunctionBinding {
+      std::shared_ptr<const Function> declaration;
+      ImportedFunctionReference contract;
+    };
     struct Constant {
       std::size_t implementation = 0, declaration = 0;
       std::shared_ptr<const Module::Implementation> owner;
     };
-    std::unordered_map<std::size_t, std::shared_ptr<const Function>> functions;
+    std::vector<FunctionBinding> functions;
+    std::unordered_map<std::size_t, std::shared_ptr<const Function>>
+        materializedFunctions;
+    OverlayMap<std::string, std::size_t> functionNames;
+    std::map<std::string, std::size_t> constructorOrdinals;
+    std::vector<std::shared_ptr<const Module::Implementation>>
+        implementationHeaders;
+    std::vector<std::string> interfaceNames;
+    std::vector<std::shared_ptr<const Module::Alias>> aliasHeaders;
+    std::vector<std::optional<Type>> aliasTypes;
     std::vector<std::shared_ptr<const Module::Alias>> aliases;
     std::vector<Constant> constants;
     std::unordered_map<const CheckedExpression *,
@@ -224,7 +250,8 @@ struct ImportedDeclarations {
         expressions;
     std::unordered_map<const Node *, const CheckedExpression *> nodes;
     std::unordered_map<const TypeSyntax *, Type> annotations;
-    std::set<std::tuple<SourceId, std::size_t, std::size_t>> spans;
+    mutable std::mutex annotationMutex;
+    std::vector<std::tuple<SourceId, std::size_t, std::size_t>> spans;
   };
   std::shared_ptr<const Index> index;
   std::string indexDeclarations(const Module *module);
@@ -234,9 +261,9 @@ struct ImportedDeclarations {
 
 private:
   std::array<const TypeTable *, 5> typeTables() const;
-  std::array<
-      std::map<std::tuple<SourceId, std::uint32_t, std::uint32_t>, std::size_t>,
-      5>
+  std::array<std::vector<std::pair<
+                 std::tuple<SourceId, std::size_t, std::size_t>, std::size_t>>,
+             5>
       typeIndices;
 };
 struct DeclarationTypeIdentity {
@@ -279,6 +306,16 @@ struct LibraryDeclarationImport {
   std::string error;
   explicit operator bool() const { return bool(declarations); }
 };
+struct DeclarationPayloadLayout {
+  struct Payload {
+    std::size_t offset, size;
+  };
+  std::vector<Payload> payloads;
+  std::string error;
+  explicit operator bool() const { return error.empty(); }
+};
+DeclarationPayloadLayout
+declarationPayloadLayout(std::span<const std::uint8_t> bytes);
 struct DeclarationQueryInputs {
   std::vector<std::uint8_t> context;
   std::map<std::size_t, std::vector<std::uint8_t>> bodies;
@@ -297,7 +334,8 @@ exportLibraryDeclarations(const CheckedModule &module,
                           std::span<const SourceId> omitImportSources = {});
 LibraryHeaderImport
 decodeLibraryHeader(std::span<const std::uint8_t> bytes,
-                    const metadata::DecodeReferences &references);
+                    const metadata::DecodeReferences &references,
+                    std::shared_ptr<const void> backing = nullptr);
 LibraryHeaderImport copyLibraryHeader(const LibraryHeaderImport &header);
 LibraryDeclarationImport importLibraryDeclarations(
     std::span<const std::uint8_t> bytes, std::shared_ptr<TypeStore> types,
@@ -306,5 +344,8 @@ LibraryDeclarationImport importLibraryDeclarations(
     std::shared_ptr<const void> backing = nullptr,
     std::shared_ptr<const metadata::DecodeReferences> retainedReferences =
         nullptr,
-    metadata::ValidationMode validation = metadata::ValidationMode::Eager);
+    metadata::ValidationMode validation = metadata::ValidationMode::Eager,
+    std::span<const std::string_view> functionNames = {},
+    std::function<bool(std::size_t, std::span<const std::uint8_t>)>
+        verifyPayload = {});
 } // namespace mettle

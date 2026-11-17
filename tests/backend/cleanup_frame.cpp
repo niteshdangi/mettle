@@ -48,7 +48,8 @@ build(LoweringContext &lowering, ir::Function source,
       llvm::FunctionType::get(lowering.builder.getVoidTy(), parameters, false),
       llvm::GlobalValue::InternalLinkage, source.name, lowering.module);
   wrapper->setUWTableKind(llvm::UWTableKind::Default);
-  CleanupFrame frame(lowering, source, wrapper);
+  const auto plan = cleanup::plan(source, *lowering.program.types);
+  CleanupFrame frame(lowering, source, plan, wrapper);
   frame.createWrapper();
   lowering.builder.SetInsertPoint(
       llvm::BasicBlock::Create(lowering.context, "entry", frame.body()));

@@ -601,7 +601,7 @@ private:
   }
 
   void indexCoreMethods(const Module &header) {
-    for (const auto &function : header.functions) {
+    for (const auto &function : header.functions.headers()) {
       auto module = function.item.scope.empty() ? std::string{}
                                                 : function.item.scope.back();
       auto name = function.name.substr(function.name.rfind('.') + 1);
@@ -665,13 +665,18 @@ private:
       auto &header = found->second;
       if (!prefix.functions.empty())
         for (std::size_t i = 0; i < header.implementations.size(); ++i)
-          for (auto &function : header.implementations.edit(i).methodFunctions)
-            function += prefix.functions.size();
+          header.implementations.transformHeader(
+              i, [offset = prefix.functions.size()](auto &implementation) {
+                for (auto &function : implementation.methodFunctions)
+                  function += offset;
+              });
       if (!prefix.implementations.empty())
         for (std::size_t i = 0; i < header.functions.size(); ++i)
-          if (header.functions[i].implementation >= 0)
-            header.functions.edit(i).implementation +=
-                prefix.implementations.size();
+          if (header.functions.header(i).implementation >= 0)
+            header.functions.transformHeader(
+                i, [offset = prefix.implementations.size()](auto &function) {
+                  function.implementation += offset;
+                });
       merge(prefix.interfaces, std::move(header.interfaces), {});
       merge(prefix.implementations, std::move(header.implementations), {});
       merge(prefix.functions, std::move(header.functions), {});

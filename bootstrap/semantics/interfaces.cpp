@@ -13,7 +13,7 @@ void Checker::interfaceHeaders() {
   auto &database = *checked.interfaceData;
   database.definitions.resize(module.interfaces.size());
   std::size_t declarationIndex = 0;
-  for (const auto &syntax : module.interfaces) {
+  for (const auto &syntax : module.interfaces.headers()) {
     auto name = definitionName(syntax.span, syntax.name);
     const auto index = declarationIndex++;
     if (!interfaceNames.emplace(name, index).second) {
@@ -36,9 +36,9 @@ void Checker::interfaceHeaders() {
   if (!diagnostics.empty())
     return;
   for (std::size_t index = 0; index < module.interfaces.size(); ++index) {
-    const auto &syntax = module.interfaces[index];
-    if (imported(syntax.span))
+    if (imported(module.interfaces.header(index).span))
       continue;
+    const auto &syntax = module.interfaces[index];
     auto &definition = database.definitions[index];
     const auto &name = definition.name;
     for (const auto &associated : syntax.associated) {
@@ -118,14 +118,16 @@ bool Checker::interfaceHasFunctions(const std::string &canonical) const {
   auto [cached, inserted] =
       interfaceFunctionOwners.try_emplace(canonical, false);
   if (inserted)
-    cached->second =
-        std::any_of(module.functions.begin(), module.functions.end(),
-                    [&](const Function &function) {
-                      return function.implementation < 0 &&
-                             !function.interfaceOwner.empty() &&
-                             typeName(function.interfaceOwner, function.span,
-                                      function.owner) == canonical;
-                    });
+    cached->second = [&] {
+      auto headers = module.functions.headers();
+      return std::any_of(
+          headers.begin(), headers.end(), [&](const Function &function) {
+            return function.implementation < 0 &&
+                   !function.interfaceOwner.empty() &&
+                   typeName(function.interfaceOwner, function.span,
+                            function.owner) == canonical;
+          });
+    }();
   return cached->second;
 }
 
@@ -460,8 +462,10 @@ Checker::resolveSuperinterfaces(std::size_t index) {
 // Region-parameterized interfaces bind their regions only during signatures.
 const std::vector<interfaces::Obligation> &
 Checker::superinterfacesOf(std::size_t index) {
-  const auto &definition = checked.interfaceData->definitions[index];
-  if (signedSuperinterfaces.contains(index))
+  const auto &definition =
+      std::as_const(*checked.interfaceData).definitions[index];
+  if (imported(module.interfaces.header(index).span) ||
+      signedSuperinterfaces.contains(index))
     return definition.superinterfaces;
   if (auto early = earlySuperinterfaces.find(index);
       early != earlySuperinterfaces.end())
@@ -630,9 +634,9 @@ Type Checker::normalizeCallType(Type type,
 void Checker::interfaceSignatures() {
   auto *saved = genericEnvironment;
   for (std::size_t i = 0; i < module.interfaces.size(); ++i) {
-    const auto &syntax = module.interfaces[i];
-    if (imported(syntax.span))
+    if (imported(module.interfaces.header(i).span))
       continue;
+    const auto &syntax = module.interfaces[i];
     auto &definition = checked.interfaceData->definitions[i];
     auto &environment = typeEnvironment(syntax);
     definition.parameters = environment.parameters;
@@ -763,18 +767,19 @@ void Checker::interfaceSignatures() {
     if (states[index] == 2)
       return;
     if (states[index] == 1) {
-      error("type", module.interfaces[index].span,
+      error("type", module.interfaces.header(index).span,
             "cyclic superinterface requirements");
       return;
     }
     if (depth > limits::typeDepth) {
-      error("limit", module.interfaces[index].span,
+      error("limit", module.interfaces.header(index).span,
             "superinterface nesting limit exceeded");
       return;
     }
     states[index] = 1;
-    for (const auto &parent :
-         checked.interfaceData->definitions[index].superinterfaces)
+    for (const auto &parent : std::as_const(*checked.interfaceData)
+                                  .definitions[index]
+                                  .superinterfaces)
       if (parent.property == interfaces::Property::Interface &&
           checked.types->isErased(parent.interfaceType))
         visit(checked.types->erased(parent.interfaceType).declaration,
@@ -783,9 +788,10 @@ void Checker::interfaceSignatures() {
   };
   for (std::size_t index = 0; index < states.size(); ++index)
     visit(index, 0);
-  for (auto &function : module.functions) {
-    if (imported(function.span))
+  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+    if (imported(module.functions.header(i).span))
       continue;
+    const auto &function = module.functions[i];
     auto &environment = functionEnvironment(function);
     genericEnvironment = &environment;
     if (function.implementation >= 0)

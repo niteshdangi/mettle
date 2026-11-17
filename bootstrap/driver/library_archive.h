@@ -33,12 +33,14 @@ private:
   friend std::optional<LibraryArchive>
   decodeLibraryArchive(std::string_view, std::string_view, std::string &,
                        std::shared_ptr<const void>);
+  std::optional<std::string> record(const Source &source, std::string &error,
+                                    std::optional<SourceText> revision);
   bool validate(std::string &error) const;
   struct Data {
     std::string identity;
     std::vector<Source> sources;
     std::vector<Generation> generations;
-    std::vector<std::string> revisions;
+    std::vector<SourceText> revisions;
     std::unordered_map<SourceId, std::size_t> sourceIndex;
     std::unordered_map<std::string, std::size_t> revisionIndex;
   };
@@ -63,19 +65,25 @@ class Section {
 public:
   Section() = default;
   Section &operator=(std::vector<std::uint8_t> bytes) {
-    owned = std::make_shared<const std::vector<std::uint8_t>>(std::move(bytes));
-    borrowed = {};
+    auto owner =
+        std::make_shared<const std::vector<std::uint8_t>>(std::move(bytes));
+    storage = std::shared_ptr<const std::uint8_t>(owner, owner->data());
+    length = owner->size();
     return *this;
   }
-  void borrow(std::span<const std::uint8_t> bytes) {
-    owned.reset();
-    borrowed = bytes;
+  void borrow(std::span<const std::uint8_t> bytes,
+              std::shared_ptr<const void> owner) {
+    if (!owner) {
+      *this = std::vector<std::uint8_t>(bytes.begin(), bytes.end());
+      return;
+    }
+    storage =
+        std::shared_ptr<const std::uint8_t>(std::move(owner), bytes.data());
+    length = bytes.size();
   }
   std::span<const std::uint8_t> bytes() const {
-    if (borrowed.data())
-      return borrowed;
-    return owned ? std::span<const std::uint8_t>(*owned)
-                 : std::span<const std::uint8_t>{};
+    return storage ? std::span<const std::uint8_t>(storage.get(), length)
+                   : std::span<const std::uint8_t>{};
   }
   operator std::span<const std::uint8_t>() const { return bytes(); }
   std::size_t size() const { return bytes().size(); }
@@ -84,8 +92,8 @@ public:
   }
 
 private:
-  std::shared_ptr<const std::vector<std::uint8_t>> owned;
-  std::span<const std::uint8_t> borrowed;
+  std::shared_ptr<const std::uint8_t> storage;
+  std::size_t length = 0;
 };
 
 struct LibraryArchive {
@@ -95,11 +103,12 @@ struct LibraryArchive {
   std::map<std::string, std::vector<std::string>> sourceModules;
   std::string macros;
   Section header, types, declarations, ir;
+  std::function<bool(std::size_t, std::span<const std::uint8_t>)> verifyIRBody,
+      verifyDeclarationPayload;
   // Keeps the memory the borrowed sections point into alive.
   std::shared_ptr<const void> backing;
 };
 
-// The integrity digest sealing an archive (see library_archive.cpp).
 std::string archiveDigest(std::string_view bytes);
 std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
                                                 std::string &error);
