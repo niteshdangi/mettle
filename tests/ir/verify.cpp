@@ -49,6 +49,54 @@ void dominanceCases() {
               dominance.dominates(5, 6),
           "unreachable predecessor changed dominance");
 }
+void coherenceCandidateCases() {
+  mettle::TypeStore types;
+  mettle::interfaces::Database database;
+  database.definitions.resize(2);
+  for (auto &definition : database.definitions)
+    definition.package = 0;
+  mettle::ErasedType first{};
+  first.declaration = 0;
+  auto firstType = types.erasedType(first);
+  first.declaration = 1;
+  auto secondType = types.erasedType(first);
+  auto append = [&](Type interface, bool imported, bool fallback) {
+    mettle::interfaces::Implementation implementation{};
+    implementation.target = Type::I32;
+    implementation.interfaceType = interface;
+    implementation.package = 0;
+    implementation.span = {database.implementations.size() * 2,
+                           database.implementations.size() * 2 + 1};
+    implementation.checkedImport = imported;
+    implementation.fallback = fallback;
+    database.implementations.push_back(std::move(implementation));
+  };
+  append(firstType, true, false);
+  append(firstType, true, false);
+  append(secondType, false, false);
+  append(firstType, false, true);
+  mettle::Diagnostics disjoint;
+  require(mettle::interfaces::Solver(types, database, disjoint).coherent(),
+          "unrelated interfaces, fallback or trusted pairs overlapped");
+  append(firstType, false, false);
+  append(secondType, false, false);
+  mettle::Diagnostics overlapping;
+  require(
+      !mettle::interfaces::Solver(types, database, overlapping).coherent() &&
+          overlapping.items.size() == 2,
+      "indexed coherence missed a local/imported overlap");
+  database.implementations.clear();
+  append(Type::Unknown, false, false);
+  database.implementations[0].inherent = {{"alpha", {}}, {"beta", {}}};
+  append(Type::Unknown, false, false);
+  database.implementations[1].inherent = {{"gamma", {}}};
+  append(Type::Unknown, true, false);
+  database.implementations[2].inherent = {{"alpha", {}}, {"beta", {}}};
+  mettle::Diagnostics inherent;
+  require(!mettle::interfaces::Solver(types, database, inherent).coherent() &&
+              inherent.items.size() == 1,
+          "inherent candidate indexing missed or duplicated a conflict");
+}
 void rejected(const Program &program, const char *expected) {
   mettle::Diagnostics diagnostics;
   require(!verify(program, diagnostics), "malformed IR passed verification");
@@ -1130,6 +1178,7 @@ void importedPreparation() {
 int main() {
   try {
     dominanceCases();
+    coherenceCandidateCases();
     verifierCases();
     functionAddressCases();
     floatingCarrierCases();

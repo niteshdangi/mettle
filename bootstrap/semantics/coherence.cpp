@@ -2,6 +2,7 @@
 #include "support/limits.h"
 #include "support/path.h"
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <stdexcept>
 
@@ -509,7 +510,15 @@ bool Solver::someImplementationCouldApply(Type subject, Type interfaceType) {
 }
 
 bool Solver::coherent() {
+  if (std::all_of(database.implementations.begin(),
+                  database.implementations.end(),
+                  [](const auto &item) { return item.checkedImport; }))
+    return true;
   bool valid = true;
+  using InterfaceKey = std::pair<std::uint32_t, bool>;
+  using MethodKey = std::pair<std::string, bool>;
+  std::array<std::map<InterfaceKey, std::vector<std::size_t>>, 2> interfaces;
+  std::array<std::map<MethodKey, std::vector<std::size_t>>, 2> methods;
   for (std::size_t i = 0; i < database.implementations.size(); ++i) {
     const auto &left = database.implementations[i];
     if (!left.checkedImport) {
@@ -547,8 +556,8 @@ bool Solver::coherent() {
           auto contract = types.parameter(parameter).callableConstraint;
           if (contract == Type::Unknown || !types.isFunctionPointer(contract))
             continue;
-          for (auto result :
-               {types.callable(contract).result, types.callable(contract).error})
+          for (auto result : {types.callable(contract).result,
+                              types.callable(contract).error})
             for (auto output : identityParameters(result, types))
               known.insert(output);
         }
@@ -576,34 +585,39 @@ bool Solver::coherent() {
              types.product(nominal).kind == AggregateKind::Enumeration ||
              types.product(nominal).kind == AggregateKind::Opaque) &&
             types.product(nominal).package == left.package;
-        bool localInterface =
-            left.package != unknownPackage && definition.package == left.package;
+        bool localInterface = left.package != unknownPackage &&
+                              definition.package == left.package;
         if (!localInterface && !localType) {
-          diagnostics.error("type", left.span,
-                            "orphan interface implementation has no local owner");
+          diagnostics.error(
+              "type", left.span,
+              "orphan interface implementation has no local owner");
           valid = false;
         }
       }
     }
-    for (std::size_t j = 0; j < i; ++j) {
+    const auto category = left.checkedImport ? 1 : 0;
+    std::vector<std::size_t> inherent;
+    const std::vector<std::size_t> *candidates = &inherent;
+    if (types.isErased(left.interfaceType))
+      candidates = &interfaces[category][{
+          types.erasedDeclaration(left.interfaceType), left.fallback}];
+    else if (left.interfaceType == Type::Unknown) {
+      for (const auto &[name, method] : left.inherent) {
+        (void)method;
+        auto found = methods[category].find({name, left.fallback});
+        if (found != methods[category].end())
+          inherent.insert(inherent.end(), found->second.begin(),
+                          found->second.end());
+      }
+      std::sort(inherent.begin(), inherent.end());
+      inherent.erase(std::unique(inherent.begin(), inherent.end()),
+                     inherent.end());
+    }
+    for (auto j : *candidates) {
       steps = 0;
       const auto &right = database.implementations[j];
-      if (left.checkedImport && database.implementations[j].checkedImport)
-        continue;
-      if (left.fallback != database.implementations[j].fallback)
-        continue;
       bool same = types.isErased(left.interfaceType) &&
-                  types.isErased(right.interfaceType) &&
-                  types.erased(left.interfaceType).declaration ==
-                      types.erased(right.interfaceType).declaration;
-      if (!same && !(left.interfaceType == Type::Unknown &&
-                     right.interfaceType == Type::Unknown))
-        continue;
-      if (!same && std::none_of(left.inherent.begin(), left.inherent.end(),
-                                [&](const auto &method) {
-                                  return right.inherent.contains(method.first);
-                                }))
-        continue;
+                  types.isErased(right.interfaceType);
       std::vector<Type> a{left.target}, b{right.target};
       if (same) {
         const auto &first = types.erased(left.interfaceType).arguments;
@@ -635,6 +649,16 @@ bool Solver::coherent() {
             "conflicting implementation is declared here"}});
       valid = false;
     }
+    for (std::size_t pool = 0; pool < (left.checkedImport ? 1u : 2u); ++pool)
+      if (types.isErased(left.interfaceType))
+        interfaces[pool]
+                  [{types.erasedDeclaration(left.interfaceType), left.fallback}]
+                      .push_back(i);
+      else if (left.interfaceType == Type::Unknown)
+        for (const auto &[name, method] : left.inherent) {
+          (void)method;
+          methods[pool][{name, left.fallback}].push_back(i);
+        }
   }
   return valid;
 }
