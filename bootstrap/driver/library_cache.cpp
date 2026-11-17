@@ -2,13 +2,286 @@
 #include "packages/sha256.h"
 #include "support/limits.h"
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <cerrno>
+#include <condition_variable>
 #include <fstream>
+#include <future>
+#include <mutex>
+#include <sstream>
+#include <system_error>
+#include <thread>
+#ifdef __linux__
+#include <fcntl.h>
+#include <linux/magic.h>
+#include <poll.h>
+#include <signal.h>
+#include <sys/eventfd.h>
+#include <sys/inotify.h>
+#include <sys/signalfd.h>
+#include <sys/statfs.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
 namespace mettle::driver {
+namespace {
+class SnapshotWatch {
+public:
+  SnapshotWatch() = default;
+  void start() {
+#ifdef __linux__
+    changes = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+    wakeup = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (changes < 0 || wakeup < 0) {
+      fail("cannot create source change monitor");
+      return;
+    }
+    mounts = mountInventory();
+    if (mounts.empty()) {
+      fail("cannot observe mount changes");
+      return;
+    }
+    std::promise<void> started;
+    auto ready = started.get_future();
+    try {
+      worker = std::thread([this, started = std::move(started)]() mutable {
+        sigset_t mask;
+        sigemptyset(&mask);
+        sigaddset(&mask, SIGIO);
+        if (pthread_sigmask(SIG_BLOCK, &mask, nullptr) != 0 ||
+            (signals = signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK)) < 0) {
+          fail("cannot receive source lease invalidation");
+          started.set_value();
+          return;
+        }
+        owner = static_cast<pid_t>(syscall(SYS_gettid));
+        started.set_value();
+        std::array<pollfd, 2> descriptors{pollfd{signals, POLLIN, 0},
+                                          pollfd{wakeup, POLLIN, 0}};
+        for (;;) {
+          auto result = poll(descriptors.data(), descriptors.size(), -1);
+          if (result < 0 && errno == EINTR)
+            continue;
+          if (result < 0 || descriptors[0].revents) {
+            if (result < 0 ||
+                (descriptors[0].revents & (POLLERR | POLLHUP | POLLNVAL)))
+              monitorError = result < 0 ? errno : EIO;
+            invalidate();
+            return;
+          }
+          if (descriptors[1].revents) {
+            std::uint64_t value;
+            ssize_t count;
+            do {
+              count = read(wakeup, &value, sizeof(value));
+            } while (count < 0 && errno == EINTR);
+            if (count != sizeof(value)) {
+              monitorError = count < 0 ? errno : EIO;
+              invalidate();
+              return;
+            }
+            signalfd_siginfo signal;
+            do {
+              count = read(signals, &signal, sizeof(signal));
+            } while (count < 0 && errno == EINTR);
+            if (count >= 0 || errno != EAGAIN) {
+              if (count < 0)
+                monitorError = errno;
+              invalidate();
+              return;
+            }
+            {
+              std::lock_guard lock(leaseMutex);
+              if (stopping)
+                return;
+              acknowledged = requested;
+            }
+            observed.notify_all();
+          }
+        }
+      });
+    } catch (const std::system_error &error) {
+      reason =
+          "cannot start source change monitor: " + std::string(error.what());
+      invalid = true;
+      return;
+    }
+    ready.get();
+#else
+    fail("source change monitoring is unavailable on this platform");
+#endif
+  }
+  ~SnapshotWatch() {
+#ifdef __linux__
+    invalidate();
+    if (worker.joinable()) {
+      {
+        std::lock_guard lock(leaseMutex);
+        stopping = true;
+      }
+      wake();
+      worker.join();
+    }
+    for (auto descriptor : {signals, changes, wakeup})
+      if (descriptor >= 0)
+        close(descriptor);
+#endif
+  }
+  SnapshotWatch(const SnapshotWatch &) = delete;
+  SnapshotWatch &operator=(const SnapshotWatch &) = delete;
+
+  void directory(const std::filesystem::path &path) {
+#ifdef __linux__
+    if (invalid)
+      return;
+    struct statfs filesystem{};
+    if (statfs(path.c_str(), &filesystem) != 0 ||
+        (filesystem.f_type != EXT4_SUPER_MAGIC &&
+         filesystem.f_type != XFS_SUPER_MAGIC &&
+         filesystem.f_type != BTRFS_SUPER_MAGIC &&
+         filesystem.f_type != TMPFS_MAGIC)) {
+      fail("source filesystem has no supported local change notification");
+      return;
+    }
+    if (inotify_add_watch(changes, path.c_str(),
+                          IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO |
+                              IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF |
+                              IN_ONLYDIR | IN_DONT_FOLLOW) < 0)
+      fail("cannot watch source directory");
+#else
+    (void)path;
+#endif
+  }
+
+  void source(const std::filesystem::path &path) {
+#ifdef __linux__
+    if (invalid)
+      return;
+    if (inotify_add_watch(changes, path.c_str(),
+                          IN_MODIFY | IN_ATTRIB | IN_DELETE_SELF |
+                              IN_MOVE_SELF | IN_DONT_FOLLOW) < 0) {
+      fail("cannot watch source file");
+      return;
+    }
+    std::lock_guard lock(leaseMutex);
+    if (invalid)
+      return;
+    leases.push_back(-1);
+    auto &descriptor = leases.back();
+    descriptor = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    struct f_owner_ex destination{F_OWNER_TID, owner};
+    if (descriptor < 0 || fcntl(descriptor, F_SETOWN_EX, &destination) < 0 ||
+        fcntl(descriptor, F_SETSIG, SIGIO) < 0 ||
+        fcntl(descriptor, F_SETLEASE, F_RDLCK) < 0) {
+      if (descriptor >= 0)
+        close(descriptor);
+      leases.pop_back();
+      reason = "source read leases are unavailable or a writer is active";
+      invalid = true;
+      return;
+    }
+#else
+    (void)path;
+#endif
+  }
+
+  bool unchanged() {
+#ifdef __linux__
+    if (invalid)
+      return false;
+    {
+      std::unique_lock lock(leaseMutex);
+      auto sequence = ++requested;
+      if (!wake())
+        return false;
+      observed.wait(lock, [&] { return invalid || acknowledged >= sequence; });
+      if (invalid)
+        return false;
+    }
+    std::array<char, 4096> events;
+    ssize_t count;
+    do {
+      count = read(changes, events.data(), events.size());
+    } while (count < 0 && errno == EINTR);
+    if (count >= 0 || errno != EAGAIN) {
+      if (count < 0)
+        monitorError = errno;
+      invalidate();
+      return false;
+    }
+    auto currentMounts = mountInventory();
+    if (currentMounts != mounts) {
+      if (currentMounts.empty())
+        monitorError = EIO;
+      invalidate();
+      return false;
+    }
+    return !invalid;
+#else
+    return false;
+#endif
+  }
+  std::string fallback() const {
+    if (auto failure = monitorError.load())
+      return "source change monitor failed: " +
+             std::error_code(failure, std::generic_category()).message();
+    return reason;
+  }
+
+private:
+  void fail(std::string message) {
+    reason = std::move(message);
+    invalid = true;
+  }
+#ifdef __linux__
+  static std::string mountInventory() {
+    std::ifstream stream("/proc/self/mountinfo", std::ios::binary);
+    std::ostringstream bytes;
+    bytes << stream.rdbuf();
+    return stream && !stream.bad() ? bytes.str() : std::string{};
+  }
+  void invalidate() {
+    invalid = true;
+    {
+      std::lock_guard lock(leaseMutex);
+      for (auto descriptor : leases)
+        close(descriptor);
+      leases.clear();
+    }
+    observed.notify_all();
+  }
+  bool wake() {
+    std::uint64_t value = 1;
+    ssize_t count;
+    do {
+      count = write(wakeup, &value, sizeof(value));
+    } while (count < 0 && errno == EINTR);
+    if (count == sizeof(value) || (count < 0 && errno == EAGAIN))
+      return true;
+    monitorError = count < 0 ? errno : EIO;
+    return false;
+  }
+  int changes = -1, signals = -1, wakeup = -1;
+  pid_t owner = 0;
+  std::string mounts;
+  std::mutex leaseMutex;
+  std::condition_variable observed;
+  std::uint64_t requested = 0, acknowledged = 0;
+  bool stopping = false;
+  std::vector<int> leases;
+  std::thread worker;
+#endif
+  std::atomic<bool> invalid = false;
+  std::atomic<int> monitorError = 0;
+  std::string reason;
+};
+
 std::optional<LibraryInputs>
-collectLibraryInputs(const std::filesystem::path &directory,
-                     const LibraryCacheConfiguration &configuration,
-                     std::string &problem) {
+collectInputs(const std::filesystem::path &directory,
+              const LibraryCacheConfiguration &configuration,
+              std::string &problem, SnapshotWatch *watch = nullptr) {
   namespace fs = std::filesystem;
   problem.clear();
   auto fail = [&](const std::string &message) -> std::optional<LibraryInputs> {
@@ -21,10 +294,19 @@ collectLibraryInputs(const std::filesystem::path &directory,
   auto root = fs::canonical(directory, error);
   if (error || !fs::is_directory(root, error))
     return fail(directory.string() + " is not a readable directory");
+  if (watch)
+    watch->directory(root);
   std::vector<fs::path> paths;
   for (fs::recursive_directory_iterator item(root, error), end;
        !error && item != end; item.increment(error)) {
     paths.push_back(item->path());
+    if (watch) {
+      auto status = item->symlink_status(error);
+      if (error)
+        break;
+      if (fs::is_directory(status))
+        watch->directory(item->path());
+    }
     if (paths.size() > limits::tokens)
       return fail("source inventory exceeds the compiler count limit");
   }
@@ -91,6 +373,8 @@ collectLibraryInputs(const std::filesystem::path &directory,
       field("non-source-link");
       continue;
     }
+    if (watch)
+      watch->source(canonical);
     auto size = fs::file_size(canonical, error);
     if (error || size > limits::sourceBytes)
       return fail("source size is unavailable or exceeds the compiler limit: " +
@@ -113,5 +397,69 @@ collectLibraryInputs(const std::filesystem::path &directory,
     return fail("no library sources");
   inputs.key = hash.finish();
   return inputs;
+}
+} // namespace
+
+struct LibraryInputSnapshots::Entry {
+  std::filesystem::path root;
+  LibraryCacheConfiguration configuration;
+  std::shared_ptr<const LibraryInputs> inputs;
+  SnapshotWatch watch;
+};
+
+LibraryInputSnapshots::LibraryInputSnapshots() = default;
+LibraryInputSnapshots::~LibraryInputSnapshots() = default;
+
+std::shared_ptr<const LibraryInputs>
+LibraryInputSnapshots::collect(const std::filesystem::path &directory,
+                               const LibraryCacheConfiguration &configuration,
+                               std::string &error, std::string &fallback) {
+  namespace fs = std::filesystem;
+  error.clear();
+  fallback.clear();
+  std::error_code fileError;
+  auto requested = fs::absolute(directory, fileError);
+  if (fileError) {
+    error = "cannot snapshot checked library: cannot identify " +
+            directory.string() + ": " + fileError.message();
+    return nullptr;
+  }
+  auto name = requested.lexically_normal().generic_string();
+  auto root = fs::canonical(requested, fileError);
+  auto found = entries.find(name);
+  if (found != entries.end()) {
+    const auto &entry = *found->second;
+    if (!fileError && entry.root == root &&
+        entry.configuration == configuration &&
+        found->second->watch.unchanged())
+      return entry.inputs;
+    fallback = entry.watch.fallback();
+    entries.erase(found);
+  }
+  auto entry = std::make_unique<Entry>();
+  entry->watch.start();
+  auto inputs = collectInputs(directory, configuration, error, &entry->watch);
+  if (!inputs)
+    return nullptr;
+  auto result = std::make_shared<const LibraryInputs>(std::move(*inputs));
+  if (entry->watch.unchanged()) {
+    entry->root = std::move(root);
+    entry->configuration = configuration;
+    entry->inputs = result;
+    entries.emplace(std::move(name), std::move(entry));
+  } else {
+    if (auto note = entry->watch.fallback(); !note.empty())
+      fallback = std::move(note);
+    if (fallback.empty())
+      fallback = "source tree or monitor changed during snapshot";
+  }
+  return result;
+}
+
+std::optional<LibraryInputs>
+collectLibraryInputs(const std::filesystem::path &directory,
+                     const LibraryCacheConfiguration &configuration,
+                     std::string &problem) {
+  return collectInputs(directory, configuration, problem);
 }
 } // namespace mettle::driver

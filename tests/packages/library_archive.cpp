@@ -2,9 +2,11 @@
 #include "driver/library_cache.h"
 #include "packages/sha256.h"
 #include "packages/store.h"
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -318,4 +320,89 @@ int main() {
       driver::collectLibraryInputs(libraryRoot, configuration, error);
   expect(addition && addition->key != compiler->key,
          "a formerly absent module appearing must invalidate the library");
+  driver::LibraryInputSnapshots snapshots;
+  std::string fallback;
+  auto snapshot = [&]() {
+    auto value = snapshots.collect(libraryRoot, configuration, error, fallback);
+    expect(static_cast<bool>(value), error.c_str());
+    return value;
+  };
+  auto retained = snapshot();
+  auto monitored = fallback.empty();
+  auto reused = snapshot();
+  expect(reused->key == retained->key && (!monitored || reused == retained),
+         "unchanged monitored sources must reuse their resident snapshot");
+  previousTime = fs::last_write_time(libraryRoot / "main.mt");
+  {
+    std::ofstream source(libraryRoot / "main.mt");
+    source << "pub const fn value(): i32 { 43 }";
+  }
+  fs::last_write_time(libraryRoot / "main.mt", previousTime);
+  auto changed = snapshot();
+  expect(
+      changed->key != reused->key,
+      "resident snapshots must invalidate same-size writes at identical mtime");
+  {
+    std::ofstream replacement(root / "replacement.mt");
+    replacement << "pub const fn value(): i32 { 44 }";
+  }
+  fs::last_write_time(root / "replacement.mt", previousTime);
+  fs::rename(root / "replacement.mt", libraryRoot / "main.mt");
+  auto replaced = snapshot();
+  expect(replaced->key != changed->key,
+         "resident snapshots must invalidate atomic same-stamp replacements");
+  fs::create_directories(libraryRoot / "nested");
+  {
+    std::ofstream added(libraryRoot / "nested" / "added.mt");
+    added << "pub const ADDED: i32 = 1";
+  }
+  auto nested = snapshot();
+  expect(nested->key != replaced->key && nested->sources.size() == 3,
+         "resident snapshots must discover newly added subdirectories");
+  fs::remove_all(libraryRoot / "nested");
+  expect(snapshot()->key == replaced->key,
+         "resident snapshots must invalidate removed source directories");
+  fs::create_hard_link(libraryRoot / "main.mt", root / "outside-alias.mt");
+  auto aliased = snapshot();
+  {
+    std::ofstream alias(root / "outside-alias.mt");
+    alias << "pub const fn value(): i32 { 45 }";
+  }
+  expect(
+      snapshot()->key != aliased->key,
+      "writes through a hard link outside the root must invalidate snapshots");
+  auto descriptor = open((libraryRoot / "main.mt").c_str(), O_RDWR);
+  expect(descriptor >= 0, "must open a mapped source writer");
+  auto length =
+      static_cast<std::size_t>(fs::file_size(libraryRoot / "main.mt"));
+  auto mapping =
+      mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
+  expect(mapping != MAP_FAILED, "must map a source writer");
+  close(descriptor);
+  auto mapped = snapshot();
+  static_cast<char *>(mapping)[length - 3] = '6';
+  expect(msync(mapping, length, MS_SYNC) == 0,
+         "must flush the mapped source edit");
+  expect(snapshot()->key != mapped->key,
+         "writable mappings must prevent unsound notification-only reuse");
+  expect(munmap(mapping, length) == 0, "must release mapped source writer");
+  auto rootLink = root / "linked-core";
+  fs::create_directory_symlink(libraryRoot, rootLink);
+  auto linked = snapshots.collect(rootLink, configuration, error, fallback);
+  expect(linked && linked->key == snapshot()->key,
+         "source root aliases must preserve canonical content identity");
+  fs::create_directory(root / "other-core");
+  {
+    std::ofstream source(root / "other-core" / "module.mt");
+    source << "pub const OTHER: i32 = 1";
+  }
+  fs::remove(rootLink);
+  fs::create_directory_symlink(root / "other-core", rootLink);
+  auto retargeted = snapshots.collect(rootLink, configuration, error, fallback);
+  expect(retargeted && retargeted->key != linked->key,
+         "retargeting a library root symlink must invalidate its snapshot");
+  fs::create_symlink(root / "outside-alias.mt", libraryRoot / "escape.mt");
+  expect(!snapshots.collect(libraryRoot, configuration, error, fallback) &&
+             error.find("source link escapes") != std::string::npos,
+         "an invalidated snapshot must reject newly introduced escaping links");
 }
