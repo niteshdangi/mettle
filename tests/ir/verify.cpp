@@ -1,4 +1,5 @@
 #include "ir/verify.h"
+#include "ir/dominance.h"
 #include "analysis/initialization.h"
 #include "analysis/loans.h"
 #include "analysis/origins.h"
@@ -23,6 +24,30 @@ Program simple() {
 void require(bool condition, const char *message) {
   if (!condition)
     throw std::runtime_error(message);
+}
+void dominanceCases() {
+  Function function{"dominance", Type::Unit, 0, {}, {}, 0};
+  function.blocks.resize(7);
+  function.blocks[0].exit = {Exit::Branch, {}, 1, 2};
+  function.blocks[1].exit = {Exit::Jump, {}, 3};
+  function.blocks[2].exit = {Exit::Jump, {}, 3};
+  function.blocks[3].exit = {Exit::Branch, {}, 4, 5};
+  function.blocks[4].exit = {Exit::Jump, {}, 3};
+  function.blocks[5].exit = {Exit::Return};
+  function.blocks[6].exit = {Exit::Jump, {}, 5};
+  Dominance dominance(function);
+  for (int block = 0; block < 6; ++block) {
+    require(dominance.dominates(0, block), "entry lost dominance");
+    require(dominance.dominates(block, block), "block lost self dominance");
+  }
+  require(dominance.dominates(3, 4) && dominance.dominates(3, 5),
+          "loop header lost dominance");
+  require(!dominance.dominates(1, 3) && !dominance.dominates(2, 1) &&
+              !dominance.dominates(4, 3) && !dominance.dominates(5, 4),
+          "dominator intervals crossed siblings or a backedge");
+  require(!dominance.reachable(6) && !dominance.dominates(6, 5) &&
+              dominance.dominates(5, 6),
+          "unreachable predecessor changed dominance");
 }
 void rejected(const Program &program, const char *expected) {
   mettle::Diagnostics diagnostics;
@@ -1104,6 +1129,7 @@ void importedPreparation() {
 } // namespace
 int main() {
   try {
+    dominanceCases();
     verifierCases();
     functionAddressCases();
     floatingCarrierCases();

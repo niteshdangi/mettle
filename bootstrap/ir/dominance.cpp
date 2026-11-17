@@ -5,7 +5,10 @@
 namespace mettle::ir {
 Dominance::Dominance(const Function &function)
     : predecessors(function.blocks.size()), rank(function.blocks.size(), -1),
-      immediate(function.blocks.size(), -1) {
+      immediate(function.blocks.size(), -1), entry(function.blocks.size()),
+      end(function.blocks.size()) {
+  if (function.blocks.empty())
+    return;
   std::vector<std::vector<int>> successors(function.blocks.size());
   for (std::size_t b = 0; b < function.blocks.size(); ++b) {
     const auto &exit = function.blocks[b].exit;
@@ -63,14 +66,34 @@ Dominance::Dominance(const Function &function)
       }
     }
   } while (changed);
+  std::vector<int> firstChild(function.blocks.size(), -1),
+      nextSibling(function.blocks.size(), -1);
+  for (auto block : order)
+    if (block != 0) {
+      auto parent = immediate[block];
+      nextSibling[block] = firstChild[parent];
+      firstChild[parent] = block;
+    }
+  int next = 0;
+  stack.emplace_back(0, false);
+  while (!stack.empty()) {
+    auto [block, finished] = stack.back();
+    stack.pop_back();
+    if (finished) {
+      end[block] = next;
+      continue;
+    }
+    entry[block] = next++;
+    stack.emplace_back(block, true);
+    for (auto child = firstChild[block]; child >= 0; child = nextSibling[child])
+      stack.emplace_back(child, false);
+  }
 }
 bool Dominance::dominates(int definition, int use) const {
   if (!reachable(use))
     return true;
   if (!reachable(definition))
     return false;
-  while (rank[use] > rank[definition])
-    use = immediate[use];
-  return definition == use;
+  return entry[definition] <= entry[use] && entry[use] < end[definition];
 }
 } // namespace mettle::ir
