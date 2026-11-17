@@ -615,6 +615,11 @@ expected amortized O(1), O(n) worst case excluding resizing/payload work.
 Full iteration, retain and drain have O(capacity) upper traversal cost where
 the table scans empty buckets; no O(len)-only requirement is weakened for
 ordered containers. A denser native implementation may be faster.
+Map and Set do not expose a contiguous bucket slice or stored full hashes.
+Borrowed map entries expose keys and values only; physical slots may contain
+holes. Resizing may rehash keys, but completes allocations and hash callbacks
+before moving payloads, preserving the original map on allocation failure or
+hash-callback panic.
 `drain` empties entries while preserving allocation and yields owned pairs;
 dropping the drain destroys unyielded entries.
 Hash/equality callback counts are not stable API guarantees. Set union yields

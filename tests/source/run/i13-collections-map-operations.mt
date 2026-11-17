@@ -71,13 +71,13 @@ fn main(): i32 {
     if !defaulted.is_empty() { return 3 }
     var default_hash = hash_map.new<i32, i32>()
     default_hash.insert(7, 70)
-    if default_hash.as_entries()[0usize].hash != core.hash.hash_one(7i32) {
+    if default_hash.hasher().hash_one(7i32) != core.hash.hash_one(7i32) ||
+        *default_hash.get(7).or_panic() != 70 {
         return 9
     }
     var custom = hash_map.with_hasher<i32, i32, TestBuildHasher>(TestBuildHasher(17u64))
     custom.insert(7, 70)
     if custom.hasher().key != 17u64 ||
-        custom.as_entries()[0usize].hash != custom.hasher().hash_one(7i32) ||
         *custom.get(7).or_panic() != 70 {
         return 8
     }
@@ -94,8 +94,7 @@ fn main(): i32 {
     if *capacity_custom_in.get(5).or_panic() != 50 { return 3 }
     var custom_set = hash_map.set_with_hasher<i32, TestBuildHasher>(TestBuildHasher(31u64))
     custom_set.insert(11)
-    if custom_set.hasher().key != 31u64 || !custom_set.contains(11) ||
-        custom_set.as_entries()[0usize].hash != custom_set.hasher().hash_one(11i32) {
+    if custom_set.hasher().key != 31u64 || !custom_set.contains(11) {
         return 86
     }
     var custom_set_capacity =

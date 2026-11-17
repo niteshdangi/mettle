@@ -172,6 +172,7 @@ extend SipHasher implements Hasher {
         }
     }
     // Finalizes a scratch copy of the state, so more input can follow.
+    @inline(always)
     fn finish(): u64 {
         var scratch = SipHasher(self.v0, self.v1, self.v2, self.v3, self.tail, self.tail_length,
                              self.length, self.compression, self.finalization)
