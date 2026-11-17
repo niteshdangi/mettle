@@ -8,11 +8,28 @@
 namespace mettle {
 class TypeInference {
 public:
+  class Changes {
+  public:
+    explicit Changes(TypeInference &inference);
+    ~Changes();
+    Changes(const Changes &) = delete;
+    Changes &operator=(const Changes &) = delete;
+    std::optional<int> next();
+
+  private:
+    friend class TypeInference;
+    TypeInference &inference;
+    Changes *previous;
+    std::vector<int> pending;
+    std::size_t position = 0;
+  };
   TypeInference(Diagnostics &diagnostics, TypeStore &types)
       : diagnostics(diagnostics), types(types) {}
+  TypeInference(const TypeInference &) = delete;
+  TypeInference &operator=(const TypeInference &) = delete;
   int fresh(Type type = Type::Unknown);
   int numeric(bool floating, Type type = Type::Unknown);
-  Type value(int variable);
+  Type value(int variable, int *blocked = nullptr);
   bool equal(int a, int b, Span span, bool coercion = false);
   int joined(int a, int b, Span span);
   void set(int variable, Type type);
@@ -50,6 +67,8 @@ private:
   Diagnostics &diagnostics;
   TypeStore &types;
   std::vector<Variable> variables;
+  Changes *changes = nullptr;
+  void changed(int variable);
   int root(int variable);
   bool occurs(int variable, int within);
 };

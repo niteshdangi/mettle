@@ -6,6 +6,7 @@
 #include "semantics/interfaces.h"
 #include "semantics/library.h"
 #include "semantics/region_solver.h"
+#include <deque>
 #include <functional>
 #include <map>
 #include <set>
@@ -232,6 +233,11 @@ private:
     GenericEnvironment *environment = nullptr;
   };
   std::vector<FieldRequest> fieldRequests;
+  std::deque<std::size_t> readyFields;
+  std::unordered_map<int, std::vector<std::size_t>> waitingFields;
+  std::set<std::size_t> genericFieldRequests;
+  std::optional<TypeInference::Changes> fieldChanges;
+  void deferField(FieldRequest request);
   std::unordered_map<const Function *, std::size_t> closureFunctions;
   std::unordered_map<const Node *, Type> closureContexts;
   std::unordered_map<const Node *, Type> expectedTypes;
@@ -437,15 +443,17 @@ private:
                     std::vector<TypeBinding> &bindings, Span span);
   void prepareGenerics();
   std::unordered_map<std::string, std::size_t> interfaceNames;
-  // Per method name: interface declarations whose hierarchy declares it.
-  std::unordered_map<std::string, std::vector<bool>> methodInterfaces;
-  const std::vector<bool> &interfacesDeclaring(const std::string &name);
   struct ReceiverImplementationCandidates {
     std::vector<std::size_t> inherent;
+    std::vector<std::size_t> declarations;
     std::vector<std::size_t> interfaces;
-    std::size_t inherentIndexed = 0;
     std::size_t interfacesIndexed = 0;
+    std::size_t definitionsIndexed = 0;
   };
+  std::size_t indexedReceiverImplementations = 0;
+  std::size_t indexedReceiverDefinitions = 0;
+  bool receiverInterfacesReady = false;
+  std::vector<std::vector<std::size_t>> receiverInterfaceChildren;
   std::map<std::string, ReceiverImplementationCandidates, std::less<>>
       receiverImplementationCandidates;
   const ReceiverImplementationCandidates &

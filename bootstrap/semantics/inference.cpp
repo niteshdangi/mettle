@@ -2,6 +2,30 @@
 #include <algorithm>
 
 namespace mettle {
+TypeInference::Changes::Changes(TypeInference &inference)
+    : inference(inference), previous(inference.changes) {
+  inference.changes = this;
+}
+TypeInference::Changes::~Changes() {
+  auto **slot = &inference.changes;
+  while (*slot != this)
+    slot = &(*slot)->previous;
+  *slot = previous;
+}
+std::optional<int> TypeInference::Changes::next() {
+  if (pending.empty())
+    return std::nullopt;
+  auto variable = pending[position++];
+  if (position == pending.size()) {
+    pending.clear();
+    position = 0;
+  }
+  return variable;
+}
+void TypeInference::changed(int variable) {
+  for (auto *observer = changes; observer; observer = observer->previous)
+    observer->pending.push_back(variable);
+}
 int TypeInference::fresh(Type type) {
   int index = static_cast<int>(variables.size());
   variables.push_back({index, type});
@@ -28,21 +52,24 @@ bool TypeInference::depends(int variable,
     return depends(child, representatives);
   });
 }
-Type TypeInference::value(int v) {
+Type TypeInference::value(int v, int *blocked) {
   v = root(v);
   if (variables[v].type != Type::Unknown)
     return variables[v].type;
-  if (!variables[v].kind)
+  if (!variables[v].kind) {
+    if (blocked && variables[v].numeric == Variable::Numeric::None)
+      *blocked = v;
     return variables[v].numeric == Variable::Numeric::Integer ? Type::I32
            : variables[v].numeric == Variable::Numeric::Floating
                ? Type::F64
                : Type::Unknown;
+  }
   auto kind = *variables[v].kind;
   auto children = variables[v].components;
   auto count = variables[v].count;
   std::vector<Type> components;
   for (auto child : children) {
-    auto type = value(child);
+    auto type = value(child, blocked);
     if (type == Type::Unknown)
       return Type::Unknown;
     components.push_back(type);
@@ -100,6 +127,7 @@ std::vector<int> TypeInference::components(int variable, AggregateKind kind,
         children.push_back(fresh());
       variables[variable].components = std::move(children);
     }
+    changed(variable);
   }
   if (*variables[variable].kind != kind) {
     diagnostics.error("type", span, "incompatible aggregate shape");
@@ -165,6 +193,7 @@ bool TypeInference::equal(int a, int b, Span span, bool coercion) {
         return false;
       }
       variables[a].parent = b;
+      changed(a);
       return true;
     }
     if (!variables[b].kind && bt == Type::Unknown) {
@@ -173,6 +202,7 @@ bool TypeInference::equal(int a, int b, Span span, bool coercion) {
         return false;
       }
       variables[b].parent = a;
+      changed(b);
       return true;
     }
     auto ac = components(a, kind, span), bc = components(b, kind, span);
@@ -191,6 +221,7 @@ bool TypeInference::equal(int a, int b, Span span, bool coercion) {
       if (!equal(ac[i], bc[i], span))
         return false;
     variables[a].parent = b;
+    changed(a);
     return true;
   }
   // Region relations are proven by the region phase, not by shape inference.
@@ -204,6 +235,10 @@ bool TypeInference::equal(int a, int b, Span span, bool coercion) {
     variables[b].type = at;
   if (bn == Variable::Numeric::None)
     variables[b].numeric = an;
+  changed(a);
+  if ((bt == Type::Unknown && at != Type::Unknown) ||
+      (bn == Variable::Numeric::None && an != Variable::Numeric::None))
+    changed(b);
   return true;
 }
 int TypeInference::joined(int a, int b, Span span) {
@@ -215,6 +250,10 @@ int TypeInference::joined(int a, int b, Span span) {
   return a;
 }
 void TypeInference::set(int variable, Type type) {
-  variables[root(variable)].type = type;
+  variable = root(variable);
+  if (variables[variable].type != type) {
+    variables[variable].type = type;
+    changed(variable);
+  }
 }
 } // namespace mettle

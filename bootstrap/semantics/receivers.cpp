@@ -14,61 +14,72 @@ ParameterMode receiverMode(const Function &function) {
                                        : ParameterMode::Read;
 }
 } // namespace
-const std::vector<bool> &Checker::interfacesDeclaring(const std::string &name) {
-  auto &definitions = checked.interfaceData->definitions;
-  auto &declaring = methodInterfaces[name];
-  if (declaring.size() == definitions.size())
-    return declaring;
-  declaring.assign(definitions.size(), false);
-  for (std::size_t root = 0; root < definitions.size(); ++root) {
-    std::vector<std::size_t> pending{root};
-    std::set<std::size_t> visited{root};
-    while (!pending.empty() && !declaring[root]) {
-      auto next = pending.back();
-      pending.pop_back();
-      for (const auto &method : definitions[next].methods)
-        if (method.name == name)
-          declaring[root] = true;
-      for (const auto &parent : definitions[next].superinterfaces)
-        if (parent.property == interfaces::Property::Interface &&
-            checked.types->isErased(parent.interfaceType)) {
-          auto declaration =
-              checked.types->erased(parent.interfaceType).declaration;
-          if (visited.insert(declaration).second)
-            pending.push_back(declaration);
-        }
-    }
-  }
-  return declaring;
-}
 const Checker::ReceiverImplementationCandidates &
 Checker::receiverCandidates(std::string_view name, bool includeInterfaces) {
-  const std::string methodName(name);
+  const auto &database = std::as_const(*checked.interfaceData);
+  const auto &implementations = database.implementations;
+  while (indexedReceiverImplementations < implementations.size()) {
+    auto index = indexedReceiverImplementations++;
+    const auto &implementation = implementations[index];
+    if (implementation.interfaceType != Type::Unknown)
+      continue;
+    for (const auto &[method, entry] : implementation.inherent)
+      receiverImplementationCandidates[method].inherent.push_back(index);
+  }
+  if (includeInterfaces) {
+    if (!database.argumentsReady || !receiverInterfacesReady) {
+      receiverInterfaceChildren.clear();
+      indexedReceiverDefinitions = 0;
+      for (auto &[method, indexed] : receiverImplementationCandidates) {
+        indexed.declarations.clear();
+        indexed.interfaces.clear();
+        indexed.interfacesIndexed = 0;
+        indexed.definitionsIndexed = 0;
+      }
+      receiverInterfacesReady = database.argumentsReady;
+    }
+    receiverInterfaceChildren.resize(database.definitions.size());
+    while (indexedReceiverDefinitions < database.definitions.size()) {
+      auto index = indexedReceiverDefinitions++;
+      const auto &definition = database.definitions[index];
+      for (const auto &method : definition.methods)
+        receiverImplementationCandidates[method.name].declarations.push_back(
+            index);
+      for (const auto &parent : definition.superinterfaces)
+        if (parent.property == interfaces::Property::Interface &&
+            checked.types->isErased(parent.interfaceType))
+          receiverInterfaceChildren[checked.types->erasedDeclaration(
+                                        parent.interfaceType)]
+              .push_back(index);
+    }
+  }
   auto found = receiverImplementationCandidates.find(name);
   if (found == receiverImplementationCandidates.end())
     found =
         receiverImplementationCandidates.try_emplace(std::string(name)).first;
   auto &candidates = found->second;
-  const auto &implementations = checked.interfaceData->implementations;
-  while (candidates.inherentIndexed < implementations.size()) {
-    auto index = candidates.inherentIndexed++;
-    const auto &implementation = implementations[index];
-    if (implementation.interfaceType == Type::Unknown &&
-        implementation.inherent.contains(methodName))
-      candidates.inherent.push_back(index);
-  }
-  if (includeInterfaces) {
-    const auto &declaring = interfacesDeclaring(found->first);
-    while (candidates.interfacesIndexed < implementations.size()) {
-      auto index = candidates.interfacesIndexed++;
-      const auto &implementation = implementations[index];
-      if (!checked.types->isErased(implementation.interfaceType))
-        continue;
-      auto declaration =
-          checked.types->erasedDeclaration(implementation.interfaceType);
-      if (declaring[declaration])
-        candidates.interfaces.push_back(index);
+  if (includeInterfaces &&
+      (candidates.interfacesIndexed != implementations.size() ||
+       candidates.definitionsIndexed != database.definitions.size())) {
+    std::vector<std::size_t> declaring;
+    std::unordered_set<std::size_t> visited;
+    for (auto declaration : candidates.declarations)
+      if (visited.insert(declaration).second)
+        declaring.push_back(declaration);
+    for (std::size_t next = 0; next < declaring.size(); ++next)
+      for (auto child : receiverInterfaceChildren[declaring[next]])
+        if (visited.insert(child).second)
+          declaring.push_back(child);
+    candidates.interfaces.clear();
+    for (auto declaration : declaring) {
+      const auto &selected =
+          database.implementationsFor(*checked.types, declaration);
+      candidates.interfaces.insert(candidates.interfaces.end(),
+                                   selected.begin(), selected.end());
     }
+    std::sort(candidates.interfaces.begin(), candidates.interfaces.end());
+    candidates.interfacesIndexed = implementations.size();
+    candidates.definitionsIndexed = database.definitions.size();
   }
   return candidates;
 }
@@ -126,25 +137,33 @@ std::optional<std::size_t> Checker::receiverCandidate(
         found != names.end() && accepts(found->second))
       inherent.push_back(found->second);
   }
-  interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
-                            interfaceAssumptions(), regionEnvironment());
-  solver.setCallableProof([&](Type parameter, Type actual,
-                              const std::vector<TypeBinding> &bindings,
-                              std::span<const RegionBinding>, Span span) {
-    auto expected = solver.normalize(
-        checked.types->substitute(
-            checked.types->parameter(parameter).erasedCallableConstraint,
-            bindings),
-        {}, span);
-    actual = solver.normalize(actual, {}, span);
-    if (!checked.types->isCallable(actual))
-      return false;
-    return checked.types->satisfiesCallable(
-        checked.types->eraseRegions(
-            checked.types->callableType(checked.types->callable(actual))),
-        checked.types->eraseRegions(expected));
-  });
-  for (auto implIndex : indexed.inherent) {
+  std::optional<interfaces::Solver> solver;
+  auto query = [&]() -> interfaces::Solver & {
+    if (!solver) {
+      solver.emplace(*checked.types, *checked.interfaceData, diagnostics,
+                     interfaceAssumptions(), regionEnvironment());
+      solver->setCallableProof([&](Type parameter, Type actual,
+                                   const std::vector<TypeBinding> &bindings,
+                                   std::span<const RegionBinding>, Span span) {
+        auto expected = solver->normalize(
+            checked.types->substitute(
+                checked.types->parameter(parameter).erasedCallableConstraint,
+                bindings),
+            {}, span);
+        actual = solver->normalize(actual, {}, span);
+        if (!checked.types->isCallable(actual))
+          return false;
+        return checked.types->satisfiesCallable(
+            checked.types->eraseRegions(
+                checked.types->callableType(checked.types->callable(actual))),
+            checked.types->eraseRegions(expected));
+      });
+    }
+    return *solver;
+  };
+  for (std::size_t position = 0, count = indexed.inherent.size();
+       position < count; ++position) {
+    auto implIndex = indexed.inherent[position];
     const auto &implementation =
         std::as_const(*checked.interfaceData).implementations[implIndex];
     if (protocol ||
@@ -154,14 +173,14 @@ std::optional<std::size_t> Checker::receiverCandidate(
     if (selected == implementation.inherent.end() ||
         !accepts(static_cast<std::size_t>(selected->second.function)))
       continue;
-    auto bindings = solver.applicable(implementation, self, call.span);
+    auto bindings = query().applicable(implementation, self, call.span);
     if (!bindings)
       continue;
     auto index = static_cast<std::size_t>(selected->second.function);
     inherent.push_back(index);
     for (auto parameter : selected->second.arguments)
       inherentArguments[index].push_back(
-          solver.normalize(parameter, *bindings, call.span));
+          query().normalize(parameter, *bindings, call.span));
   }
   std::sort(inherent.begin(), inherent.end());
   inherent.erase(std::unique(inherent.begin(), inherent.end()), inherent.end());
@@ -228,7 +247,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
   if (checked.types->isErased(self))
     consider(self);
   else if (checked.types->isProjection(self)) {
-    for (const auto &bound : solver.projectionBounds(self, call.span))
+    for (const auto &bound : query().projectionBounds(self, call.span))
       if (bound.property == interfaces::Property::Interface)
         consider(bound.interfaceType);
     for (const auto &bound : interfaceAssumptions())
@@ -334,7 +353,9 @@ std::optional<std::size_t> Checker::receiverCandidate(
     std::set<std::uint32_t> inferredConversions;
     std::map<std::uint32_t, bool> visibility;
     const auto &interfaceCandidates = receiverCandidates(name, true).interfaces;
-    for (auto index : interfaceCandidates) {
+    for (std::size_t position = 0, count = interfaceCandidates.size();
+         position < count; ++position) {
+      auto index = interfaceCandidates[position];
       const auto &implementation =
           std::as_const(*checked.interfaceData).implementations[index];
       const auto declaration =
@@ -351,8 +372,9 @@ std::optional<std::size_t> Checker::receiverCandidate(
           selfHead != Type::Unknown && targetHead != Type::Unknown &&
                   selfHead != targetHead
               ? std::nullopt
-              : solver.applicable(implementation, self, call.span, &regions,
-                                  false, arguments && call.children.size() > 1);
+              : query().applicable(implementation, self, call.span, &regions,
+                                   false,
+                                   arguments && call.children.size() > 1);
       if (bindings) {
         auto bound = checked.types->substituteRegions(
             checked.types->substitute(implementation.interfaceType, *bindings),
@@ -387,7 +409,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
             }
           }
         }
-        if (solver.prove({self, bound}, call.span, false)) {
+        if (query().prove({self, bound}, call.span, false)) {
           consider(bound);
           continue;
         }
@@ -423,7 +445,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
           checked.types->erasedType({definition.name,
                                      static_cast<std::uint32_t>(declaration),
                                      {*argument}});
-      if (solver.prove({self, inferred}, call.span, false))
+      if (query().prove({self, inferred}, call.span, false))
         consider(inferred);
     }
   }

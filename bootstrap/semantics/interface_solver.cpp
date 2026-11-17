@@ -558,11 +558,9 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
     }
     return true;
   };
-  auto available = assumptions;
-  if (types.isProjection(obligation.subject)) {
-    auto bounds = projectionBounds(obligation.subject, span);
-    available.insert(available.end(), bounds.begin(), bounds.end());
-  }
+  std::vector<Obligation> additional;
+  if (types.isProjection(obligation.subject))
+    additional = projectionBounds(obligation.subject, span);
   std::vector<Type> declared;
   if (types.isErased(obligation.subject))
     declared.push_back(obligation.subject);
@@ -571,80 +569,83 @@ bool Solver::prove(const Obligation &obligation, Span span, bool report) {
   for (auto bound : declared)
     for (auto parent : hierarchy(types, database, obligation.subject, bound,
                                  span, diagnostics))
-      available.push_back({obligation.subject, parent});
-  for (const auto &assumption : available)
-    if (assumption.property == obligation.property) {
-      if (assumption.subject != obligation.subject) {
-        if (!((obligation.property == Property::Unpin &&
-               types.isProduct(assumption.subject) &&
-               types.isProduct(obligation.subject)) ||
-              (obligation.property == Property::Interface &&
-               types.isView(assumption.subject) &&
-               types.isView(obligation.subject))))
-          continue;
-        auto environment = regionEnvironment;
-        auto equivalent =
-            match(assumption.subject, obligation.subject, false, &environment);
-        if (!equivalent || std::any_of(equivalent->begin(), equivalent->end(),
-                                       [](auto binding) {
-                                         return binding.parameter !=
-                                                binding.argument;
-                                       }))
-          continue;
-      }
-      if (assumption.interfaceType == obligation.interfaceType)
-        return true;
-      if (functionPointerMarker && types.isErased(assumption.interfaceType)) {
-        const auto &provided =
-            database
-                .definitions[types.erased(assumption.interfaceType).declaration]
-                .name;
-        if (provided == "core::clone::FunctionPointer" ||
-            provided == "core::ops::FnPtr")
-          return deriveFunctionPointerMarker();
-      }
-      if (obligation.property == Property::Interface &&
-          types.isErased(assumption.interfaceType) &&
-          types.isErased(obligation.interfaceType)) {
-        const auto provided =
-            types.erased(normalize(assumption.interfaceType, {}, span));
-        const auto wanted =
-            types.erased(normalize(obligation.interfaceType, {}, span));
-        auto environment = regionEnvironment;
-        std::vector<RegionBinding> bindings;
-        if (provided.declaration == wanted.declaration &&
-            provided.arguments == wanted.arguments &&
-            matchRegions(provided, wanted, {}, {}, bindings, environment)) {
-          bool compatible = true;
-          for (const auto &required : wanted.associated) {
-            auto item =
-                std::find_if(provided.associated.begin(),
-                             provided.associated.end(), [&](const auto &item) {
-                               return item.parameter == required.parameter;
-                             });
-            if (item == provided.associated.end()) {
-              // An unbound associated type is still equal to its wanted value
-              // when the subject's projection normalizes to it.
-              compatible &=
-                  projectedBinding(obligation.subject, wanted, required, span);
-              continue;
+      additional.push_back({obligation.subject, parent});
+  for (auto group : {std::span<const Obligation>(assumptions),
+                     std::span<const Obligation>(additional)})
+    for (const auto &assumption : group)
+      if (assumption.property == obligation.property) {
+        if (assumption.subject != obligation.subject) {
+          if (!((obligation.property == Property::Unpin &&
+                 types.isProduct(assumption.subject) &&
+                 types.isProduct(obligation.subject)) ||
+                (obligation.property == Property::Interface &&
+                 types.isView(assumption.subject) &&
+                 types.isView(obligation.subject))))
+            continue;
+          auto environment = regionEnvironment;
+          auto equivalent = match(assumption.subject, obligation.subject, false,
+                                  &environment);
+          if (!equivalent || std::any_of(equivalent->begin(), equivalent->end(),
+                                         [](auto binding) {
+                                           return binding.parameter !=
+                                                  binding.argument;
+                                         }))
+            continue;
+        }
+        if (assumption.interfaceType == obligation.interfaceType)
+          return true;
+        if (functionPointerMarker && types.isErased(assumption.interfaceType)) {
+          const auto &provided =
+              database
+                  .definitions[types.erased(assumption.interfaceType)
+                                   .declaration]
+                  .name;
+          if (provided == "core::clone::FunctionPointer" ||
+              provided == "core::ops::FnPtr")
+            return deriveFunctionPointerMarker();
+        }
+        if (obligation.property == Property::Interface &&
+            types.isErased(assumption.interfaceType) &&
+            types.isErased(obligation.interfaceType)) {
+          const auto provided =
+              types.erased(normalize(assumption.interfaceType, {}, span));
+          const auto wanted =
+              types.erased(normalize(obligation.interfaceType, {}, span));
+          auto environment = regionEnvironment;
+          std::vector<RegionBinding> bindings;
+          if (provided.declaration == wanted.declaration &&
+              provided.arguments == wanted.arguments &&
+              matchRegions(provided, wanted, {}, {}, bindings, environment)) {
+            bool compatible = true;
+            for (const auto &required : wanted.associated) {
+              auto item = std::find_if(
+                  provided.associated.begin(), provided.associated.end(),
+                  [&](const auto &item) {
+                    return item.parameter == required.parameter;
+                  });
+              if (item == provided.associated.end()) {
+                // An unbound associated type is still equal to its wanted value
+                // when the subject's projection normalizes to it.
+                compatible &= projectedBinding(obligation.subject, wanted,
+                                               required, span);
+                continue;
+              }
+              auto value = types.substituteRegions(item->argument, bindings);
+              // Generic bounds are checked with erased regions, so an erased
+              // binding stands for the same value at any region.
+              auto erased = [&](Type type) {
+                return types.eraseRegions(type) == type;
+              };
+              compatible &= value == required.argument ||
+                            ((erased(value) || erased(required.argument)) &&
+                             types.eraseRegions(value) ==
+                                 types.eraseRegions(required.argument));
             }
-            auto value = types.substituteRegions(item->argument, bindings);
-            // Generic bounds are checked with erased regions, so an erased
-            // binding stands for the same value at any region.
-            auto erased = [&](Type type) {
-              return types.eraseRegions(type) == type;
-            };
-            compatible &= value == required.argument ||
-                          ((erased(value) || erased(required.argument)) &&
-                           types.eraseRegions(value) ==
-                               types.eraseRegions(required.argument));
+            if (compatible)
+              return true;
           }
-          if (compatible)
-            return true;
         }
       }
-    }
   if (obligation.property == Property::Copy)
     return types.isCopy(obligation.subject);
   if (obligation.property == Property::Sized)
@@ -929,11 +930,11 @@ bool Solver::projectedBinding(Type subject, const ErasedType &wanted,
 }
 
 const std::vector<std::size_t> &
-Solver::candidatesFor(std::uint32_t declaration) {
-  auto &index = database.implementationsByDeclaration;
-  for (auto &i = database.indexedImplementations;
-       i < database.implementations.size(); ++i) {
-    auto interfaceType = database.implementations[i].interfaceType;
+Database::implementationsFor(const TypeStore &types,
+                             std::uint32_t declaration) const {
+  auto &index = implementationsByDeclaration;
+  for (auto &i = indexedImplementations; i < implementations.size(); ++i) {
+    auto interfaceType = implementations[i].interfaceType;
     if (!types.isErased(interfaceType))
       continue;
     auto owner = types.erasedDeclaration(interfaceType);
@@ -951,7 +952,7 @@ std::optional<Type> Solver::inferredSubject(Type partial, Type interfaceType,
     return std::nullopt;
   const auto wanted = types.erased(interfaceType);
   std::optional<Type> result;
-  for (auto index : candidatesFor(wanted.declaration)) {
+  for (auto index : database.implementationsFor(types, wanted.declaration)) {
     const auto &candidate = database.implementations[index];
     if (!types.isErased(candidate.interfaceType))
       continue;
@@ -1007,7 +1008,7 @@ Solver::implementedInterface(Type subject, Type interfaceType, Span span,
     return std::nullopt;
   const auto wanted = types.erased(interfaceType);
   std::optional<Type> found;
-  for (auto position : candidatesFor(wanted.declaration)) {
+  for (auto position : database.implementationsFor(types, wanted.declaration)) {
     const auto &candidate = database.implementations[position];
     std::vector<RegionBinding> regions;
     auto bindings = applicable(candidate, subject, span, &regions);
@@ -1149,7 +1150,7 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
   std::vector<TypeBinding> substitutions;
   std::vector<RegionBinding> selectedRegions;
   const auto wanted = types.erased(interfaceType);
-  for (auto position : candidatesFor(wanted.declaration)) {
+  for (auto position : database.implementationsFor(types, wanted.declaration)) {
     const auto &candidate = database.implementations[position];
     if (types.isProduct(candidate.target) && types.isProduct(self) &&
         !structuralAggregate(types.product(candidate.target).kind) &&

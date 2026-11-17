@@ -123,6 +123,8 @@ struct Database {
   // implementations are append-only, so only the new tail is indexed.
   mutable std::vector<std::vector<std::size_t>> implementationsByDeclaration;
   mutable std::size_t indexedImplementations = 0;
+  const std::vector<std::size_t> &
+  implementationsFor(const TypeStore &types, std::uint32_t declaration) const;
   std::vector<Projection> projections;
   mutable std::map<Type, std::size_t> projectionsByParameter;
   mutable std::size_t indexedProjections = 0;
@@ -234,7 +236,6 @@ private:
   std::optional<std::pair<const Implementation *, std::vector<TypeBinding>>>
   implementation(Type self, Type interfaceType, Span span, bool report);
   bool someImplementationCouldApply(Type subject, Type interfaceType);
-  const std::vector<std::size_t> &candidatesFor(std::uint32_t declaration);
   bool matchRegions(const ErasedType &provided, const ErasedType &wanted,
                     std::span<const RegionId> quantified,
                     std::span<const RegionRequirement> requirements,

@@ -166,11 +166,11 @@ int Checker::aggregate(Node &n, bool reachable) {
       inference.equal(key, inference.fresh(Type::I32), n.children[1]->span,
                       true);
     int result = inference.fresh();
-    fieldRequests.push_back(
-        {&n,
-         facts(n).receiverPlan ? inference.fresh(facts(n).receiverPlan->target)
-                               : base,
-         result});
+    deferField({&n,
+                facts(n).receiverPlan
+                    ? inference.fresh(facts(n).receiverPlan->target)
+                    : base,
+                result});
     return result;
   }
   if (n.kind == Kind::Coalesce) {

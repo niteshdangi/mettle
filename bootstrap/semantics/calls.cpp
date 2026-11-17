@@ -721,162 +721,183 @@ int Checker::call(Node &n, bool reachable) {
   return result;
 }
 
+void Checker::deferField(FieldRequest request) {
+  auto index = fieldRequests.size();
+  if (request.origin != Type::Unknown)
+    genericFieldRequests.insert(index);
+  fieldRequests.push_back(std::move(request));
+  readyFields.push_back(index);
+}
 void Checker::fields(bool final) {
-  bool changed;
-  do {
-    changed = false;
-    for (std::size_t next = 0; next < fieldRequests.size(); ++next) {
-      auto request = fieldRequests[next];
-      if (request.resolved)
+  while (true) {
+    while (fieldChanges) {
+      auto variable = fieldChanges->next();
+      if (!variable)
+        break;
+      auto waiting = waitingFields.find(*variable);
+      if (waiting == waitingFields.end())
         continue;
-      auto base = inference.value(request.base);
-      if (base == Type::Unknown)
-        continue;
-      fieldRequests[next].resolved = true;
-      changed = true;
-      if (request.origin != Type::Unknown) {
-        const auto &instance = checked.types->isProduct(base)
-                                   ? checked.types->product(base)
-                                   : checked.types->product(request.origin);
-        if (!checked.types->isProduct(base) ||
-            (base != request.origin &&
-             instance.genericOrigin != request.origin))
-          error("type", request.node->span,
-                "generic variant '" + request.node->text +
-                    "' does not construct the expected type");
-        else {
-          auto *saved = genericEnvironment;
-          genericEnvironment = request.environment;
-          completeGenericUnitVariant(*request.node, base);
-          genericEnvironment = saved;
-        }
-        continue;
+      readyFields.insert(readyFields.end(), waiting->second.begin(),
+                         waiting->second.end());
+      waitingFields.erase(waiting);
+    }
+    if (waitingFields.empty())
+      fieldChanges.reset();
+    if (readyFields.empty())
+      break;
+    auto next = readyFields.front();
+    readyFields.pop_front();
+    auto request = fieldRequests[next];
+    if (request.resolved)
+      continue;
+    int blocked = inference.representative(request.base);
+    auto base = inference.value(request.base, &blocked);
+    if (base == Type::Unknown) {
+      if (!fieldChanges)
+        fieldChanges.emplace(inference);
+      waitingFields[blocked].push_back(next);
+      continue;
+    }
+    fieldRequests[next].resolved = true;
+    genericFieldRequests.erase(next);
+    if (request.origin != Type::Unknown) {
+      const auto &instance = checked.types->isProduct(base)
+                                 ? checked.types->product(base)
+                                 : checked.types->product(request.origin);
+      if (!checked.types->isProduct(base) ||
+          (base != request.origin && instance.genericOrigin != request.origin))
+        error("type", request.node->span,
+              "generic variant '" + request.node->text +
+                  "' does not construct the expected type");
+      else {
+        auto *saved = genericEnvironment;
+        genericEnvironment = request.environment;
+        completeGenericUnitVariant(*request.node, base);
+        genericEnvironment = saved;
       }
-      if (base == Type::Never) {
-        inference.equal(request.result, inference.fresh(Type::Never),
-                        request.node->span);
-        continue;
-      }
-      if (request.node->kind == Kind::Unary) {
-        if (request.node->text == "*") {
-          if (!checked.types->isView(base))
-            error("type", request.node->span, "dereference requires a view");
-          else
-            inference.equal(request.result,
-                            inference.fresh(checked.types->view(base).payload),
-                            request.node->span);
-        } else
-          inference.equal(
-              request.result,
-              inference.fresh(checked.types->viewType(
-                  base, request.node->text == "read" ? ParameterMode::Read
-                                                     : ParameterMode::Mut)),
-              request.node->span);
-        continue;
-      }
-      if (request.node->kind == Kind::Index) {
-        while (checked.types->isView(base)) {
-          base = checked.types->view(base).payload;
-          ++facts(*request.node).dereferences;
-        }
-        const bool sliced = request.node->children[1]->kind == Kind::Range;
-        if (sliced) {
-          // A subslice is the unsized place `[T]`; `read`/`mut` borrow it.
-          auto slice = base;
-          if (!checked.types->isSlice(base) && checked.types->isProduct(base) &&
-              checked.types->product(base).kind == AggregateKind::Array) {
-            const auto &array = checked.types->product(base);
-            slice = checked.types->sliceType(array.components[0]);
-            facts(*request.node).rangeArrayCount =
-                array.arrayCount == Type::Unknown
-                    ? checked.types->constant(Type::I32, array.fields.size())
-                    : array.arrayCount;
-          } else if (!checked.types->isSlice(base)) {
-            error("type", request.node->span,
-                  "range indexing requires an array, slice or a type "
-                  "implementing core.ops.IndexRange");
-            continue;
-          }
-          inference.equal(request.result, inference.fresh(slice),
+      continue;
+    }
+    if (base == Type::Never) {
+      inference.equal(request.result, inference.fresh(Type::Never),
+                      request.node->span);
+      continue;
+    }
+    if (request.node->kind == Kind::Unary) {
+      if (request.node->text == "*") {
+        if (!checked.types->isView(base))
+          error("type", request.node->span, "dereference requires a view");
+        else
+          inference.equal(request.result,
+                          inference.fresh(checked.types->view(base).payload),
                           request.node->span);
-          facts(*request.node).readView =
-              checked.types->viewType(slice, ParameterMode::Read);
-          facts(*request.node).mutView =
-              checked.types->viewType(slice, ParameterMode::Mut);
-          continue;
-        }
-        if (checked.types->isSlice(base)) {
-          auto element = checked.types->slice(base).element;
-          inference.equal(request.result, inference.fresh(element),
-                          request.node->span);
-          facts(*request.node).readView =
-              checked.types->viewType(element, ParameterMode::Read);
-          facts(*request.node).mutView =
-              checked.types->viewType(element, ParameterMode::Mut);
-          continue;
-        }
-        if (!checked.types->isProduct(base) ||
-            checked.types->product(base).kind != AggregateKind::Array) {
-          error("type", request.node->span, "indexing requires an array");
-          continue;
-        }
-        const auto &array = checked.types->product(base);
-        inference.equal(request.result, inference.fresh(array.components[0]),
-                        request.node->span);
-        facts(*request.node).readView =
-            checked.types->viewType(array.components[0], ParameterMode::Read);
-        facts(*request.node).mutView =
-            checked.types->viewType(array.components[0], ParameterMode::Mut);
-        const auto &index = *request.node->children[1];
-        if (index.kind == Kind::Integer && array.arrayCount == Type::Unknown) {
-          auto value = facts(index).numeric.value_or(
-              integerLiteral(facts(index).number));
-          if (value.negative || value.magnitude[1] ||
-              value.magnitude[0] >= array.fields.size())
-            error("type", index.span, "array index is out of bounds");
-          else
-            facts(*request.node).field = static_cast<int>(value.magnitude[0]);
-        }
-        continue;
-      }
+      } else
+        inference.equal(
+            request.result,
+            inference.fresh(checked.types->viewType(
+                base, request.node->text == "read" ? ParameterMode::Read
+                                                   : ParameterMode::Mut)),
+            request.node->span);
+      continue;
+    }
+    if (request.node->kind == Kind::Index) {
       while (checked.types->isView(base)) {
         base = checked.types->view(base).payload;
         ++facts(*request.node).dereferences;
       }
-      if (!checked.types->isProduct(base)) {
-        error("type", request.node->span,
-              "field access requires a product value");
+      const bool sliced = request.node->children[1]->kind == Kind::Range;
+      if (sliced) {
+        // A subslice is the unsized place `[T]`; `read`/`mut` borrow it.
+        auto slice = base;
+        if (!checked.types->isSlice(base) && checked.types->isProduct(base) &&
+            checked.types->product(base).kind == AggregateKind::Array) {
+          const auto &array = checked.types->product(base);
+          slice = checked.types->sliceType(array.components[0]);
+          facts(*request.node).rangeArrayCount =
+              array.arrayCount == Type::Unknown
+                  ? checked.types->constant(Type::I32, array.fields.size())
+                  : array.arrayCount;
+        } else if (!checked.types->isSlice(base)) {
+          error("type", request.node->span,
+                "range indexing requires an array, slice or a type "
+                "implementing core.ops.IndexRange");
+          continue;
+        }
+        inference.equal(request.result, inference.fresh(slice),
+                        request.node->span);
+        facts(*request.node).readView =
+            checked.types->viewType(slice, ParameterMode::Read);
+        facts(*request.node).mutView =
+            checked.types->viewType(slice, ParameterMode::Mut);
         continue;
       }
-      const auto &product = checked.types->product(base);
-      if (product.layout.unionType && !facts(*request.node).writeOnly &&
-          !facts(*request.node).unsafeContext)
-        error("unsafe", request.node->span,
-              "reading a union field requires unsafe");
-      if (checked.types->isSum(base)) {
-        error("type", request.node->span,
-              "variant payload requires pattern matching");
+      if (checked.types->isSlice(base)) {
+        auto element = checked.types->slice(base).element;
+        inference.equal(request.result, inference.fresh(element),
+                        request.node->span);
+        facts(*request.node).readView =
+            checked.types->viewType(element, ParameterMode::Read);
+        facts(*request.node).mutView =
+            checked.types->viewType(element, ParameterMode::Mut);
         continue;
       }
-      int index = -1;
-      for (std::size_t i = 0; i < product.fields.size(); ++i)
-        if (product.fields[i].name == request.node->text)
-          index = static_cast<int>(i);
-      if (index < 0) {
-        error("name", request.node->span,
-              "unknown field '" + request.node->text + "'");
+      if (!checked.types->isProduct(base) ||
+          checked.types->product(base).kind != AggregateKind::Array) {
+        error("type", request.node->span, "indexing requires an array");
         continue;
       }
-      facts(*request.node).field = index;
-      visibleField(base, static_cast<std::size_t>(index), request.node->span,
-                   request.node->context);
-      inference.equal(request.result,
-                      inference.fresh(product.fields[index].type),
+      const auto &array = checked.types->product(base);
+      inference.equal(request.result, inference.fresh(array.components[0]),
                       request.node->span);
+      facts(*request.node).readView =
+          checked.types->viewType(array.components[0], ParameterMode::Read);
+      facts(*request.node).mutView =
+          checked.types->viewType(array.components[0], ParameterMode::Mut);
+      const auto &index = *request.node->children[1];
+      if (index.kind == Kind::Integer && array.arrayCount == Type::Unknown) {
+        auto value =
+            facts(index).numeric.value_or(integerLiteral(facts(index).number));
+        if (value.negative || value.magnitude[1] ||
+            value.magnitude[0] >= array.fields.size())
+          error("type", index.span, "array index is out of bounds");
+        else
+          facts(*request.node).field = static_cast<int>(value.magnitude[0]);
+      }
+      continue;
     }
-    std::erase_if(fieldRequests,
-                  [](const auto &request) { return request.resolved; });
-  } while (changed);
+    while (checked.types->isView(base)) {
+      base = checked.types->view(base).payload;
+      ++facts(*request.node).dereferences;
+    }
+    if (!checked.types->isProduct(base)) {
+      error("type", request.node->span,
+            "field access requires a product value");
+      continue;
+    }
+    const auto &product = checked.types->product(base);
+    if (product.layout.unionType && !facts(*request.node).writeOnly &&
+        !facts(*request.node).unsafeContext)
+      error("unsafe", request.node->span,
+            "reading a union field requires unsafe");
+    if (checked.types->isSum(base)) {
+      error("type", request.node->span,
+            "variant payload requires pattern matching");
+      continue;
+    }
+    int index = -1;
+    for (std::size_t i = 0; i < product.fields.size(); ++i)
+      if (product.fields[i].name == request.node->text)
+        index = static_cast<int>(i);
+    if (index < 0) {
+      error("name", request.node->span,
+            "unknown field '" + request.node->text + "'");
+      continue;
+    }
+    facts(*request.node).field = index;
+    visibleField(base, static_cast<std::size_t>(index), request.node->span,
+                 request.node->context);
+    inference.equal(request.result, inference.fresh(product.fields[index].type),
+                    request.node->span);
+  }
   if (!final)
     return;
   std::set<int> poisonedRoots;
@@ -890,5 +911,9 @@ void Checker::fields(bool final) {
                       request.node->text + "'; add ': Type' or <...>"
                 : "cannot infer field source type; add ': Type'");
   fieldRequests.clear();
+  genericFieldRequests.clear();
+  readyFields.clear();
+  waitingFields.clear();
+  fieldChanges.reset();
 }
 } // namespace mettle

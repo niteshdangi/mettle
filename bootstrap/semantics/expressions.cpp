@@ -258,7 +258,7 @@ int Checker::checkNode(Node &n, bool reachable) {
         break;
       }
       if (type == Type::Unknown) {
-        fieldRequests.push_back({&n, operand, result});
+        deferField({&n, operand, result});
         break;
       }
       if (n.text == "*") {
@@ -390,10 +390,10 @@ int Checker::checkNode(Node &n, bool reachable) {
       facts(n).optional = true;
       auto payload = inference.fresh();
       if (!components.empty())
-        fieldRequests.push_back({&n, components[0], payload});
+        deferField({&n, components[0], payload});
       result = inference.composite(AggregateKind::Optional, {payload});
     } else
-      fieldRequests.push_back({&n, base, result});
+      deferField({&n, base, result});
     break;
   }
   case Kind::Block: {

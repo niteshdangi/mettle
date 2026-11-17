@@ -8,6 +8,7 @@
 #include "lowering/scalar.h"
 #include "pipeline/compile.h"
 #include "semantics/check.h"
+#include "semantics/inference.h"
 #include "syntax/parser.h"
 #include <algorithm>
 #include <iostream>
@@ -50,6 +51,37 @@ void dominanceCases() {
   require(!dominance.reachable(6) && !dominance.dominates(6, 5) &&
               dominance.dominates(5, 6),
           "unreachable predecessor changed dominance");
+}
+void inferenceWakeupCases() {
+  mettle::TypeStore types;
+  mettle::Diagnostics diagnostics;
+  mettle::TypeInference inference(diagnostics, types);
+  auto leaf = inference.fresh(), alias = inference.fresh();
+  auto array = inference.composite(mettle::AggregateKind::Array, {leaf}, 1);
+  int blocked = -1;
+  require(inference.value(array, &blocked) == Type::Unknown && blocked == leaf,
+          "aggregate inference did not identify its unresolved child");
+  mettle::TypeInference::Changes changes(inference);
+  inference.equal(leaf, alias, {});
+  require(changes.next() == leaf &&
+              inference.value(array, &blocked) == Type::Unknown &&
+              blocked == alias,
+          "inference aliasing did not wake and redirect its dependent");
+  auto children =
+      inference.components(alias, mettle::AggregateKind::Optional, {});
+  require(changes.next() == alias &&
+              inference.value(array, &blocked) == Type::Unknown &&
+              blocked == children.front(),
+          "aggregate shape discovery lost its child dependency");
+  inference.equal(inference.numeric(false), children.front(), {});
+  bool woke = false;
+  while (auto variable = changes.next())
+    woke |= *variable == children.front();
+  auto resolved = inference.value(array);
+  require(woke && diagnostics.empty() && types.isProduct(resolved) &&
+              types.product(types.product(resolved).components.front())
+                      .components.front() == Type::I32,
+          "defaulted numeric inference did not resolve its aggregate owners");
 }
 void emptySpecializationCases() {
   Program program;
@@ -1436,6 +1468,7 @@ int main() {
   try {
     dominanceCases();
     emptySpecializationCases();
+    inferenceWakeupCases();
     coherenceCandidateCases();
     verifierCases();
     functionAddressCases();

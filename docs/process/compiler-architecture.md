@@ -782,6 +782,12 @@ Semantic checking produces a move-only checked module that owns the parsed
 module plus resolved facts. Facts are indexed by stable node addresses within
 that owned tree and exposed read-only after checking. Inference variables remain
 private to the checker and do not cross the checked boundary.
+Deferred field, indexing and dereference requests wait on the unresolved
+inference representative that blocks their source type, including aggregate
+children. Scoped inference-change observers wake only dependent requests after
+unification, shape discovery or explicit type assignment; completed requests are
+retired from scheduling. These observers and request identities never cross the
+checked boundary.
 Syntax ownership propagates const access through child/body owners; a const
 checked module must not expose mutable children through `unique_ptr` accessors.
 Moving the owner preserves heap-owned node addresses; deleting/replacing nodes
@@ -985,6 +991,12 @@ ordinary typed calls/borrows, and delegates slice/erased metadata formation to
 their existing ABI helpers. Region and loan checking therefore see the actual
 projection calls and their result-source contracts rather than an unchecked
 pointer reinterpretation.
+Receiver inventories index inherent method names and direct interface methods
+once per appended declaration. A reverse superinterface graph visits only
+descendants declaring the requested method; candidate collection reuses the
+database's interface implementation index and preserves declaration order.
+Interface indexes persist only after signature and method inventories are
+finalized. They cache inventories, not contextual proofs or visibility decisions.
 Native Ref/RefMut accessors are selected on the guard before dereferencing its
 payload; the actual machine call still checks arguments and access rights.
 

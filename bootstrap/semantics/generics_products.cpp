@@ -79,7 +79,7 @@ std::optional<int> Checker::genericUnitVariant(Node &n) {
   }
   // Remaining arguments come from the expected type once it is known.
   auto result = inference.fresh();
-  fieldRequests.push_back({&n, result, result, false, origin, caller});
+  deferField({&n, result, result, false, origin, caller});
   return result;
 }
 void Checker::completeGenericUnitVariant(Node &node, Type expected) {

@@ -510,7 +510,7 @@ bool Solver::someImplementationCouldApply(Type subject, Type interfaceType) {
     }
     return true;
   }
-  for (auto position : candidatesFor(declaration)) {
+  for (auto position : database.implementationsFor(types, declaration)) {
     const auto &candidate = database.implementations[position];
     std::vector<Type> pattern{candidate.target}, actual{subject};
     const auto &offered = types.erased(candidate.interfaceType).arguments;

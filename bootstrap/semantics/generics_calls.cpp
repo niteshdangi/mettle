@@ -88,12 +88,14 @@ std::optional<int> Checker::genericCall(
       return checked.types->structural(AggregateKind::Tuple,
                                        std::move(components));
     }
-    for (const auto &request : fieldRequests)
+    for (auto index : genericFieldRequests) {
+      const auto &request = fieldRequests[index];
       if (!request.resolved && request.origin != Type::Unknown &&
           inference.representative(request.result) ==
               inference.representative(variable->second))
         return checked.types->instantiateProduct(
             request.origin, facts(*request.node).typeArguments);
+    }
     return Type::Unknown;
   };
   bool named = false, misbound = false;

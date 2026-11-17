@@ -17,6 +17,7 @@
 #include "llvm/TargetParser/Triple.h"
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <set>
@@ -24,6 +25,33 @@
 
 namespace mettle::backend {
 namespace {
+enum class BinaryOperation : std::uint16_t {
+  Unknown,
+  Add = '+',
+  Subtract = '-',
+  Multiply = '*',
+  Divide = '/',
+  Remainder = '%',
+  And = '&',
+  Or = '|',
+  Xor = '^',
+  Less = '<',
+  Greater = '>',
+  Equal = '=' | ('=' << 8),
+  NotEqual = '!' | ('=' << 8),
+  LessEqual = '<' | ('=' << 8),
+  GreaterEqual = '>' | ('=' << 8),
+  ShiftLeft = '<' | ('<' << 8),
+  ShiftRight = '>' | ('>' << 8),
+};
+BinaryOperation binaryOperation(std::string_view text) {
+  if (text.empty() || text.size() > 2)
+    return BinaryOperation::Unknown;
+  std::uint16_t code = static_cast<unsigned char>(text.front());
+  if (text.size() == 2)
+    code |= static_cast<unsigned char>(text.back()) << 8;
+  return static_cast<BinaryOperation>(code);
+}
 std::optional<Type> pinnedViewPayload(const TypeStore &types, Type type) {
   if (!types.isProduct(type) ||
       types.product(type).kind != AggregateKind::Pin ||
@@ -1123,8 +1151,9 @@ private:
     builder.CreateCall(function, {data, length, location[0], location[1],
                                   location[2], location[3]});
   }
-  llvm::Value *binary(const std::string &op, llvm::Value *a, llvm::Value *b,
+  llvm::Value *binary(const std::string &text, llvm::Value *a, llvm::Value *b,
                       Type operand) {
+    auto op = binaryOperation(text);
     if (program.types->isPointer(operand) && a->getType()->isStructTy()) {
       llvm::Value *equal = builder.getTrue(), *less = builder.getFalse();
       auto *representation = llvm::cast<llvm::StructType>(a->getType());
@@ -1136,55 +1165,57 @@ private:
             less, builder.CreateAnd(equal, builder.CreateICmpULT(left, right)));
         equal = builder.CreateAnd(equal, builder.CreateICmpEQ(left, right));
       }
-      if (op == "==")
+      if (op == BinaryOperation::Equal)
         return equal;
-      if (op == "!=")
+      if (op == BinaryOperation::NotEqual)
         return builder.CreateNot(equal);
-      if (op == "<")
+      if (op == BinaryOperation::Less)
         return less;
-      if (op == "<=")
+      if (op == BinaryOperation::LessEqual)
         return builder.CreateOr(less, equal);
-      if (op == ">")
+      if (op == BinaryOperation::Greater)
         return builder.CreateNot(builder.CreateOr(less, equal));
       return builder.CreateNot(less);
     }
     if (isFloating(operand)) {
-      if (op == "+")
+      if (op == BinaryOperation::Add)
         return builder.CreateFAdd(a, b);
-      if (op == "-")
+      if (op == BinaryOperation::Subtract)
         return builder.CreateFSub(a, b);
-      if (op == "*")
+      if (op == BinaryOperation::Multiply)
         return builder.CreateFMul(a, b);
-      if (op == "/")
+      if (op == BinaryOperation::Divide)
         return builder.CreateFDiv(a, b);
-      if (op == "%")
+      if (op == BinaryOperation::Remainder)
         return builder.CreateFRem(a, b);
-      if (op == "==")
+      if (op == BinaryOperation::Equal)
         return builder.CreateFCmpOEQ(a, b);
-      if (op == "!=")
+      if (op == BinaryOperation::NotEqual)
         return builder.CreateFCmpUNE(a, b);
-      if (op == "<")
+      if (op == BinaryOperation::Less)
         return builder.CreateFCmpOLT(a, b);
-      if (op == "<=")
+      if (op == BinaryOperation::LessEqual)
         return builder.CreateFCmpOLE(a, b);
-      if (op == ">")
+      if (op == BinaryOperation::Greater)
         return builder.CreateFCmpOGT(a, b);
-      if (op == ">=")
+      if (op == BinaryOperation::GreaterEqual)
         return builder.CreateFCmpOGE(a, b);
     }
     bool sign = isSignedInteger(operand);
     auto integer = [&](std::uint64_t value) {
       return llvm::ConstantInt::get(a->getType(), value);
     };
-    if (op == "+" || op == "-" || op == "*") {
+    if (op == BinaryOperation::Add || op == BinaryOperation::Subtract ||
+        op == BinaryOperation::Multiply) {
       if (checked) {
-        auto intrinsic =
-            op == "+"   ? (sign ? llvm::Intrinsic::sadd_with_overflow
-                                : llvm::Intrinsic::uadd_with_overflow)
-            : op == "-" ? (sign ? llvm::Intrinsic::ssub_with_overflow
-                                : llvm::Intrinsic::usub_with_overflow)
-                        : (sign ? llvm::Intrinsic::smul_with_overflow
-                                : llvm::Intrinsic::umul_with_overflow);
+        auto intrinsic = op == BinaryOperation::Add
+                             ? (sign ? llvm::Intrinsic::sadd_with_overflow
+                                     : llvm::Intrinsic::uadd_with_overflow)
+                         : op == BinaryOperation::Subtract
+                             ? (sign ? llvm::Intrinsic::ssub_with_overflow
+                                     : llvm::Intrinsic::usub_with_overflow)
+                             : (sign ? llvm::Intrinsic::smul_with_overflow
+                                     : llvm::Intrinsic::umul_with_overflow);
         auto *fn = llvm::Intrinsic::getOrInsertDeclaration(
             module.get(), intrinsic, {a->getType()});
         auto *result = builder.CreateCall(fn, {a, b});
@@ -1192,13 +1223,13 @@ private:
         panicIf(builder.CreateExtractValue(result, 1));
         return value;
       }
-      if (op == "+")
+      if (op == BinaryOperation::Add)
         return builder.CreateAdd(a, b);
-      if (op == "-")
+      if (op == BinaryOperation::Subtract)
         return builder.CreateSub(a, b);
       return builder.CreateMul(a, b);
     }
-    if (op == "/" || op == "%") {
+    if (op == BinaryOperation::Divide || op == BinaryOperation::Remainder) {
       auto *invalid = builder.CreateICmpEQ(b, integer(0));
       if (sign) {
         auto width = integerWidth(operand);
@@ -1211,40 +1242,42 @@ private:
                                        builder.CreateICmpEQ(b, minusOne)));
       }
       panicIf(invalid);
-      return op == "/"
+      return op == BinaryOperation::Divide
                  ? (sign ? builder.CreateSDiv(a, b) : builder.CreateUDiv(a, b))
                  : (sign ? builder.CreateSRem(a, b) : builder.CreateURem(a, b));
     }
-    if (op == "<<" || op == ">>") {
+    if (op == BinaryOperation::ShiftLeft || op == BinaryOperation::ShiftRight) {
       if (checked)
         panicIf(builder.CreateICmpUGE(
             b, llvm::ConstantInt::get(b->getType(), integerWidth(operand))));
       b = builder.CreateAnd(
           b, llvm::ConstantInt::get(b->getType(), integerWidth(operand) - 1));
       b = builder.CreateZExtOrTrunc(b, a->getType());
-      return op == "<<" ? builder.CreateShl(a, b)
-             : sign     ? builder.CreateAShr(a, b)
-                        : builder.CreateLShr(a, b);
+      return op == BinaryOperation::ShiftLeft ? builder.CreateShl(a, b)
+             : sign                           ? builder.CreateAShr(a, b)
+                                              : builder.CreateLShr(a, b);
     }
-    if (op == "&")
+    if (op == BinaryOperation::And)
       return builder.CreateAnd(a, b);
-    if (op == "|")
+    if (op == BinaryOperation::Or)
       return builder.CreateOr(a, b);
-    if (op == "^")
+    if (op == BinaryOperation::Xor)
       return builder.CreateXor(a, b);
     if (operand == Type::Unit)
-      return builder.getInt1(op == "==" || op == "<=" || op == ">=");
-    if (op == "==")
+      return builder.getInt1(op == BinaryOperation::Equal ||
+                             op == BinaryOperation::LessEqual ||
+                             op == BinaryOperation::GreaterEqual);
+    if (op == BinaryOperation::Equal)
       return builder.CreateICmpEQ(a, b);
-    if (op == "!=")
+    if (op == BinaryOperation::NotEqual)
       return builder.CreateICmpNE(a, b);
-    if (op == "<")
+    if (op == BinaryOperation::Less)
       return sign ? builder.CreateICmpSLT(a, b) : builder.CreateICmpULT(a, b);
-    if (op == "<=")
+    if (op == BinaryOperation::LessEqual)
       return sign ? builder.CreateICmpSLE(a, b) : builder.CreateICmpULE(a, b);
-    if (op == ">")
+    if (op == BinaryOperation::Greater)
       return sign ? builder.CreateICmpSGT(a, b) : builder.CreateICmpUGT(a, b);
-    if (op == ">=")
+    if (op == BinaryOperation::GreaterEqual)
       return sign ? builder.CreateICmpSGE(a, b) : builder.CreateICmpUGE(a, b);
     llvm_unreachable("unknown checked binary operation");
   }
