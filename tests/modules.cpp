@@ -489,6 +489,13 @@ extern "C" fn linked_native(): i32;
 
 void residentFunctionQueries() {
   mettle::pipeline::FunctionQueries queries;
+  auto print = [](const mettle::ir::Program &input, std::ostream &out) {
+    auto program = input;
+    for (std::size_t i = 0; i < program.functions.size(); ++i)
+      if (program.functions[i].indirectContract)
+        program.functions.edit(i).name = "<indirect-contract>";
+    mettle::ir::print(program, out);
+  };
   auto prepare = [&](const std::string &text, mettle::Diagnostics &diagnostics,
                      mettle::pipeline::FunctionQueries *cache) {
     auto tree = mettle::parse({"memory/query.mt", text}, diagnostics);
@@ -507,15 +514,20 @@ void residentFunctionQueries() {
       throw std::runtime_error(
           "resident function query changed source acceptance:\n" + text);
     }
-    require(queries.hits() - before == hits,
-            "resident function query invalidated the wrong dependents");
+    if (queries.hits() - before != hits)
+      throw std::runtime_error(
+          "resident function query invalidated the wrong dependents: " +
+          std::to_string(queries.hits() - before) + " instead of " +
+          std::to_string(hits) + "\n" + text);
     std::size_t specialized = 0;
     if (valid) {
       std::ostringstream reused, uncached;
-      mettle::ir::print(result->program(), reused);
-      mettle::ir::print(fresh->program(), uncached);
-      require(reused.str() == uncached.str(),
-              "resident function query changed prepared IR");
+      print(result->program(), reused);
+      print(fresh->program(), uncached);
+      if (reused.str() != uncached.str())
+        throw std::runtime_error(
+            "resident function query changed prepared IR:\n" + text +
+            "\nCached:\n" + reused.str() + "\nFresh:\n" + uncached.str());
       auto previousSpecializations = queries.specializationHits();
       auto executable = mettle::pipeline::compile(*result, diagnostics);
       auto freshExecutable =
@@ -528,8 +540,8 @@ void residentFunctionQueries() {
       }
       reused.str({});
       uncached.str({});
-      mettle::ir::print(executable->program(), reused);
-      mettle::ir::print(freshExecutable->program(), uncached);
+      print(executable->program(), reused);
+      print(freshExecutable->program(), uncached);
       require(reused.str() == uncached.str(),
               "resident specialization changed concrete IR");
       specialized = queries.specializationHits() - previousSpecializations;
@@ -629,10 +641,84 @@ void residentFunctionQueries() {
       "fn increment(value: i32): i32 { value + 1 }\n"
       "fn main(): i32 { apply(increment, 6) }\n";
   query(indirect, 0);
-  query(indirect, 3);
+  auto reusedPointers = query(indirect, 3);
+  require(reusedPointers == 3,
+          ("function-pointer contracts prevented specialization reuse: " +
+           std::to_string(reusedPointers))
+              .c_str());
   changed = indirect;
   changed.replace(changed.find("value + 1"), 9, "value + 2");
   query(changed, 1);
+
+  const std::string callable =
+      "fn identity<T>(take value: T): T { value }\n"
+      "fn increment(value: i32): i32 { value + 1 }\n"
+      "fn noise(): i32 { let unused = ([0;2], 0); 0 }\n"
+      "fn main(): i32 { let pointer: fn(i32): i32 = increment; "
+      "let operation = identity(pointer); operation(7) }\n";
+  query(callable, 0);
+  changed = callable;
+  changed.replace(changed.find("([0;2], 0)"), 10, "(0, 0, 0 )");
+  changed.replace(changed.find("operation(7)"), 12, "operation(8)");
+  require(query(changed, 2) == 2,
+          "function-pointer specialization was not remapped after type "
+          "renumbering");
+
+  std::string quietNoise = "{ 0 }";
+  quietNoise.insert(quietNoise.size() - 1, 100, ' ');
+  std::string callingNoise = "{ let pointer: fn(bool): bool = flip; "
+                             "if pointer(true) { 1 } else { 0 } }";
+  callingNoise.insert(callingNoise.size() - 1,
+                      quietNoise.size() - callingNoise.size(), ' ');
+  const std::string contractOrder =
+      "fn reserve(pointer: fn(bool): bool): bool { true }\n"
+      "fn noise(): i32 " +
+      quietNoise +
+      "\n"
+      "fn apply(pointer: fn(i32): i32, value: i32): i32 { pointer(value) }\n"
+      "fn flip(value: bool): bool { !value }\n"
+      "fn increment(value: i32): i32 { value + 1 }\n"
+      "fn main(): i32 { apply(increment, 7) }\n";
+  query(contractOrder, 0);
+  changed = contractOrder;
+  changed.replace(changed.find(quietNoise), quietNoise.size(), callingNoise);
+  require(query(changed, 5) == 5,
+          "reordered indirect contracts were not rebound to the current "
+          "request");
+
+  const std::string higherRanked =
+      "fn apply<F: for<region r> fn(read i32 from r): read i32 from r>("
+      "read operation: F, read value: i32): read i32 from value { "
+      "operation(value) }\n"
+      "fn identity<region r>(read value: i32 from r): read i32 from r "
+      "{ read value }\n"
+      "fn noise(): i32 { let unused = ([0;2], 0); 0 }\n"
+      "fn main(): i32 { let pointer: for<region r> fn(read i32 from r): "
+      "read i32 from r = identity; let value = 7; *apply(pointer, value) }\n";
+  query(higherRanked, 0);
+  require(query(higherRanked, 4) == 4,
+          "higher-ranked callback specializations were not reused");
+  changed = higherRanked;
+  changed.replace(changed.find("([0;2], 0)"), 10, "(0, 0, 0 )");
+  changed.replace(changed.find("value = 7"), 9, "value = 8");
+  require(query(changed, 2) == 2,
+          "higher-ranked callback binders were not remapped after type "
+          "renumbering");
+
+  const std::string borrowedCallback =
+      "fn keep<T>(take value: T): T { value }\n"
+      "fn identity<region r>(read value: i32 from r): read i32 from r "
+      "{ read value }\n"
+      "fn invoke<region r>(read value: i32 from r): i32 { "
+      "let pointer: fn(read i32 from r): read i32 from r = identity; "
+      "let operation = keep(pointer); *operation(value) }\n"
+      "fn main(): i32 { let value = 7; invoke(value) }\n";
+  query(borrowedCallback, 0);
+  require(query(borrowedCallback, 4) == 4,
+          "checked region-erased callback specializations were not reused");
+  changed = borrowedCallback;
+  changed.replace(changed.find("*operation(value)"), 17, "*operation(true )");
+  query(changed, 2, false);
 
   const std::string initialized =
       "fn leaf(): i32 { var value: i32; var other: i32; value = 1; value }\n"

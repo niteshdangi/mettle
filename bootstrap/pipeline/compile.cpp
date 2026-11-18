@@ -329,8 +329,8 @@ public:
               continue;
             }
             if (types.isErased(current) || types.isProjection(current) ||
-                (types.isCallable(current) &&
-                 !types.isFunctionPointer(current)))
+                (types.isProduct(current) &&
+                 types.product(current).callable >= 0))
               return reusableTypes[type] = false;
             auto children = types.referencedTypes(current);
             pending.insert(pending.end(), children.begin(), children.end());

@@ -29,7 +29,8 @@ private:
       Structural,
       Array,
       Nominal,
-      Regional
+      Regional,
+      Callable
     };
     Kind kind = Kind::Stable;
     Type origin = Type::Unknown;
@@ -48,6 +49,7 @@ private:
     ir::Function function;
     std::vector<std::pair<Type, std::optional<Span>>> destructors;
     std::map<Type, Recipe> types;
+    std::vector<std::pair<std::size_t, std::size_t>> indirectCallees;
   };
   std::shared_ptr<const TypeStore> types;
   std::size_t functions;

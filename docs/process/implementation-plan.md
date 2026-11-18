@@ -1226,6 +1226,26 @@ The fresh-import gap is reduced, not eliminated: structural validation and
 compact-index construction still visit the admitted inventory. Broader
 specialization reuse needs explicit canonical type remapping,
 not reused numeric consumer TypeIds.
+Resident callback recipes now select current-request function-pointer types by
+closed portable signatures, including higher-ranked binders, and generated
+indirect calls rebind through their current declaration positions. Source-query
+projection distinguishes callable type parameters from closure environments.
+Focused cached/fresh cases cover changed type numbering, reordered generated
+contracts, higher-ranked and region-erased callbacks, and invalid edited calls.
+The module case passes optimized and ASan/UBSan builds. An initial seven-edit
+engineering probe of 400 wrappers increased specialization hits from 1 to 401,
+but wall time was essentially flat (generic 106.749 / 104.299 ms; ordinary
+58.326 / 59.684 ms), with higher retained RSS. This establishes reuse coverage,
+not a compilation speedup or a resolved fresh-import gap.
+Evidence: `~/w/anal/perf-callback-reuse-20261118/` and
+`~/w/anal/perf-callback-reuse-ordinary-20261118/`.
+
+The next owner-directed admission work removes consumer inventory construction:
+archive-local type indexes with sparse consumer identity mapping; module/name
+declaration lookup with independently complete implementation catalogs; deferred
+IR locals/scopes/loop metadata behind callable interfaces; and retained checked
+constructor applicability with dependency-keyed imported overlap results.
+These are not completed by the preceding compact-representation changes.
 Next action: continue measured compiler-performance work from this integrated
 source; whole-I14 source freeze and consolidated qualification remain open.
 Preserve frozen candidates and reuse unchanged-input evidence rather than

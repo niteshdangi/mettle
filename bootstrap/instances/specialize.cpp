@@ -269,6 +269,103 @@ private:
       restoredTypes;
   std::map<std::string, Type, std::less<>> nominalTypes;
   std::size_t nominalTypesIndexed = 0;
+  std::map<std::string, Type, std::less<>> callableTypes;
+  std::size_t callableTypesIndexed = 0;
+  std::string callableIdentity(Type type) const {
+    std::map<Type, std::optional<std::set<RegionId>>> regions;
+    std::function<bool(Type)> collect = [&](Type value) {
+      if (value.index() < builtinTypeCount)
+        return true;
+      auto [known, inserted] = regions.try_emplace(value);
+      if (!inserted)
+        return known->second.has_value();
+      std::set<RegionId> free;
+      auto addRegion = [&](RegionId region) {
+        if (region != RegionId::Unspecified && region != RegionId::Static)
+          free.insert(region);
+      };
+      auto child = [&](Type child) {
+        if (!collect(child))
+          return false;
+        if (auto found = regions.find(child); found != regions.end())
+          free.insert(found->second->begin(), found->second->end());
+        return true;
+      };
+      if (types->isFunctionPointer(value)) {
+        const auto &signature = types->callable(value);
+        if (!child(signature.result) || !child(signature.error) ||
+            !child(signature.abiResult))
+          return false;
+        for (const auto &requirement : signature.regionRequirements) {
+          addRegion(requirement.longer);
+          addRegion(requirement.shorter);
+        }
+        for (std::size_t i = 0; i < signature.parameters.size(); ++i) {
+          const auto &parameter = signature.parameters[i];
+          if (!child(parameter.type))
+            return false;
+          if (i < signature.parameterRegions.size() &&
+              (parameter.mode == ParameterMode::Read ||
+               parameter.mode == ParameterMode::Mut ||
+               types->containsViews(parameter.type)))
+            addRegion(signature.parameterRegions[i]);
+        }
+        for (auto bound : signature.regionParameters)
+          free.erase(bound);
+      } else if (types->isView(value) || types->isPointer(value)) {
+        addRegion(types->view(value).region);
+        if (!child(types->view(value).payload))
+          return false;
+      } else if (types->isSlice(value)) {
+        if (!child(types->slice(value).element))
+          return false;
+      } else if (types->isProduct(value)) {
+        const auto &product = types->product(value);
+        if (product.callable >= 0 ||
+            !std::all_of(product.genericArguments.begin(),
+                         product.genericArguments.end(), child) ||
+            !std::all_of(product.components.begin(), product.components.end(),
+                         child) ||
+            !std::all_of(product.fields.begin(), product.fields.end(),
+                         [&](const auto &field) { return child(field.type); }))
+          return false;
+        for (auto region : product.regionArguments)
+          addRegion(region);
+      } else
+        return false;
+      known->second = std::move(free);
+      return true;
+    };
+    if (!collect(type) || !regions.at(type)->empty())
+      return {};
+    const auto &signature = types->callable(type);
+    return "F" + typeIdentity(*types, type) + ":" +
+           std::to_string(static_cast<unsigned>(signature.environmentMode)) +
+           ":" + typeIdentity(*types, signature.abiResult);
+  }
+  Type callableType(std::string_view identity) {
+    if (auto found = callableTypes.find(identity); found != callableTypes.end())
+      return found->second;
+    if (!callableTypesIndexed)
+      callableTypesIndexed =
+          builtinTypeCount +
+          (queries->types ? queries->types->storedTypeCount() : 0);
+    while (callableTypesIndexed < builtinTypeCount + types->storedTypeCount()) {
+      auto type = types->typeAt(callableTypesIndexed++);
+      if (types->isFunctionPointer(type))
+        if (auto key = callableIdentity(type); !key.empty())
+          callableTypes.try_emplace(std::move(key), type);
+    }
+    auto found = callableTypes.find(identity);
+    return found == callableTypes.end() ? Type::Unknown : found->second;
+  }
+  bool restorable(const Queries::Recipe &value) {
+    return (value->kind != Queries::TypeRecipe::Kind::Callable ||
+            callableType(value->identity) != Type::Unknown) &&
+           std::all_of(
+               value->arguments.begin(), value->arguments.end(),
+               [&](const auto &argument) { return restorable(argument); });
+  }
   Type nominalType(std::string_view name) {
     if (!nominalTypesIndexed)
       nominalTypesIndexed =
@@ -320,6 +417,12 @@ private:
       result->value = types->parameter(type).numeric;
       arguments.push_back(types->parameter(type).valueType);
       result->identity = typeIdentity(*types, type);
+    } else if (types->isFunctionPointer(type)) {
+      result->identity = callableIdentity(type);
+      if (result->identity.empty())
+        return {};
+      result->kind = Kind::Callable;
+      callableTypes.insert_or_assign(result->identity, type);
     } else if (types->isProduct(type)) {
       const auto &product = types->product(type);
       if (product.callable >= 0 || !product.regionArguments.empty())
@@ -469,6 +572,12 @@ private:
                                       recipe->normalizedFields);
       break;
     }
+    case Kind::Callable:
+      result = callableType(recipe->identity);
+      if (result == Type::Unknown)
+        throw std::logic_error(
+            "specialization query lost its current callable contract");
+      break;
     }
     restoredTypes.emplace(recipe, result);
     return result;
@@ -959,6 +1068,27 @@ private:
       if (auto found = queries->entries.find(queryKey);
           found != queries->entries.end())
         cached = found->second;
+    if (cached &&
+        !std::all_of(cached->types.begin(), cached->types.end(),
+                     [&](const auto &item) { return restorable(item.second); }))
+      cached.reset();
+    if (cached)
+      for (auto [block, position] : cached->indirectCallees) {
+        const auto &current = loaded ? *loaded : header;
+        if (block >= current.blocks.size() ||
+            position >= current.blocks[block].instructions.size()) {
+          cached.reset();
+          break;
+        }
+        const auto &instruction = current.blocks[block].instructions[position];
+        if (instruction.op != ir::Op::IndirectCall || instruction.callee < 0 ||
+            static_cast<std::size_t>(instruction.callee) >=
+                source.functions.size() ||
+            !source.functions[instruction.callee].indirectContract) {
+          cached.reset();
+          break;
+        }
+      }
     if (!loaded && !cached && index < source.lazyFunctionRecords.size() &&
         source.lazyFunctionRecords[index])
       if (!loadBody())
@@ -980,9 +1110,10 @@ private:
         genericInstance || index >= source.functionPackages.size()
             ? std::string{}
             : source.functionPackages[index]);
-    auto function = declaration;
-    function.genericParameters.clear();
-    if (!arguments.empty()) {
+    auto function = cached ? cached->function : declaration;
+    if (!cached)
+      function.genericParameters.clear();
+    if (!cached && !arguments.empty()) {
       function.name += ".<";
       for (std::size_t i = 0; i < arguments.size(); ++i) {
         if (i)
@@ -1012,14 +1143,12 @@ private:
         function.externalName += "." + std::to_string(id);
     }
     auto regionSignature =
-        types->substitute(function.regionSignature, bindings);
+        types->substitute(declaration.regionSignature, bindings);
     if (hooks.normalizeRegionSignature)
       regionSignature = hooks.normalizeRegionSignature(
           regionSignature, bindings, *types, diagnostics);
     std::vector<std::pair<Type, std::optional<Span>>> destructors;
     if (cached) {
-      auto interfaceResult = function.interfaceResult;
-      function = cached->function;
       std::map<Type, Type> remapped;
       for (const auto &[type, value] : cached->types)
         remapped.emplace(type, restore(value));
@@ -1027,7 +1156,10 @@ private:
         return queries->stable(type) ? type : remapped.at(type);
       };
       ir::remapTypes(function, remap);
-      function.interfaceResult = interfaceResult;
+      for (auto [block, position] : cached->indirectCallees)
+        function.blocks.at(block).instructions.at(position).callee =
+            declaration.blocks.at(block).instructions.at(position).callee;
+      function.interfaceResult = declaration.interfaceResult;
       for (auto [type, location] : cached->destructors)
         destructor(remap(type), location.value_or(span));
       nextQueries.emplace(std::move(queryKey), cached);
@@ -1165,21 +1297,40 @@ private:
       }
       if (queryable && diagnostics.empty()) {
         bool stable = true;
+        std::vector<std::pair<std::size_t, std::size_t>> indirectCallees;
         for (const auto &local : function.locals)
           if (local.storage == StorageDuration::Static)
             stable &=
                 local.staticIndex >= 0 &&
                 static_cast<std::size_t>(local.staticIndex) < queries->statics;
-        for (const auto &block : function.blocks)
-          for (const auto &instruction : block.instructions) {
+        for (std::size_t b = 0; b < function.blocks.size(); ++b)
+          for (std::size_t i = 0; i < function.blocks[b].instructions.size();
+               ++i) {
+            const auto &instruction = function.blocks[b].instructions[i];
             stable &= !instruction.assembly;
-            for (auto callee : {instruction.callee, instruction.dropFunction})
-              stable &= callee < 0 ||
-                        static_cast<std::size_t>(callee) < queries->functions;
+            stable &= instruction.dropFunction < 0 ||
+                      static_cast<std::size_t>(instruction.dropFunction) <
+                          queries->functions;
+            if (instruction.callee >= 0 &&
+                static_cast<std::size_t>(instruction.callee) >=
+                    queries->functions) {
+              if (instruction.op == ir::Op::IndirectCall &&
+                  static_cast<std::size_t>(instruction.callee) <
+                      source.functions.size() &&
+                  source.functions[instruction.callee].indirectContract)
+                indirectCallees.emplace_back(b, i);
+              else
+                stable = false;
+            }
           }
         if (stable) {
           auto retained = std::make_shared<Queries::Entry>(
-              Queries::Entry{function, std::move(destructors), {}});
+              Queries::Entry{function,
+                             std::move(destructors),
+                             {},
+                             std::move(indirectCallees)});
+          for (auto [block, position] : retained->indirectCallees)
+            retained->function.blocks[block].instructions[position].callee = -1;
           retained->function.regionSignature = Type::Unknown;
           retained->function.interfaceResult = Type::Unknown;
           auto remember = [&](Type type) {

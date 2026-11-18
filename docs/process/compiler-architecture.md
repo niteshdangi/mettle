@@ -539,8 +539,19 @@ unique declaration names in the current consumer; the enclosing declaration
 context must match before reuse. Their current region patterns are retained,
 not replayed by old numeric type identity. Region-free field normalization
 replays current origins and remapped field types only when generic arguments,
-region patterns and field names match. Other regional shapes, assembly and
-generated helper identities still fall back. Imported region
+region patterns and field names match. Closed function-pointer recipes resolve a portable signature identity to an
+existing type in the current request, including alpha-equivalent higher-ranked
+binders. Memoized free-region analysis rejects unsupported cycles and captured
+nonstatic regions rather than retaining their old numeric identities. Runtime
+region erasure may make a checked callback eligible; its current region
+signature and ordinary executable admission remain mandatory. Callable type
+parameters project their constraints like other source parameters; only actual
+closure environments require the closure fallback.
+Generated indirect-call references retain instruction positions, not generated
+function IDs, and rebind to the current declaration's complete contract before
+concrete callee binding. Missing current callable types or incompatible
+instruction shapes cause ordinary cache misses. Other regional shapes, assembly
+and generated helper identities still fall back. Imported region
 signatures are created from checked contracts on demand. Region signatures are
 recomputed, and calls and destructor demand are rebound
 against the current result table. Only successful concrete admission publishes
