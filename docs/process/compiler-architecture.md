@@ -445,11 +445,15 @@ remaps, never a diagnostics instance or caller stack.
 Archive sections share immutable storage. Replacing an entry releases its
 backing when no active import still owns it.
 
-Initial semantic admission still validates the complete type/declaration
-inventory and every IR header. Empty type stores directly adopt validated graph
+Initial semantic admission validates the complete type/declaration index
+inventory and IR query directory. Empty type stores directly adopt validated graph
 records only when structural identities need no canonical remapping; duplicate
 keys, existing consumer types and logical lookups retain canonical merging.
-Identity projections build their query indexes during the first read.
+Indexed type graph v5 validates lookup keys directly against producer bytes
+instead of serializing each query again. Canonical integer hashing and encoding
+consume complete integer words rather than repeating byte-wise buffer/hash
+updates. Exact key comparisons, malformed unused-key rejection and canonical
+alias merging remain mandatory; no new type wire format is needed.
 Canonical keys retain fixed-word symbol fixups applied after complete structural
 admission and symbol resolution; symbol-bearing records are not parsed again.
 Resolved aliases still undergo exact canonical-key comparison and merging.
@@ -484,7 +488,7 @@ ordinal arrays; retained archive owners outlive their borrowed lookup data.
 Changing an imported identity key invalidates the consumer's index, not its
 shared prefix in other consumers. Generic function and type environments are
 materialized on first use rather than recreated for every imported declaration.
-Declaration header schema 5 and checked contracts 19 persist producer-built
+Declaration header schema 6 and checked contracts 20 persist producer-built
 module/name and declaration-ID directories separately from framed syntax and
 signatures. Consumers reserve stable native declaration ranges without building
 header or parameter inventories. Resolution queries those immutable directories
@@ -495,6 +499,12 @@ checking, closure discovery, lowering and package mapping enumerate local or
 demanded declarations rather than the reserved range. Producer-persisted link
 presence preserves external-library caching decisions without scanning unused
 function/static attributes.
+Fixed directory rows retain archive-backed symbol tables; ordinal symbol
+queries do not decode name/binding records. Both interface phases persist their
+complete implementation candidate groups. Imported implementation headers use
+sparse immutable records, and candidate selection does not reconstruct the
+library's declaration-to-implementation index. Consumer additions remain local
+overlays without hiding blanket implementations.
 Interface phases share unchanged immutable records and
 encode only phase replacements, retaining phase-specific selection contracts.
 Interface database admission validates framed records and their references
@@ -504,12 +514,23 @@ groups and declaration spans. Checking and finalized phases share unchanged
 deferred records; consumer mutations detach locally. Selection and coherence use
 the compact indexes before demanding candidate details, without hiding imported
 implementations or weakening cross-boundary overlap checks.
-IR v13 admission indexes callable signatures, linkage and generic information
-without traversing private locals, lexical scopes or array-loop metadata.
-Those records remain in the authenticated deferred implementation payload.
+IR v14 persists a compact callable query record separately from each full
+callable header and private implementation payload. Authenticated native
+admission reads the query records without scanning unused callable headers.
+Retained headers reserve a sparse immutable prefix rather than allocating a
+deferred slot per function. Raw/unsealed admission still validates full headers
+against the producer index; demanded native headers must reproduce that index
+and preserve cross-record symbol-binding consistency.
+Private locals, lexical scopes and array-loop metadata remain in the
+authenticated deferred implementation payload.
 Demand authenticates and decodes that payload before CFG validation; nested
 readers borrow its string table. Archive storage and remap tables remain owned
-by the shared import.
+by the shared import. Source body destinations use ordinal slots with explicit
+duplicate, range and completeness checks rather than rebuilding ordered maps.
+Native IR definition bindings use immutable borrowed ID/name directories, with
+consumer-demanded external bindings in a separate overlay. Directory admission
+checks the complete bijection; demanded headers and bodies cannot alias an
+unused definition or change its identity.
 
 **Source function queries.** Resident requests also retain successful user
 declaration/type contracts and pre-normalization symbolic IR. Reuse requires

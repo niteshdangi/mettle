@@ -530,6 +530,34 @@ void crossRecordSymbolAliases() {
   require(bool(demandedBody) && demandedBody.function->locals.size() == 2,
           "retained header/body metadata outlived neither input nor resolver");
   {
+    auto inconsistent = encoded.bytes;
+    const std::string name = "caller";
+    auto indexName = std::search(inconsistent.begin(), inconsistent.end(),
+                                 name.begin(), name.end());
+    require(indexName != inconsistent.end(), "missing callable index name");
+    *indexName = 'x';
+    auto rejected = decodeProgram(inconsistent, decode);
+    require(!rejected &&
+                rejected.error ==
+                    "IR function index does not match its callable header",
+            "eager decoding accepted a conflicting callable index");
+    auto retained = std::make_shared<const metadata::DecodeReferences>(decode);
+    auto indexed = decodeProgramLazy(
+        inconsistent, *retained, true, retained, {},
+        [](std::size_t, std::span<const std::uint8_t>) { return true; },
+        metadata::ValidationMode::OnDemand);
+    require(bool(indexed), indexed.error.c_str());
+    bool conflict = false;
+    try {
+      static_cast<void>(indexed.program.functions[0]);
+    } catch (const metadata::InvalidMetadata &error) {
+      conflict = std::string_view(error.what()) ==
+                 "IR function index does not match its callable header";
+    }
+    require(conflict && !indexed.program.functions.isMaterialized(0),
+            "demanded callable ignored its producer index");
+  }
+  {
     auto layout = programLayout(encoded.bytes);
     require(layout && layout.bodies.size() == program.functions.size(),
             "IR framing lost its deferred body inventory");
@@ -555,9 +583,11 @@ void crossRecordSymbolAliases() {
           const auto body = bodies.at(index);
           return std::ranges::equal(
               bytes, std::span(expected).subspan(body.offset, body.size));
-        });
-    require(bool(checked) && verifications == 0,
-            "admission read or authenticated an unused body's string storage");
+        },
+        metadata::ValidationMode::OnDemand);
+    require(bool(checked) && verifications == 0 && sourceReads == 0 &&
+                checked.program.functionIndex[0].parameters == 1,
+            "indexed admission decoded an unused callable or body");
     snapshot.reset();
     auto first = checked.lazyFunctions->load(0, checked.program.functions[0],
                                              checkedReferences);
@@ -569,6 +599,40 @@ void crossRecordSymbolAliases() {
     require(!rejected && verifications == 2 && sourceReads == reads &&
                 rejected.error == "IR function body checksum mismatch",
             "corrupt body entered semantic decoding before authentication");
+  }
+  {
+    auto collision = decode;
+    collision.symbol = [resolve = decode.symbol](SymbolKind kind,
+                                                 std::string_view name) {
+      auto index = resolve(kind, name);
+      return index == 100 ? std::optional<std::uint32_t>{0} : index;
+    };
+    auto retained =
+        std::make_shared<const metadata::DecodeReferences>(collision);
+    auto indexed = decodeProgramLazy(
+        encoded.bytes, *retained, true, retained, {},
+        [](std::size_t, std::span<const std::uint8_t>) { return true; },
+        metadata::ValidationMode::OnDemand);
+    require(bool(indexed), indexed.error.c_str());
+    auto rejected =
+        indexed.lazyFunctions->load(0, indexed.program.functions[0], *retained);
+    require(!rejected &&
+                rejected.error ==
+                    "inconsistent or aliased IR logical symbol mapping",
+            "demanded body aliased an immutable definition binding");
+    collision.symbol = [resolve = decode.symbol](SymbolKind kind,
+                                                 std::string_view name) {
+      auto index = resolve(kind, name);
+      return index == 2 ? std::optional<std::uint32_t>{0} : index;
+    };
+    retained = std::make_shared<const metadata::DecodeReferences>(collision);
+    auto aliased = decodeProgramLazy(
+        encoded.bytes, *retained, true, retained, {},
+        [](std::size_t, std::span<const std::uint8_t>) { return true; },
+        metadata::ValidationMode::OnDemand);
+    require(!aliased && aliased.program.functions.empty() &&
+                aliased.error == "duplicate or aliased IR definition identity",
+            "indexed definition directory accepted aliased destinations");
   }
   auto resolve = decode.symbol;
   decode.symbol = [resolve](SymbolKind kind, std::string_view name) {

@@ -253,14 +253,24 @@ struct Writer : Fields<Writer> {
       reject("type graph exceeds source byte limit");
     bytes.push_back(b);
   }
-  void u32(std::uint32_t n) {
-    for (unsigned i = 0; i != 4; ++i)
-      byte(static_cast<std::uint8_t>(n >> (8 * i)));
+  template <class T> void integer(T n) {
+    std::array<std::uint8_t, sizeof(T)> encoded;
+    for (unsigned i = 0; i != encoded.size(); ++i)
+      encoded[i] = static_cast<std::uint8_t>(n >> (8 * i));
+    if (fingerprint) {
+      auto hash = *fingerprint;
+      for (auto byte : encoded)
+        hash = (hash ^ byte) * 1099511628211ull;
+      *fingerprint = hash;
+    }
+    if (discardBytes)
+      return;
+    if (bytes.size() > limits::sourceBytes - encoded.size())
+      reject("type graph exceeds source byte limit");
+    bytes.insert(bytes.end(), encoded.begin(), encoded.end());
   }
-  void u64(std::uint64_t n) {
-    for (unsigned i = 0; i != 8; ++i)
-      byte(static_cast<std::uint8_t>(n >> (8 * i)));
-  }
+  void u32(std::uint32_t n) { integer(n); }
+  void u64(std::uint64_t n) { integer(n); }
   template <class T> void value(T &n) {
     if constexpr (std::is_same_v<T, bool>)
       byte(n ? 1 : 0);
@@ -2659,9 +2669,9 @@ struct LookupReferences {
   std::function<std::optional<std::uint32_t>(RegionUniverse)> universe;
   std::function<std::optional<std::string_view>(std::uint32_t)> interface;
 };
-bool writeLookupKey(Writer &writer, const ImportedTypeQuery &query,
+template <class Sink>
+bool writeLookupKey(Sink &writer, const ImportedTypeQuery &query,
                     const LookupReferences &references) {
-  writer.bytes.clear();
   writer.byte(static_cast<std::uint8_t>(query.kind));
   bool valid = true;
   auto ref = [&](auto value, const auto &map) {
@@ -2792,6 +2802,44 @@ std::uint32_t wireU32(std::span<const std::uint8_t> bytes, std::size_t offset) {
     value |= static_cast<std::uint32_t>(bytes[offset + i]) << (8 * i);
   return value;
 }
+struct LookupKeyMatch {
+  std::span<const std::uint8_t> bytes;
+  std::size_t offset = 0;
+  bool matched = true;
+  void byte(std::uint8_t value) {
+    if (offset == bytes.size() || bytes[offset] != value)
+      matched = false;
+    if (offset != bytes.size())
+      ++offset;
+  }
+  void u32(std::uint32_t value) {
+    if (bytes.size() - offset < 4) {
+      matched = false;
+      offset = bytes.size();
+      return;
+    }
+    matched &= wireU32(bytes, offset) == value;
+    offset += 4;
+  }
+  void u64(std::uint64_t value) {
+    u32(static_cast<std::uint32_t>(value));
+    u32(static_cast<std::uint32_t>(value >> 32));
+  }
+  void value(std::string_view text) {
+    u32(static_cast<std::uint32_t>(text.size()));
+    if (text.size() > bytes.size() - offset) {
+      matched = false;
+      offset = bytes.size();
+      return;
+    }
+    matched &= std::equal(text.begin(), text.end(), bytes.begin() + offset,
+                          [](char left, std::uint8_t right) {
+                            return static_cast<std::uint8_t>(left) == right;
+                          });
+    offset += text.size();
+  }
+  bool exact() const { return matched && offset == bytes.size(); }
+};
 struct WireTypeLookup {
   struct Admission {
     std::vector<std::size_t> offsets;
@@ -3575,7 +3623,6 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     bool uniqueKeys = true;
     std::size_t memberships = 0;
     LookupReferences admissionReferences;
-    Writer lookupWriter;
     FlatTypeEdges edges;
     std::vector<bool> regional;
     std::vector<Type> canonicalReferences;
@@ -3688,13 +3735,16 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
             deferred->kinds[i], index,
             product ? product->descriptor.name : std::string_view{},
             [&](const ImportedTypeQuery &query) {
-              if (!writeLookupKey(lookupWriter, query, admissionReferences) ||
-                  !std::any_of(groups.begin(), groups.end(),
+              if (!std::any_of(groups.begin(), groups.end(),
                                [&](std::uint32_t group) {
                                  auto key = deferred->lookup.group(group).key;
-                                 return std::equal(key.begin(), key.end(),
-                                                   lookupWriter.bytes.begin(),
-                                                   lookupWriter.bytes.end());
+                                 if (key.front() !=
+                                     static_cast<std::uint8_t>(query.kind))
+                                   return false;
+                                 LookupKeyMatch match{key};
+                                 return writeLookupKey(match, query,
+                                                       admissionReferences) &&
+                                        match.exact();
                                }))
                 reject("type lookup index does not match projection");
               ++memberships;

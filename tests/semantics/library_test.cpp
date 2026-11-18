@@ -9,9 +9,11 @@
 #include "syntax/parser.h"
 #include <algorithm>
 #include <array>
+#include <barrier>
 #include <iostream>
 #include <map>
 #include <sstream>
+#include <thread>
 
 namespace {
 int failures = 0;
@@ -360,6 +362,44 @@ import core as bootstrapOnly;
          p < checked->syntax().functions[i].parameters.size(); ++p)
       if (checked->hasDefault(i, p))
         defaultOwners.emplace_back(i, p);
+  std::array<std::map<std::string, std::vector<std::size_t>>, 2>
+      expectedImplementations;
+  std::vector<std::uint8_t> selectionRecord;
+  std::uint32_t foreignCandidate = 0;
+  std::size_t phase = 0;
+  for (const auto *database : {&checked->declarations()->checkingDatabase,
+                               &checked->declarations()->database}) {
+    auto &groups = expectedImplementations[phase++];
+    for (std::size_t i = 0; i < database->implementations.size(); ++i) {
+      auto type = database->implementations[i].interfaceType;
+      if (checked->typeStore()->isErased(type)) {
+        auto owner = checked->typeStore()->erasedDeclaration(type);
+        groups[std::string(database->definitionName(owner))].push_back(i);
+      }
+    }
+    for (std::uint32_t owner = 0; owner < database->definitions.size();
+         ++owner) {
+      auto found = groups.find(std::string(database->definitionName(owner)));
+      if (!selectionRecord.empty() || found == groups.end() ||
+          found->second.size() < 2 ||
+          found->second.back() + 1 >= database->implementations.size())
+        continue;
+      auto logical = symbols.at({SymbolKind::Interface, owner});
+      expect(logical.size() < 128 && found->second.size() < 32,
+             "candidate corruption fixture fits single-byte framing");
+      selectionRecord.push_back(static_cast<std::uint8_t>(logical.size()));
+      selectionRecord.insert(selectionRecord.end(), logical.begin(),
+                             logical.end());
+      selectionRecord.push_back(
+          static_cast<std::uint8_t>(found->second.size() * 4));
+      for (auto index : found->second)
+        for (unsigned byte = 0; byte < 4; ++byte)
+          selectionRecord.push_back(
+              static_cast<std::uint8_t>(index >> (byte * 8)));
+      foreignCandidate =
+          static_cast<std::uint32_t>(database->implementations.size() - 1);
+    }
+  }
   checked.reset();
   symbolic = {};
 
@@ -675,11 +715,11 @@ fn main(): i32 {
              "fixture has an archive-backed unused name lookup");
       if (dormantEntry != invalidDirectory.end()) {
         auto payload = dormantEntry + dormantKey.size();
-        expect(invalidDirectory.end() - payload >= 3 && *payload == 2,
-               "unused lookup has its framed stable declaration ID");
-        if (invalidDirectory.end() - payload >= 3 && *payload == 2) {
-          payload[1] = 0xff;
-          payload[2] = 0x7f;
+        expect(invalidDirectory.end() - payload >= 2,
+               "unused lookup retains its stable declaration ID");
+        if (invalidDirectory.end() - payload >= 2) {
+          payload[0] = 0xff;
+          payload[1] = 0x7f;
           auto storage = std::make_shared<const std::vector<std::uint8_t>>(
               std::move(invalidDirectory));
           expect(!decodeLibraryHeader(*storage, decode, storage,
@@ -728,6 +768,77 @@ fn main(): i32 {
       }
       expect(deferred,
              "validated interface admission retains archive-backed details");
+      bool deferredSelection = true;
+      for (std::size_t i = 0; i < database->importedImplementations->size();
+           ++i)
+        deferredSelection &=
+            !database->importedImplementations->isMaterialized(i);
+      for (std::size_t i = 0; i < database->implementationsByDeclaration.size();
+           ++i)
+        deferredSelection &=
+            !database->implementationsByDeclaration.isMaterialized(i);
+      expect(deferredSelection,
+             "mounting implementation selection builds no header or candidate "
+             "inventories");
+    }
+    std::size_t phase = 0;
+    for (const auto *database : {&contracts.declarations->checkingDatabase,
+                                 &contracts.declarations->database}) {
+      for (std::uint32_t owner = 0; owner < database->definitions.size();
+           ++owner) {
+        auto name = std::string(database->definitionName(owner));
+        if (name != "core::ConstValue")
+          continue;
+        const auto &expected = expectedImplementations[phase].at(name);
+        expect(database->implementationsFor(*types, owner) == expected &&
+                   !database->implementations.isMaterialized(expected.back()),
+               "producer candidate groups preserve all alternatives without "
+               "demanding their details");
+      }
+      ++phase;
+    }
+    {
+      const auto &database = contracts.declarations->database;
+      for (std::uint32_t owner = 0; owner < database.definitions.size();
+           ++owner) {
+        if (database.definitionName(owner) != "core::ConstValue")
+          continue;
+        const auto &expected =
+            expectedImplementations.back().at("core::ConstValue");
+        const auto cold = expected.back();
+        auto first = database, second = database;
+        expect(!first.importedImplementations->isMaterialized(cold),
+               "shared implementation header is cold before concurrent demand");
+        const interfaces::Database::ImplementationHeader *left = nullptr,
+                                                         *right = nullptr;
+        std::barrier start(2);
+        std::thread firstDemand([&] {
+          start.arrive_and_wait();
+          left = &(*first.importedImplementations)[cold];
+        });
+        std::thread secondDemand([&] {
+          start.arrive_and_wait();
+          right = &(*second.importedImplementations)[cold];
+        });
+        firstDemand.join();
+        secondDemand.join();
+        const auto &actual = database.implementations[cold];
+        expect(left == right && left->interfaceType == actual.interfaceType &&
+                   left->span == actual.span &&
+                   left->declaration == actual.declaration &&
+                   left->fallback == actual.fallback && left->inherent.empty(),
+               "concurrent snapshots publish the same complete implementation "
+               "header");
+        const auto appended = first.implementations.size();
+        first.implementations.push_back(actual);
+        auto extended = expected;
+        extended.push_back(appended);
+        expect(first.implementationsFor(*types, owner) == extended &&
+                   second.implementationsFor(*types, owner) == expected &&
+                   database.implementationsFor(*types, owner) == expected,
+               "source additions isolate consumer candidate overlays after "
+               "concurrent shared header demand");
+      }
     }
     if (!imported) {
       auto corrupt = module;
@@ -1047,6 +1158,21 @@ fn main(): i32 {
                         std::string::npos,
         "admission rejects malformed references in unused interface details");
   }
+  auto wrongSelection = declarations.contracts;
+  auto candidate = std::search(wrongSelection.begin(), wrongSelection.end(),
+                               selectionRecord.begin(), selectionRecord.end());
+  expect(!selectionRecord.empty() && candidate != wrongSelection.end(),
+         "fixture retains its producer-built implementation candidate group");
+  if (!selectionRecord.empty() && candidate != wrongSelection.end()) {
+    auto word = candidate + selectionRecord.size() - 4;
+    for (unsigned byte = 0; byte < 4; ++byte)
+      word[byte] = static_cast<std::uint8_t>(foreignCandidate >> (byte * 8));
+    auto invalid = importLibraryDeclarations(wrongSelection, types, decode);
+    expect(!invalid && invalid.error.find("implementation candidate") !=
+                           std::string::npos,
+           "unused candidate indexes cannot substitute a valid implementation "
+           "from another interface");
+  }
   auto overflowing = declarations.contracts;
   overflowing.front() |= 0x80;
   overflowing.insert(overflowing.begin() + 1, 8, 0x80);
@@ -1129,7 +1255,7 @@ fn main(): i32 {
          "header mounting rejects trailing bytes");
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
-      1 + std::string_view("mettle.checked-contracts.19").size();
+      1 + std::string_view("mettle.checked-contracts.20").size();
   oversized[inventoryOffset] = 0xff;
   oversized.insert(oversized.begin() + inventoryOffset + 1, 8, 0xff);
   oversized.insert(oversized.begin() + inventoryOffset + 9, 0x01);

@@ -1295,6 +1295,51 @@ including `results.json` and the P04/P05 type-admission logs. Frozen candidate
 SHA-256: `19a5c66bf8e995e9ef9cf71c4424a699db4dd38bea488da66049c30adf78fa10`.
 The earlier failed candidate and its measurements remain separately preserved;
 its replay failure and fresh-load regression are fixed in this candidate.
+
+The consumer-ready query-image follow-up persists header schema 6 fixed-row
+directories and contract schema 20 checking/finalized implementation candidate
+groups. Ordinal symbols are directly indexed; imported implementation headers
+are thread-safe sparse records shared across snapshots, with local candidate
+overlays. IR v14 persists compact callable query records, reserves sparse
+headers, and retains immutable borrowed definition bindings instead of rebuilding
+per-definition binding trees. On-demand headers reproduce the admitted index;
+raw decoding retains full header validation, and external/demanded bindings
+cannot alias unused definitions. Native source-body destinations use ordinal
+slots with explicit duplicate, range and completeness checks.
+
+The type graph remains v5: direct producer-key comparison and batched canonical
+integer hashing/encoding remove repeated serialization. The experimental v6
+membership/fingerprint/edge tables were removed after measurement showed that
+their added format and validation complexity did not outperform the simpler v5
+correction. Focused type, codec, declaration, archive and module cases pass
+optimized and ASan/UBSan builds, including concurrent cold implementation-header
+demand, malformed keys, deferred symbol aliases and source-overlay isolation.
+The final P04 probe still reserves 67,449 native identities with zero Entry or
+owned descriptor records before checking and demands 1,765 records afterward.
+
+Five matched pairs against `600f6408` measure the complete final integration:
+
+| Workload | Fresh check, ms | Improvement | Fresh build, ms | Improvement |
+| --- | --- | --- | --- | --- |
+| P03 text scan | 252.6 -> 202.7 | 19.8% | 541.8 -> 492.9 | 9.0% |
+| P04 struct/Vec | 250.3 -> 203.8 | 18.6% | 555.8 -> 503.5 | 9.4% |
+| P05 HashMap | 320.2 -> 269.6 | 15.8% | 734.6 -> 678.9 | 7.6% |
+
+Resident edit checks improve 2.5-10.3%; resident builds are mixed (P03 is 3.7%
+slower), and resident peak RSS is approximately flat for P03/P04 and 1.2% higher
+for P05. No general resident-build or memory improvement is claimed. All three
+generated executables are byte-identical to their matched baseline executables;
+runtime variation is not an emitted-code speedup or regression.
+The final instrumented P05 stage comparison is header 40.1 -> 25.3 ms,
+type graph 46.7 -> 40.4 ms, declarations 43.9 -> 30.7 ms and IR 26.2 -> 10.5 ms.
+These single stage samples overlap and must not be added.
+Fresh checks remain 11.3-17.0 times the matched Rust measurements.
+Evidence: `~/w/anal/perf-native-query-image-20261118-final/`, including
+`results.json`, stage profiles and `p04-type-admission.log`; isolated type
+diagnosis is retained in the preceding trial directory's
+`type-admission-followup/`.
+Frozen candidate SHA-256:
+`6565f469baa1f708d89592f508786bf592da2c58670d0eb270511e9343bd8d2b`.
 Next action: continue measured compiler-performance work from this integrated
 source; whole-I14 source freeze and consolidated qualification remain open.
 Preserve frozen candidates and reuse unchanged-input evidence rather than

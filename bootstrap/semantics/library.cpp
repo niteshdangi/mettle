@@ -1979,6 +1979,69 @@ void phaseMap(Archive &archive, const Map &checking, Map &finalized) {
   if (!shared)
     archive(finalized);
 }
+void fixedWord(std::vector<std::uint8_t> &bytes, std::uint64_t value,
+               unsigned width = sizeof(std::uint64_t)) {
+  for (unsigned byte = 0; byte < width; ++byte)
+    bytes.push_back(static_cast<std::uint8_t>(value >> (byte * 8)));
+}
+std::uint64_t fixedWord(std::span<const std::uint8_t> bytes, std::size_t offset,
+                        unsigned width) {
+  std::uint64_t result = 0;
+  for (unsigned byte = 0; byte < width; ++byte)
+    result |= std::uint64_t(bytes[offset + byte]) << (byte * 8);
+  return result;
+}
+void wire(Archive &archive,
+          interfaces::Database::ImplementationHeader &header) {
+  archive(header.interfaceType, header.span, header.inherent, header.fallback);
+}
+std::vector<interfaces::Database::ImplementationHeader>
+implementationHeaders(const interfaces::Database &database) {
+  std::vector<interfaces::Database::ImplementationHeader> result;
+  result.reserve(database.implementations.size());
+  for (const auto &item : database.implementations) {
+    interfaces::Database::ImplementationHeader header;
+    header.interfaceType = item.interfaceType;
+    header.span = item.span;
+    header.declaration = item.declaration;
+    header.fallback = item.fallback;
+    for (const auto &[name, binding] : item.inherent) {
+      (void)binding;
+      header.inherent.push_back(name);
+    }
+    result.push_back(std::move(header));
+  }
+  return result;
+}
+void implementationSelection(
+    Archive &archive,
+    const std::vector<interfaces::Database::ImplementationHeader> &headers) {
+  Archive records(archive.encoding(), *archive.types, archive.hygieneState());
+  std::vector<std::uint8_t> offsets;
+  std::map<std::uint32_t, std::vector<std::uint8_t>> groups;
+  for (std::size_t i = 0; i < headers.size(); ++i) {
+    fixedWord(offsets, records.output.size());
+    records(headers[i]);
+    if (archive.types->isErased(headers[i].interfaceType))
+      fixedWord(
+          groups[archive.types->erasedDeclaration(headers[i].interfaceType)], i,
+          sizeof(std::uint32_t));
+  }
+  if (!records.good())
+    archive.fail(std::move(records.error));
+  archive(*records.sourceRevisions());
+  std::uint64_t count = headers.size();
+  archive(count);
+  archive.writeBlock(offsets);
+  archive.writeBlock(records.output);
+  count = groups.size();
+  archive(count);
+  for (const auto &[owner, candidates] : groups) {
+    auto identity = owner;
+    archive.symbol(metadata::SymbolKind::Interface, identity);
+    archive.writeBlock(candidates);
+  }
+}
 void databases(Archive &archive, interfaces::Database &checking,
                interfaces::Database &finalized) {
   if (!archive.reading() &&
@@ -1986,6 +2049,13 @@ void databases(Archive &archive, interfaces::Database &checking,
     archive.fail("checked interface phases have conflicting inventories");
     return;
   }
+  auto checkingHeaders = implementationHeaders(checking);
+  auto finalHeaders = implementationHeaders(finalized);
+  implementationSelection(archive, checkingHeaders);
+  bool shared = checkingHeaders == finalHeaders;
+  archive(shared);
+  if (!shared)
+    implementationSelection(archive, finalHeaders);
   archive(checking);
   if (archive.reading())
     finalized = checking;
@@ -2016,6 +2086,12 @@ class DatabaseAdmission {
   };
   using ImplementationIndices =
       std::map<std::tuple<SourceId, std::uint32_t, std::uint32_t>, std::size_t>;
+  struct Selection {
+    std::size_t count = 0, candidates = 0;
+    std::span<const std::uint8_t> offsets, headers;
+    std::shared_ptr<std::vector<std::span<const std::uint8_t>>> groups;
+    std::shared_ptr<const std::vector<std::string>> revisions;
+  };
 
 public:
   DatabaseAdmission(
@@ -2031,6 +2107,20 @@ public:
         functions(functions) {}
 
   void read(interfaces::Database &checking, interfaces::Database &finalized) {
+    selection(checkingSelection, checking);
+    bool sharedSelection = false;
+    archive(sharedSelection);
+    if (sharedSelection) {
+      finalSelection = checkingSelection;
+      finalized.importedImplementations = checking.importedImplementations;
+      finalized.implementationsByDeclaration =
+          checking.implementationsByDeclaration;
+    } else
+      selection(finalSelection, finalized);
+    if (!archive.good())
+      return;
+    auto finalHeaders = finalized.importedImplementations;
+    auto finalCandidates = finalized.implementationsByDeclaration;
     auto definitions =
         std::make_shared<std::vector<interfaces::Database::DefinitionHeader>>();
     auto count = archive.collectionSize();
@@ -2063,18 +2153,26 @@ public:
           return;
         }
     checking.importedDefinitions = definitions;
-    auto implementations = std::make_shared<
-        std::vector<interfaces::Database::ImplementationHeader>>();
     count = archive.collectionSize();
+    if (count != checkingSelection.count || count != finalSelection.count) {
+      archive.fail("checked implementation selection inventory mismatch");
+      return;
+    }
     checking.implementations.resize(count);
-    implementations->resize(count);
+    std::size_t selected = 0;
     for (std::size_t i = 0; i < count && archive.good(); ++i)
-      record(checking.implementations, i, implementationRecords,
-             [&] { implementation((*implementations)[i], checking); });
+      record(checking.implementations, i, implementationRecords, [&] {
+        interfaces::Database::ImplementationHeader header;
+        implementation(header, checking);
+        validateSelection(checkingSelection, i, header, selected);
+      });
     if (!archive.good())
       return;
-    checking.importedImplementations = implementations;
-    indexImplementations(checking);
+    if (selected != checkingSelection.candidates) {
+      archive.fail("incomplete checked implementation selection");
+      return;
+    }
+    checking.indexedImplementations = count;
     count = archive.collectionSize();
     checking.projections.resize(count);
     for (std::size_t i = 0; i < count && archive.good(); ++i)
@@ -2089,6 +2187,8 @@ public:
     checking.indexedProjections = checking.projections.size();
     checking.projectionsByParameter.freeze();
     finalized = checking;
+    finalized.importedImplementations = std::move(finalHeaders);
+    finalized.implementationsByDeclaration = std::move(finalCandidates);
     auto finalDefinitions = definitions;
     changes(checking.definitions, finalized.definitions, definitionRecords,
             true, [&](std::size_t index) {
@@ -2116,43 +2216,42 @@ public:
     finalized.importedDefinitions = finalDefinitions;
     if (!archive.good())
       return;
-    auto finalImplementations = implementations;
-    bool implementationIndexChanged = false;
+    std::vector<bool> changedImplementations(checking.implementations.size());
     changes(checking.implementations, finalized.implementations,
             implementationRecords, false, [&](std::size_t index) {
               interfaces::Database::ImplementationHeader after;
               implementation(after, finalized);
-              if (index >= implementations->size() ||
-                  !sameSpan((*implementations)[index].span, after.span)) {
+              if (index >= checking.implementations.size()) {
                 archive.fail(
                     "checked interface phases have conflicting inventories");
                 return;
               }
-              const auto &before = (*implementations)[index];
-              implementationIndexChanged |=
-                  (types->isErased(before.interfaceType)
-                       ? types->erasedDeclaration(before.interfaceType)
-                       : UINT32_MAX) !=
-                  (types->isErased(after.interfaceType)
-                       ? types->erasedDeclaration(after.interfaceType)
-                       : UINT32_MAX);
-              if (before.interfaceType != after.interfaceType ||
-                  before.inherent != after.inherent ||
-                  before.fallback != after.fallback) {
-                if (finalImplementations == implementations)
-                  finalImplementations = std::make_shared<
-                      std::vector<interfaces::Database::ImplementationHeader>>(
-                      *implementations);
-                (*finalImplementations)[index] = std::move(after);
+              auto before = selectionHeader(checkingSelection, index);
+              if (!sameSpan(before.span, after.span)) {
+                archive.fail(
+                    "checked interface phases have conflicting inventories");
+                return;
               }
+              std::size_t unused = 0;
+              validateSelection(finalSelection, index, after, unused);
+              changedImplementations[index] = true;
             });
     if (finalized.implementations.size() != checking.implementations.size())
       archive.fail("checked interface phases have conflicting inventories");
-    finalized.importedImplementations = finalImplementations;
     if (!archive.good())
       return;
-    if (implementationIndexChanged)
-      indexImplementations(finalized);
+    if (!sharedSelection) {
+      selected = 0;
+      for (std::size_t i = 0;
+           i < checking.implementations.size() && archive.good(); ++i) {
+        auto header = selectionHeader(
+            changedImplementations[i] ? finalSelection : checkingSelection, i);
+        validateSelection(finalSelection, i, header, selected);
+      }
+      if (selected != finalSelection.candidates)
+        archive.fail("incomplete checked implementation selection");
+    }
+    finalized.indexedImplementations = finalized.implementations.size();
     changes(checking.projections, finalized.projections, projectionRecords,
             false, [&](std::size_t index) { projection(finalized, index); });
     finalProjectionParameters.resize(finalized.projections.size());
@@ -2182,6 +2281,7 @@ private:
   std::shared_ptr<TypeStore> types;
   std::shared_ptr<const ImplementationIndices> implementationIndices;
   const ImportedFunctionTable &functions;
+  Selection checkingSelection, finalSelection;
   Records<interfaces::Definition> definitionRecords;
   Records<interfaces::Implementation> implementationRecords;
   Records<interfaces::Projection> projectionRecords;
@@ -2196,19 +2296,197 @@ private:
     return left.source == right.source && left.begin == right.begin &&
            left.end == right.end;
   }
-  void indexImplementations(interfaces::Database &database) {
-    const auto &headers = *database.importedImplementations;
-    database.implementationsByDeclaration.clear();
-    for (std::size_t i = 0; i < headers.size(); ++i) {
-      auto interfaceType = headers[i].interfaceType;
-      if (!types->isErased(interfaceType))
-        continue;
-      auto owner = types->erasedDeclaration(interfaceType);
-      if (database.implementationsByDeclaration.size() <= owner)
-        database.implementationsByDeclaration.resize(std::size_t(owner) + 1);
-      database.implementationsByDeclaration[owner].push_back(i);
+  void selection(Selection &selection, interfaces::Database &database) {
+    auto revisions = std::make_shared<std::vector<std::string>>();
+    archive(*revisions);
+    std::set<std::string_view> knownRevisions;
+    for (const auto &revision : *revisions)
+      if (!knownRevisions.insert(revision).second)
+        archive.fail("duplicate checked implementation source revision");
+    selection.revisions = revisions;
+    selection.count = archive.collectionSize();
+    selection.offsets = archive.readBlock();
+    selection.headers = archive.readBlock();
+    if (selection.count > selection.offsets.size() / sizeof(std::uint64_t) ||
+        selection.offsets.size() != selection.count * sizeof(std::uint64_t)) {
+      archive.fail("invalid checked implementation header directory");
+      return;
     }
-    database.indexedImplementations = database.implementations.size();
+    std::size_t previous = 0;
+    for (std::size_t i = 0; i < selection.count; ++i) {
+      auto offset = fixedWord(selection.offsets, i * sizeof(std::uint64_t),
+                              sizeof(std::uint64_t));
+      if ((!i && offset) || (i && offset <= previous) ||
+          offset >= selection.headers.size()) {
+        archive.fail("invalid checked implementation header offset");
+        return;
+      }
+      previous = offset;
+    }
+    if (!selection.count && !selection.headers.empty()) {
+      archive.fail("invalid checked implementation header inventory");
+      return;
+    }
+    selection.groups =
+        std::make_shared<std::vector<std::span<const std::uint8_t>>>();
+    auto count = archive.collectionSize();
+    std::set<std::uint32_t> seen;
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      std::uint32_t owner = 0;
+      archive.symbol(metadata::SymbolKind::Interface, owner);
+      auto candidates = archive.readBlock();
+      if (owner >= limits::interfaces || !seen.insert(owner).second ||
+          candidates.empty() || candidates.size() % sizeof(std::uint32_t)) {
+        archive.fail("invalid checked implementation candidate directory");
+        return;
+      }
+      if (selection.groups->size() <= owner)
+        selection.groups->resize(std::size_t(owner) + 1);
+      (*selection.groups)[owner] = candidates;
+      std::uint64_t previous = 0;
+      for (std::size_t offset = 0; offset < candidates.size();
+           offset += sizeof(std::uint32_t)) {
+        auto index = fixedWord(candidates, offset, sizeof(std::uint32_t));
+        if (index >= selection.count || (offset && index <= previous)) {
+          archive.fail("invalid checked implementation candidate");
+          return;
+        }
+        previous = index;
+        ++selection.candidates;
+      }
+    }
+    auto headers = std::make_shared<
+        TypeRecords<interfaces::Database::ImplementationHeader, true>>();
+    auto retained = selection;
+    auto catalog = archive.declarationIndex;
+    auto indices = implementationIndices;
+    headers->deferPrefix(
+        selection.count,
+        std::make_shared<const decltype(headers)::element_type::Loader>(
+            [retained, storage = storage, references = references,
+             types = types, catalog, indices](std::size_t index) {
+              auto begin =
+                  fixedWord(retained.offsets, index * sizeof(std::uint64_t),
+                            sizeof(std::uint64_t));
+              auto end = index + 1 == retained.count
+                             ? retained.headers.size()
+                             : fixedWord(retained.offsets,
+                                         (index + 1) * sizeof(std::uint64_t),
+                                         sizeof(std::uint64_t));
+              Archive reader(retained.headers.subspan(begin, end - begin),
+                             *references, types.get(), retained.revisions);
+              interfaces::Database::ImplementationHeader header;
+              reader(header);
+              reader.finish();
+              if (!reader.good())
+                throw metadata::InvalidMetadata(reader.error);
+              if (catalog) {
+                auto declaration = catalog->typeOrdinal(3, header.span);
+                if (!declaration)
+                  throw metadata::InvalidMetadata(
+                      "checked implementation is absent from its header");
+                header.declaration = *declaration;
+              } else if (indices) {
+                auto found = indices->find(
+                    {header.span.source, header.span.begin, header.span.end});
+                if (found == indices->end())
+                  throw metadata::InvalidMetadata(
+                      "checked implementation is absent from its header");
+                header.declaration = found->second;
+              }
+              return header;
+            }));
+    database.importedImplementations = std::move(headers);
+    database.implementationsByDeclaration.deferPrefix(
+        selection.groups->size(),
+        std::make_shared<const TypeRecords<std::vector<std::size_t>>::Loader>(
+            [groups = selection.groups, storage = storage](std::size_t owner) {
+              auto bytes = (*groups)[owner];
+              std::vector<std::size_t> result;
+              result.reserve(bytes.size() / sizeof(std::uint32_t));
+              for (std::size_t i = 0; i < bytes.size();
+                   i += sizeof(std::uint32_t))
+                result.push_back(fixedWord(bytes, i, sizeof(std::uint32_t)));
+              return result;
+            }));
+  }
+  interfaces::Database::ImplementationHeader
+  selectionHeader(const Selection &selection, std::size_t index) {
+    auto begin = fixedWord(selection.offsets, index * sizeof(std::uint64_t),
+                           sizeof(std::uint64_t));
+    auto end =
+        index + 1 == selection.count
+            ? selection.headers.size()
+            : fixedWord(selection.offsets, (index + 1) * sizeof(std::uint64_t),
+                        sizeof(std::uint64_t));
+    Archive reader(selection.headers.subspan(begin, end - begin), *references,
+                   types.get(), selection.revisions);
+    interfaces::Database::ImplementationHeader header;
+    reader(header);
+    reader.finish();
+    if (!reader.good())
+      archive.fail(std::move(reader.error));
+    return header;
+  }
+  void
+  validateSelection(const Selection &selection, std::size_t index,
+                    const interfaces::Database::ImplementationHeader &header,
+                    std::size_t &selected) {
+    auto begin = fixedWord(selection.offsets, index * sizeof(std::uint64_t),
+                           sizeof(std::uint64_t));
+    auto end =
+        index + 1 == selection.count
+            ? selection.headers.size()
+            : fixedWord(selection.offsets, (index + 1) * sizeof(std::uint64_t),
+                        sizeof(std::uint64_t));
+    Archive reader(selection.headers.subspan(begin, end - begin), *references,
+                   types.get(), selection.revisions);
+    Type interfaceType = Type::Unknown;
+    Span span;
+    reader(interfaceType, span);
+    bool matches = interfaceType == header.interfaceType && span == header.span;
+    auto count = reader.collectionSize();
+    matches &= count == header.inherent.size();
+    for (std::size_t i = 0; i < count && reader.good(); ++i) {
+      auto name = reader.textView();
+      matches &= i < header.inherent.size() && header.inherent[i] == name;
+    }
+    bool fallback = false;
+    reader(fallback);
+    reader.finish();
+    if (!reader.good()) {
+      archive.fail(std::move(reader.error));
+      return;
+    }
+    if (!matches || fallback != header.fallback) {
+      archive.fail(
+          "checked implementation selection does not match its record");
+      return;
+    }
+    if (!types->isErased(header.interfaceType))
+      return;
+    auto owner = types->erasedDeclaration(header.interfaceType);
+    if (owner >= selection.groups->size()) {
+      archive.fail("missing checked implementation candidate");
+      return;
+    }
+    auto candidates = (*selection.groups)[owner];
+    begin = 0;
+    end = candidates.size() / sizeof(std::uint32_t);
+    while (begin != end) {
+      auto middle = begin + (end - begin) / 2;
+      if (fixedWord(candidates, middle * sizeof(std::uint32_t),
+                    sizeof(std::uint32_t)) < index)
+        begin = middle + 1;
+      else
+        end = middle;
+    }
+    if (begin == candidates.size() / sizeof(std::uint32_t) ||
+        fixedWord(candidates, begin * sizeof(std::uint32_t),
+                  sizeof(std::uint32_t)) != index)
+      archive.fail("missing checked implementation candidate");
+    else
+      ++selected;
   }
   template <class... T> void discard(T &...items) {
     (archive.discard(items), ...);
@@ -2969,17 +3247,40 @@ public:
                      [](const auto &left, const auto &right) {
                        return left.first < right.first;
                      });
+    std::array<std::vector<std::uint64_t>,
+               static_cast<std::size_t>(metadata::SymbolKind::Static) + 1>
+        symbols;
+    for (std::size_t i = 0; i < entries.size(); ++i) {
+      const auto &key = entries[i].first;
+      if (!key.starts_with("S:") || key.size() != 11)
+        continue;
+      auto kind = static_cast<unsigned char>(key[2]);
+      std::uint64_t ordinal = 0;
+      for (auto byte : std::string_view(key).substr(3))
+        ordinal = (ordinal << 8) | static_cast<unsigned char>(byte);
+      auto &rows = symbols.at(kind);
+      if (rows.size() <= ordinal)
+        rows.resize(ordinal + 1, UINT64_MAX);
+      rows[ordinal] = i;
+    }
     std::vector<std::uint8_t> offsets;
-    Archive records(archive.encoding(), *archive.types, archive.hygieneState());
+    std::vector<std::uint8_t> records;
     for (const auto &[key, payload] : entries) {
-      auto offset = std::uint64_t(records.output.size());
-      for (unsigned byte = 0; byte < sizeof(offset); ++byte)
-        offsets.push_back(static_cast<std::uint8_t>(offset >> (byte * 8)));
-      records(key);
-      records.writeBlock(payload);
+      fixedWord(offsets, records.size());
+      fixedWord(offsets, key.size());
+      fixedWord(offsets, payload.size());
+      records.insert(records.end(), key.begin(), key.end());
+      records.insert(records.end(), payload.begin(), payload.end());
     }
     archive.writeBlock(offsets);
-    archive.writeBlock(records.output);
+    archive.writeBlock(records);
+    for (const auto &rows : symbols) {
+      std::vector<std::uint8_t> encoded;
+      encoded.reserve(rows.size() * sizeof(std::uint64_t));
+      for (auto row : rows)
+        fixedWord(encoded, row);
+      archive.writeBlock(encoded);
+    }
   }
 
 private:
@@ -2994,35 +3295,80 @@ public:
   void read(Archive &archive, const Module &module) {
     offsets = archive.readBlock();
     records = archive.readBlock();
-    if (offsets.size() % sizeof(std::uint64_t)) {
+    for (auto &rows : symbolRows) {
+      rows = archive.readBlock();
+      if (rows.size() % sizeof(std::uint64_t)) {
+        archive.fail("invalid declaration symbol directory");
+        return;
+      }
+    }
+    if (offsets.size() % rowBytes) {
       archive.fail("invalid declaration lookup directory");
       return;
     }
-    Archive scan(records, references, nullptr);
     std::string_view previous;
-    for (std::size_t i = 0; i < size() && scan.good(); ++i) {
-      if (offset(i) != scan.position()) {
-        scan.fail("invalid declaration lookup offset");
+    std::size_t end = 0;
+    for (std::size_t i = 0; i < size() && archive.good(); ++i) {
+      auto begin = word(i, 0), keySize = word(i, 1), payloadSize = word(i, 2);
+      if (begin != end || begin > records.size() ||
+          keySize > records.size() - begin ||
+          payloadSize > records.size() - begin - keySize) {
+        archive.fail("invalid declaration lookup offset");
         break;
       }
-      auto key = scan.textView();
-      auto payload = scan.readBlock();
+      end = begin + keySize + payloadSize;
+      auto key = keyAt(i);
+      auto payload = payloadAt(i);
       if (i && key < previous)
-        scan.fail("unordered declaration lookup directory");
+        archive.fail("unordered declaration lookup directory");
       if (i && key == previous && !key.starts_with("b:") &&
           !key.starts_with("i:") && !key.starts_with("m:") &&
           !key.starts_with("x:") && !key.starts_with("X:") &&
           !key.starts_with("B:") && !key.starts_with("J:") &&
           !key.starts_with("r:"))
-        scan.fail("duplicate declaration lookup key");
+        archive.fail("duplicate declaration lookup key");
       Archive record(payload, references, nullptr);
       record.headerSources = sources;
       if (key.starts_with("b:")) {
-        NativeBinding binding;
-        record.discard(binding);
+        DeclarationNamespace space{};
+        record(space);
+        record.textView();
+        auto name = record.textView();
+        record.textView();
+        record.textView();
+        Span span;
+        bool target = false, publicBoundary = false, explicitBinding = false;
+        record(span, target);
+        if (target)
+          record.textView();
+        record(publicBoundary, explicitBinding);
+        auto end = key.find('\0', 2);
+        if (end == std::string_view::npos || key.size() - end < 3 ||
+            key[end + 1] != static_cast<char>(space) || key[end + 2] != '\0' ||
+            key.substr(end + 3) != name)
+          record.fail("invalid declaration lookup reference");
       } else if (key.starts_with("i:")) {
-        NativeItem item;
-        record.discard(item);
+        Span span;
+        bool publicBoundary = false;
+        record(span);
+        record.textView();
+        record.textView();
+        record.textView();
+        record(publicBoundary);
+        auto revision = sources->mountedRevisions.find(span.source);
+        auto coordinates = sources->coordinates(span);
+        if (revision == sources->mountedRevisions.end() || !coordinates)
+          record.fail("invalid declaration lookup reference");
+        else {
+          auto prefix = 2 + revision->second.size();
+          if (key.size() != prefix + 17 ||
+              key.substr(2, revision->second.size()) != revision->second ||
+              key[prefix] != '\0' ||
+              key.substr(prefix + 1, 8) != ordinalKey(coordinates->first) ||
+              key.substr(prefix + 9) !=
+                  ordinalKey(UINT64_MAX - coordinates->second))
+            record.fail("invalid declaration lookup reference");
+        }
       } else if (key.starts_with("S:")) {
         DeclarationSymbolIdentity identity;
         record.discard(identity);
@@ -3059,14 +3405,28 @@ public:
         record.fail("invalid declaration lookup key");
       record.finish();
       if (!record.good())
-        scan.fail(std::move(record.error));
+        archive.fail(std::move(record.error));
       previous = key;
     }
-    scan.finish();
-    if (!scan.good()) {
-      archive.fail(std::move(scan.error));
+    if (end != records.size())
+      archive.fail("trailing declaration lookup bytes");
+    if (!archive.good())
       return;
-    }
+    for (std::size_t kind = 0; kind < symbolRows.size(); ++kind)
+      for (std::size_t ordinal = 0;
+           ordinal < symbolRows[kind].size() / sizeof(std::uint64_t);
+           ++ordinal) {
+        auto row = fixedWord(symbolRows[kind], ordinal * sizeof(std::uint64_t),
+                             sizeof(std::uint64_t));
+        if (row != UINT64_MAX &&
+            (row >= size() ||
+             keyAt(row) !=
+                 symbolKey('S', static_cast<metadata::SymbolKind>(kind)) +
+                     ordinalKey(ordinal))) {
+          archive.fail("invalid declaration symbol reference");
+          return;
+        }
+      }
     if (symbolCount(metadata::SymbolKind::Function) !=
             module.functions.size() ||
         symbolCount(metadata::SymbolKind::Static) != module.statics.size()) {
@@ -3081,7 +3441,7 @@ public:
         result = (result << 8) | static_cast<unsigned char>(byte);
       return std::optional{result};
     };
-    std::map<metadata::SymbolKind, std::size_t> symbolRows;
+    std::map<metadata::SymbolKind, std::size_t> symbolCounts;
     std::size_t names = 0, defaults = 0, inverseDefaults = 0, constructors = 0,
                 typeCounts = 0;
     const std::array declarationCounts{module.products.size(),
@@ -3091,30 +3451,41 @@ public:
       auto key = keyAt(i);
       bool valid = true;
       if (key.starts_with("S:")) {
-        auto identity = value<DeclarationSymbolIdentity>(i);
+        auto identity = symbolView(i);
         valid =
             key == symbolKey('S', identity.kind) + ordinalKey(identity.index) &&
-            identity.index < symbolCount(identity.kind);
-        ++symbolRows[identity.kind];
+            symbolRow(identity.kind, identity.index) == i &&
+            symbol(identity.kind, identity.definition) == identity.index;
+        ++symbolCounts[identity.kind];
       } else if (key.starts_with("s:")) {
         valid = key.size() >= 3;
         if (valid) {
           auto kind = static_cast<metadata::SymbolKind>(key[2]);
           auto id = value<std::uint32_t>(i);
-          auto identity = symbol(kind, id);
-          valid = identity && identity->definition == key.substr(3);
+          auto row = symbolRow(kind, id);
+          valid =
+              row != UINT64_MAX && symbolView(row).definition == key.substr(3);
         }
+      } else if (key.starts_with("C:")) {
+        valid = key.size() == 3 &&
+                static_cast<unsigned char>(key[2]) < symbolRows.size() &&
+                value<std::uint64_t>(i) ==
+                    symbolCount(static_cast<metadata::SymbolKind>(key[2]));
       } else if (key.starts_with("F:")) {
         auto id = ordinal(key, 2);
-        auto name = value<std::string>(i);
+        auto name = text(i);
         valid = id && *id < module.functions.size() && function(name) == *id;
         ++names;
       } else if (key.starts_with("f:") || key.starts_with("m:") ||
                  key.starts_with("X:") || key.starts_with("z:")) {
         auto id = value<std::uint32_t>(i);
         valid = id < module.functions.size();
-        if (valid && key.starts_with("f:"))
-          valid = functionName(id) == key.substr(2);
+        if (valid && key.starts_with("f:")) {
+          auto position = lowerBound("F:" + ordinalKey(id));
+          valid = position < size() &&
+                  keyAt(position) == "F:" + ordinalKey(id) &&
+                  text(position) == key.substr(2);
+        }
       } else if (key.starts_with("v:") || key.starts_with("x:"))
         valid = value<std::uint32_t>(i) < module.statics.size();
       else if (key.starts_with("n:")) {
@@ -3162,27 +3533,20 @@ public:
       } else if (key.starts_with("J:") || key.starts_with("r:") ||
                  key.starts_with("o:"))
         valid = value<bool>(i);
-      else if (key.starts_with("b:")) {
-        auto binding = value<NativeBinding>(i);
-        auto end = key.find('\0', 2);
-        valid = end != std::string_view::npos &&
-                key == bindingKey(key.substr(2, end - 2), binding.name,
-                                  binding.space);
-      } else if (key.starts_with("i:")) {
-        auto item = value<NativeItem>(i);
-        auto revision = sources->mountedRevisions.find(item.span.source);
-        auto coordinates = sources->coordinates(item.span);
-        valid = revision != sources->mountedRevisions.end() && coordinates &&
-                key == "i:" + revision->second + '\0' +
-                           ordinalKey(coordinates->first) +
-                           ordinalKey(UINT64_MAX - coordinates->second);
-      }
       if (!valid)
         archive.fail("invalid declaration lookup reference");
     }
+    for (std::size_t kind = 0; kind < symbolRows.size(); ++kind) {
+      auto identity = static_cast<metadata::SymbolKind>(kind);
+      auto count = symbolCount(identity);
+      if (one<std::uint64_t>(symbolKey('C', identity)).value_or(0) != count ||
+          (count && symbolRow(identity, count - 1) == UINT64_MAX))
+        archive.fail("incomplete declaration symbol directory");
+    }
     if (names != module.functions.size() ||
-        symbolRows[metadata::SymbolKind::Function] != module.functions.size() ||
-        symbolRows[metadata::SymbolKind::Static] != module.statics.size() ||
+        symbolCounts[metadata::SymbolKind::Function] !=
+            module.functions.size() ||
+        symbolCounts[metadata::SymbolKind::Static] != module.statics.size() ||
         defaults != defaultCount() || inverseDefaults != defaultCount() ||
         constructors != constructorCount() || typeCounts != 5 ||
         !one<bool>("links"))
@@ -3287,15 +3651,20 @@ public:
   }
   std::optional<DeclarationSymbolIdentity>
   symbol(metadata::SymbolKind kind, std::uint32_t index) const override {
-    return one<DeclarationSymbolIdentity>(symbolKey('S', kind) +
-                                          ordinalKey(index));
+    auto row = symbolRow(kind, index);
+    return row == UINT64_MAX
+               ? std::nullopt
+               : std::optional(value<DeclarationSymbolIdentity>(row));
   }
   std::optional<std::uint32_t>
   symbol(metadata::SymbolKind kind, std::string_view identity) const override {
-    return one<std::uint32_t>(symbolKey('s', kind) + std::string(identity));
+    return one<std::uint32_t>(symbolKey('s', kind), identity);
   }
   std::size_t symbolCount(metadata::SymbolKind kind) const override {
-    return one<std::uint64_t>(symbolKey('C', kind)).value_or(0);
+    auto index = static_cast<std::size_t>(kind);
+    return index < symbolRows.size()
+               ? symbolRows[index].size() / sizeof(std::uint64_t)
+               : 0;
   }
   std::size_t defaultCount() const override {
     return one<std::uint64_t>("defaults").value_or(0);
@@ -3331,7 +3700,7 @@ public:
   }
   std::optional<std::uint32_t>
   function(std::string_view canonical) const override {
-    return one<std::uint32_t>("f:" + std::string(canonical));
+    return one<std::uint32_t>("f:", canonical);
   }
   std::optional<std::string> functionName(std::uint32_t index) const override {
     return one<std::string>("F:" + ordinalKey(index));
@@ -3388,20 +3757,50 @@ public:
   }
 
 private:
+  struct SymbolView {
+    metadata::SymbolKind kind{};
+    std::uint32_t index = 0;
+    Span span;
+    std::string_view definition;
+  };
   std::shared_ptr<const void> owner;
   std::shared_ptr<HeaderSources> sources;
   metadata::DecodeReferences references;
   std::span<const std::uint8_t> offsets, records;
-  std::size_t size() const { return offsets.size() / sizeof(std::uint64_t); }
-  std::size_t offset(std::size_t index) const {
-    std::uint64_t result = 0;
-    for (unsigned byte = 0; byte < sizeof(result); ++byte)
-      result |= std::uint64_t(offsets[index * sizeof(result) + byte])
-                << (byte * 8);
-    return static_cast<std::size_t>(result);
+  std::array<std::span<const std::uint8_t>,
+             static_cast<std::size_t>(metadata::SymbolKind::Static) + 1>
+      symbolRows;
+  std::uint64_t symbolRow(metadata::SymbolKind kind,
+                          std::uint32_t index) const {
+    if (index >= symbolCount(kind))
+      return UINT64_MAX;
+    return fixedWord(symbolRows[static_cast<std::size_t>(kind)],
+                     std::size_t(index) * sizeof(std::uint64_t),
+                     sizeof(std::uint64_t));
+  }
+  static constexpr std::size_t rowBytes = 3 * sizeof(std::uint64_t);
+  std::size_t size() const { return offsets.size() / rowBytes; }
+  std::uint64_t word(std::size_t index, std::size_t field) const {
+    return fixedWord(offsets, index * rowBytes + field * sizeof(std::uint64_t),
+                     sizeof(std::uint64_t));
   }
   std::string_view keyAt(std::size_t index) const {
-    Archive reader(records.subspan(offset(index)), references, nullptr);
+    return {reinterpret_cast<const char *>(records.data() + word(index, 0)),
+            static_cast<std::size_t>(word(index, 1))};
+  }
+  std::span<const std::uint8_t> payloadAt(std::size_t index) const {
+    return records.subspan(word(index, 0) + word(index, 1), word(index, 2));
+  }
+  SymbolView symbolView(std::size_t index) const {
+    Archive reader(payloadAt(index), references, nullptr);
+    reader.headerSources = sources;
+    SymbolView result;
+    reader(result.kind, result.index, result.span);
+    result.definition = reader.textView();
+    return result;
+  }
+  std::string_view text(std::size_t index) const {
+    Archive reader(payloadAt(index), references, nullptr);
     return reader.textView();
   }
   std::size_t lowerBound(std::string_view key) const {
@@ -3416,10 +3815,7 @@ private:
     return begin;
   }
   template <class T> T value(std::size_t index) const {
-    Archive frame(records.subspan(offset(index)), references, nullptr);
-    frame.textView();
-    auto payload = frame.readBlock();
-    Archive reader(payload, references, nullptr);
+    Archive reader(payloadAt(index), references, nullptr);
     reader.headerSources = sources;
     T result{};
     reader(result);
@@ -3433,6 +3829,25 @@ private:
     auto position = lowerBound(key);
     return position < size() && keyAt(position) == key
                ? std::optional(value<T>(position))
+               : std::nullopt;
+  }
+  template <class T>
+  std::optional<T> one(std::string_view prefix, std::string_view suffix) const {
+    std::size_t begin = 0, end = size();
+    while (begin != end) {
+      auto middle = begin + (end - begin) / 2;
+      auto key = keyAt(middle);
+      auto order = key.substr(0, prefix.size()).compare(prefix);
+      if (order < 0 || (!order && key.substr(prefix.size()) < suffix))
+        begin = middle + 1;
+      else
+        end = middle;
+    }
+    if (begin == size())
+      return std::nullopt;
+    auto key = keyAt(begin);
+    return key.starts_with(prefix) && key.substr(prefix.size()) == suffix
+               ? std::optional(value<T>(begin))
                : std::nullopt;
   }
   template <class T> std::vector<T> equal(std::string_view key) const {
@@ -3898,14 +4313,14 @@ exportLibraryDeclarations(const CheckedModule &module,
     return result;
   }
   Archive framed(references, *module.types, header.hygieneState());
-  framed.tag("mettle.checked-header.5");
+  framed.tag("mettle.checked-header.6");
   framed(header.headerSources->revisions, header.headerSources->references);
   framed.writeBlock(header.output);
   result.header = std::move(framed.output);
   decltype(header.output){}.swap(header.output);
   header.headerSources.reset();
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.19");
+  contracts.tag("mettle.checked-contracts.20");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size() +
                         (module.importedDeclarations
@@ -4016,7 +4431,7 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
   auto storage =
       std::shared_ptr<const std::uint8_t>(std::move(backing), bytes.data());
   Archive envelope(bytes, references, nullptr);
-  envelope.tag("mettle.checked-header.5");
+  envelope.tag("mettle.checked-header.6");
   auto sources = std::make_shared<HeaderSources>();
   envelope(sources->revisions, sources->references);
   std::unordered_set<std::string_view> revisions;
@@ -4113,7 +4528,15 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
                                       reader.error);
   };
   Module module;
-  archive(module);
+  if (validation == metadata::ValidationMode::OnDemand) {
+    archive(module.functions, module.statics, module.products, module.aliases,
+            module.interfaces, module.implementations);
+    archive.discard(module.modules);
+    archive.discard(module.macros);
+    archive.discard(module.imports);
+    archive(module.prelude);
+  } else
+    archive(module);
   auto index = std::make_shared<ArchiveDeclarationIndex>(storage, sources);
   index->read(archive, module);
   if (validation == metadata::ValidationMode::Eager)
@@ -4398,7 +4821,7 @@ declarationPayloadLayout(std::span<const std::uint8_t> bytes) {
     return std::optional<std::uint32_t>{0};
   };
   Archive archive(bytes, references, nullptr);
-  archive.tag("mettle.checked-contracts.19");
+  archive.tag("mettle.checked-contracts.20");
   std::uint64_t count = 0;
   archive(count);
   if (count > bytes.size())
@@ -4565,7 +4988,7 @@ LibraryDeclarationImport importLibraryDeclarations(
     target.facts = std::move(decoded->facts);
     target.constants = std::move(decoded->constants);
   };
-  archive.tag("mettle.checked-contracts.19");
+  archive.tag("mettle.checked-contracts.20");
   auto value = std::make_shared<ImportedDeclarations>();
   value->catalog = std::move(catalog);
   archive.declarationIndex = value->catalog;

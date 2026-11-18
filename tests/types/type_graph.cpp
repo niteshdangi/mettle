@@ -353,7 +353,7 @@ int main() {
     auto vector = producer.vectorType("Shared", Type::I32, 4, 16);
     auto second = producer.declareProduct("Shared", true);
     producer.defineProduct(second, {{"value", Type::Bool}});
-    auto suffix = producer.declareProduct("SharedSuffix", true);
+    auto suffix = producer.declareProduct("Shared\xc3\xa9", true);
     producer.defineProduct(suffix, {{"value", Type::I64}});
     TypeGraphSymbols symbols;
     symbols.definition = [](Type type) {
@@ -374,7 +374,7 @@ int main() {
     expect(!copy.findProduct("Missing") &&
                !copy.findProduct("logical" + std::to_string(first.index())) &&
                copy.findProduct("Shared") == imported.roots[1] &&
-               copy.findProduct("SharedSuffix") == imported.roots[4] &&
+               copy.findProduct("Shared\xc3\xa9") == imported.roots[4] &&
                copy.vectorType("Shared", Type::I32, 4, 16) == imported.roots[2],
            "native name queries preserve descriptor spellings and archive "
            "order without reading unrelated records");
@@ -442,6 +442,29 @@ int main() {
       expect(!imported && consumer.storedTypeCount() == 0,
              "unused lookup references and projection mismatches must reject "
              "the entire import transaction");
+    }
+    for (bool trailing : {false, true}) {
+      auto malformed = encoded.bytes;
+      auto end = last + 4 + keySize;
+      if (trailing)
+        malformed.insert(malformed.begin() + end, 0);
+      else
+        malformed.erase(malformed.begin() + end - 1);
+      auto adjusted = [trailing](std::uint32_t value) {
+        return trailing ? value + 1 : value - 1;
+      };
+      put32(malformed, last, adjusted(keySize));
+      auto terminal = table + 4 * (groups + 1);
+      put32(malformed, terminal, adjusted(u32(malformed, terminal)));
+      put32(malformed, indexOffset, adjusted(u32(malformed, indexOffset)));
+      TypeStore consumer;
+      auto imported = importTypeGraph(consumer, malformed, *retained,
+                                      ValidationMode::OnDemand, retained);
+      expect(!imported && consumer.storedTypeCount() == 0 &&
+                 imported.error ==
+                     "type lookup index does not match projection",
+             "lookup membership must match the complete key, not a truncated "
+             "or extended prefix");
     }
     auto projection = indexOffset + 4 + u32(encoded.bytes, indexOffset) + 1;
     auto full = projection + 4 + u32(encoded.bytes, projection);

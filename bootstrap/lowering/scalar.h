@@ -16,7 +16,7 @@ struct ImportedBodies {
   std::map<std::pair<std::size_t, std::size_t>, ir::Function> defaults;
   std::vector<ir::Function> support;
   std::vector<int> closureFunctions;
-  std::map<std::size_t, std::size_t> functionRecords;
+  std::vector<std::optional<std::size_t>> functionRecords;
   std::map<std::pair<std::size_t, std::size_t>, std::size_t> defaultRecords;
   std::vector<std::optional<std::size_t>> supportRecords;
   std::vector<std::size_t> functionBodySizes;

@@ -874,13 +874,13 @@ CheckedLibrary::import(const Module &module,
   };
   auto retainedReferences =
       std::make_shared<const metadata::DecodeReferences>(references);
-  auto pendingIR =
-      std::async(std::launch::async | std::launch::deferred,
-                 [storage, retainedReferences] {
-                   return ir::decodeProgramLazy(
-                       storage->ir, *retainedReferences, true,
-                       retainedReferences, storage, storage->verifyIRBody);
-                 });
+  auto pendingIR = std::async(
+      std::launch::async | std::launch::deferred,
+      [storage, retainedReferences] {
+        return ir::decodeProgramLazy(
+            storage->ir, *retainedReferences, true, retainedReferences, storage,
+            storage->verifyIRBody, metadata::ValidationMode::OnDemand);
+      });
   auto declarations = importLibraryDeclarations(
       storage->declarations, types, *retainedReferences, &module, storage,
       retainedReferences, metadata::ValidationMode::OnDemand, {},
@@ -901,33 +901,40 @@ CheckedLibrary::import(const Module &module,
   if (largestSupportOrdinal->load() >= static_cast<std::int64_t>(supportCount))
     return fail("compiled support identity exceeds its artifact-local table");
   auto bodies = std::make_shared<lowering::ImportedBodies>();
+  bodies->functionRecords.resize(functions);
+  std::size_t sourceBodies = 0;
   std::vector<std::optional<std::size_t>> supportRecords(supportCount);
-  std::set<std::uint32_t> assigned;
   for (std::size_t i = 0; i < decoded.program.functions.size(); ++i) {
     auto destination = decoded.functionDestinations[i];
-    if (!assigned.insert(destination).second)
-      return fail("duplicate compiled function destination");
     if (destination < functions) {
+      if (bodies->functionRecords[destination])
+        return fail("duplicate compiled function destination");
       auto symbol =
           catalog->symbol(metadata::SymbolKind::Function, destination);
       if (!symbol || decoded.functionIdentities[i] != symbol->definition)
         return fail("compiled function identity does not match its header");
-      bodies->functionRecords.emplace(destination, i);
+      bodies->functionRecords[destination] = i;
+      ++sourceBodies;
     } else if (destination < supportBase) {
       if (destination < module.functions.size() ||
           destination - module.functions.size() >= nativeDefaults)
         return fail("compiled body occupies a consumer default-helper slot");
       decoded.program.functionIndex[i].name = decoded.functionIdentities[i];
-      bodies->defaultRecords.emplace(
-          catalog->defaultAt(destination - module.functions.size()), i);
+      if (!bodies->defaultRecords
+               .emplace(
+                   catalog->defaultAt(destination - module.functions.size()), i)
+               .second)
+        return fail("duplicate compiled function destination");
     } else if (destination - supportBase < supportCount) {
       decoded.program.functionIndex[i].name = decoded.functionIdentities[i];
+      if (supportRecords[destination - supportBase])
+        return fail("duplicate compiled function destination");
       supportRecords[destination - supportBase] = i;
     } else {
       return fail("compiled body destination exceeds its support table");
     }
   }
-  if (bodies->functionRecords.size() != functions ||
+  if (sourceBodies != functions ||
       bodies->defaultRecords.size() != nativeDefaults)
     return fail("compiled IR is missing a source function or default helper");
   for (auto record : supportRecords)

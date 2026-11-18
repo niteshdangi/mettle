@@ -324,9 +324,9 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
             continue;
           }
         if (deferredHeader)
-          if (auto record = imported->functionRecords.find(i);
-              record != imported->functionRecords.end()) {
-            takeRecord(record->second);
+          if (i < imported->functionRecords.size() &&
+              imported->functionRecords[i]) {
+            takeRecord(*imported->functionRecords[i]);
             continue;
           }
         auto found =
@@ -338,10 +338,9 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
                             "imported function has no verified symbolic body");
           return result;
         }
-        auto record = imported->functionRecords.find(i);
-        take(found->second, record == imported->functionRecords.end()
-                                ? std::nullopt
-                                : std::optional(record->second));
+        take(found->second, i < imported->functionRecords.size()
+                                ? imported->functionRecords[i]
+                                : std::nullopt);
       } else
         append(Builder(module, imported.get())
                    .run(module.syntax().functions[i], i),

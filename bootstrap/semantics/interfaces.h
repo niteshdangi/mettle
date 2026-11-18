@@ -384,9 +384,10 @@ struct Database {
     std::size_t declaration = static_cast<std::size_t>(-1);
     std::vector<std::string> inherent;
     bool fallback = false;
+    bool operator==(const ImplementationHeader &) const = default;
   };
   std::shared_ptr<const std::vector<DefinitionHeader>> importedDefinitions;
-  std::shared_ptr<const std::vector<ImplementationHeader>>
+  std::shared_ptr<const TypeRecords<ImplementationHeader, true>>
       importedImplementations;
   DatabaseRecords<Definition> definitions;
   DatabaseRecords<Implementation> implementations;

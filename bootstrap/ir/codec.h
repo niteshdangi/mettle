@@ -61,7 +61,8 @@ private:
   decodeProgramLazy(std::span<const std::uint8_t>,
                     const metadata::DecodeReferences &references, bool,
                     std::shared_ptr<const metadata::DecodeReferences>,
-                    std::shared_ptr<const void>, FunctionBodyVerifier);
+                    std::shared_ptr<const void>, FunctionBodyVerifier,
+                    metadata::ValidationMode);
 };
 
 EncodeResult encodeProgram(const Program &program,
@@ -72,11 +73,12 @@ DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
 // Decodes callable contracts and record extents. Implementation metadata and
 // CFG are authenticated and validated when loaded. `bytes` must outlive the
 // returned body loader. Both header modes retain only callable contracts.
-DecodeResult decodeProgramLazy(std::span<const std::uint8_t> bytes,
-                               const metadata::DecodeReferences &references,
-                               bool compactHeaders = false,
-                               std::shared_ptr<const metadata::DecodeReferences>
-                                   retainedReferences = nullptr,
-                               std::shared_ptr<const void> backing = nullptr,
-                               FunctionBodyVerifier verifyBody = {});
+DecodeResult decodeProgramLazy(
+    std::span<const std::uint8_t> bytes,
+    const metadata::DecodeReferences &references, bool compactHeaders = false,
+    std::shared_ptr<const metadata::DecodeReferences> retainedReferences =
+        nullptr,
+    std::shared_ptr<const void> backing = nullptr,
+    FunctionBodyVerifier verifyBody = {},
+    metadata::ValidationMode validation = metadata::ValidationMode::Eager);
 } // namespace mettle::ir
