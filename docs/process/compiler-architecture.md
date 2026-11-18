@@ -467,7 +467,9 @@ references map identically without a consistency sort. Arbitrary point remapping
 retains its resolver and conflicting-binding checks; that fallback reuses
 revision storage between bindings. Neither resolver is retained by lazy syntax.
 Consumers share paged type records, immutable declaration contracts and indexed
-function facts; mutating access detaches the affected records. Native type
+function facts; mutating access detaches the affected records. Overlay insertion
+and lookup reuse their ordered positions instead of repeating membership probes.
+Native type
 and implementation records retain separate checking/finalized COW snapshots.
 Finalized quantified callable-bound contracts travel with the interface
 database, and consumer coherence compares only pairs containing a source rule.

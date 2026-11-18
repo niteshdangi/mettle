@@ -77,10 +77,14 @@ public:
     return {prefix().end(), prefix().end(), local.end(), local.end()};
   }
   Iterator find(const K &key) const {
-    if (!contains(key))
+    const auto &shared = prefix();
+    auto inherited = shared.lower_bound(key);
+    auto own = local.lower_bound(key);
+    auto less = std::less<K>{};
+    if ((inherited == shared.end() || less(key, inherited->first)) &&
+        (own == local.end() || less(key, own->first)))
       return end();
-    return {prefix().lower_bound(key), prefix().end(), local.lower_bound(key),
-            local.end()};
+    return {inherited, shared.end(), own, local.end()};
   }
   bool contains(const K &key) const {
     return local.contains(key) || prefix().contains(key);
@@ -102,12 +106,15 @@ public:
   }
   template <class... Args>
   std::pair<Iterator, bool> emplace(K key, Args &&...args) {
-    if (contains(key))
-      return {find(key), false};
+    const auto &shared = prefix();
+    auto inherited = shared.lower_bound(key);
+    if (inherited != shared.end() && !std::less<K>{}(key, inherited->first))
+      return {{inherited, shared.end(), local.lower_bound(key), local.end()},
+              false};
     auto [position, inserted] =
-        local.emplace(std::move(key), V(std::forward<Args>(args)...));
+        local.try_emplace(std::move(key), std::forward<Args>(args)...);
     count += inserted;
-    return {find(position->first), inserted};
+    return {{inherited, shared.end(), position, local.end()}, inserted};
   }
   template <class Input> void insert(Input first, Input last) {
     for (; first != last; ++first)

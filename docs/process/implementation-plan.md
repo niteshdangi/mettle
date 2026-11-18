@@ -1165,6 +1165,21 @@ repeated invalid demands still reject. This is an isolated algorithm measurement
 not an end-to-end/Rust parity result:
 `~/w/anal/perf-demand-reachability-20261118/comparison.json`.
 
+Shared-map insertion and lookup now reuse ordered positions. An 8,205-name probe
+reduced insertion comparisons from 630,053 to 175,917 and 65,640 frozen lookups
+from 1,900,056 to 982,848. Compiler `355d492c...` against `74d0a1eb...`
+measured P03/P04/P05 fresh checks at 300.375 / 290.936, 296.454 / 300.000
+and 351.157 / 336.276 ms; builds were 591.902 / 568.784,
+617.210 / 634.675 and 766.731 / 769.767 ms. Outputs matched Rust.
+Nine further P04 pairs were still slightly higher:
+311.680 / 312.941 ms checks and 601.901 / 605.197 ms builds. No universal
+speedup is established. A diagnostic profile reduced declaration indexing from
+11.180 to 7.549 ms. Shared-prefix, override, missing-key and suffix-iteration
+cases pass optimized and ASan/UBSan imports.
+Evidence: `~/w/anal/perf-overlay-admission-20261118-040307/`,
+`~/w/anal/perf-admission-check-pairs-20261118-040542/` and
+`~/w/anal/perf-admission-build-pairs-20261118-040548/`.
+
 Still missing: specialization recipes do not cover every consumer-local type.
 Source queries conservatively fall back for unsupported cache shapes and shifted
 spans. Consolidated memory/storage/performance gates and whole-milestone

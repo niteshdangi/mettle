@@ -49,6 +49,18 @@ void interfaceSnapshots() {
                                 original.callableContracts.end());
   expected[Type::I32] = Type::U8;
   expected[Type::Bool] = Type::Unit;
+  auto added = consumer.callableContracts.emplace(Type::Char, Type::U16);
+  expected[Type::Char] = Type::U16;
+  auto inherited = consumer.callableContracts.emplace(Type::U32, Type::Bool);
+  auto overridden = consumer.callableContracts.emplace(Type::I32, Type::Unit);
+  expect(added.second && !inherited.second && !overridden.second &&
+             inherited.first->second == Type::U64 &&
+             overridden.first->second == Type::U8 &&
+             consumer.callableContracts.find(Type::Unit) ==
+                 consumer.callableContracts.end() &&
+             std::equal(added.first, consumer.callableContracts.end(),
+                        expected.find(Type::Char), expected.end()),
+         "overlay insertion preserves inherited overrides and merged suffixes");
   expect(consumer.callableContracts.size() == expected.size() &&
              std::equal(consumer.callableContracts.begin(),
                         consumer.callableContracts.end(), expected.begin(),
