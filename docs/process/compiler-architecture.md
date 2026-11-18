@@ -440,6 +440,9 @@ Initial semantic admission still validates the complete type/declaration
 inventory and every IR header. Empty type stores directly adopt validated graph
 records only when structural identities need no canonical remapping; duplicate
 keys, existing consumer types and logical lookups retain canonical merging.
+Symbol-free identity projections build their query indexes during the first
+read. Only records needing logical-symbol remapping are decoded again after
+the graph's references have been validated.
 Consumers share paged type records, immutable declaration contracts and indexed
 function facts; mutating access detaches the affected records. Native type
 and implementation records retain separate checking/finalized COW snapshots.

@@ -1110,6 +1110,15 @@ type, wildcard and package/cache/output cases also pass.
 Evidence: `~/w/anal/perf-compact-query-six-20261117-234049/results.json`
 and `~/w/anal/perf-indexed-import-scaling/results.json`.
 
+A further type-index change eliminates a second identity-projection decode for
+60,727 of P04's 67,449 imported types; 6,722 symbol-dependent records retain
+the remapping pass. Compiler `a402c438...` against `2ddb0217...` measured
+P03/P04/P05 fresh checks at 397.474 / 383.394, 445.432 / 405.464 and
+451.834 / 441.647 ms in three matched triples. Builds were mixed
+(-4.4% to +0.5%), and all outputs matched Rust. Focused graph/import checks
+pass optimized and ASan/UBSan builds. These are engineering measurements:
+`~/w/anal/perf-type-query-pass-20261117-235802/results.json`.
+
 Still missing: specialization recipes do not cover every consumer-local type.
 Source queries conservatively fall back for unsupported cache shapes and shifted
 spans. Consolidated memory/storage/performance gates and whole-milestone

@@ -3054,6 +3054,39 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     deferred->records.reserve(header.types);
     TypeGraphImport result;
     std::set<DefinitionIdentity> identities;
+    auto indexArena = demand ? std::make_shared<CompactArena>() : nullptr;
+    std::unordered_multimap<std::uint64_t, std::size_t> keys;
+    Graph graph(candidate);
+    FlatTypeEdges edges;
+    std::vector<Type> references;
+    std::vector<std::size_t> pendingRecords;
+    bool uniqueKeys = true;
+    if (demand) {
+      keys.reserve(ids.size());
+      edges.offsets.reserve(ids.size() + 1);
+      deferred->index.reserve(header.types);
+    }
+    auto indexDefinition = [&](std::size_t i,
+                               const CompactDefinitionView &definition) {
+      auto &slice = deferred->records[i];
+      deferred->index[i] = compactIndex(definition, *indexArena, true);
+      references.clear();
+      if (slice.nominal)
+        return;
+      std::uint64_t fingerprint = 14695981039346656037ull;
+      auto key = canonicalKey(graph, definition, &references, nullptr,
+                              &fingerprint, true);
+      for (auto [entry, end] = keys.equal_range(fingerprint); entry != end;
+           ++entry)
+        if (deferred->identityKey(entry->second) == key) {
+          uniqueKeys = false;
+          return;
+        }
+      keys.emplace(fingerprint, i);
+      slice.keyOffset = deferred->canonicalKeys.size();
+      slice.keyLength = key.size();
+      deferred->canonicalKeys += key;
+    };
     for (std::uint32_t i = 0; i < header.types; ++i) {
       std::optional<DefinitionIdentity> identity;
       reader(identity);
@@ -3102,8 +3135,27 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
             return &storage.front();
           },
           definition));
-      if (demand)
+      if (demand) {
+        auto view = std::visit(
+            [](auto &record) -> CompactDefinitionView { return &record; },
+            definition);
+        bool pending = false;
+        for (std::size_t k = 0; k < Reader::symbolKinds; ++k)
+          pending |= reader.pendingSymbols[k].size() != slice.symbols[k];
+        deferred->index.emplace_back();
+        if (pending) {
+          pendingRecords.push_back(i);
+          references.clear();
+          if (!slice.nominal)
+            canonicalKey(graph, view, &references);
+        } else
+          indexDefinition(i, view);
+        for (auto reference : references)
+          if (reference.index() >= builtinTypeCount)
+            edges.targets.push_back(graphIndex(ids, reference));
+        edges.offsets.push_back(edges.targets.size());
         reader.arena->reset();
+      }
     }
     result.roots.reserve(header.roots);
     for (std::uint32_t i = 0; i < header.roots; ++i) {
@@ -3114,18 +3166,12 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     if (reader.remaining())
       reject("trailing bytes in type graph");
     deferred->symbols = reader.resolveSymbols();
-    bool uniqueKeys = true;
     deferred->index.reserve(definitions.size());
     if (demand) {
-      auto indexArena = std::make_shared<CompactArena>();
-      std::unordered_multimap<std::uint64_t, std::size_t> keys;
-      keys.reserve(ids.size());
-      Graph graph(candidate);
-      FlatTypeEdges edges;
-      edges.offsets.reserve(ids.size() + 1);
-      std::vector<Type> references;
       reader.resolvedSymbols = &deferred->symbols;
-      for (std::size_t i = 0; i < ids.size(); ++i) {
+      for (auto i : pendingRecords) {
+        if (!uniqueKeys)
+          break;
         auto &slice = deferred->records[i];
         reader.bytes =
             bytes.subspan(slice.identityOffset, slice.identityLength);
@@ -3136,29 +3182,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
         auto view = std::visit(
             [](auto &record) -> CompactDefinitionView { return &record; },
             definition);
-        deferred->index.push_back(compactIndex(view, *indexArena, true));
-        if (!slice.nominal) {
-          references.clear();
-          std::uint64_t fingerprint = 14695981039346656037ull;
-          auto key = canonicalKey(graph, view, &references, nullptr,
-                                  &fingerprint, true);
-          for (auto [entry, end] = keys.equal_range(fingerprint); entry != end;
-               ++entry)
-            if (deferred->identityKey(entry->second) == key) {
-              uniqueKeys = false;
-              break;
-            }
-          if (!uniqueKeys)
-            break;
-          keys.emplace(fingerprint, i);
-          slice.keyOffset = deferred->canonicalKeys.size();
-          slice.keyLength = key.size();
-          deferred->canonicalKeys += key;
-          for (auto reference : references)
-            if (reference.index() >= builtinTypeCount)
-              edges.targets.push_back(graphIndex(ids, reference));
-        }
-        edges.offsets.push_back(edges.targets.size());
+        indexDefinition(i, view);
         reader.arena->reset();
       }
       if (uniqueKeys)
