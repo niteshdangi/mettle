@@ -456,6 +456,8 @@ scratch buffer per admission. Deferred validation retains regions and target ABI
 not another TypeStore whose shared, uninitialized pages must then be detached.
 Previously validated immutable dependencies reuse their drop and array-expansion
 proofs instead of being enqueued again when a new type record is demanded.
+Demand validation reuses reachability bits and clears only queued ordinals on
+every exit, rather than zeroing the complete library inventory for each query.
 Structural-key admission uses one bounded ordinal table rather than allocating
 a hash node per key; hash collisions still compare the complete canonical bytes.
 Header syntax and types retain their actual section owners. Header source-span

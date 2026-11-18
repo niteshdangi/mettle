@@ -2815,7 +2815,7 @@ struct DeferredTypeGraph {
   VaListAbi validationAbi{};
   std::vector<ImportedTypeIndex> index;
   std::string canonicalKeys;
-  mutable std::vector<bool> loaded;
+  mutable std::vector<bool> loaded, visiting;
   mutable std::unordered_map<std::size_t, TypeGraphProof> validated;
   mutable std::unordered_map<std::size_t, Reader::ResolvedSymbols>
       recordSymbols;
@@ -2953,17 +2953,24 @@ void DeferredTypeGraph::validate(std::size_t index) const {
   if (validated.contains(index))
     return;
   try {
-    std::vector<bool> seen(records.size());
     std::vector<std::size_t> pending;
+    struct ResetVisiting {
+      std::vector<bool> &visiting;
+      const std::vector<std::size_t> &pending;
+      ~ResetVisiting() {
+        for (auto index : pending)
+          visiting[index] = false;
+      }
+    } reset{visiting, pending};
     auto require = [&](Type type) {
       if (type.index() < builtinTypeCount)
         return;
       auto current = static_cast<std::size_t>(type.index() - builtinTypeCount);
       if (validated.contains(current))
         return;
-      if (!seen[current]) {
-        seen[current] = true;
+      if (!visiting[current]) {
         pending.push_back(current);
+        visiting[current] = true;
       }
       if (!loaded[current]) {
         const auto &slice = records[current];
@@ -3256,6 +3263,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       deferred->validationRegions = candidate.regions();
       deferred->validationAbi = candidate.vaListAbi();
       deferred->loaded.resize(header.types);
+      deferred->visiting.resize(header.types);
       deferred->demandedArena = std::make_shared<CompactArena>();
     }
     auto loader = std::make_shared<const TypeStore::ImportedDefinitionLoader>(

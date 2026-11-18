@@ -1156,6 +1156,15 @@ P04 median peak RSS fell from 296,550,400 to 288,432,128 bytes in three pairs.
 P05 checks did not improve; these remain engineering measurements, not I14
 qualification: `~/w/anal/perf-source-range-admission-20261118-034212/`.
 
+Demand validation no longer allocates/clears an inventory-sized reachability
+bitmap per new root. One retained bitmap clears only queued nodes, including
+failed demands. For 32,768 independent demands, median time fell from 40.571
+to 34.535-35.131 ms with 32,768 types, and from 44.941 to 31.438-31.825 ms
+with 262,144 types. Affected imports pass optimized and ASan/UBSan cases;
+repeated invalid demands still reject. This is an isolated algorithm measurement,
+not an end-to-end/Rust parity result:
+`~/w/anal/perf-demand-reachability-20261118/comparison.json`.
+
 Still missing: specialization recipes do not cover every consumer-local type.
 Source queries conservatively fall back for unsupported cache shapes and shifted
 spans. Consolidated memory/storage/performance gates and whole-milestone

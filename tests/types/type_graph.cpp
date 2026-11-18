@@ -140,13 +140,15 @@ int main() {
     expect(consumer.product(imported.roots[3]).fields.size() == 32 &&
                consumer.product(imported.roots[4]).arrayCount != Type::Unknown,
            "reused array proofs must preserve nested expansion counts");
-    bool rejected = false;
-    try {
-      (void)consumer.product(imported.roots[1]);
-    } catch (const InvalidMetadata &) {
-      rejected = true;
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+      bool rejected = false;
+      try {
+        (void)consumer.product(imported.roots[1]);
+      } catch (const InvalidMetadata &) {
+        rejected = true;
+      }
+      expect(rejected, "invalid demanded type was published before validation");
     }
-    expect(rejected, "invalid demanded type was published before validation");
     auto changed = consumer;
     changed.defineProduct(imported.roots[0], {{"changed", Type::Bool}});
     expect(consumer.product(imported.roots[0]).fields[0].name == "payload",
