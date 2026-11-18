@@ -160,8 +160,8 @@ std::string ImportedDeclarations::indexDeclarations(const Module *module) {
       result->implementationHeaders.push_back(
           module->implementations.sharedHeader(i));
     }
-  for (const auto &definition : std::as_const(checkingDatabase).definitions)
-    result->interfaceNames.push_back(definition.name);
+  for (std::size_t i = 0; i < checkingDatabase.definitions.size(); ++i)
+    result->interfaceNames.emplace_back(checkingDatabase.definitionName(i));
   for (const auto &constant : inherentConstants) {
     expression(constant.initializer);
     if (!module)
@@ -461,6 +461,12 @@ public:
     }
   }
   template <typename T> void value(TypeRecords<T> &items) {
+    recordCollection<T>(items);
+  }
+  template <typename T> void value(interfaces::DatabaseRecords<T> &items) {
+    recordCollection<T>(items);
+  }
+  template <typename T, class Records> void recordCollection(Records &items) {
     std::uint64_t count = items.size();
     value(count);
     if (!good())
@@ -640,6 +646,12 @@ public:
     map(items);
   }
   template <typename K, typename V> void value(OverlayMap<K, V> &items) {
+    map(items);
+    if (reading())
+      items.freeze();
+  }
+  template <typename K, typename V>
+  void value(interfaces::DatabaseMap<K, V> &items) {
     map(items);
     if (reading())
       items.freeze();
@@ -915,7 +927,7 @@ public:
     if (reading() && good()) {
       if (!types || !types->isCallable(carrier))
         fail("invalid declaration callable reference");
-      else
+      else if (!discarding)
         signature = types->callable(carrier);
     }
   }
@@ -1546,8 +1558,10 @@ void wire(Archive &a, interfaces::Database &v) {
     v.structuralDeclarations, v.argumentsReady, v.callableContracts);
 }
 template <class T>
-void phaseRecords(Archive &archive, const TypeRecords<T> &checking,
-                  TypeRecords<T> &finalized, bool interfaces = false) {
+void phaseRecords(Archive &archive,
+                  const interfaces::DatabaseRecords<T> &checking,
+                  interfaces::DatabaseRecords<T> &finalized,
+                  bool interfaces = false) {
   std::uint64_t size = finalized.size();
   if (!interfaces)
     archive(size);
@@ -1605,7 +1619,7 @@ void phaseRecords(Archive &archive, const TypeRecords<T> &checking,
               [](const auto &left, const auto &right) {
                 return left.first < right.first;
               });
-    TypeRecords<T> records;
+    interfaces::DatabaseRecords<T> records;
     records.reserve(static_cast<std::size_t>(size));
     auto replacement = replacements.begin();
     for (std::size_t i = 0; i < size; ++i)
@@ -1619,13 +1633,12 @@ void phaseRecords(Archive &archive, const TypeRecords<T> &checking,
     finalized = std::move(records);
   }
 }
-template <class K, class V>
-void phaseMap(Archive &archive, const OverlayMap<K, V> &checking,
-              OverlayMap<K, V> &finalized) {
+template <class Map>
+void phaseMap(Archive &archive, const Map &checking, Map &finalized) {
   bool shared = !archive.reading() && archive.same(checking, finalized);
   archive(shared);
   if (archive.reading())
-    finalized = shared ? checking : OverlayMap<K, V>{};
+    finalized = shared ? checking : Map{};
   if (!shared)
     archive(finalized);
 }
@@ -1655,6 +1668,484 @@ void databases(Archive &archive, interfaces::Database &checking,
     finalized.indexedProjections = 0;
   }
 }
+class DatabaseAdmission {
+  struct Block {
+    std::size_t offset, size;
+  };
+  template <class T> struct Records {
+    std::shared_ptr<std::vector<Block>> blocks =
+        std::make_shared<std::vector<Block>>();
+    std::shared_ptr<const typename TypeRecords<T>::Loader> load;
+  };
+  using ImplementationIndices =
+      std::map<std::tuple<SourceId, std::uint32_t, std::uint32_t>, std::size_t>;
+
+public:
+  DatabaseAdmission(
+      Archive &archive, std::span<const std::uint8_t> bytes,
+      std::shared_ptr<const void> storage,
+      std::shared_ptr<const metadata::DecodeReferences> references,
+      std::shared_ptr<TypeStore> types,
+      std::shared_ptr<const ImplementationIndices> implementationIndices,
+      const std::map<std::uint32_t, ImportedFunctionReference> &functions)
+      : archive(archive), bytes(bytes), storage(std::move(storage)),
+        references(std::move(references)), types(std::move(types)),
+        implementationIndices(std::move(implementationIndices)),
+        functions(functions) {}
+
+  void read(interfaces::Database &checking, interfaces::Database &finalized) {
+    auto definitions =
+        std::make_shared<std::vector<interfaces::Database::DefinitionHeader>>();
+    auto count = archive.collectionSize();
+    if (count > limits::interfaces) {
+      archive.fail("interface inventory exceeds the compiler representation");
+      return;
+    }
+    std::set<std::uint32_t> seen;
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      auto index = std::uint32_t{0};
+      archive.symbol(metadata::SymbolKind::Interface, index);
+      if (index >= limits::interfaces || !seen.insert(index).second) {
+        archive.fail("invalid checked interface identity");
+        return;
+      }
+      if (checking.definitions.size() <= index) {
+        checking.definitions.resize(std::size_t(index) + 1);
+        definitions->resize(std::size_t(index) + 1);
+      }
+      record(checking.definitions, index, definitionRecords,
+             [&] { definition((*definitions)[index]); });
+    }
+    if (!archive.good())
+      return;
+    for (const auto &header : *definitions)
+      for (auto parent : header.parents)
+        if (parent >= definitions->size() ||
+            (*definitions)[parent].name.empty()) {
+          archive.fail("unknown checked superinterface");
+          return;
+        }
+    checking.importedDefinitions = definitions;
+    auto implementations = std::make_shared<
+        std::vector<interfaces::Database::ImplementationHeader>>();
+    count = archive.collectionSize();
+    checking.implementations.resize(count);
+    implementations->resize(count);
+    for (std::size_t i = 0; i < count && archive.good(); ++i)
+      record(checking.implementations, i, implementationRecords,
+             [&] { implementation((*implementations)[i], checking); });
+    if (!archive.good())
+      return;
+    checking.importedImplementations = implementations;
+    indexImplementations(checking);
+    count = archive.collectionSize();
+    checking.projections.resize(count);
+    for (std::size_t i = 0; i < count && archive.good(); ++i)
+      record(checking.projections, i, projectionRecords,
+             [&] { projection(checking, i); });
+    map(checking.unpinImplementations, checking, unpinRecords);
+    map(checking.structuralDeclarations, checking, structuralRecords);
+    archive(checking.argumentsReady, checking.callableContracts);
+    validateCallableContracts(checking);
+    if (!archive.good())
+      return;
+    checking.indexedProjections = checking.projections.size();
+    checking.projectionsByParameter.freeze();
+    finalized = checking;
+    auto finalDefinitions = definitions;
+    changes(checking.definitions, finalized.definitions, definitionRecords,
+            true, [&](std::size_t index) {
+              interfaces::Database::DefinitionHeader after;
+              definition(after);
+              const auto &before = (*definitions)[index];
+              if (before.name != after.name ||
+                  !sameSpan(before.span, after.span))
+                archive.fail(
+                    "checked interface phases have conflicting inventories");
+              for (auto parent : after.parents)
+                if (parent >= definitions->size() ||
+                    (*definitions)[parent].name.empty())
+                  archive.fail("unknown checked superinterface");
+              if (before.methods != after.methods ||
+                  before.parents != after.parents ||
+                  before.associated != after.associated) {
+                if (finalDefinitions == definitions)
+                  finalDefinitions = std::make_shared<
+                      std::vector<interfaces::Database::DefinitionHeader>>(
+                      *definitions);
+                (*finalDefinitions)[index] = std::move(after);
+              }
+            });
+    finalized.importedDefinitions = finalDefinitions;
+    if (!archive.good())
+      return;
+    auto finalImplementations = implementations;
+    bool implementationIndexChanged = false;
+    changes(checking.implementations, finalized.implementations,
+            implementationRecords, false, [&](std::size_t index) {
+              interfaces::Database::ImplementationHeader after;
+              implementation(after, finalized);
+              if (index >= implementations->size() ||
+                  !sameSpan((*implementations)[index].span, after.span)) {
+                archive.fail(
+                    "checked interface phases have conflicting inventories");
+                return;
+              }
+              const auto &before = (*implementations)[index];
+              implementationIndexChanged |=
+                  (types->isErased(before.interfaceType)
+                       ? types->erasedDeclaration(before.interfaceType)
+                       : UINT32_MAX) !=
+                  (types->isErased(after.interfaceType)
+                       ? types->erasedDeclaration(after.interfaceType)
+                       : UINT32_MAX);
+              if (before.interfaceType != after.interfaceType ||
+                  before.inherent != after.inherent ||
+                  before.fallback != after.fallback) {
+                if (finalImplementations == implementations)
+                  finalImplementations = std::make_shared<
+                      std::vector<interfaces::Database::ImplementationHeader>>(
+                      *implementations);
+                (*finalImplementations)[index] = std::move(after);
+              }
+            });
+    if (finalized.implementations.size() != checking.implementations.size())
+      archive.fail("checked interface phases have conflicting inventories");
+    finalized.importedImplementations = finalImplementations;
+    if (!archive.good())
+      return;
+    if (implementationIndexChanged)
+      indexImplementations(finalized);
+    changes(checking.projections, finalized.projections, projectionRecords,
+            false, [&](std::size_t index) { projection(finalized, index); });
+    finalProjectionParameters.resize(finalized.projections.size());
+    if (projectionIndexChanged ||
+        finalized.projections.size() != checking.projections.size()) {
+      finalized.projectionsByParameter.clear();
+      for (std::size_t i = 0; i < finalProjectionParameters.size(); ++i)
+        finalized.projectionsByParameter.emplace(finalProjectionParameters[i],
+                                                 i);
+    }
+    mapPhase(checking.unpinImplementations, finalized.unpinImplementations,
+             finalized, unpinRecords);
+    mapPhase(checking.structuralDeclarations, finalized.structuralDeclarations,
+             finalized, structuralRecords);
+    archive(finalized.argumentsReady);
+    phaseMap(archive, checking.callableContracts, finalized.callableContracts);
+    validateCallableContracts(finalized);
+    finalized.indexedProjections = finalized.projections.size();
+    finalized.projectionsByParameter.freeze();
+  }
+
+private:
+  Archive &archive;
+  std::span<const std::uint8_t> bytes;
+  std::shared_ptr<const void> storage;
+  std::shared_ptr<const metadata::DecodeReferences> references;
+  std::shared_ptr<TypeStore> types;
+  std::shared_ptr<const ImplementationIndices> implementationIndices;
+  const std::map<std::uint32_t, ImportedFunctionReference> &functions;
+  Records<interfaces::Definition> definitionRecords;
+  Records<interfaces::Implementation> implementationRecords;
+  Records<interfaces::Projection> projectionRecords;
+  Records<std::pair<Type, interfaces::Implementation>> unpinRecords;
+  Records<std::pair<std::pair<interfaces::Property, Type>,
+                    interfaces::StructuralPropertyDeclaration>>
+      structuralRecords;
+  std::vector<Type> finalProjectionParameters;
+  bool projectionIndexChanged = false;
+
+  static bool sameSpan(Span left, Span right) {
+    return left.source == right.source && left.begin == right.begin &&
+           left.end == right.end;
+  }
+  void indexImplementations(interfaces::Database &database) {
+    const auto &headers = *database.importedImplementations;
+    database.implementationsByDeclaration.clear();
+    for (std::size_t i = 0; i < headers.size(); ++i) {
+      auto interfaceType = headers[i].interfaceType;
+      if (!types->isErased(interfaceType))
+        continue;
+      auto owner = types->erasedDeclaration(interfaceType);
+      if (database.implementationsByDeclaration.size() <= owner)
+        database.implementationsByDeclaration.resize(std::size_t(owner) + 1);
+      database.implementationsByDeclaration[owner].push_back(i);
+    }
+    database.indexedImplementations = database.implementations.size();
+  }
+  template <class... T> void discard(T &...items) {
+    (archive.discard(items), ...);
+  }
+  bool parameter(Type type) const {
+    return types->isParameter(type) || types->isConstParameter(type) ||
+           types->isProjection(type);
+  }
+  bool function(int index) const {
+    return index >= 0 && functions.contains(std::uint32_t(index));
+  }
+  void parameters(const char *error) {
+    auto count = archive.collectionSize();
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      Type type = Type::Unknown;
+      archive(type);
+      if (!parameter(type))
+        archive.fail(error);
+    }
+  }
+  template <class T> void loader(Records<T> &records) {
+    if (!records.load)
+      records.load = std::make_shared<const typename TypeRecords<T>::Loader>(
+          [storage = storage, bytes = bytes, references = references,
+           types = types, indices = implementationIndices,
+           revisions = archive.sourceRevisions(),
+           blocks = records.blocks](std::size_t index) {
+            const auto &block = blocks->at(index);
+            Archive reader(bytes.subspan(block.offset, block.size), *references,
+                           types.get(), revisions);
+            reader.implementationIndices = indices.get();
+            T value;
+            reader(value);
+            reader.finish();
+            if (!reader.good())
+              throw metadata::InvalidMetadata(
+                  "invalid checked interface record: " + reader.error);
+            return value;
+          });
+  }
+  template <class T, class Scan>
+  void record(interfaces::DatabaseRecords<T> &target, std::size_t index,
+              Records<T> &records, Scan scan) {
+    auto begin = archive.position();
+    scan();
+    if (!archive.good())
+      return;
+    loader(records);
+    auto ordinal = records.blocks->size();
+    records.blocks->push_back({begin, archive.position() - begin});
+    target.defer(index, ordinal, records.load);
+  }
+  template <class K, class V>
+  void map(interfaces::DatabaseMap<K, V> &target,
+           const interfaces::Database &database,
+           Records<std::pair<K, V>> &records) {
+    auto count = archive.collectionSize();
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      auto begin = archive.position();
+      K key{};
+      archive(key);
+      if constexpr (std::is_same_v<V,
+                                   interfaces::StructuralPropertyDeclaration>) {
+        bool negative = false;
+        archive(negative);
+      }
+      interfaces::Database::ImplementationHeader header;
+      implementation(header, database);
+      if (!archive.good())
+        return;
+      loader(records);
+      auto ordinal = records.blocks->size();
+      records.blocks->push_back({begin, archive.position() - begin});
+      if (!target.defer(std::move(key), ordinal, records.load))
+        archive.fail("duplicate declaration map key");
+    }
+    target.freeze();
+  }
+  template <class K, class V>
+  void mapPhase(const interfaces::DatabaseMap<K, V> &checking,
+                interfaces::DatabaseMap<K, V> &finalized,
+                const interfaces::Database &database,
+                Records<std::pair<K, V>> &records) {
+    bool shared = false;
+    archive(shared);
+    if (shared)
+      finalized = checking;
+    else {
+      finalized.clear();
+      map(finalized, database, records);
+    }
+  }
+  template <class T, class Scan>
+  void changes(const interfaces::DatabaseRecords<T> &checking,
+               interfaces::DatabaseRecords<T> &finalized, Records<T> &records,
+               bool interfaces, Scan scan) {
+    std::uint64_t size = checking.size();
+    if (!interfaces)
+      archive(size);
+    if (size > UINT32_MAX || (size > checking.size() &&
+                              size - checking.size() > archive.remaining())) {
+      archive.fail("checked phase inventory exceeds its representation");
+      return;
+    }
+    auto count = archive.collectionSize();
+    if (count > size) {
+      archive.fail("checked phase changes exceed their inventory");
+      return;
+    }
+    finalized.resize(static_cast<std::size_t>(size));
+    std::set<std::uint32_t> seen;
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      std::uint32_t index = 0;
+      if (interfaces)
+        archive.symbol(metadata::SymbolKind::Interface, index);
+      else
+        archive(index);
+      if (index >= size || !seen.insert(index).second) {
+        archive.fail("invalid checked phase record identity");
+        return;
+      }
+      record(finalized, index, records, [&] { scan(index); });
+    }
+    if (size > checking.size())
+      for (auto i = checking.size(); i < size; ++i)
+        if (!seen.contains(static_cast<std::uint32_t>(i))) {
+          archive.fail("missing checked phase record");
+          return;
+        }
+  }
+  const interfaces::Database::DefinitionHeader *
+  owner(Type type, const interfaces::Database &database) const {
+    if (!types->isErased(type))
+      return nullptr;
+    auto index = types->erasedDeclaration(type);
+    const auto &headers = *database.importedDefinitions;
+    return index < headers.size() && !headers[index].name.empty()
+               ? &headers[index]
+               : nullptr;
+  }
+  void definition(interfaces::Database::DefinitionHeader &header) {
+    header = {};
+    interfaces::Definition item;
+    archive(header.name, header.span);
+    archive.package(item.package);
+    archive(item.self);
+    if (!types->isParameter(item.self) && !header.name.empty())
+      archive.fail("invalid checked interface parameter inventory");
+    parameters("invalid checked interface parameter inventory");
+    auto count = archive.collectionSize();
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      interfaces::Obligation parent;
+      archive(parent);
+      if (parent.property == interfaces::Property::Interface &&
+          types->isErased(parent.interfaceType))
+        header.parents.push_back(
+            types->erasedDeclaration(parent.interfaceType));
+    }
+    count = archive.collectionSize();
+    header.associated = count;
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      interfaces::Associated associated;
+      archive.discard(associated.name);
+      archive(associated.parameter);
+      if (!parameter(associated.parameter))
+        archive.fail("invalid checked associated parameter inventory");
+      parameters("invalid checked associated parameter inventory");
+      discard(associated.defaultValue, associated.bounds,
+              associated.requirements, associated.constant, associated.regions,
+              associated.regionRequirements, associated.asyncFuture,
+              associated.asyncFutureDefaultInferred, associated.equalities,
+              associated.defaults);
+    }
+    count = archive.collectionSize();
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      interfaces::Method method;
+      archive(method.name);
+      archive.symbol(metadata::SymbolKind::Function, method.function);
+      if (!function(method.function))
+        archive.fail("unknown checked interface method");
+      header.methods.push_back(std::move(method.name));
+      discard(method.signature, method.implicitParameters, method.dispatchable);
+    }
+    discard(item.regions, item.regionRequirements, item.requirements,
+            item.equalities, item.unsafeInterface);
+  }
+  void binding(const char *error) {
+    interfaces::MethodBinding item;
+    archive.symbol(metadata::SymbolKind::Function, item.function);
+    if (!function(item.function))
+      archive.fail(error);
+    discard(item.arguments, item.defaultMethod);
+  }
+  void implementation(interfaces::Database::ImplementationHeader &header,
+                      const interfaces::Database &database) {
+    header = {};
+    interfaces::Implementation item;
+    archive(item.target, header.interfaceType, header.span);
+    archive.package(item.package);
+    if (!types->contains(item.target))
+      archive.fail("invalid checked implementation parameter inventory");
+    parameters("invalid checked implementation parameter inventory");
+    archive.discard(item.requirements);
+    auto *definition = owner(header.interfaceType, database);
+    if (header.interfaceType != Type::Unknown && !definition)
+      archive.fail("unknown checked implementation interface");
+    auto count = archive.collectionSize();
+    std::set<std::size_t> seen;
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      std::size_t ordinal = 0;
+      archive(ordinal);
+      if (!definition || ordinal >= definition->methods.size() ||
+          !seen.insert(ordinal).second)
+        archive.fail("invalid checked implementation method");
+      binding("invalid checked implementation method");
+    }
+    count = archive.collectionSize();
+    seen.clear();
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      std::size_t ordinal = 0;
+      archive(ordinal);
+      if (!definition || ordinal >= definition->associated ||
+          !seen.insert(ordinal).second)
+        archive.fail("invalid checked implementation associated item");
+      interfaces::AssociatedValue associated;
+      parameters("invalid checked implementation associated item");
+      discard(associated.value, associated.regions,
+              associated.regionRequirements, associated.requirements,
+              associated.fromDefault);
+      archive.symbol(metadata::SymbolKind::Function, associated.initializer);
+    }
+    count = archive.collectionSize();
+    std::set<std::string> names;
+    for (std::size_t i = 0; i < count && archive.good(); ++i) {
+      std::string name;
+      archive(name);
+      if (!names.insert(name).second)
+        archive.fail("duplicate declaration map key");
+      header.inherent.push_back(std::move(name));
+      binding("unknown checked inherent method");
+    }
+    discard(item.regions, item.regionRequirements, item.equalities);
+    archive(header.fallback);
+    if (implementationIndices) {
+      auto found = implementationIndices->find(
+          {header.span.source, header.span.begin, header.span.end});
+      if (found == implementationIndices->end())
+        archive.fail("checked implementation is absent from its header");
+      else
+        header.declaration = found->second;
+    }
+  }
+  void projection(interfaces::Database &database, std::size_t index) {
+    interfaces::Projection item{};
+    archive(item.parameter, item.subject, item.interfaceType, item.associated);
+    discard(item.arguments, item.regionArguments);
+    auto *definition = owner(item.interfaceType, database);
+    if (!definition || item.associated >= definition->associated ||
+        !parameter(item.parameter) || !types->contains(item.subject))
+      archive.fail("invalid checked associated projection");
+    if (finalProjectionParameters.size() <= index)
+      finalProjectionParameters.resize(index + 1, Type::Unknown);
+    else
+      projectionIndexChanged |=
+          finalProjectionParameters[index] != item.parameter;
+    finalProjectionParameters[index] = item.parameter;
+    database.projectionsByParameter.emplace(item.parameter, index);
+  }
+  void validateCallableContracts(const interfaces::Database &database) {
+    for (const auto &[parameter, contract] : database.callableContracts)
+      if (!types->isParameter(parameter) || !types->isFunctionPointer(contract))
+        archive.fail("invalid checked callable-bound contract");
+  }
+};
 void wire(Archive &a, ReceiverStep &v) {
   a(v.kind, v.source, v.target, v.resultView, v.count, v.mode);
   a.symbol(metadata::SymbolKind::Function, v.callee);
@@ -3209,217 +3700,41 @@ LibraryDeclarationImport importLibraryDeclarations(
         !value->closures.emplace(index, std::move(closure)).second)
       archive.fail("invalid checked closure identity");
   }
-  databases(archive, value->checkingDatabase, value->database);
+  auto indices = module
+                     ? std::make_shared<const decltype(implementationIndices)>(
+                           implementationIndices)
+                     : nullptr;
+  DatabaseAdmission(archive, bytes, storage, frozen, types, std::move(indices),
+                    value->functions)
+      .read(value->checkingDatabase, value->database);
+  if (!archive.good()) {
+    result.error = std::move(archive.error);
+    return result;
+  }
   std::size_t phase = 0;
   for (const auto *database : {&value->checkingDatabase, &value->database}) {
     auto &counts = (*methods)[phase++];
     counts.reserve(database->definitions.size());
-    for (const auto &definition : database->definitions)
-      counts.push_back(definition.name.empty()
-                           ? std::nullopt
-                           : std::optional(definition.methods.size()));
+    for (std::size_t i = 0; i < database->definitions.size(); ++i) {
+      auto name = database->definitionName(i);
+      auto count = (*database->importedDefinitions)[i].methods.size();
+      counts.push_back(name.empty() ? std::nullopt : std::optional(count));
+    }
   }
-  auto sameSpan = [](Span left, Span right) {
-    return left.source == right.source && left.begin == right.begin &&
-           left.end == right.end;
-  };
-  const auto &checking = value->checkingDatabase;
-  const auto &finalized = value->database;
-  if (checking.definitions.size() != finalized.definitions.size() ||
-      checking.implementations.size() != finalized.implementations.size() ||
-      !std::equal(checking.definitions.begin(), checking.definitions.end(),
-                  finalized.definitions.begin(),
-                  [&](const auto &left, const auto &right) {
-                    return left.name == right.name &&
-                           sameSpan(left.span, right.span);
-                  }) ||
-      !std::equal(checking.implementations.begin(),
-                  checking.implementations.end(),
-                  finalized.implementations.begin(),
-                  [&](const auto &left, const auto &right) {
-                    return sameSpan(left.span, right.span);
-                  }))
-    archive.fail("checked interface phases have conflicting inventories");
   archive.finish();
   if (!archive.good()) {
     result.error = std::move(archive.error);
     return result;
   }
-  auto parameter = [&](Type type) {
-    return value->types->isParameter(type) ||
-           value->types->isConstParameter(type) ||
-           value->types->isProjection(type);
-  };
-  auto parameters = [&](const std::vector<Type> &items) {
-    return std::all_of(items.begin(), items.end(), parameter);
-  };
-  for (const auto *database : {&value->checkingDatabase, &value->database}) {
-    const bool finalizedPhase = database == &value->database;
-    for (const auto &[parameter, contract] : database->callableContracts) {
-      if (finalizedPhase) {
-        auto previous =
-            value->checkingDatabase.callableContracts.find(parameter);
-        if (previous != value->checkingDatabase.callableContracts.end() &&
-            &previous->second == &contract)
-          continue;
-      }
-      if (!value->types->isParameter(parameter) ||
-          !value->types->isFunctionPointer(contract))
-        archive.fail("invalid checked callable-bound contract");
-    }
-    auto definition = [&](Type type) -> const interfaces::Definition * {
-      if (!value->types->isErased(type))
-        return nullptr;
-      auto index = value->types->erasedDeclaration(type);
-      return index < database->definitions.size() &&
-                     !database->definitions[index].name.empty()
-                 ? &database->definitions[index]
-                 : nullptr;
-    };
-    auto functionExists = [&](int index) {
-      return index >= 0 && value->functions.contains(std::uint32_t(index));
-    };
-    for (std::size_t i = 0; i < database->definitions.size(); ++i) {
-      const auto &item = database->definitions[i];
-      if (finalizedPhase &&
-          &item == &std::as_const(value->checkingDatabase).definitions[i])
-        continue;
-      if (item.name.empty())
-        continue;
-      if (!value->types->isParameter(item.self) || !parameters(item.parameters))
-        archive.fail("invalid checked interface parameter inventory");
-      for (const auto &associated : item.associated)
-        if (!parameter(associated.parameter) ||
-            !parameters(associated.parameters))
-          archive.fail("invalid checked associated parameter inventory");
-      for (const auto &method : item.methods)
-        if (!functionExists(method.function))
-          archive.fail("unknown checked interface method");
-    }
-    auto implementation = [&](const interfaces::Implementation &item) {
-      if (!value->types->contains(item.target) || !parameters(item.parameters))
-        archive.fail("invalid checked implementation parameter inventory");
-      const auto *owner = definition(item.interfaceType);
-      if (item.interfaceType != Type::Unknown && !owner)
-        archive.fail("unknown checked implementation interface");
-      for (const auto &[ordinal, method] : item.methods)
-        if (!owner || ordinal >= owner->methods.size() ||
-            !functionExists(method.function))
-          archive.fail("invalid checked implementation method");
-      for (const auto &[ordinal, associated] : item.associated)
-        if (!owner || ordinal >= owner->associated.size() ||
-            !parameters(associated.parameters))
-          archive.fail("invalid checked implementation associated item");
-      for (const auto &[name, method] : item.inherent) {
-        (void)name;
-        if (!functionExists(method.function))
-          archive.fail("unknown checked inherent method");
-      }
-    };
-    for (std::size_t i = 0; i < database->implementations.size(); ++i) {
-      const auto &item = database->implementations[i];
-      if (!finalizedPhase ||
-          &item != &std::as_const(value->checkingDatabase).implementations[i])
-        implementation(item);
-    }
-    for (const auto &[type, item] : database->unpinImplementations) {
-      auto previous = value->checkingDatabase.unpinImplementations.find(type);
-      if (!finalizedPhase ||
-          previous == value->checkingDatabase.unpinImplementations.end() ||
-          &previous->second != &item)
-        implementation(item);
-    }
-    for (const auto &[key, item] : database->structuralDeclarations) {
-      auto previous = value->checkingDatabase.structuralDeclarations.find(key);
-      if (!finalizedPhase ||
-          previous == value->checkingDatabase.structuralDeclarations.end() ||
-          &previous->second != &item)
-        implementation(item.implementation);
-    }
-    for (std::size_t i = 0; i < database->projections.size(); ++i) {
-      const auto &projection = database->projections[i];
-      if (finalizedPhase && i < value->checkingDatabase.projections.size() &&
-          &projection == &std::as_const(value->checkingDatabase).projections[i])
-        continue;
-      const auto *owner = definition(projection.interfaceType);
-      if (!owner || projection.associated >= owner->associated.size() ||
-          !parameter(projection.parameter) ||
-          !value->types->contains(projection.subject))
-        archive.fail("invalid checked associated projection");
-    }
-    auto expression = [&](const std::shared_ptr<CheckedExpression> &body) {
-      if (!body)
-        return;
-      for (const auto &dispatch : body->dispatches) {
-        const auto *owner = definition(dispatch.interfaceType);
-        if (dispatch.method < 0 || !owner ||
-            static_cast<std::size_t>(dispatch.method) >=
-                owner->methods.size() ||
-            dispatch.self == Type::Unknown ||
-            !value->types->contains(dispatch.self))
-          archive.fail("invalid checked expression interface dispatch");
-      }
-    };
+  try {
     for (const auto &[index, function] : value->functions) {
       (void)index;
-      if (!function.isMaterialized())
-        continue;
-      expression(function->body);
-      for (const auto &argument : function->defaults)
-        expression(argument);
+      if (function.isMaterialized())
+        validateDispatches(*function, *types, *methods);
     }
-  }
-  if (!archive.good()) {
-    result.error = std::move(archive.error);
+  } catch (const metadata::InvalidMetadata &error) {
+    result.error = error.what();
     return result;
-  }
-  for (auto *database : {&value->checkingDatabase, &value->database}) {
-    const auto &snapshot = std::as_const(*database);
-    auto declaration = [&](Type interfaceType) {
-      return types->isErased(interfaceType)
-                 ? types->erasedDeclaration(interfaceType)
-                 : UINT32_MAX;
-    };
-    const auto &checking = std::as_const(value->checkingDatabase);
-    const bool sharedImplementations =
-        database == &value->database &&
-        std::equal(snapshot.implementations.begin(),
-                   snapshot.implementations.end(),
-                   checking.implementations.begin(),
-                   [&](const auto &left, const auto &right) {
-                     return declaration(left.interfaceType) ==
-                            declaration(right.interfaceType);
-                   });
-    if (sharedImplementations)
-      database->implementationsByDeclaration =
-          checking.implementationsByDeclaration;
-    else {
-      for (std::size_t i = 0; i < snapshot.implementations.size(); ++i) {
-        auto owner = declaration(snapshot.implementations[i].interfaceType);
-        if (owner == UINT32_MAX)
-          continue;
-        if (database->implementationsByDeclaration.size() <= owner)
-          database->implementationsByDeclaration.resize(owner + 1);
-        database->implementationsByDeclaration[owner].push_back(i);
-      }
-    }
-    database->indexedImplementations = snapshot.implementations.size();
-    const bool sharedProjections =
-        database == &value->database &&
-        snapshot.projections.size() == checking.projections.size() &&
-        std::equal(snapshot.projections.begin(), snapshot.projections.end(),
-                   checking.projections.begin(),
-                   [](const auto &left, const auto &right) {
-                     return left.parameter == right.parameter;
-                   });
-    if (sharedProjections)
-      database->projectionsByParameter = checking.projectionsByParameter;
-    else
-      for (std::size_t i = 0; i < snapshot.projections.size(); ++i)
-        database->projectionsByParameter.emplace(
-            snapshot.projections[i].parameter, i);
-    database->indexedProjections = snapshot.projections.size();
-    database->projectionsByParameter.freeze();
   }
   value->indexTypes();
   if (auto error = value->indexDeclarations(module); !error.empty()) {

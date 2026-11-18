@@ -527,9 +527,13 @@ bool Solver::someImplementationCouldApply(Type subject, Type interfaceType) {
 }
 
 bool Solver::coherent() {
-  if (std::all_of(database.implementations.begin(),
-                  database.implementations.end(),
-                  [](const auto &item) { return item.checkedImport; }))
+  bool imported = true;
+  for (std::size_t i = 0; i < database.implementations.size(); ++i)
+    if (!database.importedImplementation(i)) {
+      imported = false;
+      break;
+    }
+  if (imported)
     return true;
   bool valid = true;
   using InterfaceKey = std::pair<std::uint32_t, bool>;
@@ -537,6 +541,30 @@ bool Solver::coherent() {
   std::array<std::map<InterfaceKey, std::vector<std::size_t>>, 2> interfaces;
   std::array<std::map<MethodKey, std::vector<std::size_t>>, 2> methods;
   for (std::size_t i = 0; i < database.implementations.size(); ++i) {
+    if (database.importedImplementations &&
+        i < database.importedImplementations->size() &&
+        !database.implementations.isMaterialized(i)) {
+      const auto &header = (*database.importedImplementations)[i];
+      bool relevant = false;
+      if (types.isErased(header.interfaceType)) {
+        auto key = InterfaceKey{types.erasedDeclaration(header.interfaceType),
+                                header.fallback};
+        auto found = interfaces[1].find(key);
+        relevant = found != interfaces[1].end() && !found->second.empty();
+        if (!relevant)
+          interfaces[0][key].push_back(i);
+      } else if (header.interfaceType == Type::Unknown) {
+        for (const auto &name : header.inherent) {
+          auto found = methods[1].find({name, header.fallback});
+          relevant |= found != methods[1].end() && !found->second.empty();
+        }
+        if (!relevant)
+          for (const auto &name : header.inherent)
+            methods[0][{name, header.fallback}].push_back(i);
+      }
+      if (!relevant)
+        continue;
+    }
     const auto &left = database.implementations[i];
     if (!left.checkedImport) {
       std::set<Type> known;

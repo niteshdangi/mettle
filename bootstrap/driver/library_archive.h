@@ -33,8 +33,6 @@ private:
   friend std::optional<LibraryArchive>
   decodeLibraryArchive(std::string_view, std::string_view, std::string &,
                        std::shared_ptr<const void>);
-  std::optional<std::string> record(const Source &source, std::string &error,
-                                    std::optional<SourceText> revision);
   bool validate(std::string &error) const;
   struct Data {
     std::string identity;

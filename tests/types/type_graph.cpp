@@ -154,7 +154,7 @@ int main() {
     expect(consumer.product(imported.roots[0]).fields[0].name == "payload",
            "demand-loaded type mutation changed its retained snapshot");
   }
-  {
+  for (auto destination : {17u, 0x89abcdefu}) {
     TypeStore producer;
     ErasedType descriptor;
     descriptor.name = "any Alias";
@@ -163,11 +163,12 @@ int main() {
     descriptor.declaration = 7;
     auto second = producer.erasedType(descriptor);
     auto maps = symbolMaps();
-    maps.resolve = [](SymbolKind kind,
+    maps.resolve =
+        [destination](SymbolKind kind,
                       std::string_view name) -> std::optional<std::uint32_t> {
       if (kind == SymbolKind::Interface &&
           (name == symbolName(kind, 3) || name == symbolName(kind, 7)))
-        return 17;
+        return destination;
       return {};
     };
     auto retained = std::make_shared<const TypeGraphSymbols>(maps);
@@ -178,7 +179,7 @@ int main() {
     auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
                                     ValidationMode::OnDemand, retained);
     expect(bool(imported), imported.error);
-    descriptor.declaration = 17;
+    descriptor.declaration = destination;
     expect(imported.roots[0] == imported.roots[1] &&
                consumer.erasedType(descriptor) == imported.roots[0],
            "resolved symbol aliases share one canonical type identity");
@@ -851,6 +852,16 @@ int main() {
   failedUnchanged(bad, countResolutions);
   expect(resolutions == 0,
          "malformed graph must be rejected before resolving symbols");
+  {
+    auto malformed = indexedBytes;
+    malformed.push_back(0);
+    auto retained = std::make_shared<const TypeGraphSymbols>(countResolutions);
+    TypeStore fresh;
+    expect(!importTypeGraph(fresh, malformed, *retained,
+                            ValidationMode::OnDemand, retained) &&
+               resolutions == 0 && fresh.storedTypeCount() == 0,
+           "indexed structural admission must precede symbol resolution");
+  }
   bad = bytes;
   put32(bad, 16, UINT32_MAX);
   failedUnchanged(bad, symbols);
@@ -874,6 +885,12 @@ int main() {
       return kind == missing ? std::nullopt : symbols.resolve(kind, name);
     };
     failedUnchanged(bytes, missingSymbol);
+    auto retained = std::make_shared<const TypeGraphSymbols>(missingSymbol);
+    TypeStore fresh;
+    expect(!importTypeGraph(fresh, indexedBytes, *retained,
+                            ValidationMode::OnDemand, retained) &&
+               fresh.storedTypeCount() == 0,
+           "indexed admission must reject unresolved symbols transactionally");
   }
   bad = bytes;
   constexpr std::string_view destructorSymbol = "0:11";

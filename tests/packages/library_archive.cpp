@@ -51,6 +51,42 @@ int main() {
     hash.update(text);
     return hash.finish();
   };
+  auto sourcePayloads = [](const std::string &bytes) {
+    std::size_t offset = 0;
+    auto integer = [&] {
+      std::uint32_t value = 0;
+      for (unsigned shift = 0; shift < 32; shift += 8)
+        value |= static_cast<std::uint32_t>(
+                     static_cast<unsigned char>(bytes[offset++]))
+                 << shift;
+      return value;
+    };
+    auto skip = [&] {
+      const auto size = integer();
+      offset += size;
+    };
+    skip();
+    skip();
+    const auto count = integer();
+    std::vector<std::pair<std::size_t, std::size_t>> ranges;
+    for (std::size_t i = 0; i < count; ++i) {
+      skip();
+      const auto size = integer();
+      ranges.emplace_back(offset, size);
+      offset += size;
+      skip();
+      skip();
+    }
+    return ranges;
+  };
+  auto reseal = [&](std::string &value) {
+    auto metadata = value.substr(0, value.size() - 64);
+    const auto payloads = sourcePayloads(value);
+    for (auto payload = payloads.rbegin(); payload != payloads.rend();
+         ++payload)
+      metadata.erase(payload->first, payload->second);
+    value.replace(value.size() - 64, 64, driver::archiveDigest(metadata));
+  };
   expect(digest("abc") ==
              "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
          "SHA-256 of one block changed");
@@ -199,13 +235,24 @@ int main() {
   }
   {
     SourceText text;
+    std::size_t validations = 0;
     {
       auto snapshot = std::make_shared<const std::string>(std::string(80, 'x'));
-      text = SourceText::retain(*snapshot, snapshot);
+      text = SourceText::retain(
+          *snapshot, snapshot, [&](std::string_view contents) {
+            ++validations;
+            expect(contents == std::string(80, 'x'),
+                   "deferred validation must receive the retained contents");
+          });
     }
+    const auto shared = text;
+    expect(text.size() == 80 && !text.empty() && validations == 0,
+           "retained source bounds must not demand diagnostic text");
     SourceText moved;
     moved = std::move(text);
     expect(text.empty(), "moved retained text must not retain an unowned view");
+    expect(shared.view() == moved.view() && validations == 1,
+           "source copies must share one successful deferred validation");
     moved += std::string_view(moved).substr(1);
     expect(moved == std::string(159, 'x'),
            "self-appending a retained slice must preserve its backing");
@@ -317,21 +364,61 @@ int main() {
          "corrupt payload must reject");
   expect(!driver::decodeLibraryArchive(*bytes + "x", "library-revision", error),
          "trailing archive data must reject");
+  {
+    auto changed = first;
+    changed.text[0] = 'M';
+    driver::LibraryArchive baseline("library-revision");
+    driver::LibraryArchive replacement("library-revision");
+    expect(baseline.sources.record(first, error).has_value(), error.c_str());
+    expect(replacement.sources.record(changed, error).has_value(),
+           error.c_str());
+    baseline.ir = archive.ir;
+    replacement.ir = archive.ir;
+    auto before = driver::encodeLibraryArchive(baseline, error);
+    auto after = driver::encodeLibraryArchive(replacement, error);
+    expect(before && after &&
+               before->substr(before->size() - 64) !=
+                   after->substr(after->size() - 64),
+           "changed source contents must invalidate archive metadata identity");
+  }
   auto invalidSource = *bytes;
   auto sourceText = invalidSource.find("generated");
   expect(sourceText != std::string::npos, "fixture must contain source text");
   invalidSource[sourceText] = static_cast<char>(255);
-  invalidSource.resize(invalidSource.size() - 64);
-  invalidSource += driver::archiveDigest(invalidSource);
-  expect(
-      !driver::decodeLibraryArchive(invalidSource, "library-revision", error),
-      "well-checksummed invalid source encoding must reject");
-  auto reseal = [](std::string &value) {
-    value.resize(value.size() - 64);
-    value += driver::archiveDigest(value);
-  };
-  for (const auto &field : {std::string("library-revision"), first.path,
-                            std::string("generated"), reference->revision}) {
+  auto invalid =
+      driver::decodeLibraryArchive(invalidSource, "library-revision", error);
+  expect(invalid.has_value(), error.c_str());
+  Diagnostics invalidDiagnostics;
+  SourceId invalidId = 80;
+  expect(invalid->sources.mount(
+             invalidDiagnostics, [&] { return invalidId++; }, error) &&
+             invalid->sources.resolve(*reference).has_value(),
+         "unused diagnostic text must not be read while mounting provenance");
+  bool invalidRejected = false;
+  try {
+    invalid->sources.source(reference->revision)->text.view();
+  } catch (const metadata::InvalidMetadata &failure) {
+    invalidRejected =
+        std::string_view(failure.what()).find("source revision") !=
+        std::string_view::npos;
+  }
+  expect(invalidRejected,
+         "corrupt retained text must reject before exposing source bytes");
+  {
+    const auto *source = invalid->sources.source(reference->revision);
+    Source edited = *source;
+    bool rejected = false;
+    try {
+      edited.text[0] = 'x';
+    } catch (const metadata::InvalidMetadata &) {
+      rejected = true;
+    }
+    expect(
+        rejected,
+        "editing a copied corrupt source must not bypass deferred integrity");
+  }
+  for (const auto &field :
+       {std::string("library-revision"), first.path, reference->revision}) {
     auto changed = *bytes;
     auto offset = changed.find(field);
     expect(offset != std::string::npos, "source identity fixture must exist");
@@ -340,10 +427,10 @@ int main() {
     if (field == identity)
       identity[0] ^= 1;
     reseal(changed);
-    expect(
-        !driver::decodeLibraryArchive(changed, identity, error) &&
-            error.find("source revision") != std::string::npos,
-        "source revisions must bind identity, path, text and encoded digest");
+    expect(!driver::decodeLibraryArchive(changed, identity, error) &&
+               error.find("source revision") != std::string::npos,
+           "source revision bindings must reject changed identity, path and "
+           "digest");
   }
   auto firstPath = bytes->find(first.path);
   auto secondPath = bytes->find(generated.path, firstPath + first.path.size());
@@ -353,7 +440,36 @@ int main() {
          "source order fixture must contain both complete records");
   auto firstRecord = firstPath - 4;
   auto secondRecord = secondPath - 4;
-  auto secondEnd = secondRevision + reference->revision.size();
+  auto secondEnd = secondRevision + reference->revision.size() + 68;
+  {
+    auto invalidEncoding = invalidSource;
+    const auto identityOffset = bytes->find("library-revision");
+    auto prefix = bytes->substr(identityOffset - 4,
+                                std::string("library-revision").size() + 4);
+    prefix.append("\1\0\0\0", 4);
+    prefix += bytes->substr(secondRecord, sourceText - secondRecord);
+    const auto revision = digest(
+        prefix + invalidEncoding.substr(sourceText, generated.text.size()));
+    invalidEncoding.replace(secondRevision + 68, 64, digest(prefix + revision));
+    for (auto offset = invalidEncoding.find(reference->revision);
+         offset != std::string::npos;
+         offset = invalidEncoding.find(reference->revision, offset + 64))
+      invalidEncoding.replace(offset, 64, revision);
+    reseal(invalidEncoding);
+    auto encoded = driver::decodeLibraryArchive(invalidEncoding,
+                                                "library-revision", error);
+    expect(encoded.has_value(), error.c_str());
+    bool rejected = false;
+    try {
+      encoded->sources.source(revision)->text.view();
+    } catch (const metadata::InvalidMetadata &failure) {
+      rejected = std::string_view(failure.what()).find("source encoding") !=
+                 std::string_view::npos;
+    }
+    expect(
+        rejected,
+        "revision-consistent malformed UTF8 must reject when text is demanded");
+  }
   for (const auto &[offset, value, message] :
        {std::tuple{secondEnd + 8, 1u, "cyclic generation provenance"},
         std::tuple{secondEnd + 16, static_cast<unsigned>(first.text.size() + 1),
@@ -415,6 +531,10 @@ int main() {
     for (auto body = layout.bodies.rbegin(); body != layout.bodies.rend();
          ++body)
       metadata.erase(irOffset + body->offset, body->size);
+    const auto sourceRanges = sourcePayloads(*sealed);
+    for (auto source = sourceRanges.rbegin(); source != sourceRanges.rend();
+         ++source)
+      metadata.erase(source->first, source->second);
     expect(driver::archiveDigest(metadata) ==
                sealed->substr(sealed->size() - 64),
            "fragmented parallel metadata hashing must preserve logical chunks");

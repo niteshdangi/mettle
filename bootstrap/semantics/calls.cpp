@@ -45,8 +45,10 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
   interfaces::Solver inherentSolver(*checked.types, *checked.interfaceData,
                                     diagnostics, interfaceAssumptions(),
                                     regionEnvironment());
-  for (const auto &implementation :
-       std::as_const(*checked.interfaceData).implementations) {
+  const auto &database = std::as_const(*checked.interfaceData);
+  const auto &inherentCandidates = receiverCandidates(member, false).inherent;
+  for (auto index : inherentCandidates) {
+    const auto &implementation = database.implementations[index];
     if (implementation.interfaceType != Type::Unknown)
       continue;
     auto method = implementation.inherent.find(member);
@@ -85,8 +87,10 @@ std::optional<std::string> Checker::staticInterfaceCall(Node &n,
   };
   std::vector<Candidate> candidates;
   std::optional<interfaces::Solver> interfaceSolver;
-  const auto &definitions = checked.interfaceData->definitions;
+  const auto &definitions = database.definitions;
   for (std::size_t d = 0; d < definitions.size(); ++d) {
+    if (!database.definitionHasMethod(d, member))
+      continue;
     const auto &definition = definitions[d];
     for (std::size_t m = 0; m < definition.methods.size(); ++m) {
       const auto &method = definition.methods[m];

@@ -20,6 +20,15 @@ Checker::receiverCandidates(std::string_view name, bool includeInterfaces) {
   const auto &implementations = database.implementations;
   while (indexedReceiverImplementations < implementations.size()) {
     auto index = indexedReceiverImplementations++;
+    if (database.importedImplementations &&
+        index < database.importedImplementations->size() &&
+        !implementations.isMaterialized(index)) {
+      const auto &header = (*database.importedImplementations)[index];
+      if (header.interfaceType == Type::Unknown)
+        for (const auto &method : header.inherent)
+          receiverImplementationCandidates[method].inherent.push_back(index);
+      continue;
+    }
     const auto &implementation = implementations[index];
     if (implementation.interfaceType != Type::Unknown)
       continue;
@@ -41,6 +50,17 @@ Checker::receiverCandidates(std::string_view name, bool includeInterfaces) {
     receiverInterfaceChildren.resize(database.definitions.size());
     while (indexedReceiverDefinitions < database.definitions.size()) {
       auto index = indexedReceiverDefinitions++;
+      if (database.importedDefinitions &&
+          index < database.importedDefinitions->size() &&
+          !database.definitions.isMaterialized(index)) {
+        const auto &header = (*database.importedDefinitions)[index];
+        for (const auto &method : header.methods)
+          receiverImplementationCandidates[method].declarations.push_back(
+              index);
+        for (auto parent : header.parents)
+          receiverInterfaceChildren[parent].push_back(index);
+        continue;
+      }
       const auto &definition = database.definitions[index];
       for (const auto &method : definition.methods)
         receiverImplementationCandidates[method.name].declarations.push_back(

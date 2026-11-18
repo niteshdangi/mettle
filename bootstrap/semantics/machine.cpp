@@ -932,13 +932,12 @@ std::optional<int> Checker::machineCall(Node &call, bool reachable,
       for (std::size_t declaration = 0;
            declaration < checked.interfaceData->definitions.size();
            ++declaration) {
-        const auto &definition =
-            checked.interfaceData->definitions[declaration];
-        if (definition.name != "core::clone::FunctionPointer" &&
-            definition.name != "core::ops::FnPtr")
+        auto name = checked.interfaceData->definitionName(declaration);
+        if (name != "core::clone::FunctionPointer" &&
+            name != "core::ops::FnPtr")
           continue;
         ErasedType marker;
-        marker.name = definition.name;
+        marker.name = name;
         marker.declaration = static_cast<std::uint32_t>(declaration);
         if (solver.prove(
                 {operand, checked.types->erasedType(std::move(marker))},

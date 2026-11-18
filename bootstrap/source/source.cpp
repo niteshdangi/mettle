@@ -17,23 +17,37 @@ SourceText &SourceText::operator=(SourceText &&other) noexcept {
 }
 
 SourceText SourceText::retain(std::string_view text,
-                              std::shared_ptr<const void> owner) {
-  if (!owner)
+                              std::shared_ptr<const void> owner,
+                              std::function<void(std::string_view)> validate) {
+  if (!owner) {
+    if (validate)
+      validate(text);
     return SourceText(text);
+  }
   SourceText result;
-  result.storage = Retained{std::move(owner), text};
+  result.storage = Retained{
+      std::move(owner), text,
+      validate ? std::make_shared<Validation>(std::move(validate)) : nullptr};
   return result;
 }
 
-std::string_view SourceText::view() const {
+std::string_view SourceText::bytes() const {
   if (const auto *owned = std::get_if<std::string>(&storage))
     return *owned;
   return std::get<Retained>(storage).text;
 }
 
+std::string_view SourceText::view() const {
+  if (const auto *retained = std::get_if<Retained>(&storage);
+      retained && retained->validation)
+    std::call_once(retained->validation->once,
+                   [&] { retained->validation->validate(retained->text); });
+  return bytes();
+}
+
 std::string &SourceText::edit() {
   if (!std::holds_alternative<std::string>(storage))
-    storage = std::string(std::get<Retained>(storage).text);
+    storage = std::string(view());
   return std::get<std::string>(storage);
 }
 

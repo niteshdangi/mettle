@@ -449,10 +449,13 @@ Initial semantic admission still validates the complete type/declaration
 inventory and every IR header. Empty type stores directly adopt validated graph
 records only when structural identities need no canonical remapping; duplicate
 keys, existing consumer types and logical lookups retain canonical merging.
-Symbol-free identity projections build their query indexes during the first
-read. Only records needing logical-symbol remapping are decoded again after
-the graph's references have been validated. Canonical encoding reuses one
-scratch buffer per admission. Deferred validation retains regions and target ABI,
+Identity projections build their query indexes during the first read.
+Canonical keys retain fixed-word symbol fixups applied after complete structural
+admission and symbol resolution; symbol-bearing records are not parsed again.
+Resolved aliases still undergo exact canonical-key comparison and merging.
+Demand imports retain neither eager replay offsets nor the initial resolved-symbol
+inventory. Canonical encoding reuses one scratch buffer per admission.
+Deferred validation retains regions and target ABI,
 not another TypeStore whose shared, uninitialized pages must then be detached.
 Previously validated immutable dependencies reuse their drop and array-expansion
 proofs instead of being enqueued again when a new type record is demanded.
@@ -487,6 +490,13 @@ syntax; demanded syntax must reproduce its admitted projection. Item attributes
 remain in query records, so driver linkage discovery does not materialize
 functions or statics. Interface phases share unchanged immutable records and
 encode only phase replacements, retaining phase-specific selection contracts.
+Interface database admission validates framed records and their references
+without retaining full definitions, implementations or structural-property
+values. Compact headers preserve method names, parent relationships, candidate
+groups and declaration spans. Checking and finalized phases share unchanged
+deferred records; consumer mutations detach locally. Selection and coherence use
+the compact indexes before demanding candidate details, without hiding imported
+implementations or weakening cross-boundary overlap checks.
 Compact IR admission streams and validates all locals and lexical scopes,
 retaining only the parameter/special-slot prefix without temporary full
 functions or repeated demanded-header decoding. Nested readers borrow their
@@ -710,13 +720,14 @@ source insertion order; import and definition equality retain that identity.
 Header and IR source references remain archive-relative. The envelope
 checks format, expected compiler/content/configuration identity and a SHA-256
 commitment; its sections still require their owning semantic decoders.
-Envelope v4 authenticates every metadata byte and ordered, section-specific
-function payload digests, excluding the owning codecs' framed checked-function
-and IR body payloads. Its root commitment therefore changes when a payload
-digest changes. Source text and encoded
-revisions remain retained slices; admission still validates source UTF-8 and
-revision binding to the library identity, ordinal, path and exact text, followed
-by complete generation provenance validation.
+Envelope v5 authenticates every metadata byte, source revision binding and
+ordered, section-specific function payload digest, excluding source text and
+the owning codecs' framed checked-function and IR body payloads. Its root
+commitment changes when an encoded source revision or payload digest changes.
+Source identity, ordinal, path and extent bindings and complete generation
+provenance are validated at admission. Retained source text validates its revision
+SHA and UTF-8 before first text access or mutation; copies share successful
+validation. Extent-only queries do not read or validate the text.
 Library discovery snapshots source bytes and the module inventory, including
 in-root source links, rather than trusting timestamps. Links outside the
 declared library root make that snapshot ineligible; the driver reports the
@@ -758,14 +769,13 @@ First admission retains the Store's read-only mapping without copying or
 explicitly reading unused payload bytes. Store writers atomically publish new
 read-only blob inodes; replacement and pruning cannot modify a live mapping.
 External in-place mutation of published blobs is outside that storage contract.
-Admission hashes only metadata, including eager source bytes,
+Admission hashes only metadata, including source revision bindings,
 checked-function summaries, type-graph storage, IR headers, statics and the
 program tail, plus the payload commitments. Included fragments form logical
 1 MiB digest blocks hashed on up to eight workers, matching contiguous archive
 digests without concatenating the metadata stream.
-Source revision hashing and UTF-8 validation still traverse source bytes
-separately. Unused checked-function blocks, IR body bytes and body-private string
-tables are not hashed at admission. Demand hashes only the selected payload;
+Unused source text, checked-function blocks, IR body bytes and body-private
+string tables are not hashed at admission. Demand hashes only the selected payload;
 no whole-archive payload digest is repeated. The blob store delegates
 these authenticated deferred checks to the native importer instead of adding
 an eager full-blob hash.

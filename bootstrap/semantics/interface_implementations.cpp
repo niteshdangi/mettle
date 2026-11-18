@@ -629,8 +629,16 @@ Checker::interfaceMethod(Type self, std::string_view name, Node &call) {
   } else {
     interfaces::Solver solver(*checked.types, *checked.interfaceData,
                               diagnostics, interfaceAssumptions());
-    for (const auto &implementation :
-         std::as_const(*checked.interfaceData).implementations) {
+    const auto &indexed = receiverCandidates(name, true);
+    auto positions = indexed.inherent;
+    positions.insert(positions.end(), indexed.interfaces.begin(),
+                     indexed.interfaces.end());
+    std::sort(positions.begin(), positions.end());
+    positions.erase(std::unique(positions.begin(), positions.end()),
+                    positions.end());
+    for (auto position : positions) {
+      const auto &implementation =
+          std::as_const(*checked.interfaceData).implementations[position];
       auto bindings = solver.applicable(implementation, self, call.span);
       if (!bindings)
         continue;
@@ -669,10 +677,11 @@ Checker::interfaceMethod(Type self, std::string_view name, Node &call) {
 }
 
 void Checker::checkAssociatedContracts() {
-  for (const auto &implementation :
-       std::as_const(*checked.interfaceData).implementations) {
-    if (imported(implementation.span))
+  const auto &database = std::as_const(*checked.interfaceData);
+  for (std::size_t i = 0; i < database.implementations.size(); ++i) {
+    if (imported(database.implementationSpan(i)))
       continue;
+    const auto &implementation = database.implementations[i];
     if (!checked.types->isErased(implementation.interfaceType))
       continue;
     // Copied: interning substituted types below may grow the erased-type store.
@@ -773,10 +782,11 @@ void Checker::checkAssociatedContracts() {
 
 void Checker::checkInterfaceContracts() {
   auto *saved = genericEnvironment;
-  for (const auto &implementation :
-       std::as_const(*checked.interfaceData).implementations) {
-    if (imported(implementation.span))
+  const auto &database = std::as_const(*checked.interfaceData);
+  for (std::size_t i = 0; i < database.implementations.size(); ++i) {
+    if (imported(database.implementationSpan(i)))
       continue;
+    const auto &implementation = database.implementations[i];
     if (!checked.types->isErased(implementation.interfaceType))
       continue;
     const auto descriptor = checked.types->erased(implementation.interfaceType);
@@ -984,7 +994,10 @@ void Checker::checkInterfaceContracts() {
 }
 
 void Checker::finalizeInterfaces() {
-  for (std::size_t i = 0; i < checked.interfaceData->definitions.size(); ++i)
+  for (std::size_t i = 0; i < checked.interfaceData->definitions.size(); ++i) {
+    if (i < module.interfaces.size() &&
+        imported(module.interfaces.header(i).span))
+      continue;
     for (std::size_t m = 0;
          m <
          std::as_const(*checked.interfaceData).definitions[i].methods.size();
@@ -1012,6 +1025,7 @@ void Checker::finalizeInterfaces() {
                                   ? ParameterMode::Take
                                   : ParameterMode::Read;
     }
+  }
   finalizeErasure();
 }
 

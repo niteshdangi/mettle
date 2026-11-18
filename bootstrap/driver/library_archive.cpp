@@ -213,6 +213,23 @@ private:
   std::size_t offset = 0;
 };
 
+std::string sourcePrefix(std::string_view identity, std::size_t ordinal,
+                         std::string_view path, std::size_t size) {
+  Writer prefix;
+  prefix.text(identity);
+  prefix.integer(static_cast<std::uint32_t>(ordinal));
+  prefix.text(path);
+  prefix.integer(static_cast<std::uint32_t>(size));
+  return std::move(prefix.bytes);
+}
+
+std::string sourceDigest(std::string_view prefix, std::string_view text) {
+  packages::Sha256 hash;
+  hash.update(prefix);
+  hash.update(text);
+  return hash.finish();
+}
+
 std::optional<std::size_t>
 sourceSpanIndex(Span span, std::span<const Source> sources,
                 const std::unordered_map<SourceId, std::size_t> &index) {
@@ -411,17 +428,10 @@ void LibrarySources::edit() {
 
 std::optional<std::string> LibrarySources::record(const Source &source,
                                                   std::string &error) {
-  return record(source, error, std::nullopt);
-}
-
-std::optional<std::string>
-LibrarySources::record(const Source &source, std::string &error,
-                       std::optional<SourceText> revision) {
   if (auto found = data->sourceIndex.find(source.id);
       found != data->sourceIndex.end()) {
     const auto &previous = data->sources[found->second];
-    if (previous.path != source.path || previous.text != source.text ||
-        (revision && *revision != data->revisions[found->second])) {
+    if (previous.path != source.path || previous.text != source.text) {
       error = "compiled library source ID names conflicting revisions";
       return std::nullopt;
     }
@@ -434,24 +444,13 @@ LibrarySources::record(const Source &source, std::string &error,
     error = "invalid compiled library source identity, size or encoding";
     return std::nullopt;
   }
-  Writer prefix;
-  prefix.text(data->identity);
-  prefix.integer(static_cast<std::uint32_t>(data->sources.size()));
-  prefix.text(source.path);
-  prefix.integer(static_cast<std::uint32_t>(source.text.size()));
-  packages::Sha256 hash;
-  hash.update(prefix.bytes);
-  hash.update(source.text);
-  auto name = hash.finish();
-  if (revision && *revision != name) {
-    error = "invalid compiled library archive: source revision does not match "
-            "its identity and contents";
-    return std::nullopt;
-  }
+  auto name = sourceDigest(sourcePrefix(data->identity, data->sources.size(),
+                                        source.path, source.text.size()),
+                           source.text);
   edit();
   data->sourceIndex.emplace(source.id, data->sources.size());
   data->revisionIndex.emplace(name, data->sources.size());
-  data->revisions.push_back(revision ? std::move(*revision) : SourceText(name));
+  data->revisions.emplace_back(name);
   data->sources.push_back(source);
   return name;
 }
@@ -691,14 +690,21 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
     return std::nullopt;
   }
   Writer out;
-  out.text("mettle-checked-library-4");
+  out.text("mettle-checked-library-5");
   out.text(data.identity);
   out.integer(static_cast<std::uint32_t>(data.sources.size()));
+  std::vector<PayloadRange> excluded;
+  excluded.reserve(data.sources.size() + declarationsLayout.payloads.size() +
+                   irLayout.bodies.size());
   for (std::size_t i = 0; i < data.sources.size(); ++i) {
     const auto &source = data.sources[i];
     out.text(source.path);
+    excluded.push_back({out.bytes.size() + 4, source.text.size()});
     out.text(source.text);
     out.text(data.revisions[i]);
+    out.text(sourceDigest(
+        sourcePrefix(data.identity, i, source.path, source.text.size()),
+        data.revisions[i]));
   }
   auto span = [&](Span value) {
     out.integer(static_cast<std::uint32_t>(data.sourceIndex.at(value.source)));
@@ -770,8 +776,6 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
     error = "compiled library archive exceeds the compiler data-file limit";
     return std::nullopt;
   }
-  std::vector<PayloadRange> excluded;
-  excluded.reserve(declarationsLayout.payloads.size() + irLayout.bodies.size());
   excludePayloads(excluded, declarationsOffset, declarationsLayout.payloads);
   excludePayloads(excluded, irOffset, irLayout.bodies);
   out.bytes += metadataDigest(out.bytes, excluded);
@@ -792,22 +796,57 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
     backing = std::move(snapshot);
   }
   Reader in(bytes.substr(0, bytes.size() - 64), error);
-  if (in.textView() != "mettle-checked-library-4")
+  if (in.textView() != "mettle-checked-library-5")
     in.fail("unsupported format");
   auto revision = in.text();
   if (revision != identity || revision.empty())
     in.fail("compiler, content or configuration identity mismatch");
   LibraryArchive archive(std::move(revision));
-  auto count = in.count(12);
+  auto count = in.count(144);
+  std::vector<PayloadRange> excluded;
+  excluded.reserve(count);
   for (std::size_t i = 0; in.good() && i < count; ++i) {
     auto path = in.text();
+    const auto offset = in.position() + 4;
     auto text = in.textView();
     auto revision = in.textView();
-    if (in.good())
-      archive.sources.record({std::move(path),
-                              SourceText::retain(text, backing),
-                              static_cast<SourceId>(i)},
-                             error, SourceText::retain(revision, backing));
+    auto binding = in.textView();
+    auto prefix =
+        sourcePrefix(archive.sources.data->identity, i, path, text.size());
+    if (revision.size() != 64 ||
+        std::any_of(revision.begin(), revision.end(),
+                    [](unsigned char byte) {
+                      return !(byte >= '0' && byte <= '9') &&
+                             !(byte >= 'a' && byte <= 'f');
+                    }) ||
+        sourceDigest(prefix, revision) != binding)
+      in.fail("source revision binding does not match its identity");
+    if (!in.good())
+      break;
+    excluded.push_back({offset, text.size()});
+    auto &data = *archive.sources.data;
+    data.sourceIndex.emplace(static_cast<SourceId>(i), i);
+    if (!data.revisionIndex.emplace(std::string(revision), i).second) {
+      in.fail("duplicate source revision");
+      break;
+    }
+    data.revisions.push_back(SourceText::retain(revision, backing));
+    data.sources.push_back(
+        {std::move(path),
+         SourceText::retain(
+             text, backing,
+             [prefix = std::move(prefix), revision](std::string_view text) {
+               if (sourceDigest(prefix, text) != revision)
+                 throw metadata::InvalidMetadata(
+                     "invalid compiled library archive: source "
+                     "revision does not match its identity and "
+                     "contents");
+               if (invalidUtf8(text))
+                 throw metadata::InvalidMetadata(
+                     "invalid compiled library archive: invalid "
+                     "source encoding");
+             }),
+         static_cast<SourceId>(i)});
   }
   auto generationCount = in.count(24);
   if (generationCount > count)
@@ -894,8 +933,8 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
     error = "invalid compiled library IR framing or body seal count";
     return std::nullopt;
   }
-  std::vector<PayloadRange> excluded;
-  excluded.reserve(declarationsLayout.payloads.size() + irLayout.bodies.size());
+  excluded.reserve(excluded.size() + declarationsLayout.payloads.size() +
+                   irLayout.bodies.size());
   excludePayloads(excluded, declarationsOffset, declarationsLayout.payloads);
   excludePayloads(excluded, irOffset, irLayout.bodies);
   if (metadataDigest(bytes.substr(0, bytes.size() - 64), excluded) !=

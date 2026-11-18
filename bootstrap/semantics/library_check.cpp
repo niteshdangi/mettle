@@ -370,12 +370,13 @@ void Checker::importDeclarations() {
     }
     for (std::size_t i = 0; i < checked.interfaceData->implementations.size();
          ++i) {
-      const auto &rule =
-          std::as_const(*checked.interfaceData).implementations[i];
-      if (auto found = implementationIndices.find(
-              {rule.span.source, rule.span.begin, rule.span.end});
+      auto span = checked.interfaceData->implementationSpan(i);
+      if (auto found =
+              implementationIndices.find({span.source, span.begin, span.end});
           found != implementationIndices.end()) {
-        if (!rule.checkedImport || rule.declaration != found->second) {
+        if (!checked.interfaceData->importedImplementation(i) ||
+            checked.interfaceData->implementationDeclaration(i) !=
+                found->second) {
           auto &local = checked.interfaceData->implementations[i];
           local.checkedImport = true;
           local.declaration = found->second;
@@ -388,7 +389,7 @@ void Checker::importDeclarations() {
         (i >= checked.interfaceData->definitions.size() ||
          (imports->index && i < imports->index->interfaceNames.size()
               ? imports->index->interfaceNames[i]
-              : std::as_const(*checked.interfaceData).definitions[i].name) !=
+              : checked.interfaceData->definitionName(i)) !=
              definitionName(module.interfaces.header(i).span,
                             module.interfaces.header(i).name)))
       error("metadata", module.interfaces.header(i).span,

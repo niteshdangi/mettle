@@ -233,6 +233,11 @@ struct Graph {
   }
 };
 struct Writer : Fields<Writer> {
+  struct SymbolFixup {
+    std::size_t offset;
+    SymbolKind kind;
+    std::uint32_t ordinal;
+  };
   Graph *graph = nullptr;
   const TypeGraphSymbols *symbols = nullptr;
   std::vector<std::uint8_t> bytes;
@@ -240,6 +245,8 @@ struct Writer : Fields<Writer> {
   std::uint64_t *fingerprint = nullptr;
   std::vector<Type> *typeReferences = nullptr;
   const std::function<Type(Type)> *typeMapper = nullptr;
+  std::vector<SymbolFixup> *symbolFixups = nullptr;
+  std::size_t symbolBase = 0;
   bool omitCallableNames = false;
   Writer() = default;
   Writer(Graph &graph, const TypeGraphSymbols &symbols)
@@ -338,8 +345,13 @@ struct Writer : Fields<Writer> {
     for (auto text : items)
       value(text);
   }
+  void symbolFixup(SymbolKind kind, std::uint32_t index) {
+    if (symbolFixups)
+      symbolFixups->push_back({symbolBase + bytes.size(), kind, index});
+  }
   void symbol(SymbolKind kind, std::uint32_t index) {
     if (!graph) {
+      symbolFixup(kind, index);
       u32(index);
       return;
     }
@@ -2207,6 +2219,7 @@ void writeCanonicalKey(Writer &key, const Definition &definition) {
           key.omitCallableNames = false;
         } else if constexpr (std::is_same_v<T, ErasedType> ||
                              std::is_same_v<T, CompactErased>) {
+          key.symbolFixup(SymbolKind::Interface, r.declaration);
           key(r.declaration, r.arguments);
           std::vector<TypeBinding> associated(r.associated.begin(),
                                               r.associated.end());
@@ -2794,9 +2807,7 @@ namespace {
 struct DeferredTypeGraph {
   struct Record {
     std::size_t offset = 0, length = 0;
-    std::size_t identityOffset = 0, identityLength = 0;
     std::size_t keyOffset = 0, keyLength = 0;
-    std::array<std::size_t, Reader::symbolKinds> symbols{};
     bool nominal = false;
   };
   Header header;
@@ -2807,6 +2818,7 @@ struct DeferredTypeGraph {
   std::vector<RegionId> regions;
   std::vector<RegionUniverse> universes;
   Reader::ResolvedSymbols symbols;
+  std::vector<std::array<std::size_t, Reader::symbolKinds>> symbolOffsets;
   std::vector<Record> records;
   std::shared_ptr<const CompactArena> arena;
   mutable std::vector<CompactDefinitionView> definitions;
@@ -2842,7 +2854,7 @@ struct DeferredTypeGraph {
     reader.resolvedSymbols =
         retainedSymbols ? &recordSymbols.at(index) : &symbols;
     if (!retainedSymbols)
-      reader.symbolOffsets = slice.symbols;
+      reader.symbolOffsets = symbolOffsets.at(index);
     auto definition = definitionFor(kinds.at(index));
     try {
       std::visit([&](auto &record) { reader(record); }, definition);
@@ -3083,6 +3095,8 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     std::vector<CompactDefinitionView> definitions;
     definitions.reserve(header.types);
     deferred->records.reserve(header.types);
+    if (!demand)
+      deferred->symbolOffsets.reserve(header.types);
     TypeGraphImport result;
     std::unordered_set<std::string_view> identities;
     auto indexArena = demand ? std::make_shared<CompactArena>() : nullptr;
@@ -3091,7 +3105,8 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     std::vector<Type> references;
     Writer canonicalWriter;
     canonicalWriter.typeReferences = &references;
-    std::vector<std::size_t> pendingRecords;
+    std::vector<Writer::SymbolFixup> symbolFixups;
+    canonicalWriter.symbolFixups = &symbolFixups;
     bool uniqueKeys = true;
     if (demand) {
       keys.resize(std::bit_ceil(ids.size() * 2));
@@ -3106,19 +3121,11 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       if (slice.nominal)
         return;
       canonicalWriter.bytes.clear();
+      canonicalWriter.symbolBase = deferred->canonicalKeys.size();
       writeCanonicalKey(canonicalWriter, definition);
       std::string_view key{
           reinterpret_cast<const char *>(canonicalWriter.bytes.data()),
           canonicalWriter.bytes.size()};
-      auto bucket = std::hash<std::string_view>{}(key) & (keys.size() - 1);
-      while (keys[bucket]) {
-        if (deferred->identityKey(keys[bucket] - 1) == key) {
-          uniqueKeys = false;
-          return;
-        }
-        bucket = (bucket + 1) & (keys.size() - 1);
-      }
-      keys[bucket] = static_cast<std::uint32_t>(i + 1);
       slice.keyOffset = deferred->canonicalKeys.size();
       slice.keyLength = key.size();
       deferred->canonicalKeys += key;
@@ -3131,16 +3138,16 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
           bytes.subspan(identityBegin, reader.offset - identityBegin);
       DeferredTypeGraph::Record slice;
       slice.offset = reader.offset;
-      for (std::size_t k = 0; k < Reader::symbolKinds; ++k)
-        slice.symbols[k] = reader.pendingSymbols[k].size();
+      if (!demand) {
+        auto &offsets = deferred->symbolOffsets.emplace_back();
+        for (std::size_t k = 0; k < Reader::symbolKinds; ++k)
+          offsets[k] = reader.pendingSymbols[k].size();
+      }
       auto definition = compactDefinitionFor(tables.kinds[i]);
       if (header.indexed) {
         std::span<const std::uint8_t> payload;
         if (demand) {
-          auto identityPayload = framedDefinition(reader, definition);
-          slice.identityOffset = static_cast<std::size_t>(
-              identityPayload.data() - reader.bytes.data());
-          slice.identityLength = identityPayload.size();
+          framedDefinition(reader, definition);
           payload = reader.block();
         } else {
           reader.block();
@@ -3181,17 +3188,8 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
         auto view = std::visit(
             [](auto &record) -> CompactDefinitionView { return &record; },
             definition);
-        bool pending = false;
-        for (std::size_t k = 0; k < Reader::symbolKinds; ++k)
-          pending |= reader.pendingSymbols[k].size() != slice.symbols[k];
         deferred->index.emplace_back();
-        if (pending) {
-          pendingRecords.push_back(i);
-          references.clear();
-          if (!slice.nominal)
-            canonicalKey(view, &references);
-        } else
-          indexDefinition(i, view);
+        indexDefinition(i, view);
         for (auto reference : references)
           if (reference.index() >= builtinTypeCount)
             edges.targets.push_back(graphIndex(ids, reference));
@@ -3210,22 +3208,29 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     deferred->symbols = reader.resolveSymbols();
     deferred->index.reserve(definitions.size());
     if (demand) {
-      reader.resolvedSymbols = &deferred->symbols;
-      for (auto i : pendingRecords) {
-        if (!uniqueKeys)
+      for (const auto &fixup : symbolFixups) {
+        auto value = deferred->symbols[static_cast<std::size_t>(fixup.kind)].at(
+            fixup.ordinal);
+        for (unsigned byte = 0; byte < 4; ++byte)
+          deferred->canonicalKeys[fixup.offset + byte] =
+              static_cast<char>(value >> (byte * 8));
+      }
+      for (std::size_t i = 0; i < ids.size(); ++i) {
+        if (tables.kinds[i] == ImportedTypeKind::Erased)
+          deferred->index[i].declaration =
+              deferred->symbols[static_cast<std::size_t>(SymbolKind::Interface)]
+                  .at(deferred->index[i].declaration);
+        if (deferred->records[i].nominal)
+          continue;
+        auto key = deferred->identityKey(i);
+        auto bucket = std::hash<std::string_view>{}(key) & (keys.size() - 1);
+        while (keys[bucket] && deferred->identityKey(keys[bucket] - 1) != key)
+          bucket = (bucket + 1) & (keys.size() - 1);
+        if (keys[bucket]) {
+          uniqueKeys = false;
           break;
-        auto &slice = deferred->records[i];
-        reader.bytes =
-            bytes.subspan(slice.identityOffset, slice.identityLength);
-        reader.offset = 0;
-        reader.symbolOffsets = slice.symbols;
-        auto definition = compactDefinitionFor(tables.kinds[i]);
-        std::visit([&](auto &record) { reader(record); }, definition);
-        auto view = std::visit(
-            [](auto &record) -> CompactDefinitionView { return &record; },
-            definition);
-        indexDefinition(i, view);
-        reader.arena->reset();
+        }
+        keys[bucket] = static_cast<std::uint32_t>(i + 1);
       }
       if (uniqueKeys)
         recursiveRegionals(std::move(edges), [&](std::size_t node) {
@@ -3259,6 +3264,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     deferred->definitions = std::move(definitions);
     deferred->kinds = std::move(tables.kinds);
     if (demand) {
+      deferred->symbols = {};
       deferred->retainedSymbols = std::move(retainedSymbols);
       deferred->validationRegions = candidate.regions();
       deferred->validationAbi = candidate.vaListAbi();

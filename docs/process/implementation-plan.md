@@ -1199,12 +1199,35 @@ engineering measurements, not universal build speedups or I14 qualification:
 `~/w/anal/perf-symbol-ownership-compare-20261118/` and
 `~/w/anal/perf-admission-build-pairs-20261118-042221/`.
 
-Initial canonical type/index validation and checking-database admission remain
-eager; the dominant fresh-import gap is reduced, not eliminated.
-Next action: reduce those remaining admission costs without dropping graph
-validation or implementation-selection closure. Broader specialization reuse
-needs explicit canonical type remapping,
+The remaining three structural admission changes are implemented together:
+symbol-bearing type projections and canonical keys are decoded once, then
+patched after structural preflight resolves symbols; interface databases retain
+validated record indexes and shared deferred details across checking/finalized
+phases; envelope v5 authenticates source identities and provenance eagerly while
+verifying retained source text on first access. Full graph/reference validation
+and implementation-selection visibility remain mandatory. Deferred interface
+records preserve identity across unrelated copy-on-write page edits, while
+edited records detach locally.
+
+The five affected graph, declaration, archive, module and macro CTest cases pass
+optimized and ASan/UBSan builds. Regressions cover resolver callback ordering,
+transactional missing symbols, high unsigned interface IDs, untouched deferred
+database records, property snapshot isolation, malformed unused references and
+deferred source corruption/UTF-8 rejection.
+Against compiler `df7c3d99...`, three matched triples measured P03/P04/P05 fresh
+checks at 320.425 / 301.628, 359.207 / 326.937 and 362.868 / 353.385 ms;
+builds were 664.075 / 659.115, 655.477 / 625.118 and 790.621 / 797.745 ms.
+Outputs matched Rust. Fresh checks improved 2.6-9.0%; the P05 build was 0.9%
+slower. These are engineering measurements, not universal build speedups or I14
+qualification. Evidence:
+`~/w/anal/perf-final-structural-admission-20261118/results.json`.
+
+The fresh-import gap is reduced, not eliminated: structural validation and
+compact-index construction still visit the admitted inventory. Broader
+specialization reuse needs explicit canonical type remapping,
 not reused numeric consumer TypeIds.
+Next action: continue measured compiler-performance work from this integrated
+source; whole-I14 source freeze and consolidated qualification remain open.
 Preserve frozen candidates and reuse unchanged-input evidence rather than
 rerunning broad passing groups.
 

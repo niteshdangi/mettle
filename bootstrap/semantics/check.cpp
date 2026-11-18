@@ -620,13 +620,10 @@ std::optional<CheckedModule> Checker::run() {
     if (family == definition.associated.end())
       return;
     const auto &definitions = std::as_const(*checked.interfaceData).definitions;
-    auto futureInterface = std::find_if(
-        definitions.begin(), definitions.end(), [](const auto &candidate) {
-          return candidate.name == "core::future::Future";
-        });
-    if (futureInterface != definitions.end()) {
-      const auto declaration = static_cast<std::uint32_t>(
-          std::distance(definitions.begin(), futureInterface));
+    auto future = interfaceNames.find("core::future::Future");
+    if (future != interfaceNames.end()) {
+      const auto declaration = future->second;
+      const auto *futureInterface = &definitions[declaration];
       auto outputItem = std::find_if(
           futureInterface->associated.begin(),
           futureInterface->associated.end(),
@@ -661,15 +658,12 @@ std::optional<CheckedModule> Checker::run() {
     if (!module.functions.header(i).item.checkedImport)
       edges[i] = functionDependencies(module.functions[i]);
   const auto &definitions = std::as_const(*checked.interfaceData).definitions;
-  auto futureInterface = std::find_if(
-      definitions.begin(), definitions.end(), [](const auto &definition) {
-        return definition.name == "core::future::Future";
-      });
+  auto future = interfaceNames.find("core::future::Future");
   std::uint32_t futureDeclaration = 0;
   Type outputParameter = Type::Unknown;
-  if (futureInterface != definitions.end()) {
-    futureDeclaration = static_cast<std::uint32_t>(
-        std::distance(definitions.begin(), futureInterface));
+  if (future != interfaceNames.end()) {
+    futureDeclaration = static_cast<std::uint32_t>(future->second);
+    const auto *futureInterface = &definitions[futureDeclaration];
     if (auto output = std::find_if(
             futureInterface->associated.begin(),
             futureInterface->associated.end(),
@@ -850,7 +844,7 @@ std::optional<CheckedModule> Checker::run() {
   }
   for (std::size_t i = 0; i < checked.interfaceData->implementations.size();
        ++i) {
-    if (std::as_const(*checked.interfaceData).implementations[i].checkedImport)
+    if (checked.interfaceData->importedImplementation(i))
       continue;
     auto &implementation = checked.interfaceData->implementations[i];
     if (!checked.types->isErased(implementation.interfaceType))

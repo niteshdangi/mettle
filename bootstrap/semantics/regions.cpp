@@ -4515,18 +4515,24 @@ void RegionPass::run() {
   std::vector<const interfaces::Implementation *> implementationRules(
       module.implementations.size());
   for (std::size_t i = 0; i < interfaceData.implementations.size(); ++i) {
-    if (!std::as_const(interfaceData).implementations[i].checkedImport)
-      decorateRule(interfaceData.implementations[i]);
+    if (interfaceData.importedImplementation(i))
+      continue;
+    decorateRule(interfaceData.implementations[i]);
     const auto &rule = std::as_const(interfaceData).implementations[i];
     if (rule.declaration < implementationRules.size())
       implementationRules[rule.declaration] = &rule;
   }
-  for (const auto &[origin, rule] : interfaceData.unpinImplementations) {
-    if (!rule.checkedImport)
+  for (const auto &[origin, index] :
+       interfaceData.unpinImplementations.entries()) {
+    if (!interfaceData.unpinImplementations.isImported(index) &&
+        !interfaceData.unpinImplementations.at(origin).checkedImport)
       decorateRule(interfaceData.unpinImplementations[origin]);
   }
-  for (const auto &[key, declaration] : interfaceData.structuralDeclarations) {
-    if (!declaration.implementation.checkedImport)
+  for (const auto &[key, index] :
+       interfaceData.structuralDeclarations.entries()) {
+    if (!interfaceData.structuralDeclarations.isImported(index) &&
+        !interfaceData.structuralDeclarations.at(key)
+             .implementation.checkedImport)
       decorateRule(interfaceData.structuralDeclarations[key].implementation);
   }
   if (!diagnostics.empty())
@@ -5078,23 +5084,31 @@ void Checker::checkRegions() {
     };
     const auto &current = *checked.interfaceData;
     for (std::size_t i = 0; i < finalized.implementations.size(); ++i)
-      if (std::as_const(finalized).implementations[i].declaration !=
-          current.implementations[i].declaration)
+      if (finalized.implementationDeclaration(i) !=
+          current.implementationDeclaration(i))
         finalized.implementations[i].declaration =
-            current.implementations[i].declaration;
+            current.implementationDeclaration(i);
     append(finalized.definitions, current.definitions,
            imports.checkingDatabase.definitions.size());
     append(finalized.implementations, current.implementations,
            imports.checkingDatabase.implementations.size());
     append(finalized.projections, current.projections,
            imports.checkingDatabase.projections.size());
-    finalized.unpinImplementations.insert(current.unpinImplementations.begin(),
-                                          current.unpinImplementations.end());
-    finalized.structuralDeclarations.insert(
-        current.structuralDeclarations.begin(),
-        current.structuralDeclarations.end());
+    finalized.unpinImplementations.insertLocal(current.unpinImplementations);
+    finalized.structuralDeclarations.insertLocal(
+        current.structuralDeclarations);
     finalized.argumentsReady = current.argumentsReady;
+    const bool receiverIndexChanged =
+        finalized.importedDefinitions != current.importedDefinitions ||
+        finalized.importedImplementations != current.importedImplementations;
     *checked.interfaceData = std::move(finalized);
+    if (receiverIndexChanged) {
+      receiverImplementationCandidates.clear();
+      receiverInterfaceChildren.clear();
+      indexedReceiverImplementations = 0;
+      indexedReceiverDefinitions = 0;
+      receiverInterfacesReady = false;
+    }
   }
   std::vector<std::pair<Type, const Module::Product *>> products;
   std::map<std::size_t, RegionSeed> seeds;
@@ -5165,19 +5179,18 @@ void Checker::checkRegions() {
         if (current->implementation >= 0) {
           const auto index = static_cast<std::size_t>(current->implementation);
           const auto &syntax = module.implementations[index];
-          const auto &rules =
-              std::as_const(*checked.interfaceData).implementations;
-          auto rule = std::find_if(rules.begin(), rules.end(),
-                                   [&](const auto &candidate) {
-                                     return candidate.declaration == index;
-                                   });
-          if (rule == rules.end()) {
+          const auto &database = std::as_const(*checked.interfaceData);
+          std::size_t rule = 0;
+          while (rule < database.implementations.size() &&
+                 database.implementationDeclaration(rule) != index)
+            ++rule;
+          if (rule == database.implementations.size()) {
             error("internal", span, "missing implementation region context");
             current = saved;
             genericEnvironment = savedEnvironment;
             return Type::Unknown;
           }
-          const auto &compiled = *rule;
+          const auto &compiled = database.implementations[rule];
           const auto &names = functionRegions(*current).names;
           std::vector<RegionBinding> ownerRegions;
           std::size_t ordinal = 0;

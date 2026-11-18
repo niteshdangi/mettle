@@ -2,7 +2,9 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -38,13 +40,14 @@ public:
   SourceText(SourceText &&other) noexcept;
   SourceText &operator=(SourceText &&other) noexcept;
   static SourceText retain(std::string_view text,
-                           std::shared_ptr<const void> owner);
+                           std::shared_ptr<const void> owner,
+                           std::function<void(std::string_view)> validate = {});
   std::string_view view() const;
   operator std::string_view() const { return view(); }
   operator std::string() const { return std::string(view()); }
   const char *data() const { return view().data(); }
-  std::size_t size() const { return view().size(); }
-  bool empty() const { return view().empty(); }
+  std::size_t size() const { return bytes().size(); }
+  bool empty() const { return size() == 0; }
   char operator[](std::size_t index) const { return view()[index]; }
   char &operator[](std::size_t index) { return edit()[index]; }
   std::string substr(std::size_t offset = 0,
@@ -68,10 +71,18 @@ public:
   }
 
 private:
+  struct Validation {
+    explicit Validation(std::function<void(std::string_view)> validate)
+        : validate(std::move(validate)) {}
+    std::function<void(std::string_view)> validate;
+    std::once_flag once;
+  };
   struct Retained {
     std::shared_ptr<const void> owner;
     std::string_view text;
+    std::shared_ptr<Validation> validation;
   };
+  std::string_view bytes() const;
   std::string &edit();
   std::variant<std::string, Retained> storage;
 };

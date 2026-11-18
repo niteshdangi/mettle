@@ -34,16 +34,30 @@ void interfaceSnapshots() {
   imported.callableContracts[Type::I32] = Type::I64;
   imported.callableContracts[Type::U32] = Type::U64;
   imported.callableContracts.freeze();
+  imported.unpinImplementations[Type::I32].target = Type::I32;
+  imported
+      .structuralDeclarations[{interfaces::Property::Transferable, Type::I32}]
+      .implementation.target = Type::I32;
+  imported.unpinImplementations.freeze();
+  imported.structuralDeclarations.freeze();
   auto consumer = imported;
   consumer.definitions[0].name = "Consumer";
   consumer.projections[0].subject = Type::Bool;
   consumer.callableContracts[Type::I32] = Type::U8;
   consumer.callableContracts[Type::Bool] = Type::Unit;
+  consumer.unpinImplementations[Type::I32].target = Type::I64;
+  consumer
+      .structuralDeclarations[{interfaces::Property::Transferable, Type::I32}]
+      .negative = true;
   const auto &original = imported;
   expect(original.definitions[0].name == "Original" &&
              original.projections[0].subject == Type::I64 &&
              original.callableContracts.at(Type::I32) == Type::I64 &&
-             !original.callableContracts.contains(Type::Bool),
+             !original.callableContracts.contains(Type::Bool) &&
+             original.unpinImplementations.at(Type::I32).target == Type::I32 &&
+             !original.structuralDeclarations
+                  .at({interfaces::Property::Transferable, Type::I32})
+                  .negative,
          "consumer interface edits preserve the immutable imported phase");
   std::map<Type, Type> expected(original.callableContracts.begin(),
                                 original.callableContracts.end());
@@ -127,9 +141,13 @@ pub module core {
     pub type Number {}
     pub const fn record(): Number { Number() }
     pub copy enum Marker { First, Last }
+    unsafe extend Number implements Unpin {}
+    unsafe extend Marker implements Transferable {}
     pub const fn mark(): Marker { Marker.Last }
     pub interface Value { fn get(): i32; }
     extend Number implements Value { fn get(): i32 { 5 } }
+    pub interface Dormant { fn unused(): i32; }
+    extend Marker implements Dormant { fn unused(): i32 { 0 } }
     pub interface Cursor { type Item; mut fn next(): Self.Item?; }
     pub type GenericOwner<T> { value: T }
     pub type Payload { value: i32 }
@@ -307,6 +325,16 @@ import core as bootstrapOnly;
   if (!declarations || !programBytes || !graph)
     return 1;
   const auto sourceFunctionCount = checked->syntax().functions.size();
+  std::string dormantMethod;
+  for (std::size_t i = 0; i < sourceFunctionCount; ++i) {
+    const auto &function = checked->syntax().functions[i];
+    if (function.implementation < 0)
+      continue;
+    const auto &symbol =
+        symbols.at({SymbolKind::Function, static_cast<std::uint32_t>(i)});
+    if (symbol.find("unused") != std::string::npos)
+      dormantMethod = symbol;
+  }
   std::vector<std::pair<std::size_t, std::size_t>> defaultOwners;
   for (std::size_t i = 0; i < sourceFunctionCount; ++i)
     for (std::size_t p = 0;
@@ -483,6 +511,28 @@ fn main(): i32 {
            "checked contracts decode after symbol/type remapping");
     if (!contracts)
       return std::nullopt;
+    for (const auto *database : {&contracts.declarations->checkingDatabase,
+                                 &contracts.declarations->database}) {
+      bool deferred = true;
+      for (std::size_t i = 0; i < database->definitions.size(); ++i)
+        deferred &= !database->definitions.isMaterialized(i);
+      for (std::size_t i = 0; i < database->implementations.size(); ++i)
+        deferred &= !database->implementations.isMaterialized(i);
+      for (std::size_t i = 0; i < database->projections.size(); ++i)
+        deferred &= !database->projections.isMaterialized(i);
+      for (const auto &[key, index] :
+           database->unpinImplementations.entries()) {
+        (void)key;
+        deferred &= !database->unpinImplementations.isMaterialized(index);
+      }
+      for (const auto &[key, index] :
+           database->structuralDeclarations.entries()) {
+        (void)key;
+        deferred &= !database->structuralDeclarations.isMaterialized(index);
+      }
+      expect(deferred,
+             "validated interface admission retains archive-backed details");
+    }
     if (!imported) {
       auto corrupt = module;
       auto owner = std::find_if(
@@ -539,6 +589,28 @@ fn main(): i32 {
       std::move(*consumer), diagnostics, true, {},
       [&](const CheckedModule &module) {
         ++observations;
+        const auto &database = module.interfaceDatabase();
+        bool dormant = false;
+        for (std::size_t i = 0; i < database.definitions.size(); ++i)
+          if (database.definitionName(i) == "core::Dormant") {
+            const auto &candidates = database.implementationsFor(
+                *module.typeStore(), static_cast<std::uint32_t>(i));
+            dormant =
+                !database.definitions.isMaterialized(i) &&
+                candidates.size() == 1 &&
+                !database.implementations.isMaterialized(candidates.front());
+          }
+        expect(dormant, "checking and coherence do not materialize unrelated "
+                        "interface implementations");
+        bool structuralDeferred = !database.structuralDeclarations.empty();
+        for (const auto &[key, index] :
+             database.structuralDeclarations.entries()) {
+          (void)key;
+          structuralDeferred &=
+              !database.structuralDeclarations.isMaterialized(index);
+        }
+        expect(structuralDeferred,
+               "region decoration preserves unused imported property records");
         expect(module.statics().back().initializer &&
                    module.statics().back().initializer->scalar.magnitude[0] ==
                        10,
@@ -683,6 +755,19 @@ fn main(): i32 {
   truncated.pop_back();
   expect(!importLibraryDeclarations(truncated, types, decode),
          "truncated contract payload is rejected");
+  auto invalidUnused = declarations.contracts;
+  auto unusedMethod = std::find_end(invalidUnused.begin(), invalidUnused.end(),
+                                    dormantMethod.begin(), dormantMethod.end());
+  expect(!dormantMethod.empty() && unusedMethod != invalidUnused.end(),
+         "fixture retains its unused implementation method reference");
+  if (!dormantMethod.empty() && unusedMethod != invalidUnused.end()) {
+    *unusedMethod = '!';
+    auto invalid = importLibraryDeclarations(invalidUnused, types, decode);
+    expect(
+        !invalid && invalid.error.find("unknown logical declaration symbol") !=
+                        std::string::npos,
+        "admission rejects malformed references in unused interface details");
+  }
   auto overflowing = declarations.contracts;
   overflowing.front() |= 0x80;
   overflowing.insert(overflowing.begin() + 1, 8, 0x80);
