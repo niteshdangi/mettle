@@ -3079,17 +3079,15 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     TypeGraphImport result;
     std::unordered_set<std::string_view> identities;
     auto indexArena = demand ? std::make_shared<CompactArena>() : nullptr;
-    std::unordered_multimap<std::uint64_t, std::size_t> keys;
+    std::vector<std::uint32_t> keys;
     FlatTypeEdges edges;
     std::vector<Type> references;
-    std::uint64_t keyFingerprint = 0;
     Writer canonicalWriter;
     canonicalWriter.typeReferences = &references;
-    canonicalWriter.fingerprint = &keyFingerprint;
     std::vector<std::size_t> pendingRecords;
     bool uniqueKeys = true;
     if (demand) {
-      keys.reserve(ids.size());
+      keys.resize(std::bit_ceil(ids.size() * 2));
       edges.offsets.reserve(ids.size() + 1);
       deferred->index.reserve(header.types);
     }
@@ -3100,19 +3098,20 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       references.clear();
       if (slice.nominal)
         return;
-      keyFingerprint = 14695981039346656037ull;
       canonicalWriter.bytes.clear();
       writeCanonicalKey(canonicalWriter, definition);
       std::string_view key{
           reinterpret_cast<const char *>(canonicalWriter.bytes.data()),
           canonicalWriter.bytes.size()};
-      for (auto [entry, end] = keys.equal_range(keyFingerprint); entry != end;
-           ++entry)
-        if (deferred->identityKey(entry->second) == key) {
+      auto bucket = std::hash<std::string_view>{}(key) & (keys.size() - 1);
+      while (keys[bucket]) {
+        if (deferred->identityKey(keys[bucket] - 1) == key) {
           uniqueKeys = false;
           return;
         }
-      keys.emplace(keyFingerprint, i);
+        bucket = (bucket + 1) & (keys.size() - 1);
+      }
+      keys[bucket] = static_cast<std::uint32_t>(i + 1);
       slice.keyOffset = deferred->canonicalKeys.size();
       slice.keyLength = key.size();
       deferred->canonicalKeys += key;

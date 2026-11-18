@@ -456,6 +456,14 @@ scratch buffer per admission. Deferred validation retains regions and target ABI
 not another TypeStore whose shared, uninitialized pages must then be detached.
 Previously validated immutable dependencies reuse their drop and array-expansion
 proofs instead of being enqueued again when a new type record is demanded.
+Structural-key admission uses one bounded ordinal table rather than allocating
+a hash node per key; hash collisions still compare the complete canonical bytes.
+Header syntax and types retain their actual section owners. Header source-span
+admission can bind each revision to a complete destination range once, validating
+relative bounds before adding the range's origin. Cached ranges make identical
+references map identically without a consistency sort. Arbitrary point remapping
+retains its resolver and conflicting-binding checks; that fallback reuses
+revision storage between bindings. Neither resolver is retained by lazy syntax.
 Consumers share paged type records, immutable declaration contracts and indexed
 function facts; mutating access detaches the affected records. Native type
 and implementation records retain separate checking/finalized COW snapshots.

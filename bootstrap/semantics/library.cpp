@@ -2495,7 +2495,13 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
       envelope.fail("duplicate declaration source revision");
   sources->spans.reserve(sources->references.size());
   std::vector<std::size_t> order;
-  order.reserve(sources->references.size());
+  std::vector<std::optional<Span>> ranges;
+  if (references.sourceRange)
+    ranges.resize(sources->revisions.size());
+  else
+    order.reserve(sources->references.size());
+  metadata::SourceReference reference;
+  auto revisionIndex = sources->revisions.size();
   for (const auto &source : sources->references) {
     if (!envelope.good())
       break;
@@ -2504,18 +2510,32 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
       envelope.fail("invalid declaration source reference");
       break;
     }
-    metadata::SourceReference reference{sources->revisions[source[0]],
-                                        static_cast<std::uint32_t>(source[1]),
-                                        static_cast<std::uint32_t>(source[2])};
-    auto span = references.source ? references.source(reference) : std::nullopt;
+    std::optional<Span> span;
+    if (references.sourceRange) {
+      auto &range = ranges[source[0]];
+      if (!range)
+        range = references.sourceRange(sources->revisions[source[0]]);
+      if (range && range->begin <= range->end &&
+          source[2] <= range->end - range->begin)
+        span = Span{range->begin + source[1], range->begin + source[2],
+                    range->source};
+    } else {
+      if (source[0] != revisionIndex) {
+        reference.revision = sources->revisions[source[0]];
+        revisionIndex = source[0];
+      }
+      reference.begin = static_cast<std::uint32_t>(source[1]);
+      reference.end = static_cast<std::uint32_t>(source[2]);
+      span = references.source ? references.source(reference) : std::nullopt;
+      order.push_back(sources->spans.size());
+    }
     if (!span) {
       envelope.fail("unknown declaration source revision");
       break;
     }
-    order.push_back(sources->spans.size());
     sources->spans.push_back(*span);
   }
-  if (envelope.good()) {
+  if (envelope.good() && !references.sourceRange) {
     std::sort(order.begin(), order.end(), [&](auto left, auto right) {
       return sources->references[left] < sources->references[right];
     });

@@ -88,6 +88,7 @@ public:
   }
   operator std::span<const std::uint8_t>() const { return bytes(); }
   std::size_t size() const { return bytes().size(); }
+  std::shared_ptr<const void> owner() const { return storage; }
   bool operator==(const Section &other) const {
     return std::ranges::equal(bytes(), other.bytes());
   }

@@ -652,6 +652,12 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
   references.source = [&](const auto &reference) {
     return archive.sources.resolve(reference);
   };
+  references.sourceRange =
+      [&](std::string_view revision) -> std::optional<Span> {
+    auto source = archive.sources.source(revision);
+    return source ? std::optional(Span{0, source->text.size(), source->id})
+                  : std::nullopt;
+  };
   std::vector<SourceId> sourceIds;
   for (const auto &source : archive.sources.snapshots())
     sourceIds.push_back(source.id);
@@ -660,7 +666,8 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
           ? options.libraryQueries->findHeader(root, archiveContent, sourceIds)
           : nullptr;
   auto decoded = retained ? copyLibraryHeader(*retained)
-                          : decodeLibraryHeader(archive.header, references);
+                          : decodeLibraryHeader(archive.header, references,
+                                                archive.header.owner());
   if (!decoded) {
     error = decoded.error;
     return false;
@@ -918,7 +925,7 @@ CheckedLibrary::import(const Module &module,
   typeSymbols->resolve = references.symbol;
   auto graph = metadata::importTypeGraph(*types, archive.types, *typeSymbols,
                                          metadata::ValidationMode::OnDemand,
-                                         typeSymbols, archive.backing);
+                                         typeSymbols, archive.types.owner());
   if (!graph)
     return fail(graph.error);
   auto roots = std::make_shared<std::vector<Type>>(std::move(graph.roots));

@@ -23,5 +23,6 @@ struct DecodeReferences {
   std::function<std::optional<Span>(const SourceReference &)> source;
   std::function<std::optional<std::uint32_t>(SymbolKind, std::string_view)>
       symbol;
+  std::function<std::optional<Span>(std::string_view)> sourceRange;
 };
 } // namespace mettle::metadata

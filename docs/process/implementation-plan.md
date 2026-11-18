@@ -1144,6 +1144,18 @@ optimized and ASan/UBSan builds. These are three-triple engineering timings,
 not qualification; fresh checks remain 17-23 times Rust:
 `~/w/anal/perf-proof-type-admission-20261118-025003/results.json`.
 
+Header admission now borrows its section instead of copying 8,135,248 bytes,
+binds source revisions once and skips the redundant span-consistency sort.
+Structural-key uniqueness uses a flat ordinal table with exact collision checks.
+Compiler `74d0a1eb...` against `40b98922...` measured P03/P04/P05 fresh checks
+at 309.254 / 292.979, 341.052 / 303.769 and 352.782 / 352.911 ms, and builds
+at 617.920 / 603.498, 627.409 / 616.133 and 791.281 / 779.166 ms.
+Outputs matched Rust; affected imports pass optimized and ASan/UBSan cases,
+including backing lifetime, relocated ranges and invalid source bounds.
+P04 median peak RSS fell from 296,550,400 to 288,432,128 bytes in three pairs.
+P05 checks did not improve; these remain engineering measurements, not I14
+qualification: `~/w/anal/perf-source-range-admission-20261118-034212/`.
+
 Still missing: specialization recipes do not cover every consumer-local type.
 Source queries conservatively fall back for unsupported cache shapes and shifted
 spans. Consolidated memory/storage/performance gates and whole-milestone

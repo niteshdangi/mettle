@@ -315,7 +315,21 @@ import core as bootstrapOnly;
   };
   resolution::Library library;
   std::size_t headerReads = 0;
+  auto headerStorage =
+      std::make_shared<const std::vector<std::uint8_t>>(declarations.header);
+  std::weak_ptr<const std::vector<std::uint8_t>> headerLifetime = headerStorage;
   std::optional<LibraryHeaderImport> retainedHeader;
+  std::size_t sourceBindings = 0;
+  metadata::DecodeReferences headerReferences;
+  headerReferences.sourceRange =
+      [&](std::string_view revision) -> std::optional<Span> {
+    ++sourceBindings;
+    if (revision == "library-revision")
+      return Span{0, source.size(), 42};
+    if (revision == "reexport-revision")
+      return Span{0, reexportSource.text.size(), 43};
+    return std::nullopt;
+  };
   auto makeHeader = [&]() -> std::optional<Module> {
     ++headerReads;
     library.compiledSourcePackages.emplace(42, "library");
@@ -323,8 +337,13 @@ import core as bootstrapOnly;
     library.compiledSourcePackages.emplace(43, "library");
     library.compiledSourceModules.emplace(
         43, std::vector<std::string>{"core", "network"});
-    if (!retainedHeader)
-      retainedHeader = decodeLibraryHeader(declarations.header, decode);
+    if (!retainedHeader) {
+      retainedHeader =
+          decodeLibraryHeader(*headerStorage, headerReferences, headerStorage);
+      headerStorage.reset();
+      expect(!headerLifetime.expired() && sourceBindings == 2,
+             "deferred syntax retains backing and binds each revision once");
+    }
     if (!*retainedHeader)
       std::cerr << retainedHeader->error << '\n';
     return std::move(copyLibraryHeader(*retainedHeader).module);
@@ -667,6 +686,31 @@ fn main(): i32 {
   invalidReferences.source = {};
   expect(!decodeLibraryHeader(declarations.header, invalidReferences),
          "header mounting rejects missing source revision references");
+  {
+    auto shifted = headerReferences;
+    shifted.sourceRange =
+        [&](std::string_view revision) -> std::optional<Span> {
+      if (revision == "library-revision")
+        return Span{9, source.size() + 9, 42};
+      if (revision == "reexport-revision")
+        return Span{9, reexportSource.text.size() + 9, 43};
+      return std::nullopt;
+    };
+    auto header = decodeLibraryHeader(declarations.header, shifted);
+    expect(bool(header), "revision ranges accept relocated source text");
+    if (header) {
+      auto original = retainedHeader->module->functions.header(0).span;
+      expect(header.module->functions.header(0).span ==
+                 Span{original.begin + 9, original.end + 9, original.source},
+             "revision ranges relocate declaration source positions");
+    }
+    for (auto range : {std::optional<Span>{}, std::optional(Span{0, 0, 42}),
+                       std::optional(Span{2, 1, 42})}) {
+      shifted.sourceRange = [range](std::string_view) { return range; };
+      expect(!decodeLibraryHeader(declarations.header, shifted),
+             "revision ranges reject unknown and out-of-bounds sources");
+    }
+  }
   auto unknownSource = declarations.header;
   const std::string_view revision = "library-revision";
   auto revisionBytes = std::search(unknownSource.begin(), unknownSource.end(),
