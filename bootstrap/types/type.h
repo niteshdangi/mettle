@@ -705,26 +705,31 @@ private:
   };
   template <class Key> struct ImportedLookupTable {
     std::vector<std::pair<Key, std::uint32_t>> pending;
-    std::vector<std::pair<Key, std::vector<std::uint32_t>>> groups;
+    std::vector<std::pair<Key, std::size_t>> groups;
+    std::vector<std::uint32_t> ordinals;
     void add(Key key, std::uint32_t ordinal) {
       pending.emplace_back(std::move(key), ordinal);
     }
     void seal() {
       std::sort(pending.begin(), pending.end());
+      ordinals.reserve(pending.size());
       for (const auto &[key, ordinal] : pending) {
         if (groups.empty() || groups.back().first != key)
-          groups.emplace_back(key, std::vector<std::uint32_t>{});
-        groups.back().second.push_back(ordinal);
+          groups.emplace_back(key, ordinals.size());
+        ordinals.push_back(ordinal);
       }
       decltype(pending){}.swap(pending);
     }
-    const std::vector<std::uint32_t> *find(const Key &key) const {
+    std::span<const std::uint32_t> find(const Key &key) const {
       auto entry = std::lower_bound(groups.begin(), groups.end(), key,
                                     [](const auto &group, const Key &value) {
                                       return group.first < value;
                                     });
-      return entry != groups.end() && entry->first == key ? &entry->second
-                                                          : nullptr;
+      if (entry == groups.end() || entry->first != key)
+        return {};
+      const auto next = std::next(entry);
+      const auto end = next == groups.end() ? ordinals.size() : next->second;
+      return std::span(ordinals).subspan(entry->second, end - entry->second);
     }
   };
   using ImportedCallableKey =
@@ -751,11 +756,11 @@ private:
   void syncLookup();
   static CallableKey callableKey(const CallableType &descriptor);
   template <class Match>
-  std::optional<Type> findIndexed(
-      const std::array<const std::vector<std::uint32_t> *, 3> &candidates,
-      Match &&match) const {
+  std::optional<Type>
+  findIndexed(const std::array<std::span<const std::uint32_t>, 3> &candidates,
+              Match &&match) const {
     std::optional<Type> result;
-    for (const auto *part : candidates)
+    for (const auto part : candidates)
       if (auto found = findIndexed(part, match);
           found && (!result || found->index() < result->index()))
         result = found;
@@ -789,12 +794,19 @@ private:
       return lookup.imported->views;
   }
   template <class Key>
-  std::array<const std::vector<std::uint32_t> *, 3>
+  std::array<std::span<const std::uint32_t>, 3>
   candidates(const std::map<Key, std::vector<std::uint32_t>> LookupData::*table,
              const Key &key) const {
-    return {lookup.imported ? importedTable(table).find(key) : nullptr,
-            lookup.base ? found(lookup.base.get()->*table, key) : nullptr,
-            found(lookup.local.*table, key)};
+    auto owned = [&](const LookupData &data) {
+      const auto *values = found(data.*table, key);
+      return values ? std::span<const std::uint32_t>(*values)
+                    : std::span<const std::uint32_t>{};
+    };
+    return {lookup.imported ? importedTable(table).find(key)
+                            : std::span<const std::uint32_t>{},
+            lookup.base ? owned(*lookup.base)
+                        : std::span<const std::uint32_t>{},
+            owned(lookup.local)};
   }
   template <class Key>
   std::optional<std::uint32_t>
@@ -803,24 +815,23 @@ private:
     const auto *local = found(lookup.local.*table, key);
     const auto *base =
         lookup.base ? found(lookup.base.get()->*table, key) : nullptr;
-    const auto *imported =
-        lookup.imported ? importedTable(table).find(key) : nullptr;
+    const auto imported = lookup.imported ? importedTable(table).find(key)
+                                          : std::span<const std::uint32_t>{};
     std::optional<std::uint32_t> result;
-    if (imported)
-      result = imported->front();
+    if (!imported.empty())
+      result = imported.front();
     for (const auto *part : {base, local})
       if (part && (!result || *part < *result))
         result = *part;
     return result;
   }
   template <class Match>
-  std::optional<Type> findIndexed(const std::vector<std::uint32_t> *candidates,
+  std::optional<Type> findIndexed(std::span<const std::uint32_t> candidates,
                                   Match &&match) const {
     std::optional<std::uint32_t> best;
-    if (candidates)
-      for (auto i : *candidates)
-        if ((!best || i < *best) && match(static_cast<std::size_t>(i)))
-          best = i;
+    for (auto i : candidates)
+      if ((!best || i < *best) && match(static_cast<std::size_t>(i)))
+        best = i;
     if (!best)
       return std::nullopt;
     return Type(builtinTypeCount + *best);

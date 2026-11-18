@@ -233,17 +233,17 @@ struct Graph {
   }
 };
 struct Writer : Fields<Writer> {
-  Graph &graph;
-  const TypeGraphSymbols &symbols;
+  Graph *graph = nullptr;
+  const TypeGraphSymbols *symbols = nullptr;
   std::vector<std::uint8_t> bytes;
-  bool localReferences = false;
   bool discardBytes = false;
   std::uint64_t *fingerprint = nullptr;
   std::vector<Type> *typeReferences = nullptr;
   const std::function<Type(Type)> *typeMapper = nullptr;
   bool omitCallableNames = false;
+  Writer() = default;
   Writer(Graph &graph, const TypeGraphSymbols &symbols)
-      : graph(graph), symbols(symbols) {}
+      : graph(&graph), symbols(&symbols) {}
   void byte(std::uint8_t b) {
     if (fingerprint)
       *fingerprint = (*fingerprint ^ b) * 1099511628211ull;
@@ -278,13 +278,13 @@ struct Writer : Fields<Writer> {
     auto mapped = typeMapper ? (*typeMapper)(type) : type;
     if (typeReferences)
       typeReferences->push_back(mapped);
-    u32(localReferences ? mapped.index() : graph.type(mapped));
+    u32(graph ? graph->type(mapped) : mapped.index());
   }
   void value(RegionId &region) {
-    u32(localReferences ? region.index() : graph.region(region));
+    u32(graph ? graph->region(region) : region.index());
   }
   void universe(RegionUniverse &universe) {
-    u32(localReferences ? universe : graph.universe(universe));
+    u32(graph ? graph->universe(universe) : universe);
   }
   void value(std::string &text) {
     std::string_view view = text;
@@ -339,13 +339,13 @@ struct Writer : Fields<Writer> {
       value(text);
   }
   void symbol(SymbolKind kind, std::uint32_t index) {
-    if (localReferences) {
+    if (!graph) {
       u32(index);
       return;
     }
-    if (!symbols.symbol)
+    if (!symbols->symbol)
       reject("missing logical symbol mapper");
-    auto logical = symbols.symbol(kind, index);
+    auto logical = symbols->symbol(kind, index);
     if (!logical || logical->empty())
       reject("unmapped exported symbol");
     value(*logical);
@@ -847,14 +847,19 @@ private:
 };
 class CompactTypes {
 public:
-  const TypeStore &types;
+  const RegionStore &regionStore;
+  unsigned pointerBits;
+  VaListAbi abi;
   std::span<const CompactDefinitionView> definitions;
   std::function<void(Type)> demand{};
   void requireDefinition(Type type) const {
     if (demand)
       demand(type);
   }
-  bool contains(Type type) const { return types.contains(type); }
+  bool contains(Type type) const {
+    return type != Type::Unknown &&
+           type.index() < builtinTypeCount + definitions.size();
+  }
   bool isProduct(Type type) const { return holds<CompactProduct>(type); }
   bool isView(Type type) const { return holds<CompactView>(type); }
   bool isPointer(Type type) const { return holds<CompactPointer>(type); }
@@ -901,9 +906,9 @@ public:
       return parameter(type).numeric;
     return std::nullopt;
   }
-  unsigned targetPointerBits() const { return types.targetPointerBits(); }
-  VaListAbi vaListAbi() const { return types.vaListAbi(); }
-  const RegionStore &regions() const { return types.regions(); }
+  unsigned targetPointerBits() const { return pointerBits; }
+  VaListAbi vaListAbi() const { return abi; }
+  const RegionStore &regions() const { return regionStore; }
   std::string_view name(Type type) const {
     if (type.index() < builtinTypeCount)
       return typeName(type);
@@ -1219,10 +1224,16 @@ void validateCallable(const Store &store, const Callable &r, bool pointer) {
     if (parameter.type == Type::Unknown || store.isConstant(parameter.type))
       reject("invalid callable parameter type");
 }
+struct TypeGraphProof {
+  std::uint64_t expanded = 1, elements = 1;
+  bool drops = false;
+};
 template <class Store, class Definitions>
-void validateGraph(const Store &store, std::span<const Type> ids,
-                   const Definitions &definitions,
-                   std::vector<std::size_t> *selected = nullptr) {
+void validateGraph(
+    const Store &store, std::span<const Type> ids,
+    const Definitions &definitions,
+    std::vector<std::size_t> *selected = nullptr,
+    std::unordered_map<std::size_t, TypeGraphProof> *proofs = nullptr) {
   auto count = selected ? 0 : ids.size();
   std::vector<std::vector<std::size_t>> valueEdges(count), originEdges(count),
       interfaceEdges(count);
@@ -1663,6 +1674,14 @@ void validateGraph(const Store &store, std::span<const Type> ids,
   };
   for (auto slot : order) {
     auto i = selected ? ordinals[slot] : slot;
+    if (proofs) {
+      if (auto found = proofs->find(i); found != proofs->end()) {
+        drops[slot] = found->second.drops;
+        expanded[slot] = found->second.expanded;
+        elements[slot] = found->second.elements;
+        continue;
+      }
+    }
     auto type = ids[i];
     if (store.isSlice(type))
       drops[slot] = drop(store.slice(type).element);
@@ -1731,6 +1750,11 @@ void validateGraph(const Store &store, std::span<const Type> ids,
       }
     }
   }
+  if (proofs)
+    for (std::size_t slot = 0; slot < ordinals.size(); ++slot)
+      proofs->try_emplace(
+          ordinals[slot],
+          TypeGraphProof{expanded[slot], elements[slot], drops[slot]});
 }
 struct Remap : SemanticWalk<Remap> {
   using SemanticWalk::value;
@@ -1738,7 +1762,7 @@ struct Remap : SemanticWalk<Remap> {
   explicit Remap(std::function<Type(Type)> map) : map(std::move(map)) {}
   void value(Type &type) { type = map(type); }
 };
-bool equalDefinition(const TypeStore &store, ImportedTypeDefinition left,
+bool equalDefinition(ImportedTypeDefinition left,
                      ImportedTypeDefinition right) {
   if (left.index() != right.index())
     return false;
@@ -1764,10 +1788,7 @@ bool equalDefinition(const TypeStore &store, ImportedTypeDefinition left,
   };
   clearNames(left);
   clearNames(right);
-  Graph graph(store);
-  TypeGraphSymbols symbols;
-  Writer a(graph, symbols), b(graph, symbols);
-  a.localReferences = b.localReferences = true;
+  Writer a, b;
   std::visit([&](auto &r) { a(r); }, left);
   std::visit([&](auto &r) { b(r); }, right);
   return a.bytes == b.bytes;
@@ -1902,8 +1923,7 @@ matchExisting(const TypeStore &decoded, const TypeStore &consumer,
     ReferenceShape left, right;
     std::visit([&](auto &r) { left(r); }, a);
     std::visit([&](auto &r) { right(r); }, b);
-    if (!equalDefinition(consumer, a, b) ||
-        left.types.size() != right.types.size() ||
+    if (!equalDefinition(a, b) || left.types.size() != right.types.size() ||
         left.regions.size() != right.regions.size() ||
         left.universes.size() != right.universes.size())
       reject("conflicting logical definition contract");
@@ -2131,18 +2151,8 @@ void remapRegionGraph(TypeStore &candidate, const TypeStore &decoded,
     std::visit([&](auto &r) { mapper(r); }, definition);
 }
 template <class Definition>
-std::string canonicalKey(Graph &graph, const Definition &definition,
-                         std::vector<Type> *references = nullptr,
-                         const std::function<Type(Type)> *mapper = nullptr,
-                         std::uint64_t *fingerprint = nullptr,
-                         bool retainBytes = false) {
-  TypeGraphSymbols symbols;
-  Writer key(graph, symbols);
-  key.localReferences = true;
-  key.typeReferences = references;
-  key.discardBytes = references != nullptr && !retainBytes;
-  key.typeMapper = mapper;
-  key.fingerprint = fingerprint;
+void writeCanonicalKey(Writer &key, const Definition &definition) {
+  const auto *mapper = key.typeMapper;
   key.byte(static_cast<std::uint8_t>(definition.index()));
   visitDefinition(
       [&](const auto &r) {
@@ -2225,6 +2235,18 @@ std::string canonicalKey(Graph &graph, const Definition &definition,
           key(r.element);
       },
       definition);
+}
+template <class Definition>
+std::string canonicalKey(const Definition &definition,
+                         std::vector<Type> *references = nullptr,
+                         const std::function<Type(Type)> *mapper = nullptr,
+                         std::uint64_t *fingerprint = nullptr) {
+  Writer key;
+  key.typeReferences = references;
+  key.discardBytes = references != nullptr;
+  key.typeMapper = mapper;
+  key.fingerprint = fingerprint;
+  writeCanonicalKey(key, definition);
   if (key.discardBytes)
     return {};
   return {reinterpret_cast<const char *>(key.bytes.data()), key.bytes.size()};
@@ -2319,10 +2341,9 @@ std::vector<bool> recursiveRegionals(FlatTypeEdges edges, Regional regional) {
   return recursive;
 }
 template <class Definitions>
-std::vector<bool>
-recursiveRegionals(const TypeStore &store, std::span<const Type> ids,
-                   const Definitions &definitions, bool *uniqueKeys = nullptr) {
-  Graph graph(store);
+std::vector<bool> recursiveRegionals(std::span<const Type> ids,
+                                     const Definitions &definitions,
+                                     bool *uniqueKeys = nullptr) {
   std::unordered_multimap<std::uint64_t, std::size_t> keys;
   if (uniqueKeys) {
     *uniqueKeys = true;
@@ -2335,14 +2356,14 @@ recursiveRegionals(const TypeStore &store, std::span<const Type> ids,
     references.clear();
     if (!nominal(definitions[i])) {
       std::uint64_t fingerprint = 14695981039346656037ull;
-      canonicalKey(graph, definitions[i], &references, nullptr,
+      canonicalKey(definitions[i], &references, nullptr,
                    uniqueKeys ? &fingerprint : nullptr);
       if (uniqueKeys) {
         auto [first, last] = keys.equal_range(fingerprint);
         if (first != last) {
-          auto key = canonicalKey(graph, definitions[i]);
+          auto key = canonicalKey(definitions[i]);
           for (auto entry = first; entry != last; ++entry)
-            if (canonicalKey(graph, definitions[entry->second]) == key) {
+            if (canonicalKey(definitions[entry->second]) == key) {
               *uniqueKeys = false;
               return {};
             }
@@ -2367,17 +2388,15 @@ public:
                   std::vector<ImportedTypeDefinition> &definitions,
                   const std::vector<std::optional<DefinitionIdentity>> &logical,
                   const ExistingGraph &existing)
-      : original(original), candidate(candidate), canonicalGraph(candidate),
-        ids(ids), definitions(definitions), mapped(ids.size()),
-        state(ids.size()), installed(ids.size()) {
-    Graph originalGraph(original);
+      : original(original), candidate(candidate), ids(ids),
+        definitions(definitions), mapped(ids.size()), state(ids.size()),
+        installed(ids.size()) {
     auto stored = original.storedTypes();
     canonicalTypes.reserve(ids.size() + stored.size());
     for (auto type : stored) {
       auto definition = original.importedDefinition(type);
       if (!nominal(definition))
-        canonicalTypes.try_emplace(
-            canonicalKey(originalGraph, std::move(definition)), type);
+        canonicalTypes.try_emplace(canonicalKey(definition), type);
     }
     for (const auto &[source, target] : existing.types) {
       auto i = graphIndex(ids, source);
@@ -2399,7 +2418,7 @@ public:
         mapped[i] = candidate.declareImportedType(decoded.importedKind(ids[i]));
       state[i] = 2;
     }
-    auto recursive = recursiveRegionals(decoded, ids, definitions);
+    auto recursive = recursiveRegionals(ids, definitions);
     for (std::size_t i = 0; i < ids.size(); ++i)
       if (recursive[i] && state[i] != 2) {
         mapped[i] = candidate.declareImportedType(ImportedTypeKind::Product);
@@ -2418,7 +2437,7 @@ public:
       reject("imported type nesting exceeds compiler depth limit");
     state[i] = 1;
     std::function<Type(Type)> mapper = [&](Type type) { return build(type); };
-    auto key = canonicalKey(canonicalGraph, definitions[i], nullptr, &mapper);
+    auto key = canonicalKey(definitions[i], nullptr, &mapper);
     if (auto existing = canonicalTypes.find(key);
         existing != canonicalTypes.end())
       mapped[i] = existing->second;
@@ -2448,8 +2467,7 @@ public:
         continue;
       auto expected = definitions[i];
       remap(expected);
-      if (!equalDefinition(candidate, expected,
-                           candidate.importedDefinition(mapped[i])))
+      if (!equalDefinition(expected, candidate.importedDefinition(mapped[i])))
         reject("conflicting logical or structural type definition");
     }
   }
@@ -2457,7 +2475,6 @@ public:
 private:
   const TypeStore &original;
   TypeStore &candidate;
-  Graph canonicalGraph;
   std::span<const Type> ids;
   std::vector<ImportedTypeDefinition> &definitions;
   std::unordered_map<std::string, Type> canonicalTypes;
@@ -2692,10 +2709,13 @@ static TypeGraphImport importTypeGraphEager(TypeStore &types,
     TypeGraphImport result;
     result.definitions.reserve(header.types);
     result.roots.reserve(header.roots);
-    std::set<DefinitionIdentity> identities;
+    std::unordered_set<std::string_view> identities;
     for (std::uint32_t i = 0; i < header.types; ++i) {
+      const auto identityBegin = reader.offset;
       std::optional<DefinitionIdentity> identity;
       reader(identity);
+      const auto identityBytes =
+          bytes.subspan(identityBegin, reader.offset - identityBegin);
       auto definition = definitionFor(tables.kinds[i]);
       if (header.indexed) {
         reader.block();
@@ -2707,7 +2727,10 @@ static TypeGraphImport importTypeGraphEager(TypeStore &types,
       if (identity) {
         validIdentity(*identity,
                       std::holds_alternative<TypeParameter>(definition));
-        if (!identities.insert(*identity).second)
+        if (!identities
+                 .insert({reinterpret_cast<const char *>(identityBytes.data()),
+                          identityBytes.size()})
+                 .second)
           reject("duplicate logical definition identity");
       }
       logical.push_back(std::move(identity));
@@ -2732,7 +2755,7 @@ static TypeGraphImport importTypeGraphEager(TypeStore &types,
     validateGraph(candidate, decodedIds, staged);
     bool uniqueKeys = false;
     if (fresh && !symbols.lookupDefinition)
-      recursiveRegionals(candidate, decodedIds, staged, &uniqueKeys);
+      recursiveRegionals(decodedIds, staged, &uniqueKeys);
     if (uniqueKeys) {
       // Unique raw keys in the acyclic identity graph need no remapping.
       for (std::size_t i = 0; i < staged.size(); ++i) {
@@ -2788,10 +2811,12 @@ struct DeferredTypeGraph {
   std::shared_ptr<const CompactArena> arena;
   mutable std::vector<CompactDefinitionView> definitions;
   std::shared_ptr<const TypeGraphSymbols> retainedSymbols;
-  std::shared_ptr<const TypeStore> validationTypes;
+  std::optional<RegionStore> validationRegions;
+  VaListAbi validationAbi{};
   std::vector<ImportedTypeIndex> index;
   std::string canonicalKeys;
-  mutable std::vector<bool> loaded, validated;
+  mutable std::vector<bool> loaded;
+  mutable std::unordered_map<std::size_t, TypeGraphProof> validated;
   mutable std::unordered_map<std::size_t, Reader::ResolvedSymbols>
       recordSymbols;
   std::shared_ptr<CompactArena> demandedArena;
@@ -2925,16 +2950,17 @@ void DeferredTypeGraph::validate(std::size_t index) const {
   if (!retainedSymbols)
     return;
   std::lock_guard lock(validationMutex);
-  if (validated.at(index))
+  if (validated.contains(index))
     return;
   try {
     std::vector<bool> seen(records.size());
     std::vector<std::size_t> pending;
-    Graph graph(*validationTypes);
     auto require = [&](Type type) {
       if (type.index() < builtinTypeCount)
         return;
       auto current = static_cast<std::size_t>(type.index() - builtinTypeCount);
+      if (validated.contains(current))
+        return;
       if (!seen[current]) {
         seen[current] = true;
         pending.push_back(current);
@@ -2969,8 +2995,7 @@ void DeferredTypeGraph::validate(std::size_t index) const {
                             right.end());
         };
         if (slice.nominal != nominal(value) ||
-            (!slice.nominal &&
-             identityKey(current) != canonicalKey(graph, value)) ||
+            (!slice.nominal && identityKey(current) != canonicalKey(value)) ||
             !equal(expected.key, actual.key) ||
             !equal(expected.callableRegionParameters,
                    actual.callableRegionParameters) ||
@@ -2996,11 +3021,10 @@ void DeferredTypeGraph::validate(std::size_t index) const {
       }
     };
     require(types[primitiveCount + index]);
-    validateGraph(CompactTypes{*validationTypes, definitions, require},
+    validateGraph(CompactTypes{*validationRegions, header.pointerBits,
+                               validationAbi, definitions, require},
                   std::span(types).subspan(primitiveCount), definitions,
-                  &pending);
-    for (auto current : pending)
-      validated[current] = true;
+                  &pending, &validated);
   } catch (const InvalidGraph &error) {
     throw InvalidMetadata("invalid demanded type record: " + error.message);
   }
@@ -3053,12 +3077,15 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     definitions.reserve(header.types);
     deferred->records.reserve(header.types);
     TypeGraphImport result;
-    std::set<DefinitionIdentity> identities;
+    std::unordered_set<std::string_view> identities;
     auto indexArena = demand ? std::make_shared<CompactArena>() : nullptr;
     std::unordered_multimap<std::uint64_t, std::size_t> keys;
-    Graph graph(candidate);
     FlatTypeEdges edges;
     std::vector<Type> references;
+    std::uint64_t keyFingerprint = 0;
+    Writer canonicalWriter;
+    canonicalWriter.typeReferences = &references;
+    canonicalWriter.fingerprint = &keyFingerprint;
     std::vector<std::size_t> pendingRecords;
     bool uniqueKeys = true;
     if (demand) {
@@ -3073,23 +3100,29 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       references.clear();
       if (slice.nominal)
         return;
-      std::uint64_t fingerprint = 14695981039346656037ull;
-      auto key = canonicalKey(graph, definition, &references, nullptr,
-                              &fingerprint, true);
-      for (auto [entry, end] = keys.equal_range(fingerprint); entry != end;
+      keyFingerprint = 14695981039346656037ull;
+      canonicalWriter.bytes.clear();
+      writeCanonicalKey(canonicalWriter, definition);
+      std::string_view key{
+          reinterpret_cast<const char *>(canonicalWriter.bytes.data()),
+          canonicalWriter.bytes.size()};
+      for (auto [entry, end] = keys.equal_range(keyFingerprint); entry != end;
            ++entry)
         if (deferred->identityKey(entry->second) == key) {
           uniqueKeys = false;
           return;
         }
-      keys.emplace(fingerprint, i);
+      keys.emplace(keyFingerprint, i);
       slice.keyOffset = deferred->canonicalKeys.size();
       slice.keyLength = key.size();
       deferred->canonicalKeys += key;
     };
     for (std::uint32_t i = 0; i < header.types; ++i) {
+      const auto identityBegin = reader.offset;
       std::optional<DefinitionIdentity> identity;
       reader(identity);
+      const auto identityBytes =
+          bytes.subspan(identityBegin, reader.offset - identityBegin);
       DeferredTypeGraph::Record slice;
       slice.offset = reader.offset;
       for (std::size_t k = 0; k < Reader::symbolKinds; ++k)
@@ -3121,7 +3154,10 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       if (identity) {
         validIdentity(*identity,
                       std::holds_alternative<CompactParameter>(definition));
-        if (!identities.insert(*identity).second)
+        if (!identities
+                 .insert({reinterpret_cast<const char *>(identityBytes.data()),
+                          identityBytes.size()})
+                 .second)
           reject("duplicate logical definition identity");
         result.definitions.push_back({std::move(*identity), ids[i]});
       }
@@ -3147,7 +3183,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
           pendingRecords.push_back(i);
           references.clear();
           if (!slice.nominal)
-            canonicalKey(graph, view, &references);
+            canonicalKey(view, &references);
         } else
           indexDefinition(i, view);
         for (auto reference : references)
@@ -3192,8 +3228,11 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       deferred->arena = std::move(indexArena);
     } else {
       remapCompactSymbols(definitions, deferred->symbols);
-      validateGraph(CompactTypes{candidate, definitions}, ids, definitions);
-      recursiveRegionals(candidate, ids, definitions, &uniqueKeys);
+      validateGraph(CompactTypes{candidate.regions(),
+                                 candidate.targetPointerBits(),
+                                 candidate.vaListAbi(), definitions},
+                    ids, definitions);
+      recursiveRegionals(ids, definitions, &uniqueKeys);
       for (const auto &definition : definitions)
         deferred->index.push_back(compactIndex(definition, *reader.arena));
       deferred->arena = std::move(reader.arena);
@@ -3215,9 +3254,9 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     deferred->kinds = std::move(tables.kinds);
     if (demand) {
       deferred->retainedSymbols = std::move(retainedSymbols);
-      deferred->validationTypes = std::make_shared<const TypeStore>(candidate);
+      deferred->validationRegions = candidate.regions();
+      deferred->validationAbi = candidate.vaListAbi();
       deferred->loaded.resize(header.types);
-      deferred->validated.resize(header.types);
       deferred->demandedArena = std::make_shared<CompactArena>();
     }
     auto loader = std::make_shared<const TypeStore::ImportedDefinitionLoader>(

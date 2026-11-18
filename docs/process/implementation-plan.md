@@ -1132,6 +1132,18 @@ binder variants and rejection of unused cyclic/out-of-bounds provenance.
 These remain three-triple engineering timings, not qualification:
 `~/w/anal/perf-provenance-final-20261118-074314/results.json`.
 
+Imported candidate groups now share contiguous ordinal storage; canonical
+encoding reuses its buffer, logical-identity uniqueness uses retained wire
+slices, and demanded validation reuses completed drop/array-expansion proofs.
+The validation context retains regions and ABI rather than another TypeStore.
+Compiler `40b98922...` against `2b8b702b...` measured P03/P04/P05 fresh checks
+at 330.647 / 324.253, 344.547 / 315.023 and 385.052 / 367.168 ms
+(1.9-8.6% lower), and builds at 649.103 / 607.953, 643.216 / 618.438 and
+814.252 / 779.595 ms. Outputs matched Rust; affected graph/import cases pass
+optimized and ASan/UBSan builds. These are three-triple engineering timings,
+not qualification; fresh checks remain 17-23 times Rust:
+`~/w/anal/perf-proof-type-admission-20261118-025003/results.json`.
+
 Still missing: specialization recipes do not cover every consumer-local type.
 Source queries conservatively fall back for unsupported cache shapes and shifted
 spans. Consolidated memory/storage/performance gates and whole-milestone

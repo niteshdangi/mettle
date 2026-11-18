@@ -451,7 +451,11 @@ records only when structural identities need no canonical remapping; duplicate
 keys, existing consumer types and logical lookups retain canonical merging.
 Symbol-free identity projections build their query indexes during the first
 read. Only records needing logical-symbol remapping are decoded again after
-the graph's references have been validated.
+the graph's references have been validated. Canonical encoding reuses one
+scratch buffer per admission. Deferred validation retains regions and target ABI,
+not another TypeStore whose shared, uninitialized pages must then be detached.
+Previously validated immutable dependencies reuse their drop and array-expansion
+proofs instead of being enqueued again when a new type record is demanded.
 Consumers share paged type records, immutable declaration contracts and indexed
 function facts; mutating access detaches the affected records. Native type
 and implementation records retain separate checking/finalized COW snapshots.
@@ -460,6 +464,8 @@ database, and consumer coherence compares only pairs containing a source rule.
 Native type interning indices have one immutable shared prefix and
 consumer-local additions;
 lookups preserve full identity checks and canonical ordering across both.
+Imported candidate groups borrow immutable descriptor keys and address one
+contiguous ordinal array; their retained index owner outlives every borrowed key.
 Changing an imported identity key invalidates the consumer's index, not its
 shared prefix in other consumers. Generic function and type environments are
 materialized on first use rather than recreated for every imported declaration.

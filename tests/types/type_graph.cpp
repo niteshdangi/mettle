@@ -107,13 +107,19 @@ int main() {
     producer.defineProduct(unused, {{"invalid", Type::Unknown}});
     auto holder = producer.declareProduct("Holder", true);
     producer.defineProduct(holder, {{"payload", payload}});
+    auto wrapper = producer.declareProduct("Wrapper", true);
+    producer.defineProduct(wrapper, {{"holder", holder}});
+    auto row =
+        producer.arrayType(Type::I32, producer.constant(Type::Usize, 32));
+    auto matrix = producer.arrayType(row, producer.constant(Type::Usize, 40));
     TypeGraphSymbols symbols;
     symbols.definition = [&producer](Type type) {
       return std::optional(DefinitionIdentity{
           "demand", std::string(producer.name(type)), std::nullopt});
     };
-    auto encoded = exportTypeGraph(producer, std::array{holder, unused},
-                                   symbols, ValidationMode::OnDemand);
+    auto encoded = exportTypeGraph(
+        producer, std::array{holder, unused, wrapper, row, matrix}, symbols,
+        ValidationMode::OnDemand);
     expect(bool(encoded), "indexed type graph did not export");
     TypeStore eager;
     expect(!importTypeGraph(eager, encoded.bytes, {}),
@@ -128,6 +134,12 @@ int main() {
     expect(consumer.isCopy(imported.roots[0]) &&
                consumer.product(imported.roots[0]).fields.size() == 1,
            "demanded type dependencies lost validation or retained bytes");
+    expect(consumer.product(imported.roots[2]).fields[0].type ==
+               imported.roots[0],
+           "demand validation must reuse a proved dependency closure");
+    expect(consumer.product(imported.roots[3]).fields.size() == 32 &&
+               consumer.product(imported.roots[4]).arrayCount != Type::Unknown,
+           "reused array proofs must preserve nested expansion counts");
     bool rejected = false;
     try {
       (void)consumer.product(imported.roots[1]);
@@ -198,10 +210,13 @@ int main() {
   {
     TypeStore producer;
     auto four = producer.structural(AggregateKind::Array, {Type::I32}, 4);
+    auto six = producer.structural(AggregateKind::Array, {Type::I32}, 6);
+    auto wide = producer.structural(AggregateKind::Array, {Type::I64}, 7);
     auto pointer = producer.pointerType(four, ParameterMode::Read);
     auto retained = std::make_shared<const TypeGraphSymbols>();
-    auto encoded = exportTypeGraph(producer, std::array{four, pointer},
-                                   *retained, ValidationMode::OnDemand);
+    auto encoded =
+        exportTypeGraph(producer, std::array{four, pointer, six, wide},
+                        *retained, ValidationMode::OnDemand);
     expect(bool(encoded), encoded.error);
     TypeStore original;
     auto imported = importTypeGraph(original, encoded.bytes, *retained,
@@ -212,8 +227,12 @@ int main() {
     original.shareInterning();
     auto changed = original;
     expect(changed.structural(AggregateKind::Array, {Type::I32}, 4) == four &&
+               changed.structural(AggregateKind::Array, {Type::I32}, 6) ==
+                   imported.roots[2] &&
+               changed.structural(AggregateKind::Array, {Type::I64}, 7) ==
+                   imported.roots[3] &&
                changed.pointerType(four, ParameterMode::Read) == pointer,
-           "copied imports reuse borrowed sequence and scalar interning keys");
+           "copied imports preserve all candidates and adjacent key groups");
     auto five = changed.structural(AggregateKind::Array, {Type::I32}, 5);
     expect(changed.structural(AggregateKind::Array, {Type::I32}, 5) == five &&
                changed.structural(AggregateKind::Array, {Type::I32}, 4) ==
@@ -1267,18 +1286,30 @@ int main() {
     TypeStore producer;
     auto a = producer.declareProduct("One", false);
     auto b = producer.declareProduct("Two", false);
+    producer.defineProduct(a, {{"value", Type::I32}});
+    producer.defineProduct(b, {{"first", Type::I64}, {"second", Type::Bool}});
     auto maps = symbolMaps();
     maps.definition = [&](Type type) -> std::optional<DefinitionIdentity> {
       return DefinitionIdentity{"pkg", type == a ? "One" : "Two", {}};
     };
-    auto encoded = exportTypeGraph(producer, std::array{a, b}, maps);
-    expect(static_cast<bool>(encoded), encoded.error);
-    constexpr std::string_view two = "Two";
-    auto found = std::search(encoded.bytes.begin(), encoded.bytes.end(),
-                             two.begin(), two.end());
-    expect(found != encoded.bytes.end(), "duplicate identity fixture");
-    std::copy_n("One", 3, found);
-    failedUnchanged(encoded.bytes, symbols);
+    for (auto mode : {ValidationMode::Eager, ValidationMode::OnDemand}) {
+      auto encoded = exportTypeGraph(producer, std::array{a, b}, maps, mode);
+      expect(static_cast<bool>(encoded), encoded.error);
+      constexpr std::string_view two = "Two";
+      auto found = std::search(encoded.bytes.begin(), encoded.bytes.end(),
+                               two.begin(), two.end());
+      expect(found != encoded.bytes.end(), "duplicate identity fixture");
+      std::copy_n("One", 3, found);
+      failedUnchanged(encoded.bytes, symbols);
+      TypeStore fresh;
+      auto retained = std::make_shared<const TypeGraphSymbols>(maps);
+      auto imported =
+          importTypeGraph(fresh, encoded.bytes, *retained, mode, retained);
+      expect(
+          !imported &&
+              imported.error == "duplicate logical definition identity",
+          "duplicate logical identities must reject across different payloads");
+    }
     producer.defineProduct(a, {{"self", a}});
     auto cyclic = exportTypeGraph(producer, std::array{a}, maps);
     expect(static_cast<bool>(cyclic), cyclic.error);

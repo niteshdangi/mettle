@@ -447,10 +447,8 @@ void TypeStore::refreshProductInstances(std::span<const Type> origins) {
   syncLookup();
   std::vector<std::uint32_t> instances;
   for (auto origin : origins)
-    for (const auto *matches :
-         candidates(&LookupData::genericInstances, origin))
-      if (matches)
-        instances.insert(instances.end(), matches->begin(), matches->end());
+    for (const auto matches : candidates(&LookupData::genericInstances, origin))
+      instances.insert(instances.end(), matches.begin(), matches.end());
   std::sort(instances.begin(), instances.end());
   instances.erase(std::unique(instances.begin(), instances.end()),
                   instances.end());

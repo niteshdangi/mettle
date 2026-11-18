@@ -213,14 +213,12 @@ void TypeStore::setProductPackage(Type type, std::uint32_t package) {
     products.at(entries.at(current.index() - builtins).index).package = package;
     for (auto table :
          {&LookupData::genericInstances, &LookupData::regionInstances})
-      for (const auto *matches : candidates(table, current))
-        if (matches)
-          for (auto index : *matches) {
-            const auto &record = std::as_const(products)[entries[index].index];
-            if (record.genericOrigin == current ||
-                record.regionOrigin == current)
-              pending.push_back(Type(builtins + index));
-          }
+      for (const auto matches : candidates(table, current))
+        for (auto index : matches) {
+          const auto &record = std::as_const(products)[entries[index].index];
+          if (record.genericOrigin == current || record.regionOrigin == current)
+            pending.push_back(Type(builtins + index));
+        }
   }
 }
 void TypeStore::setProductLayout(Type type, ProductLayout layout) {
