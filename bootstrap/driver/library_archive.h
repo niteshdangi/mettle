@@ -39,7 +39,8 @@ private:
   struct Data {
     std::string identity;
     std::vector<Source> sources;
-    std::vector<Generation> generations;
+    std::vector<GenerationRecord> generations;
+    std::optional<std::vector<std::uint64_t>> binders;
     std::vector<SourceText> revisions;
     std::unordered_map<SourceId, std::size_t> sourceIndex;
     std::unordered_map<std::string, std::size_t> revisionIndex;

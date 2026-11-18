@@ -28,6 +28,24 @@ void expect(bool condition, const char *message) {
 
 int main() {
   using namespace mettle;
+  {
+    std::size_t loads = 0;
+    Diagnostics diagnostics;
+    diagnostics.generated(GenerationRecord(9, [&] {
+      ++loads;
+      return Generation{9, {1, 2, 4}, "deferred expansion", {}};
+    }));
+    auto shared = diagnostics;
+    expect(
+        diagnostics.isGenerated(9) &&
+            diagnostics.registeredGenerations().size() == 1 &&
+            diagnostics.debugSpan({1, 2, 4}).source == 4 &&
+            !diagnostics.syntaxContext({1, 2, 4}) && loads == 0,
+        "unrelated source queries must not reconstruct generated provenance");
+    expect(diagnostics.debugSpan({0, 1, 9}).source == 4 &&
+               shared.debugSpan({0, 1, 9}).source == 4 && loads == 1,
+           "shared generated provenance must materialize only once on demand");
+  }
   auto digest = [](const std::string &text) {
     packages::Sha256 hash;
     hash.update(text);
@@ -73,11 +91,25 @@ int main() {
     Diagnostics::SourceContext registerGenerated(original, generated);
   }
   auto context = original.makeSyntaxContext({"core"}, {0, 5, first.id});
+  auto variant = std::make_shared<const SyntaxContext>(
+      SyntaxContext{{"core", "variant"}, {1, 6, first.id}, context->identity});
+  auto unbound = std::make_shared<const SyntaxContext>(
+      SyntaxContext{{"core"}, {0, 5, first.id}, 0});
   original.generated(
       {generated.id,
        {0, 5, first.id},
        "macro value",
-       {{0, 9, {1, 10, first.id}, false, {0, 5, first.id}, "value", context}}});
+       {{0, 4, {1, 5, first.id}, false, {0, 5, first.id}, "value", context},
+        {4, 5, {5, 6, first.id}, false, {0, 5, first.id}, "value", context},
+        {5, 6, {6, 7, first.id}, false, {0, 5, first.id}, "value", variant},
+        {6, 7, {7, 8, first.id}, false, {0, 5, first.id}, "value", unbound},
+        {7,
+         9,
+         {8, 10, first.id},
+         false,
+         {0, 5, first.id},
+         "value",
+         SyntaxContextPtr{}}}});
   driver::LibraryArchive archive("library-revision");
   std::string error;
   expect(archive.sources.capture(original, error), error.c_str());
@@ -201,6 +233,20 @@ int main() {
              remappedContext->scope == context->scope &&
              remappedContext->definition.source == 80,
          "generated hygiene and definition provenance must be remapped");
+  const auto remappedVariant = consumer.syntaxContext({5, 6, 81});
+  const auto remappedUnbound = consumer.syntaxContext({6, 7, 81});
+  expect(
+      consumer.syntaxContext({4, 5, 81}) == remappedContext &&
+          remappedVariant && remappedVariant != remappedContext &&
+          remappedVariant->identity == remappedContext->identity &&
+          remappedVariant->scope == variant->scope &&
+          remappedVariant->definition ==
+              (Span{variant->definition.begin, variant->definition.end, 80}) &&
+          remappedUnbound && remappedUnbound->identity == 0 &&
+          remappedUnbound->definition.source == 80 &&
+          !consumer.syntaxContext({7, 9, 81}),
+      "deferred provenance must share exact contexts without merging binder "
+      "variants or null contexts");
   auto debug = consumer.debugSpan(*span);
   expect(debug.source == 80 && debug.begin == 0,
          "generated debug locations must retain their invocation");
@@ -308,6 +354,19 @@ int main() {
   auto firstRecord = firstPath - 4;
   auto secondRecord = secondPath - 4;
   auto secondEnd = secondRevision + reference->revision.size();
+  for (const auto &[offset, value, message] :
+       {std::tuple{secondEnd + 8, 1u, "cyclic generation provenance"},
+        std::tuple{secondEnd + 16, static_cast<unsigned>(first.text.size() + 1),
+                   "invalid generation origin"}}) {
+    auto changed = *bytes;
+    for (unsigned shift = 0; shift < 32; shift += 8)
+      changed[offset + shift / 8] = static_cast<char>(value >> shift);
+    reseal(changed);
+    expect(!driver::decodeLibraryArchive(changed, "library-revision", error) &&
+               error.find(message) != std::string::npos,
+           "unused deferred provenance must reject invalid spans and cycles at "
+           "admission");
+  }
   auto reordered = bytes->substr(0, firstRecord) +
                    bytes->substr(secondRecord, secondEnd - secondRecord) +
                    bytes->substr(firstRecord, secondRecord - firstRecord) +

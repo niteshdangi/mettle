@@ -137,6 +137,9 @@ public:
       : bytes(bytes), error(error) {}
   bool good() const { return error.empty(); }
   std::size_t position() const { return offset; }
+  std::string_view range(std::size_t begin, std::size_t end) const {
+    return bytes.substr(begin, end - begin);
+  }
   std::size_t remaining() const { return bytes.size() - offset; }
   void fail(std::string_view message) {
     if (good())
@@ -209,6 +212,189 @@ private:
   std::string &error;
   std::size_t offset = 0;
 };
+
+std::optional<std::size_t>
+sourceSpanIndex(Span span, std::span<const Source> sources,
+                const std::unordered_map<SourceId, std::size_t> &index) {
+  auto found = index.find(span.source);
+  if (found == index.end() || span.begin > span.end ||
+      span.end > sources[found->second].text.size())
+    return std::nullopt;
+  return found->second;
+}
+
+class ProvenanceValidator {
+public:
+  ProvenanceValidator(
+      std::span<const Source> sources,
+      const std::unordered_map<SourceId, std::size_t> &sourceIndex,
+      std::string &error)
+      : sources(sources), sourceIndex(sourceIndex), error(error),
+        seen(sources.size(), std::numeric_limits<std::size_t>::max()) {}
+  bool generation(SourceId source, Span origin, std::size_t description,
+                  std::size_t mappings) {
+    auto found = sourceIndex.find(source);
+    if (found == sourceIndex.end() ||
+        !parents.emplace(source, std::vector<SourceId>{}).second ||
+        description > limits::sourceBytes || mappings > limits::tokens)
+      return fail("invalid or duplicate generated source");
+    edges = &parents.at(source);
+    current = found->second;
+    length = sources[found->second].text.size();
+    previousEnd = 0;
+    return parent(origin) || fail("invalid generation origin");
+  }
+  bool mapping(const Generation::Mapping &mapping,
+               std::string_view description) {
+    if (mapping.begin < previousEnd || mapping.begin > mapping.end ||
+        mapping.end > length || description.size() > limits::sourceBytes ||
+        !parent(mapping.target) ||
+        (!description.empty() && !parent(mapping.origin)) ||
+        (mapping.exact && mapping.end - mapping.begin >
+                              mapping.target.end - mapping.target.begin))
+      return fail("invalid generation mapping");
+    previousEnd = mapping.end;
+    return true;
+  }
+  bool context(Span definition, std::size_t scope, std::size_t longestPart) {
+    return (sourceSpanIndex(definition, sources, sourceIndex) &&
+            scope <= limits::tokens && longestPart <= limits::sourceBytes) ||
+           fail("invalid syntax context");
+  }
+  bool finish() {
+    std::unordered_map<SourceId, unsigned char> state;
+    for (const auto &[source, edges] : parents) {
+      if (state[source] == 2)
+        continue;
+      std::vector<std::pair<SourceId, std::size_t>> stack{{source, 0}};
+      state[source] = 1;
+      while (!stack.empty()) {
+        auto &[current, next] = stack.back();
+        auto found = parents.find(current);
+        if (found == parents.end() || next == found->second.size()) {
+          state[current] = 2;
+          stack.pop_back();
+          continue;
+        }
+        auto parent = found->second[next++];
+        if (state[parent] == 1)
+          return fail("cyclic generation provenance");
+        if (state[parent] == 0) {
+          state[parent] = 1;
+          stack.emplace_back(parent, 0);
+        }
+      }
+    }
+    return true;
+  }
+
+private:
+  bool parent(Span span) {
+    const auto index = sourceSpanIndex(span, sources, sourceIndex);
+    if (!index)
+      return false;
+    if (seen[*index] != current) {
+      seen[*index] = current;
+      edges->push_back(span.source);
+    }
+    return true;
+  }
+  bool fail(std::string_view message) {
+    if (error.empty())
+      error =
+          "invalid compiled library source archive: " + std::string(message);
+    return false;
+  }
+  std::span<const Source> sources;
+  const std::unordered_map<SourceId, std::size_t> &sourceIndex;
+  std::string &error;
+  std::unordered_map<SourceId, std::vector<SourceId>> parents;
+  std::vector<std::size_t> seen;
+  std::vector<SourceId> *edges = nullptr;
+  std::size_t current = 0, length = 0, previousEnd = 0;
+};
+
+struct ProvenanceScan {
+  ProvenanceValidator validator;
+  std::vector<std::uint64_t> binders;
+  std::unordered_set<std::uint64_t> seenBinders;
+};
+
+template <bool Materialize>
+Generation readGeneration(Reader &in, std::size_t sourceCount,
+                          ProvenanceScan *scan = nullptr) {
+  Generation generation;
+  generation.source = in.integer();
+  generation.origin = in.span(sourceCount);
+  auto description = in.textView();
+  auto mappings = in.count(26);
+  if constexpr (Materialize) {
+    generation.description = description;
+    generation.mappings.reserve(mappings);
+  } else if (in.good()) {
+    scan->validator.generation(generation.source, generation.origin,
+                               description.size(), mappings);
+  }
+  std::unordered_map<std::string_view, SyntaxContextPtr> contexts;
+  for (std::size_t j = 0; in.good() && j < mappings; ++j) {
+    Generation::Mapping mapping;
+    mapping.begin = in.integer();
+    mapping.end = in.integer();
+    mapping.target = in.span(sourceCount);
+    mapping.exact = in.boolean();
+    const auto hasOrigin = in.boolean();
+    if (hasOrigin)
+      mapping.origin = in.span(sourceCount);
+    const auto description = in.textView();
+    if (hasOrigin != !description.empty())
+      in.fail("inconsistent mapping origin");
+    if constexpr (!Materialize)
+      if (in.good())
+        scan->validator.mapping(mapping, description);
+    if (in.boolean()) {
+      mapping.syntaxContext = SyntaxContextPtr{};
+      if (in.boolean()) {
+        const auto contextBegin = in.position();
+        const auto binder = in.integer();
+        const auto parts = in.count(4);
+        const auto scopeBegin = in.position();
+        std::size_t longestPart = 0;
+        for (std::size_t k = 0; in.good() && k < parts; ++k)
+          longestPart = std::max(longestPart, in.textView().size());
+        const auto scopeEnd = in.position();
+        const auto definition = in.span(sourceCount);
+        if constexpr (Materialize) {
+          if (in.good()) {
+            auto [entry, inserted] =
+                contexts.try_emplace(in.range(contextBegin, in.position()));
+            if (inserted) {
+              std::string error;
+              Reader scopeReader(in.range(scopeBegin, scopeEnd), error);
+              std::vector<std::string> scope;
+              scope.reserve(parts);
+              for (std::size_t k = 0; k < parts; ++k)
+                scope.push_back(scopeReader.text());
+              if (!scopeReader.good())
+                in.fail("invalid syntax-context scope");
+              entry->second = std::make_shared<const SyntaxContext>(
+                  SyntaxContext{std::move(scope), definition, binder});
+            }
+            mapping.syntaxContext = entry->second;
+          }
+        } else if (in.good()) {
+          scan->validator.context(definition, parts, longestPart);
+          if (binder && scan->seenBinders.insert(binder).second)
+            scan->binders.push_back(binder);
+        }
+      }
+    }
+    if constexpr (Materialize) {
+      mapping.description = description;
+      generation.mappings.push_back(std::move(mapping));
+    }
+  }
+  return generation;
+}
 } // namespace
 
 LibrarySources::LibrarySources(std::string identity) {
@@ -272,11 +458,10 @@ LibrarySources::record(const Source &source, std::string &error,
 
 std::optional<metadata::SourceReference>
 LibrarySources::reference(Span span) const {
-  auto found = data->sourceIndex.find(span.source);
-  if (found == data->sourceIndex.end() || span.begin > span.end ||
-      span.end > data->sources[found->second].text.size())
+  const auto index = sourceSpanIndex(span, data->sources, data->sourceIndex);
+  if (!index)
     return std::nullopt;
-  return metadata::SourceReference{data->revisions[found->second],
+  return metadata::SourceReference{data->revisions[*index],
                                    static_cast<std::uint32_t>(span.begin),
                                    static_cast<std::uint32_t>(span.end)};
 }
@@ -306,70 +491,28 @@ bool LibrarySources::validate(std::string &error) const {
   if (data->identity.empty() || data->sources.size() > limits::tokens ||
       data->generations.size() > data->sources.size())
     return fail("invalid identity or table size");
-  std::unordered_map<SourceId, std::vector<SourceId>> parents;
-  for (const auto &generation : data->generations) {
-    auto found = data->sourceIndex.find(generation.source);
-    if (found == data->sourceIndex.end() ||
-        !parents.emplace(generation.source, std::vector<SourceId>{}).second ||
-        generation.description.size() > limits::sourceBytes ||
-        generation.mappings.size() > limits::tokens)
-      return fail("invalid or duplicate generated source");
-    auto &edges = parents.at(generation.source);
-    auto span = [&](Span value) {
-      if (!reference(value))
-        return false;
-      edges.push_back(value.source);
-      return true;
-    };
-    if (!span(generation.origin))
-      return fail("invalid generation origin");
-    std::size_t previousEnd = 0;
+  ProvenanceValidator validator(data->sources, data->sourceIndex, error);
+  for (const auto &record : data->generations) {
+    const auto &generation = record.get();
+    if (!validator.generation(generation.source, generation.origin,
+                              generation.description.size(),
+                              generation.mappings.size()))
+      return false;
     for (const auto &mapping : generation.mappings) {
-      if (mapping.begin < previousEnd || mapping.begin > mapping.end ||
-          mapping.end > data->sources[found->second].text.size() ||
-          mapping.description.size() > limits::sourceBytes ||
-          !span(mapping.target) ||
-          (!mapping.description.empty() && !span(mapping.origin)) ||
-          (mapping.exact && mapping.end - mapping.begin >
-                                mapping.target.end - mapping.target.begin))
-        return fail("invalid generation mapping");
-      previousEnd = mapping.end;
+      if (!validator.mapping(mapping, mapping.description))
+        return false;
       if (mapping.syntaxContext && *mapping.syntaxContext) {
         const auto &context = **mapping.syntaxContext;
-        if (!reference(context.definition) ||
-            context.scope.size() > limits::tokens ||
-            std::any_of(context.scope.begin(), context.scope.end(),
-                        [](const auto &part) {
-                          return part.size() > limits::sourceBytes;
-                        }))
-          return fail("invalid syntax context");
+        std::size_t longestPart = 0;
+        for (const auto &part : context.scope)
+          longestPart = std::max(longestPart, part.size());
+        if (!validator.context(context.definition, context.scope.size(),
+                               longestPart))
+          return false;
       }
     }
   }
-  std::unordered_map<SourceId, unsigned char> state;
-  for (const auto &[source, edges] : parents) {
-    if (state[source] == 2)
-      continue;
-    std::vector<std::pair<SourceId, std::size_t>> stack{{source, 0}};
-    state[source] = 1;
-    while (!stack.empty()) {
-      auto &[current, next] = stack.back();
-      auto found = parents.find(current);
-      if (found == parents.end() || next == found->second.size()) {
-        state[current] = 2;
-        stack.pop_back();
-        continue;
-      }
-      auto parent = found->second[next++];
-      if (state[parent] == 1)
-        return fail("cyclic generation provenance");
-      if (state[parent] == 0) {
-        state[parent] = 1;
-        stack.emplace_back(parent, 0);
-      }
-    }
-  }
-  return true;
+  return validator.finish();
 }
 
 bool LibrarySources::capture(const Diagnostics &diagnostics,
@@ -381,6 +524,7 @@ bool LibrarySources::capture(const Diagnostics &diagnostics,
   candidate.edit();
   const auto generations = diagnostics.registeredGenerations();
   candidate.data->generations.assign(generations.begin(), generations.end());
+  candidate.data->binders.reset();
   if (!candidate.validate(error))
     return false;
   candidate.validated = true;
@@ -422,8 +566,7 @@ bool LibrarySources::mount(
     for (const auto &source : data->sources)
       diagnostics.registerSource(std::shared_ptr<const Source>(data, &source));
     for (const auto &generation : data->generations)
-      diagnostics.generated(
-          std::shared_ptr<const Generation>(data, &generation));
+      diagnostics.generated(generation);
     validated = true;
     mounted = true;
   };
@@ -435,39 +578,59 @@ bool LibrarySources::mount(
   }
   if (!data.unique())
     data = std::make_shared<Data>(*data);
-  auto span = [&](Span value) {
-    value.source = remap.at(value.source);
-    return value;
-  };
   std::unordered_map<SourceId, std::size_t> mountedIndex;
   for (std::size_t i = 0; i < data->sources.size(); ++i)
     mountedIndex.emplace(remap.at(data->sources[i].id), i);
-  std::unordered_map<std::uint64_t, std::uint64_t> binders;
-  for (auto &generation : data->generations) {
-    generation.source = remap.at(generation.source);
-    generation.origin = span(generation.origin);
-    for (auto &mapping : generation.mappings) {
-      mapping.target = span(mapping.target);
-      if (!mapping.description.empty())
-        mapping.origin = span(mapping.origin);
-      if (!mapping.syntaxContext || !*mapping.syntaxContext)
-        continue;
-      const auto &context = **mapping.syntaxContext;
-      auto definition = span(context.definition);
-      std::uint64_t identity = 0;
-      if (context.identity) {
-        auto found = binders.find(context.identity);
-        if (found == binders.end()) {
-          identity = diagnostics.makeSyntaxContext(context.scope, definition)
-                         ->identity;
-          binders.emplace(context.identity, identity);
-        } else {
-          identity = found->second;
-        }
-      }
-      mapping.syntaxContext = std::make_shared<const SyntaxContext>(
-          SyntaxContext{context.scope, definition, identity});
+  if (!data->binders) {
+    data->binders.emplace();
+    std::unordered_set<std::uint64_t> seen;
+    for (const auto &record : data->generations)
+      for (const auto &mapping : record.get().mappings)
+        if (mapping.syntaxContext && *mapping.syntaxContext)
+          if (auto id = (**mapping.syntaxContext).identity;
+              id && seen.insert(id).second)
+            data->binders->push_back(id);
+  }
+  struct Remapping {
+    std::unordered_map<SourceId, SourceId> sources;
+    std::unordered_map<std::uint64_t, std::uint64_t> binders;
+    Span span(Span value) const {
+      value.source = sources.at(value.source);
+      return value;
     }
+  };
+  Remapping values{remap, {}};
+  for (auto &binder : *data->binders) {
+    const auto identity = syntaxBegin + values.binders.size() + 1;
+    values.binders.emplace(binder, identity);
+    binder = identity;
+  }
+  diagnostics.reserveSyntaxContexts(values.binders.size());
+  auto mapping = std::make_shared<const Remapping>(std::move(values));
+  for (auto &record : data->generations) {
+    record = GenerationRecord(remap.at(record.source()), [original = record,
+                                                          mapping] {
+      auto generation = original.get();
+      generation.source = mapping->sources.at(generation.source);
+      generation.origin = mapping->span(generation.origin);
+      std::unordered_map<SyntaxContextPtr, SyntaxContextPtr> contexts;
+      for (auto &entry : generation.mappings) {
+        entry.target = mapping->span(entry.target);
+        if (!entry.description.empty())
+          entry.origin = mapping->span(entry.origin);
+        if (!entry.syntaxContext || !*entry.syntaxContext)
+          continue;
+        auto [found, inserted] = contexts.try_emplace(*entry.syntaxContext);
+        if (inserted) {
+          const auto &context = **entry.syntaxContext;
+          found->second = std::make_shared<const SyntaxContext>(SyntaxContext{
+              context.scope, mapping->span(context.definition),
+              context.identity ? mapping->binders.at(context.identity) : 0});
+        }
+        entry.syntaxContext = found->second;
+      }
+      return generation;
+    });
   }
   for (auto &source : data->sources) {
     source.id = remap.at(source.id);
@@ -544,7 +707,8 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
   };
   std::unordered_map<std::uint64_t, std::uint32_t> binders;
   out.integer(static_cast<std::uint32_t>(data.generations.size()));
-  for (const auto &generation : data.generations) {
+  for (const auto &record : data.generations) {
+    const auto &generation = record.get();
     out.integer(
         static_cast<std::uint32_t>(data.sourceIndex.at(generation.source)));
     span(generation.origin);
@@ -648,41 +812,30 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
   auto generationCount = in.count(24);
   if (generationCount > count)
     in.fail("too many generated sources");
+  ProvenanceScan scan{ProvenanceValidator(archive.sources.data->sources,
+                                          archive.sources.data->sourceIndex,
+                                          error),
+                      {},
+                      {}};
   for (std::size_t i = 0; in.good() && i < generationCount; ++i) {
-    Generation generation;
-    generation.source = in.integer();
-    generation.origin = in.span(count);
-    generation.description = in.text();
-    auto mappings = in.count(26);
-    for (std::size_t j = 0; in.good() && j < mappings; ++j) {
-      Generation::Mapping mapping;
-      mapping.begin = in.integer();
-      mapping.end = in.integer();
-      mapping.target = in.span(count);
-      mapping.exact = in.boolean();
-      auto hasOrigin = in.boolean();
-      if (hasOrigin)
-        mapping.origin = in.span(count);
-      mapping.description = in.text();
-      if (hasOrigin != !mapping.description.empty())
-        in.fail("inconsistent mapping origin");
-      if (in.boolean()) {
-        mapping.syntaxContext = SyntaxContextPtr{};
-        if (in.boolean()) {
-          auto binder = in.integer();
-          auto parts = in.count(4);
-          std::vector<std::string> scope;
-          for (std::size_t k = 0; in.good() && k < parts; ++k)
-            scope.push_back(in.text());
-          auto definition = in.span(count);
-          mapping.syntaxContext = std::make_shared<const SyntaxContext>(
-              SyntaxContext{std::move(scope), definition, binder});
-        }
-      }
-      generation.mappings.push_back(std::move(mapping));
-    }
-    archive.sources.data->generations.push_back(std::move(generation));
+    const auto begin = in.position();
+    const auto generation = readGeneration<false>(in, count, &scan);
+    if (in.good())
+      archive.sources.data->generations.emplace_back(
+          generation.source,
+          [frame = in.range(begin, in.position()), count, backing] {
+            std::string error;
+            Reader reader(frame, error);
+            auto generation = readGeneration<true>(reader, count);
+            if (!reader.good() || reader.remaining())
+              throw metadata::InvalidMetadata(
+                  error.empty() ? "trailing generated-source data" : error);
+            return generation;
+          });
   }
+  if (in.good())
+    scan.validator.finish();
+  archive.sources.data->binders = std::move(scan.binders);
   auto modules = in.count(8);
   if (modules > count)
     in.fail("source-module table exceeds source table");
@@ -750,8 +903,6 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
     error = "invalid compiled library archive metadata checksum";
     return std::nullopt;
   }
-  if (!archive.sources.validate(error))
-    return std::nullopt;
   archive.verifyDeclarationPayload = payloadVerifier(
       backing, std::move(declarationSeals), declarationsLayout.payloads);
   archive.verifyIRBody =

@@ -431,8 +431,17 @@ Archive admission retains immutable Store mappings: published blobs are replaced
 atomically, never rewritten in place. Matching source/configuration identities
 reuse that snapshot without rereading the persistent blob; Store replacement or
 pruning cannot change its bytes. Consumers copy source/remap state before
-mounting. Source-provenance
-validation survives these copies; source recording or recapture invalidates it.
+mounting. Source-provenance validation survives these copies; source recording
+or recapture invalidates it. Admission validates every generated mapping,
+context extent and provenance cycle directly from the archive, retaining framed
+records rather than constructing their mapping strings and syntax contexts.
+Generated-source registration and lookup inspect source IDs before demanding a
+record. Mounting reserves bound hygiene identities in archive encounter order
+and retains immutable source/binder remaps; only requested records are decoded
+and rebased, once per shared record. Exact encoded contexts share storage within
+a generation without merging distinct scopes, definition spans, unbound marks
+or present-but-null contexts. Deferred loaders own their archive backing and
+remaps, never a diagnostics instance or caller stack.
 Archive sections share immutable storage. Replacing an entry releases its
 backing when no active import still owns it.
 

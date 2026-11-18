@@ -1119,6 +1119,19 @@ P03/P04/P05 fresh checks at 397.474 / 383.394, 445.432 / 405.464 and
 pass optimized and ASan/UBSan builds. These are engineering measurements:
 `~/w/anal/perf-type-query-pass-20261117-235802/results.json`.
 
+Generated provenance now retains validated archive frames and rebases only
+demanded records. The native inventory contained 161,771 mappings and 160,494
+context occurrences but only 988 distinct bound marks. Span validation no longer
+allocates revision strings; provenance edges and exact contexts are deduplicated.
+Compiler `2b8b702b...` against `a402c438...` measured P03/P04/P05 fresh checks at
+423.156 / 342.658, 397.627 / 338.577 and 453.294 / 383.645 ms (14.9-19.0%
+lower), and builds at 707.859 / 623.246, 702.446 / 632.109 and
+852.980 / 786.365 ms. All three outputs matched Rust. Archive, module, macro and
+boundary cases pass optimized and ASan/UBSan builds, including deferred lifetime,
+binder variants and rejection of unused cyclic/out-of-bounds provenance.
+These remain three-triple engineering timings, not qualification:
+`~/w/anal/perf-provenance-final-20261118-074314/results.json`.
+
 Still missing: specialization recipes do not cover every consumer-local type.
 Source queries conservatively fall back for unsupported cache shapes and shifted
 spans. Consolidated memory/storage/performance gates and whole-milestone
