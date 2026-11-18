@@ -1184,6 +1184,21 @@ Still missing: specialization recipes do not cover every consumer-local type.
 Source queries conservatively fall back for unsupported cache shapes and shifted
 spans. Consolidated memory/storage/performance gates and whole-milestone
 lifetime/sanitizer qualification remain open, as do source freeze and I14.
+IR symbol indexes now own each logical name once, with move-only reverse views.
+Compiler image keys no longer include the executable path, preserving linker
+build-ID and fallback-image-hash invalidation. Relocation regressions pass for
+both identity paths, including changed images; affected IR/archive/module cases
+also pass optimized and ASan/UBSan builds. An identical relocated compiler reused
+the warmed native `alloc` archive without rebuilding it.
+Compiler `df7c3d99...` against `355d492c...` measured P03/P04/P05 fresh checks
+at 356.103 / 324.777, 312.662 / 303.314 and 343.612 / 338.095 ms;
+builds were 568.891 / 601.815, 587.992 / 593.227 and 769.084 / 767.072 ms.
+Nine further P03 build pairs measured 599.923 / 596.328 ms, so the initial
+P03 build regression did not persist. Outputs matched Rust. These remain
+engineering measurements, not universal build speedups or I14 qualification:
+`~/w/anal/perf-symbol-ownership-compare-20261118/` and
+`~/w/anal/perf-admission-build-pairs-20261118-042221/`.
+
 Initial canonical type/index validation and checking-database admission remain
 eager; the dominant fresh-import gap is reduced, not eliminated.
 Next action: reduce those remaining admission costs without dropping graph

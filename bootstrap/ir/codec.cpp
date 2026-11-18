@@ -198,19 +198,25 @@ template <class T> struct IsPair : std::false_type {};
 template <class T, class U> struct IsPair<std::pair<T, U>> : std::true_type {};
 
 struct Symbols {
-  std::map<std::pair<SymbolKind, std::uint32_t>, std::string> identities;
   std::map<std::pair<SymbolKind, std::string>, std::uint32_t> indices;
+  std::map<std::pair<SymbolKind, std::uint32_t>, std::string_view> identities;
+  Symbols() = default;
+  Symbols(const Symbols &) = delete;
+  Symbols &operator=(const Symbols &) = delete;
+  Symbols(Symbols &&) = default;
+  Symbols &operator=(Symbols &&) = default;
   void bind(SymbolKind kind, std::uint32_t index, std::string_view name) {
-    // Repeated references dominate; probe before building a node.
     auto known = identities.find({kind, index});
     if (known != identities.end()) {
       if (known->second != name)
         reject("inconsistent or aliased IR logical symbol mapping");
       return;
     }
-    if (!indices.emplace(std::pair{kind, std::string(name)}, index).second)
+    auto [binding, inserted] =
+        indices.emplace(std::pair{kind, std::string(name)}, index);
+    if (!inserted)
       reject("inconsistent or aliased IR logical symbol mapping");
-    identities.emplace(std::pair{kind, index}, name);
+    identities.emplace(std::pair{kind, index}, binding->first.second);
   }
   void merge(const Symbols &other) {
     for (const auto &[key, name] : other.identities)

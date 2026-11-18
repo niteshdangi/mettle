@@ -722,6 +722,9 @@ in-root source links, rather than trusting timestamps. Links outside the
 declared library root make that snapshot ineligible; the driver reports the
 reason with `--explain` and uses ordinary source compilation. Compiler, target,
 profile, checks, features and declared dependency identities participate in its key.
+Compiler image identity uses its linker build ID, or a full image hash when
+absent, not its installation path. Identical relocated images share cache
+entries; runtime paths and content remain independently keyed.
 Each native root is scanned and content-hashed once per coordinator snapshot;
 larger closures reuse those captured dependency bytes and keys, not filesystem
 timestamps or process-global source caches. Archive section decoding avoids
@@ -742,8 +745,12 @@ imports require the envelope's immutable retained payload verifiers. Each demand
 checked-function block or IR body passes its committed digest check before its
 contents enter semantic decoding, then is fully validated before specialization.
 Body-private string tables are included in those checks; each body's symbol
-bindings are merged against the archive and previously loaded bodies. The
-checked archive owner remains live through compilation. Library-object misses load every body
+bindings are merged against the archive and previously loaded bodies.
+The move-only symbol tables own each name once in stable ordered-map nodes;
+reverse identity bindings borrow those names, not caller or archive strings.
+Moving a table preserves its nodes and views; merging copies names into the
+destination's own nodes.
+The checked archive owner remains live through compilation. Library-object misses load every body
 they emit, while object hits need not load bodies referenced as external
 declarations. The ordinary `decodeProgram` path remains eager and validates all
 bodies.

@@ -29,11 +29,13 @@ std::string compilerStamp(const fs::path &path) {
   if (object) {
     auto identity = llvm::object::getBuildID(object->getBinary());
     if (!identity.empty())
-      return path.generic_string() + ":build-id:" + llvm::toHex(identity, true);
+      return "build-id:" + llvm::toHex(identity, true);
   } else {
     llvm::consumeError(object.takeError());
   }
-  return fileStamp(path);
+  std::uint64_t size = 0;
+  auto hash = packages::hashFile(path, size);
+  return "sha256:" + hash.value_or("unreadable:" + path.generic_string());
 }
 
 std::string digest(std::string_view text) {

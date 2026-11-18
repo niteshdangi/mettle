@@ -1480,6 +1480,11 @@ def cache_compiler_identity():
 
     assert "cache miss" in last_cache_event(build())
     assert "cache hit" in last_cache_event(build())
+    relocated = evidence / "compiler-relocated"
+    shutil.copy2(compiler, relocated)
+    arguments[0] = str(relocated)
+    assert "cache hit" in last_cache_event(build())
+    arguments[0] = str(compiler)
     image = compiler.read_bytes()
     wide = image[4] == 2
     order = "<" if image[5] == 1 else ">"
@@ -1527,6 +1532,9 @@ def cache_compiler_identity():
         stream.write(b"C")
     os.utime(compiler, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
     assert "cache miss" in last_cache_event(build())
+    shutil.copy2(compiler, relocated)
+    arguments[0] = str(relocated)
+    assert "cache hit" in last_cache_event(build())
 
 
 def build_script():
