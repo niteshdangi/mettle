@@ -69,10 +69,9 @@ EncodeResult encodeProgram(const Program &program,
 // Raw records require global-table assembly and pipeline validation before use.
 DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
                            const metadata::DecodeReferences &references);
-// Decodes and validates headers and record extents. Function bodies are
-// validated when loaded; `bytes` must outlive the returned body loader.
-// Compact headers retain call contracts; body-local metadata loads with the
-// CFG.
+// Decodes callable contracts and record extents. Implementation metadata and
+// CFG are authenticated and validated when loaded. `bytes` must outlive the
+// returned body loader. Both header modes retain only callable contracts.
 DecodeResult decodeProgramLazy(std::span<const std::uint8_t> bytes,
                                const metadata::DecodeReferences &references,
                                bool compactHeaders = false,

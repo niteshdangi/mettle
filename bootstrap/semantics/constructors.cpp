@@ -72,9 +72,17 @@ bool Checker::constructorShapesOverlap(const Function &a, const Function &b) {
 void Checker::registerConstructors() {
   auto *savedCurrent = current;
   auto *savedEnvironment = genericEnvironment;
+  if (checked.importedDeclarations)
+    constructorGroups = checked.importedDeclarations->constructorGroups;
+  for (const auto &group : constructorGroups)
+    for (std::size_t i = 0; i < group->headers.size(); ++i) {
+      const auto &header = group->headers[i];
+      constructors[header.origin].push_back({header.function, group, i});
+    }
+  auto local = std::make_shared<ImportedConstructors>();
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
     auto &function = module.functions.header(i);
-    if (!function.constructor)
+    if (!function.constructor || checked.imported(i))
       continue;
     current = &function;
     genericEnvironment = &functionEnvironment(function);
@@ -98,12 +106,19 @@ void Checker::registerConstructors() {
     const auto &regions = functionRegions(function);
     applicability.regions = regions.parameters;
     applicability.regionRequirements = regions.environment.assumptions;
-    constructors[origin].push_back({i, std::move(applicability)});
+    auto record = local->headers.size();
+    local->headers.push_back({static_cast<std::uint32_t>(i), origin});
+    local->applicability.push_back(std::move(applicability));
+    constructors[origin].push_back({i, local, record});
   }
   genericEnvironment = savedEnvironment;
   current = savedCurrent;
+  if (!local->headers.empty())
+    constructorGroups.push_back(local);
 
   for (const auto &product : module.products.headers()) {
+    if (imported(product.span))
+      continue;
     auto origin = typeNames.find(definitionName(product.span, product.name));
     if (origin == typeNames.end() || !constructors.contains(origin->second))
       continue;
@@ -122,45 +137,52 @@ void Checker::registerConstructors() {
                 return left.source == right.source ? left.begin < right.begin
                                                    : left.source < right.source;
               });
-    for (std::size_t i = 0; i < candidates.size(); ++i)
-      for (std::size_t j = 0; j < i; ++j) {
-        const auto &later = candidates[i];
-        const auto &earlier = candidates[j];
-        if (!constructorShapesOverlap(
-                module.functions.header(later.function),
-                module.functions.header(earlier.function)))
+    std::map<const ImportedConstructors *,
+             std::vector<const ConstructorCandidate *>>
+        earlierGroups;
+    for (const auto &later : candidates) {
+      for (const auto &[group, earlierCandidates] : earlierGroups) {
+        if (group == later.group.get() && group != local.get())
           continue;
-        interfaces::Solver solver(*checked.types, *checked.interfaceData,
-                                  diagnostics);
-        auto bindings = solver.match(later.applicability.target,
-                                     earlier.applicability.target, true);
-        if (!bindings)
-          continue;
-        auto intersection = later.applicability;
-        intersection.parameters.insert(intersection.parameters.end(),
-                                       earlier.applicability.parameters.begin(),
-                                       earlier.applicability.parameters.end());
-        intersection.equalities.insert(intersection.equalities.end(),
-                                       earlier.applicability.equalities.begin(),
-                                       earlier.applicability.equalities.end());
-        intersection.requirements.insert(
-            intersection.requirements.end(),
-            earlier.applicability.requirements.begin(),
-            earlier.applicability.requirements.end());
-        if (solver.constraints(intersection, *bindings,
-                               module.functions.header(later.function).span, {},
-                               true))
-          error("type", module.functions.header(later.function).span,
-                "overlapping constructor argument shapes for '" +
-                    displayType(*checked.types, origin) + "'");
+        for (const auto *earlier : earlierCandidates) {
+          if (!constructorShapesOverlap(
+                  module.functions.header(later.function),
+                  module.functions.header(earlier->function)))
+            continue;
+          interfaces::Solver solver(*checked.types, *checked.interfaceData,
+                                    diagnostics);
+          const auto &left = later.applicability();
+          const auto &right = earlier->applicability();
+          auto bindings = solver.match(left.target, right.target, true);
+          if (!bindings)
+            continue;
+          auto intersection = left;
+          intersection.parameters.insert(intersection.parameters.end(),
+                                         right.parameters.begin(),
+                                         right.parameters.end());
+          intersection.equalities.insert(intersection.equalities.end(),
+                                         right.equalities.begin(),
+                                         right.equalities.end());
+          intersection.requirements.insert(intersection.requirements.end(),
+                                           right.requirements.begin(),
+                                           right.requirements.end());
+          if (solver.constraints(intersection, *bindings,
+                                 module.functions.header(later.function).span,
+                                 {}, true))
+            error("type", module.functions.header(later.function).span,
+                  "overlapping constructor argument shapes for '" +
+                      displayType(*checked.types, origin) + "'");
+        }
       }
+      earlierGroups[later.group.get()].push_back(&later);
+    }
   }
 }
 
 std::optional<std::vector<TypeBinding>> Checker::constructorApplicability(
     const ConstructorCandidate &candidate, Type type, Span span,
     interfaces::Solver &solver, std::span<const TypeBinding> seed) {
-  auto applicability = candidate.applicability;
+  auto applicability = candidate.applicability();
   std::vector<TypeBinding> known;
   for (const auto &binding : seed)
     if (binding.argument != Type::Unknown)
@@ -273,7 +295,8 @@ int Checker::genericCustomConstruction(Node &call, bool reachable, Type origin,
       return checked.types->substitute(type, known);
     };
     const auto targetArguments =
-        checked.types->product(candidate.applicability.target).genericArguments;
+        checked.types->product(candidate.applicability().target)
+            .genericArguments;
     if (targetArguments.size() != requestedArguments.size())
       continue;
     if (!assumptions)

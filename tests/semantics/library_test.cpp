@@ -139,6 +139,18 @@ pub module core {
     }
     pub const fn address6(): Address6 { Address6.LOCALHOST }
     pub type Number {}
+    pub type Owned {}
+    pub type Choice<T> { pub value: i32 }
+    extend<T: Copy> Choice<T> {
+        pub init(value: i32) { self.value = value }
+    }
+    extend Choice<Owned> {
+        pub init(value: i32) { self.value = value + 1 }
+    }
+    pub type DormantConstructor {
+        pub value: i32
+        pub init(value: i32) { self.value = value }
+    }
     pub const fn record(): Number { Number() }
     pub copy enum Marker { First, Last }
     unsafe extend Number implements Unpin {}
@@ -415,7 +427,10 @@ fn main(): i32 { core.ownValue() }
 module bootstrapOnly {}
 import core.Value;
 import core.Cursor;
-type Local { value: i32 }
+type Local {
+    value: i32
+    init(value: i32) { self.value = value }
+}
 extend Local implements core.Value { fn get(): i32 { self.value } }
 const MARKER: core.Marker = core.mark();
 const ADDRESS6: core.Address6 = core.address6();
@@ -433,6 +448,9 @@ fn main(): i32 {
     match cursor.next() { present(_) => {}, none => {} }
     var mapped = core.mapper(fn(): i32 { 3 });
     match mapped.next() { present(_) => {}, none => {} }
+    let first = core.Choice<i32>(3);
+    let second = core.Choice<core.Owned>(4);
+    if first.value != 3 || second.value != 5 { return 1 }
     core.add() + core.identity(*borrowed) + core.apply(1) + core.dispatch() +
         core.constIdentity(1) + record.get() + Local(1).get()
 }
@@ -503,14 +521,33 @@ fn main(): i32 {
                  ? std::optional{transientRoots[reference]}
                  : std::nullopt;
     };
-    auto contracts = importLibraryDeclarations(transientBytes, types,
-                                               transientReferences, &module);
+    auto retainedReferences =
+        std::make_shared<metadata::DecodeReferences>(decode);
+    retainedReferences->type =
+        [roots =
+             importedRoots](std::uint32_t reference) -> std::optional<Type> {
+      return reference < roots.size() ? std::optional{roots[reference]}
+                                      : std::nullopt;
+    };
+    auto storage =
+        std::make_shared<const std::vector<std::uint8_t>>(transientBytes);
+    auto contracts = importLibraryDeclarations(
+        *storage, types, *retainedReferences, &module, storage,
+        retainedReferences, metadata::ValidationMode::OnDemand);
     if (!contracts)
       std::cerr << contracts.error << '\n';
     expect(bool(contracts),
            "checked contracts decode after symbol/type remapping");
     if (!contracts)
       return std::nullopt;
+    bool deferredConstructors = false;
+    for (const auto &group : contracts.declarations->constructorGroups)
+      for (std::size_t i = 0; i < group->headers.size(); ++i) {
+        deferredConstructors = true;
+        expect(!group->applicability.isMaterialized(i),
+               "constructor admission retains checked applicability on demand");
+      }
+    expect(deferredConstructors, "fixture exports checked constructor groups");
     for (const auto *database : {&contracts.declarations->checkingDatabase,
                                  &contracts.declarations->database}) {
       bool deferred = true;
@@ -602,6 +639,15 @@ fn main(): i32 {
           }
         expect(dormant, "checking and coherence do not materialize unrelated "
                         "interface implementations");
+        bool dormantConstructor = false;
+        for (const auto &group : imported->constructorGroups)
+          for (std::size_t i = 0; i < group->headers.size(); ++i)
+            if (module.typeStore()->product(group->headers[i].origin).name ==
+                "core::DormantConstructor")
+              dormantConstructor = !group->applicability.isMaterialized(i);
+        expect(dormantConstructor,
+               "unused imported constructors reuse overlap proofs without "
+               "materializing applicability");
         bool structuralDeferred = !database.structuralDeclarations.empty();
         for (const auto &[key, index] :
              database.structuralDeclarations.entries()) {
@@ -850,7 +896,7 @@ fn main(): i32 {
          "header mounting rejects trailing bytes");
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
-      1 + std::string_view("mettle.checked-contracts.17").size();
+      1 + std::string_view("mettle.checked-contracts.18").size();
   oversized[inventoryOffset] = 0xff;
   oversized.insert(oversized.begin() + inventoryOffset + 1, 8, 0xff);
   oversized.insert(oversized.begin() + inventoryOffset + 9, 0x01);
@@ -876,6 +922,30 @@ fn main(): i32 {
                         rejectedNames, true, {}, nullptr, imported);
   expect(!rejected && !rejectedDiagnostics.empty(),
          "new consumer cannot bypass imported private visibility");
+  {
+    Diagnostics conflicts;
+    auto module =
+        resolution::load({"constructor-conflict.mt",
+                          "extend core.Choice<i32> {\n"
+                          "    init(value: i32) { self.value = value }\n"
+                          "}\nfn main(): i32 { 0 }\n"},
+                         provider, conflicts, library);
+    expect(bool(module), "local constructor extension mounts its dependency");
+    if (module) {
+      auto names = resolution::resolve(*module, conflicts,
+                                       library.compiledSourcePackages);
+      auto checked = check(std::move(*module), conflicts, names, true, {},
+                           nullptr, imported);
+      expect(!checked &&
+                 std::any_of(conflicts.items.begin(), conflicts.items.end(),
+                             [](const auto &item) {
+                               return item.message.find(
+                                          "overlapping constructor argument "
+                                          "shapes") != std::string::npos;
+                             }),
+             "local constructors are checked against imported applicability");
+    }
+  }
   auto constantValue = [&](const std::string &text, std::uint64_t expected) {
     Diagnostics diagnostics;
     auto module = resolution::load({"unsupported-constant.mt", text}, provider,

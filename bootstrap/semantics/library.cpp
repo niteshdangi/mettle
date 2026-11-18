@@ -2903,7 +2903,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   decltype(header.output){}.swap(header.output);
   header.headerSources.reset();
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.17");
+  contracts.tag("mettle.checked-contracts.18");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size() +
                         (module.importedDeclarations
@@ -2941,6 +2941,23 @@ exportLibraryDeclarations(const CheckedModule &module,
       writeFunction(static_cast<std::uint32_t>(i),
                     *value.functions.at(static_cast<std::uint32_t>(i)));
   }
+  count = 0;
+  for (const auto &group : value.constructorGroups)
+    count += group->headers.size();
+  contracts(count);
+  for (const auto &group : value.constructorGroups)
+    for (std::size_t i = 0; i < group->headers.size(); ++i) {
+      auto header = group->headers[i];
+      contracts.symbol(metadata::SymbolKind::Function, header.function);
+      contracts(header.origin);
+      Archive record(references, *module.types, contracts.hygieneState());
+      auto applicability = group->applicability[i];
+      record(applicability);
+      if (!record.good())
+        contracts.fail(std::move(record.error));
+      else
+        contracts.writeBlock(record.output);
+    }
   count = value.statics.size();
   contracts(count);
   for (auto &[index, item] : value.statics) {
@@ -3332,7 +3349,7 @@ declarationPayloadLayout(std::span<const std::uint8_t> bytes) {
     return std::optional<std::uint32_t>{0};
   };
   Archive archive(bytes, references, nullptr);
-  archive.tag("mettle.checked-contracts.17");
+  archive.tag("mettle.checked-contracts.18");
   std::uint64_t count = 0;
   archive(count);
   if (count > bytes.size())
@@ -3479,7 +3496,7 @@ LibraryDeclarationImport importLibraryDeclarations(
     target.facts = std::move(decoded->facts);
     target.constants = std::move(decoded->constants);
   };
-  archive.tag("mettle.checked-contracts.17");
+  archive.tag("mettle.checked-contracts.18");
   auto value = std::make_shared<ImportedDeclarations>();
   auto methods = std::make_shared<InterfaceMethods>();
   auto deferExpressions = [storage, frozen,
@@ -3674,6 +3691,83 @@ LibraryDeclarationImport importLibraryDeclarations(
     for (std::size_t i = 0; i < compact->functions.size(); ++i)
       compact->functions.defer(i, i, loader);
   }
+  archive(count);
+  if (count > value->functions.size())
+    archive.fail("constructor inventory exceeds the function inventory");
+  auto constructors = std::make_shared<ImportedConstructors>();
+  std::set<std::uint32_t> constructorFunctions;
+  auto validConstructor = [types](const interfaces::Implementation &item,
+                                  const ImportedConstructors::Header &header,
+                                  Type result) {
+    if (item.target != result || !types->isProduct(item.target))
+      return false;
+    const auto &product = types->product(item.target);
+    auto origin = product.genericOrigin == Type::Unknown
+                      ? item.target
+                      : product.genericOrigin;
+    return product.kind == AggregateKind::Product &&
+           !product.layout.unionType && origin == header.origin;
+  };
+  for (std::uint64_t i = 0; i < count && archive.good(); ++i) {
+    ImportedConstructors::Header header;
+    archive.symbol(metadata::SymbolKind::Function, header.function);
+    archive(header.origin);
+    auto payload = archive.readBlock();
+    auto function = value->functions.find(header.function);
+    if (!archive.good())
+      break;
+    if (function == value->functions.end() ||
+        !constructorFunctions.insert(header.function).second ||
+        !types->isProduct(header.origin) ||
+        (module && (header.function >= module->functions.size() ||
+                    !module->functions.header(header.function).constructor))) {
+      archive.fail("invalid checked constructor identity");
+      break;
+    }
+    auto resultType = function->second.resultType();
+    constructors->headers.push_back(header);
+    if (validation == metadata::ValidationMode::OnDemand) {
+      constructors->applicability.push_uninitialized();
+      auto loader = std::make_shared<const interfaces::DatabaseRecords<
+          interfaces::Implementation>::Loader>([storage, frozen, types, payload,
+                                                header, resultType,
+                                                validConstructor](std::size_t) {
+        Archive reader(payload, *frozen, types.get());
+        interfaces::Implementation item;
+        reader(item);
+        reader.finish();
+        if (!reader.good())
+          throw metadata::InvalidMetadata(
+              "invalid checked constructor applicability: " + reader.error);
+        if (!validConstructor(item, header, resultType))
+          throw metadata::InvalidMetadata(
+              "constructor applicability does not match its signature index");
+        return item;
+      });
+      constructors->applicability.defer(i, i, std::move(loader));
+    } else {
+      Archive reader(payload, admission, types.get());
+      interfaces::Implementation item;
+      reader(item);
+      reader.finish();
+      if (!reader.good())
+        archive.fail("invalid checked constructor applicability: " +
+                     reader.error);
+      else if (!validConstructor(item, header, resultType))
+        archive.fail(
+            "constructor applicability does not match its signature index");
+      else
+        constructors->applicability.push_back(std::move(item));
+    }
+  }
+  if (module)
+    for (std::size_t i = 0; i < module->functions.size() && archive.good(); ++i)
+      if (module->functions.header(i).constructor &&
+          value->functions.contains(static_cast<std::uint32_t>(i)) &&
+          !constructorFunctions.contains(static_cast<std::uint32_t>(i)))
+        archive.fail("missing checked constructor applicability");
+  if (!constructors->headers.empty())
+    value->constructorGroups.push_back(std::move(constructors));
   archive(count);
   if (count > bytes.size())
     archive.fail("static inventory exceeds its payload");

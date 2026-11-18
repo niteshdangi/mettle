@@ -176,9 +176,14 @@ private:
   OverlayMap<std::string, std::size_t> names;
   struct ConstructorCandidate {
     std::size_t function;
-    interfaces::Implementation applicability;
+    std::shared_ptr<const ImportedConstructors> group;
+    std::size_t record;
+    const interfaces::Implementation &applicability() const {
+      return group->applicability[record];
+    }
   };
   std::map<Type, std::vector<ConstructorCandidate>> constructors;
+  std::vector<std::shared_ptr<const ImportedConstructors>> constructorGroups;
   std::unordered_map<std::string, std::size_t> aliases;
   // The synthetic function type-checking each static's initializer, or -1.
   std::vector<int> staticInitializerFunctions;

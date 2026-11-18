@@ -601,6 +601,16 @@ and default vectors. Stable declaration IDs link signatures to demand-installed
 syntax annotations. Imported function names retain one immutable index with a
 consumer-local overlay, including cross-boundary constructor/name conflicts.
 
+Checked constructor applicability is retained in immutable groups. Each group
+records the jointly checked constructor inventory for one resolved dependency
+context; its function IDs and nominal origins are eager, while applicability
+constraints are archive-backed records loaded for selection or cross-group
+overlap checks. Consumer checking reuses overlap results only within the same
+imported group. Local/local, local/imported and independently imported groups
+still undergo shape and constraint intersection checks. Retaining declarations
+shares groups without loading their records; re-exporting checks all records
+it serializes and binds their types and functions to the new archive identities.
+
 Interface admission decodes the checking database once and applies finalized
 record differences, sharing unchanged definitions, projections, implementations,
 maps and implementation-candidate indexes. Consumer changes detach records or
@@ -615,7 +625,7 @@ admission; owned encoded slices materialize once on demand. Deferred readers
 retain frozen successful remaps or explicitly retained immutable driver-owned
 resolver tables, never caller-borrowing callbacks. Function-relative slices
 translate deferred expression offsets back to the enclosing archive. Header
-schema 3 and contract schema 16 encode each source revision once, followed by
+schema 4 and contract schema 18 encode each source revision once, followed by
 ordinal references. Admission rejects forward or conflicting definitions before
 source resolution; deferred readers retain the completed revision table.
 Span extents still pass through the admitted source resolver. The driver
@@ -756,13 +766,15 @@ The checked-library coordinator connects these sections through lazy native
 providers and a post-resolution pipeline importer. Unused native roots are not
 prepared, and user roots retain shadowing priority. Imported declarations and
 bodies still pass ordinary specialization and concrete admission.
-Checked IR v12 records independently frame and intern function headers and CFG
-bodies, so body-only strings are deferred with their bodies. The codec owns the
+Checked IR v13 records independently frame and intern callable interfaces and
+implementation payloads. Private locals, parameter storage/scope details,
+values, lexical scopes and array-loop metadata are deferred with the CFG;
+signature, safety and linkage information remain eager. The codec owns the
 shared frame index used by envelope integrity and semantic decoding; checked
 declarations likewise expose their existing function-block extents. The driver
 does not parse either schema. Import preflights every record extent and
-definition identity, decodes all headers and
-statics, and rejects trailing data while leaving CFG bodies encoded. Native
+definition identity, decodes callable interfaces and statics, and rejects
+trailing data while leaving implementation payloads encoded. Native
 imports require the envelope's immutable retained payload verifiers. Each demanded
 checked-function block or IR body passes its committed digest check before its
 contents enter semantic decoding, then is fully validated before specialization.

@@ -215,6 +215,14 @@ private:
   std::shared_ptr<const ImportedFunctionRecords> records;
   std::size_t index = 0;
 };
+struct ImportedConstructors {
+  struct Header {
+    std::uint32_t function = 0;
+    Type origin = Type::Unknown;
+  };
+  std::vector<Header> headers;
+  interfaces::DatabaseRecords<interfaces::Implementation> applicability;
+};
 struct ImportedDeclarations {
   using TypeTable = std::vector<std::shared_ptr<const ImportedTypeDeclaration>>;
   std::map<std::uint32_t, ImportedFunctionReference> functions;
@@ -222,6 +230,7 @@ struct ImportedDeclarations {
   std::map<std::uint32_t, ImportedClosure> closures;
   TypeTable products, aliases, interfaces, implementations, associated;
   std::vector<ImportedInherentConstant> inherentConstants;
+  std::vector<std::shared_ptr<const ImportedConstructors>> constructorGroups;
   interfaces::Database checkingDatabase, database;
   std::shared_ptr<const TypeStore> types;
   struct Index {

@@ -1246,6 +1246,17 @@ declaration lookup with independently complete implementation catalogs; deferred
 IR locals/scopes/loop metadata behind callable interfaces; and retained checked
 constructor applicability with dependency-keyed imported overlap results.
 These are not completed by the preceding compact-representation changes.
+The IR/constructor portion now separates IR v13 callable interfaces from private
+implementation metadata and retains checked constructor applicability in
+contract schema 18. Imported constructor groups reuse their internal overlap
+proof without enumerating imported/imported pairs; consumer additions and
+independently checked groups still undergo intersection checks. Applicability
+loads for selection or cross-group checks, not for unused constructors.
+Focused optimized and ASan/UBSan codec, declaration and resident-module cases
+pass; source cases cover generic conditional constructors, regional inference
+and overlapping-shape rejection. This is implementation/correctness evidence,
+not measured admission speedup. Sparse archive-local consumer type mapping and
+module/name demand-only declaration admission remain unimplemented.
 Next action: continue measured compiler-performance work from this integrated
 source; whole-I14 source freeze and consolidated qualification remain open.
 Preserve frozen candidates and reuse unchanged-input evidence rather than

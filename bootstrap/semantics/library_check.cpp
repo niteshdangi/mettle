@@ -401,6 +401,7 @@ void Checker::retainDeclarations() {
   result->types = checked.types;
   result->checkingDatabase = std::move(checkingInterfaces);
   result->database = *checked.interfaceData;
+  result->constructorGroups = constructorGroups;
   auto environment = [](const GenericEnvironment &value) {
     return DeclarationEnvironment{value.names,      value.bounds,
                                   value.parameters, value.defaults,

@@ -431,9 +431,18 @@ void verifiedRemapping() {
       require(result.program.functions.empty(),
               "mutated archive exposed partial records");
       if (result.error == "invalid IR local scope reference" ||
-          result.error == "invalid IR lexical scope parent")
-        require(!decodeProgramLazy(bad, refs, true),
-                "compact validation ignored malformed body-local metadata");
+          result.error == "invalid IR lexical scope parent") {
+        require(bool(compact),
+                "admission traversed malformed implementation scopes");
+        bool rejectedOnDemand = false;
+        for (std::size_t i = 0; i < compact.program.functions.size(); ++i) {
+          auto demanded = compact.lazyFunctions->load(
+              i, compact.program.functions[i], refs);
+          rejectedOnDemand |= !demanded && demanded.error == result.error;
+        }
+        require(rejectedOnDemand,
+                "demanded implementation skipped scope validation");
+      }
     }
   }
   require(imported.roots == rootsBefore,
@@ -449,6 +458,7 @@ void crossRecordSymbolAliases() {
     program.functions.push_back(std::move(function));
   }
   auto &header = program.functions.edit(0);
+  header.parameters = 1;
   header.locals = {{"self", Type::I32, false, {}, ParameterMode::Value, 1},
                    {"unused", Type::I32, false, {}, ParameterMode::Value, 1}};
   header.scopes.push_back({0});
@@ -662,7 +672,9 @@ void rawFieldCoverage() {
   p.requireEntry = false;
   auto function = constantFunction("metadata", 0);
   function.parameters = 1;
-  function.locals = {{"argument", Type::I32, true, {}, ParameterMode::Mut}};
+  function.locals = {{"argument", Type::I16, true, {}, ParameterMode::Mut}};
+  function.locals.push_back(
+      {"private", Type::Isize, false, {29, 31, 7}, ParameterMode::Value, 1, 7});
   function.scopes.push_back({0});
   function.resultSources = function.resultContents =
       function.callLocalParameters = function.genericResultSources = {0};
@@ -854,6 +866,53 @@ void rawFieldCoverage() {
   require(bool(loaded) && *loaded.function == f &&
               declarationReads == readsBeforeBody,
           "compact body loading lost metadata or decoded its signature again");
+  auto missingPrivateType = decode;
+  missingPrivateType.type = [resolve = decode.type](std::uint32_t id) {
+    return id == Type::Isize.index() + 100 ? std::optional<Type>{}
+                                           : resolve(id);
+  };
+  auto deferred = decodeProgramLazy(bytes.bytes, missingPrivateType, true);
+  require(bool(deferred),
+          "unused implementation-local type was resolved during admission");
+  auto missingLocal = deferred.lazyFunctions->load(
+      0, deferred.program.functions[0], missingPrivateType);
+  require(!missingLocal && missingLocal.error == "unmapped IR type reference",
+          "demanded implementation skipped private-local type validation");
+  auto missingParameterType = decode;
+  missingParameterType.type = [resolve = decode.type](std::uint32_t id) {
+    return id == Type::I16.index() + 100 ? std::optional<Type>{} : resolve(id);
+  };
+  require(!decodeProgramLazy(bytes.bytes, missingParameterType, true),
+          "invalid callable type was deferred until implementation demand");
+  const auto layout = programLayout(bytes.bytes);
+  require(bool(layout), layout.error.c_str());
+  const auto body = layout.bodies[0];
+  bool deferredLoop = false, deferredLocalScope = false,
+       deferredScopeParent = false;
+  for (std::size_t offset = body.offset;
+       offset < body.offset + body.size &&
+       !(deferredLoop && deferredLocalScope && deferredScopeParent);
+       ++offset) {
+    auto mutated = bytes.bytes;
+    mutated[offset] ^= 0x40;
+    auto malformed = decodeProgram(mutated, decode);
+    if (malformed || (!malformed.error.starts_with("invalid IR array-loop") &&
+                      malformed.error != "invalid IR local scope reference" &&
+                      malformed.error != "invalid IR lexical scope parent"))
+      continue;
+    auto admitted = decodeProgramLazy(mutated, *retained, true, retained);
+    require(bool(admitted),
+            "admission traversed malformed implementation metadata");
+    auto demanded =
+        admitted.lazyFunctions->load(0, admitted.program.functions[0], decode);
+    require(!demanded && demanded.error == malformed.error,
+            "demanded implementation skipped local-reference validation");
+    deferredLoop |= malformed.error.starts_with("invalid IR array-loop");
+    deferredLocalScope |= malformed.error == "invalid IR local scope reference";
+    deferredScopeParent |= malformed.error == "invalid IR lexical scope parent";
+  }
+  require(deferredLoop && deferredLocalScope && deferredScopeParent,
+          "corruption probes did not reach deferred scopes and loops");
   auto bad = bytes.bytes;
   auto marker =
       std::search(bad.begin(), bad.end(), n.text.begin(), n.text.end());
