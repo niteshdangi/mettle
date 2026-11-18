@@ -1255,8 +1255,46 @@ loads for selection or cross-group checks, not for unused constructors.
 Focused optimized and ASan/UBSan codec, declaration and resident-module cases
 pass; source cases cover generic conditional constructors, regional inference
 and overlapping-shape rejection. This is implementation/correctness evidence,
-not measured admission speedup. Sparse archive-local consumer type mapping and
-module/name demand-only declaration admission remain unimplemented.
+not measured admission speedup.
+Archive-local type admission now has producer-built v5 lookup indexes and sparse
+native Entry/descriptor prefixes. The native identity address range stays stable
+across snapshots, while actual records materialize on demand. Admission retains
+neither a complete compact descriptor inventory nor canonical-key storage;
+collision checks remain exact, and duplicate identities retain the existing
+eager canonicalization path. Focused type-graph cases pass optimized and
+ASan/UBSan builds, including malformed unused indexes, symbol aliases, snapshots
+and concurrent demand. Module/name demand-only declaration admission is
+implemented through resolution,
+checking, lowering and the driver, with stable native declaration ranges and
+independently complete implementation/constructor catalogs. Driver probes admit
+35/8,215 function headers for `vec_core_traits` and 126/8,215 for `hash_map`;
+both admit 2/6,171 implementation syntax records. Default/private-helper lookup,
+closure discovery, package mapping and link-presence queries no longer enumerate
+unused headers. The final production candidate reserves 67,449 native type
+identities with zero native Entry records or owned descriptors before checking.
+P04 demands 1,765 native records and P05 demands 7,417, without eager shells.
+The combined optimized and ASan/UBSan type-graph, declaration, archive and module
+cases pass. Resident replay retains local product/alias identities alongside
+native catalogs; the complete P03/P04/P05 semantic-edit sequence passes with
+query reuse enabled. Archive readers no longer allocate unused hygiene state
+or source-revision inventories for scalar/index queries.
+
+The five-pair engineering comparison against `f41aa45b` measures the complete
+integration, not isolated stage estimates:
+
+| Workload | Fresh check, ms | Fresh build, ms | Resident check, ms | Resident peak RSS, KiB |
+| --- | --- | --- | --- | --- |
+| P03 text scan | 312.6 -> 249.0 | 579.6 -> 527.8 | 101.1 -> 56.3 | 377,556 -> 239,552 |
+| P04 struct/Vec | 310.4 -> 256.0 | 588.1 -> 552.6 | 108.1 -> 65.0 | 391,756 -> 251,692 |
+| P05 HashMap | 341.5 -> 309.1 | 743.1 -> 719.7 | 126.7 -> 72.7 | 395,904 -> 291,736 |
+
+Generated-program outputs agree with the baseline and Rust. Fresh checks remain
+14.4-18.3 times the matched Rust measurements, so these gains do not close I14.
+Evidence: `~/w/anal/perf-sparse-native-integration-20261118-095842-final/`,
+including `results.json` and the P04/P05 type-admission logs. Frozen candidate
+SHA-256: `19a5c66bf8e995e9ef9cf71c4424a699db4dd38bea488da66049c30adf78fa10`.
+The earlier failed candidate and its measurements remain separately preserved;
+its replay failure and fresh-load regression are fixed in this candidate.
 Next action: continue measured compiler-performance work from this integrated
 source; whole-I14 source freeze and consolidated qualification remain open.
 Preserve frozen candidates and reuse unchanged-input evidence rather than

@@ -181,8 +181,16 @@ public:
     if (auto cached = destructorCache.find(origin);
         cached != destructorCache.end())
       return cached->second;
+    if (checker.checked.importedDeclarations &&
+        checker.checked.importedDeclarations->catalog)
+      if (auto native =
+              checker.checked.importedDeclarations->catalog->destructor(
+                  checker.checked.types->product(origin).name))
+        return destructorCache
+            .emplace(origin, &checker.module.functions[*native])
+            .first->second;
     const Function *found = nullptr;
-    for (const auto &function : checker.module.functions.headers()) {
+    for (const auto &function : checker.module.functions.localHeaders()) {
       if (!function.destructor)
         continue;
       auto name = checker.typeName(function.owner, function.span);

@@ -129,13 +129,19 @@ Type TypeStore::constantExpression(std::string operation,
 }
 std::pair<TypeParameterKind, Type>
 TypeStore::parameterCategory(Type type) const {
+  auto ordinal = type.index() - builtinTypeCount;
+  if (importedScalars && ordinal < reservedImportedTypes &&
+      !parameters.isMaterialized(ordinal)) {
+    auto scalars = importedScalars(ordinal);
+    return {scalars.parameterKind, scalars.valueType};
+  }
   return inspectParameter(type, [](const auto &record) {
     return std::pair{record.kind, record.valueType};
   });
 }
 bool TypeStore::isParameter(Type type) const {
   if (type.index() < builtins || !contains(type) ||
-      entries[type.index() - builtins].kind != EntryKind::Parameter)
+      entryKind(type) != EntryKind::Parameter)
     return false;
   const auto [kind, value] = parameterCategory(type);
   return kind == TypeParameterKind::Type ||
@@ -143,7 +149,7 @@ bool TypeStore::isParameter(Type type) const {
 }
 bool TypeStore::isConstant(Type type) const {
   if (type.index() < builtins || !contains(type) ||
-      entries[type.index() - builtins].kind != EntryKind::Parameter)
+      entryKind(type) != EntryKind::Parameter)
     return false;
   const auto [kind, value] = parameterCategory(type);
   return kind != TypeParameterKind::Type &&
@@ -151,12 +157,12 @@ bool TypeStore::isConstant(Type type) const {
 }
 bool TypeStore::isConstParameter(Type type) const {
   return type.index() >= builtins && contains(type) &&
-         entries[type.index() - builtins].kind == EntryKind::Parameter &&
+         entryKind(type) == EntryKind::Parameter &&
          parameterCategory(type).first == TypeParameterKind::Constant;
 }
 bool TypeStore::isProjection(Type type) const {
   return type.index() >= builtins && contains(type) &&
-         entries[type.index() - builtins].kind == EntryKind::Parameter &&
+         entryKind(type) == EntryKind::Parameter &&
          parameterCategory(type).first == TypeParameterKind::Projection;
 }
 Type TypeStore::projection(Type subject, Type interfaceType,

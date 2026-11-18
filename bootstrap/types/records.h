@@ -64,10 +64,12 @@ public:
   TypeRecords(const TypeRecords &) = default;
   TypeRecords &operator=(const TypeRecords &) = default;
   TypeRecords(TypeRecords &&other) noexcept
-      : pages(std::move(other.pages)), count(std::exchange(other.count, 0)) {}
+      : pages(std::move(other.pages)), prefix(std::move(other.prefix)),
+        count(std::exchange(other.count, 0)) {}
   TypeRecords &operator=(TypeRecords &&other) noexcept {
     if (this != &other) {
       pages = std::move(other.pages);
+      prefix = std::move(other.prefix);
       count = std::exchange(other.count, 0);
     }
     return *this;
@@ -77,13 +79,17 @@ public:
   bool isMaterialized(std::size_t index) const {
     if (index >= count)
       throw std::out_of_range("type record index");
-    return pages[index / pageCapacity]->ready[index % pageCapacity].load(
-        std::memory_order_acquire);
+    auto pageIndex = index / pageCapacity;
+    const auto &local = pages[pageIndex];
+    const auto &page = local ? local : prefix->find(pageIndex);
+    return page &&
+           page->ready[index % pageCapacity].load(std::memory_order_acquire);
   }
   const T &front() const { return (*this)[0]; }
   Reference front() { return (*this)[0]; }
   const T &operator[](std::size_t index) const {
-    return pages[index / pageCapacity]->read(index % pageCapacity);
+    const auto &page = readable(index / pageCapacity);
+    return page->read(index % pageCapacity);
   }
   Reference operator[](std::size_t index) {
     if constexpr (ExplicitWrite)
@@ -104,7 +110,7 @@ public:
   std::shared_ptr<const T> retain(std::size_t index) const {
     if (index >= count)
       throw std::out_of_range("type record index");
-    const auto &page = pages[index / pageCapacity];
+    auto page = readable(index / pageCapacity);
     return {page, &page->read(index % pageCapacity)};
   }
   Reference at(std::size_t index) {
@@ -125,11 +131,22 @@ public:
   void reserve(std::size_t capacity) {
     pages.reserve(capacity / pageCapacity + (capacity % pageCapacity != 0));
   }
+  void deferPrefix(std::size_t size, std::shared_ptr<const Loader> loader) {
+    if (!loader)
+      throw std::invalid_argument("invalid deferred type record loader");
+    if (!empty())
+      throw std::logic_error("cannot defer a nonempty type record prefix");
+    auto deferred = std::make_shared<Prefix>(size, std::move(loader));
+    pages.resize(size / pageCapacity + (size % pageCapacity != 0));
+    prefix = std::move(deferred);
+    count = size;
+  }
   void resize(std::size_t size) {
     if (size < count) {
       pages.resize(size / pageCapacity + (size % pageCapacity != 0));
       if (size % pageCapacity) {
         auto &page = writable(size / pageCapacity);
+        page.prefixSlots = std::min(page.prefixSlots, size % pageCapacity);
         for (auto i = size % pageCapacity; i < pageCapacity; ++i) {
           if (!page.items.empty())
             page.items[i] = T{};
@@ -145,6 +162,7 @@ public:
   }
   void clear() {
     pages.clear();
+    prefix.reset();
     count = 0;
   }
   bool operator==(const TypeRecords &other) const {
@@ -190,11 +208,21 @@ private:
     mutable std::array<std::atomic_bool, pageCapacity> ready{};
     mutable std::mutex mutex;
     mutable std::vector<Deferred> pending;
+    std::shared_ptr<const Loader> prefixLoader;
+    std::size_t prefixBase = 0;
+    std::size_t prefixSlots = 0;
     Page() = default;
+    Page(std::shared_ptr<const Loader> loader, std::size_t base,
+         std::size_t slots)
+        : prefixLoader(std::move(loader)), prefixBase(base),
+          prefixSlots(slots) {}
     Page(const Page &other) {
       std::lock_guard lock(other.mutex);
       items = other.items;
       pending = other.pending;
+      prefixLoader = other.prefixLoader;
+      prefixBase = other.prefixBase;
+      prefixSlots = other.prefixSlots;
       for (std::size_t i = 0; i < pageCapacity; ++i)
         ready[i].store(other.ready[i].load(std::memory_order_relaxed),
                        std::memory_order_relaxed);
@@ -211,23 +239,63 @@ private:
         if (!ready[index].load(std::memory_order_relaxed)) {
           if (items.empty())
             items.resize(pageCapacity);
-          if (!pending.empty()) {
-            if (pending[index].borrowed)
-              items[index] = *pending[index].borrowed;
-            else if (pending[index].loader)
-              items[index] = (*pending[index].loader)(pending[index].input);
+          if (!pending.empty() && pending[index].borrowed)
+            items[index] = *pending[index].borrowed;
+          else if (!pending.empty() && pending[index].loader)
+            items[index] = (*pending[index].loader)(pending[index].input);
+          else if (index < prefixSlots)
+            items[index] = (*prefixLoader)(prefixBase + index);
+          if (!pending.empty())
             pending[index].loader.reset();
-          }
           ready[index].store(true, std::memory_order_release);
         }
       }
       return items[index];
     }
   };
+  struct Prefix {
+    struct Slot {
+      std::atomic_bool ready = false;
+      std::shared_ptr<Page> page;
+    };
+    std::shared_ptr<const Loader> loader;
+    std::size_t count;
+    mutable std::mutex mutex;
+    mutable std::vector<Slot> pages;
+    const std::shared_ptr<Page> empty;
+    Prefix(std::size_t count, std::shared_ptr<const Loader> loader)
+        : loader(std::move(loader)), count(count),
+          pages(count / pageCapacity + (count % pageCapacity != 0)) {}
+    const std::shared_ptr<Page> &find(std::size_t index) const {
+      const auto &slot = pages[index];
+      return slot.ready.load(std::memory_order_acquire) ? slot.page : empty;
+    }
+    const std::shared_ptr<Page> &get(std::size_t index) const {
+      auto &slot = pages[index];
+      if (!slot.ready.load(std::memory_order_acquire)) {
+        std::lock_guard lock(mutex);
+        if (!slot.ready.load(std::memory_order_relaxed)) {
+          slot.page = std::make_shared<Page>(
+              loader, index * pageCapacity,
+              std::min(pageCapacity, count - index * pageCapacity));
+          slot.ready.store(true, std::memory_order_release);
+        }
+      }
+      return slot.page;
+    }
+  };
   std::vector<std::shared_ptr<Page>> pages;
+  std::shared_ptr<Prefix> prefix;
   std::size_t count = 0;
+  const std::shared_ptr<Page> &readable(std::size_t index) const {
+    if (pages[index])
+      return pages[index];
+    return prefix->get(index);
+  }
   Page &writable(std::size_t index) {
     auto &page = pages[index];
+    if (!page)
+      page = prefix->get(index);
     if (!page.unique())
       page = std::make_shared<Page>(*page);
     return *page;

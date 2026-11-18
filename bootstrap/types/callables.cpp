@@ -123,10 +123,8 @@ std::vector<Type> TypeStore::coroutineInterior(Type closure) {
       bindings.push_back({parameters[i], arguments[i]});
     closure = origin;
   }
-  auto found = coroutineInteriors.find(closure.index());
-  if (found == coroutineInteriors.end())
-    return {};
-  auto held = found->second;
+  auto interior = retainedCoroutineInterior(closure);
+  std::vector<Type> held(interior.begin(), interior.end());
   if (!bindings.empty())
     for (auto &type : held)
       type = substitute(type, bindings);
@@ -134,7 +132,7 @@ std::vector<Type> TypeStore::coroutineInterior(Type closure) {
 }
 bool TypeStore::isFunctionPointer(Type type) const {
   return type.index() >= builtins && contains(type) &&
-         entries[type.index() - builtins].kind == EntryKind::Callable;
+         entryKind(type) == EntryKind::Callable;
 }
 bool TypeStore::isCallable(Type type) const {
   return isFunctionPointer(type) ||

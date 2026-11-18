@@ -80,7 +80,8 @@ void Checker::registerConstructors() {
       constructors[header.origin].push_back({header.function, group, i});
     }
   auto local = std::make_shared<ImportedConstructors>();
-  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i) {
     auto &function = module.functions.header(i);
     if (!function.constructor || checked.imported(i))
       continue;
@@ -116,7 +117,7 @@ void Checker::registerConstructors() {
   if (!local->headers.empty())
     constructorGroups.push_back(local);
 
-  for (const auto &product : module.products.headers()) {
+  for (const auto &product : module.products.localHeaders()) {
     if (imported(product.span))
       continue;
     auto origin = typeNames.find(definitionName(product.span, product.name));
@@ -130,6 +131,12 @@ void Checker::registerConstructors() {
   }
 
   for (auto &[origin, candidates] : constructors) {
+    if (!candidates.empty() && candidates.front().group != local &&
+        std::all_of(candidates.begin(), candidates.end(),
+                    [&](const auto &candidate) {
+                      return candidate.group == candidates.front().group;
+                    }))
+      continue;
     std::sort(candidates.begin(), candidates.end(),
               [&](const auto &a, const auto &b) {
                 auto left = module.functions.header(a.function).span;

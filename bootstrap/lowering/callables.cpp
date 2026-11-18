@@ -91,12 +91,11 @@ void callableContracts(ir::Program &program) {
 int Builder::closureIndex(std::size_t index) const {
   if (imported && index < imported->closureFunctions.size())
     return imported->closureFunctions[index];
-  auto result = module.syntax().functions.size();
-  for (const auto &function : module.syntax().functions.headers())
-    for (const auto &parameter : function.parameters)
-      result += module.hasDefault(
-          module.syntax().functions.indexOf(&function),
-          static_cast<std::size_t>(&parameter - function.parameters.data()));
+  const auto &functions = module.syntax().functions;
+  auto result = functions.size() + module.nativeDefaultCount();
+  for (auto f = functions.nativeSize(); f < functions.size(); ++f)
+    for (std::size_t p = 0; p < functions.header(f).parameters.size(); ++p)
+      result += module.hasDefault(f, p);
   if (imported)
     result += (imported->headers.empty() ? imported->support.size()
                                          : imported->supportRecords.size()) -

@@ -5,7 +5,7 @@
 
 namespace mettle {
 void Checker::declarations() {
-  for (const auto &product : module.products.headers()) {
+  for (const auto &product : module.products.localHeaders()) {
     if (imported(product.span))
       continue;
     auto name = definitionName(product.span, product.name);
@@ -27,7 +27,8 @@ void Checker::declarations() {
     }
   }
   aliasStates.resize(module.aliases.size());
-  for (std::size_t i = 0; i < module.aliases.size(); ++i) {
+  for (std::size_t i = module.aliases.nativeSize(); i < module.aliases.size();
+       ++i) {
     const auto &header = module.aliases.header(i);
     if (imported(header.span)) {
       aliases.emplace(definitionName(header.span, header.name), i);
@@ -85,7 +86,8 @@ void Checker::declarations() {
   if (!diagnostics.empty())
     return;
   prepareGenerics();
-  for (std::size_t i = 0; i < module.aliases.size(); ++i)
+  for (std::size_t i = module.aliases.nativeSize(); i < module.aliases.size();
+       ++i)
     if (imported(module.aliases.header(i).span))
       continue;
     else if (typeEnvironment(module.aliases[i]).parameters.empty())

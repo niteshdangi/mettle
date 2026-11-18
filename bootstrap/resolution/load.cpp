@@ -525,6 +525,7 @@ private:
   // `core` because the built-in range value is then a library range.
   std::unordered_set<std::string> iteratorMethods;
   bool builtinMethodsLoaded = false;
+  std::vector<std::shared_ptr<const NativeDeclarationIndex>> builtinIndexes;
   std::size_t scanned = 0, scannedLiterals = 0, scannedImports = 0;
 
   const Library::CompiledModule *compiledModule(std::string_view root,
@@ -601,6 +602,11 @@ private:
   }
 
   void indexCoreMethods(const Module &header) {
+    if (!header.nativeDeclarations.empty()) {
+      builtinIndexes = header.nativeDeclarations;
+      builtinMethodsLoaded = true;
+      return;
+    }
     for (const auto &function : header.functions.headers()) {
       auto module = function.item.scope.empty() ? std::string{}
                                                 : function.item.scope.back();
@@ -663,6 +669,9 @@ private:
       if (found == compiledHeaders.end())
         continue;
       auto &header = found->second;
+      prefix.nativeDeclarations.insert(prefix.nativeDeclarations.end(),
+                                       header.nativeDeclarations.begin(),
+                                       header.nativeDeclarations.end());
       if (!prefix.functions.empty())
         for (std::size_t i = 0; i < header.implementations.size(); ++i)
           header.implementations.transformHeader(
@@ -710,6 +719,9 @@ private:
     prepend(result.modules, prefix.modules);
     prepend(result.imports, prefix.imports);
     prepend(result.macros, prefix.macros);
+    result.nativeDeclarations.insert(result.nativeDeclarations.begin(),
+                                     prefix.nativeDeclarations.begin(),
+                                     prefix.nativeDeclarations.end());
   }
 
   SourceId sourceId(Source &source) {
@@ -1125,6 +1137,12 @@ private:
           i + 1 < significant.size() && significant[i + 1]->text == "(" &&
           available("core")) {
         const auto &known = builtinMethods();
+        for (const auto &index : builtinIndexes) {
+          if (auto method = index->builtinMethod(token.text))
+            methods.emplace(token.text, std::move(*method));
+          if (index->iteratorMethod(token.text))
+            iteratorMethods.insert(token.text);
+        }
         if (auto method = known.find(token.text); method != known.end())
           found.push_back({"core", method->second, "", token.span, false});
         else if (i > 1 && significant[i - 2]->text == ")" &&

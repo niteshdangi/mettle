@@ -268,15 +268,25 @@ extern "C" fn linked_native(): i32;
           linked->item.attributes[0].arguments[0].text ==
               "\"archive_dependency\"",
       "compact declaration lookup lost deferred external linkage");
+  const auto implementationMethods = retained.index->methods("value");
   require(module.products.header(packet).fields[0].name == "item" &&
               module.products.header(packet).fields[0].visibility.publicItem &&
               module.aliases.header(0).target.name == "i32" &&
               module.implementations.header(0).target.name == "Scalar" &&
               module.implementations.header(0).interface.name == "Borrowed" &&
-              !module.implementations.header(0).methodFunctions.empty(),
+              std::any_of(implementationMethods.begin(),
+                          implementationMethods.end(),
+                          [&](std::uint32_t index) {
+                            const auto &method = module.functions.header(index);
+                            return method.implementation == 0 &&
+                                   method.name.ends_with(".value");
+                          }),
           "compact declaration headers lost resolution metadata");
   auto resolved = resolution::resolve(module, diagnostics);
   require(bool(resolved), "compact declaration headers did not resolve");
+  require(resolved->lookup(0, "packet", resolution::Namespace::Macro, {}) ==
+              "packet",
+          "indexed declaration lookup lost macro ownership");
   unexpanded(module.products);
   unexpanded(module.aliases);
   unexpanded(module.interfaces);
@@ -377,6 +387,11 @@ extern "C" fn linked_native(): i32;
   Declarations<Module::Product> mounted;
   mounted.push_back({});
   mounted.append(module.products);
+  require(!mounted.native(0) && mounted.native(packet + 1) &&
+              mounted.indexOf(first) == packet + 1 &&
+              std::distance(mounted.localHeaders().begin(),
+                            mounted.localHeaders().end()) == 1,
+          "mixed declaration mounting lost local order or native indices");
   std::vector<std::size_t> notifications;
   mounted.onMaterializeAll([&](std::size_t index, auto declaration) {
     if (index) {
@@ -391,7 +406,22 @@ extern "C" fn linked_native(): i32;
   require(notifications == std::vector<std::size_t>{packet + 1, scalar + 1} &&
               module.products.isMaterialized(scalar),
           "batch syntax observer lost shared deferred materialization");
-  auto method = module.implementations.header(0).methodFunctions.at(0);
+  Module::Product trailing;
+  trailing.name = "Trailing";
+  mounted.push_back(std::move(trailing));
+  auto mountedCopy = mounted;
+  mountedCopy.edit(packet + 1).fields[0].name = "mounted-copy";
+  require(mounted.header(mounted.size() - 1).name == "Trailing" &&
+              mounted.indexOf(first) == packet + 1 &&
+              mounted[packet + 1].fields[0].name == "item" &&
+              std::distance(mounted.localHeaders().begin(),
+                            mounted.localHeaders().end()) == 2,
+          "mixed declaration append or copy changed existing identities");
+  auto method =
+      *std::find_if(implementationMethods.begin(), implementationMethods.end(),
+                    [&](std::uint32_t index) {
+                      return module.functions.header(index).implementation == 0;
+                    });
   auto rebased = module.functions;
   rebased.transformHeader(
       method, [](Function &function) { function.implementation += 5; });

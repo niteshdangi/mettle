@@ -103,7 +103,8 @@ Checker::GenericEnvironment Checker::makeGenericEnvironment(
   return result;
 }
 void Checker::prepareGenerics() {
-  for (std::size_t i = 0; i < module.products.size(); ++i) {
+  for (std::size_t i = module.products.nativeSize(); i < module.products.size();
+       ++i) {
     if (imported(module.products.header(i).span))
       continue;
     const auto &product = module.products[i];
@@ -114,7 +115,8 @@ void Checker::prepareGenerics() {
     checked.types->setGenericParameters(type, environment.parameters);
     productGenerics.emplace(&product, std::move(environment));
   }
-  for (std::size_t i = 0; i < module.aliases.size(); ++i) {
+  for (std::size_t i = module.aliases.nativeSize(); i < module.aliases.size();
+       ++i) {
     if (imported(module.aliases.header(i).span))
       continue;
     const auto &alias = module.aliases[i];
@@ -123,7 +125,8 @@ void Checker::prepareGenerics() {
     environment.declarationSpan = alias.span;
     aliasGenerics.emplace(&alias, std::move(environment));
   }
-  for (std::size_t i = 0; i < module.interfaces.size(); ++i) {
+  for (std::size_t i = module.interfaces.nativeSize();
+       i < module.interfaces.size(); ++i) {
     if (imported(module.interfaces.header(i).span))
       continue;
     const auto &interface = module.interfaces[i];
@@ -136,19 +139,22 @@ void Checker::prepareGenerics() {
     checked.interfaceData->definitions[i].parameters = environment.parameters;
     interfaceGenerics.emplace(&interface, std::move(environment));
   }
-  for (std::size_t i = 0; i < module.products.size(); ++i)
+  for (std::size_t i = module.products.nativeSize(); i < module.products.size();
+       ++i)
     if (!imported(module.products.header(i).span)) {
       const auto &product = module.products[i];
       validateGenericEnvironment(product.genericParameters, product.constraints,
                                  typeEnvironment(product));
     }
-  for (std::size_t i = 0; i < module.aliases.size(); ++i)
+  for (std::size_t i = module.aliases.nativeSize(); i < module.aliases.size();
+       ++i)
     if (!imported(module.aliases.header(i).span)) {
       const auto &alias = module.aliases[i];
       validateGenericEnvironment(alias.genericParameters, alias.constraints,
                                  typeEnvironment(alias));
     }
-  for (std::size_t i = 0; i < module.interfaces.size(); ++i) {
+  for (std::size_t i = module.interfaces.nativeSize();
+       i < module.interfaces.size(); ++i) {
     if (imported(module.interfaces.header(i).span))
       continue;
     const auto &interface = module.interfaces[i];
@@ -161,7 +167,8 @@ void Checker::prepareGenerics() {
                                  interface.constraints,
                                  typeEnvironment(interface));
   }
-  for (std::size_t i = 0; i < module.implementations.size(); ++i) {
+  for (std::size_t i = module.implementations.nativeSize();
+       i < module.implementations.size(); ++i) {
     const auto &header = module.implementations.header(i);
     if (imported(header.span) || header.negative ||
         std::none_of(header.associated.begin(), header.associated.end(),

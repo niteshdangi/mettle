@@ -11,6 +11,7 @@
 #include <array>
 #include <iostream>
 #include <map>
+#include <sstream>
 
 namespace {
 int failures = 0;
@@ -91,7 +92,7 @@ int main() {
   interfaceSnapshots();
   using namespace mettle;
   using metadata::SymbolKind;
-  const std::string source = R"(
+  std::string source = R"(
 pub module core {
     const BASE: i32 = 4;
     interface ConstValue { static fn value(x: i32): i32; }
@@ -202,6 +203,12 @@ pub module core {
 }
 import core as bootstrapOnly;
 )";
+  std::string dormant;
+  for (std::size_t i = 0; i < 511; ++i)
+    dormant += "\n    fn archivedUnused" + std::to_string(i) + "(): i32 { 0 }";
+  dormant += "\n    @link(\"archive-only\") extern \"C\" { "
+             "unsafe fn archivedUnused511(): i32; }";
+  source.insert(source.rfind("\n}\nimport core as bootstrapOnly;"), dormant);
   const Source reexportSource{"reexport.mt", "pub import super.Address;\n", 1};
   Diagnostics diagnostics;
   auto tree = parse({"library.mt", source}, diagnostics);
@@ -529,6 +536,158 @@ fn main(): i32 {
       return reference < roots.size() ? std::optional{roots[reference]}
                                       : std::nullopt;
     };
+    std::optional<Module> indexedProgram;
+    std::shared_ptr<const ImportedDeclarations> indexedDeclarations;
+    resolution::Library indexedLibrary;
+    if (!imported) {
+      auto indexedBytes = std::make_shared<const std::vector<std::uint8_t>>(
+          declarations.header);
+      auto indexedHeader =
+          decodeLibraryHeader(*indexedBytes, decode, indexedBytes,
+                              metadata::ValidationMode::OnDemand);
+      expect(
+          indexedHeader &&
+              indexedHeader.module->functions.admittedSize() == 0 &&
+              indexedHeader.module->products.admittedSize() == 0 &&
+              indexedHeader.module->implementations.admittedSize() == 0,
+          "archive lookup mounts declaration address ranges without headers");
+      expect(indexedHeader && indexedHeader.index->hasExternalLibraries() &&
+                 indexedHeader.module->functions.admittedSize() == 0,
+             "unused native link attributes preserve external-library cache "
+             "policy without admitting declarations");
+      if (!indexedHeader)
+        return std::nullopt;
+      auto contractsBytes = std::make_shared<const std::vector<std::uint8_t>>(
+          declarations.contracts);
+      indexedLibrary.compiledSourcePackages = library.compiledSourcePackages;
+      indexedLibrary.compiledSourceModules = library.compiledSourceModules;
+      indexedLibrary.compiled.push_back(
+          {"core", [indexedHeader]() {
+             return copyLibraryHeader(indexedHeader).module;
+           }});
+      Diagnostics indexedDiagnostics;
+      auto indexedModule = resolution::load(
+          {"indexed.mt", "const RESULT: i32 = core.answer();\n"
+                         "fn main(): i32 { let invoke = fn(): i32 { RESULT }; "
+                         "invoke() }\n"},
+          [](const std::string &) { return std::optional<Source>{}; },
+          indexedDiagnostics, indexedLibrary);
+      expect(bool(indexedModule),
+             "indexed declarations mount through module loading");
+      if (!indexedModule)
+        return std::nullopt;
+      auto indexedNames =
+          resolution::resolve(*indexedModule, indexedDiagnostics,
+                              indexedLibrary.compiledSourcePackages);
+      auto indexedContracts = importLibraryDeclarations(
+          *contractsBytes, types, *retainedReferences, &*indexedModule,
+          contractsBytes, retainedReferences,
+          metadata::ValidationMode::OnDemand, {}, {}, indexedHeader.index);
+      expect(bool(indexedContracts),
+             "indexed contracts admit complete implementation catalogs");
+      if (!indexedContracts) {
+        std::cerr << indexedContracts.error << '\n';
+        return std::nullopt;
+      }
+      indexedBytes.reset();
+      contractsBytes.reset();
+      indexedProgram = *indexedModule;
+      indexedDeclarations = indexedContracts.declarations;
+      auto indexedChecked =
+          check(std::move(*indexedModule), indexedDiagnostics, indexedNames,
+                true, {}, nullptr, indexedContracts.declarations);
+      if (!indexedDiagnostics.empty())
+        errors(indexedDiagnostics);
+      expect(indexedChecked && indexedChecked->statics().back().initializer &&
+                 indexedChecked->statics()
+                         .back()
+                         .initializer->scalar.magnitude[0] == 10,
+             "indexed lookup retains transitive defaults, private helpers and "
+             "trait dispatch");
+      const auto admitted = indexedHeader.module->functions.admittedSize();
+      expect(admitted == 5 &&
+                 indexedHeader.module->implementations.admittedSize() == 0,
+             "requested names do not admit unused declarations or "
+             "implementation syntax");
+      auto dormantId = indexedHeader.index->function("core::archivedUnused511");
+      expect(dormantId &&
+                 indexedHeader.module->functions.admittedSize() == admitted,
+             "stable declaration ID lookup does not materialize its header");
+      if (dormantId)
+        expect(
+            indexedHeader.module->functions.header(*dormantId).name ==
+                    "archivedUnused511" &&
+                indexedHeader.module->functions.admittedSize() == admitted + 1,
+            "stable declaration IDs materialize exactly the requested header");
+      std::cout << "indexed admission: " << admitted << '/'
+                << sourceFunctionCount << " native functions\n";
+      Diagnostics conflictDiagnostics;
+      auto conflictModule = resolution::load(
+          {"indexed-conflict.mt",
+           "import core.answer;\n"
+           "fn answer(): i32 { 0 }\nfn main(): i32 { 0 }\n"},
+          [](const std::string &) { return std::optional<Source>{}; },
+          conflictDiagnostics, indexedLibrary);
+      if (conflictModule)
+        resolution::resolve(*conflictModule, conflictDiagnostics,
+                            indexedLibrary.compiledSourcePackages);
+      expect(!conflictDiagnostics.empty(),
+             "indexed imports preserve conflicts with local explicit bindings");
+      Diagnostics constructorDiagnostics;
+      auto constructorModule = resolution::load(
+          {"indexed-constructors.mt",
+           "fn main(): i32 {\n"
+           "let first = core.Choice<i32>(3);\n"
+           "let second = core.Choice<core.Owned>(4);\n"
+           "first.value + second.value\n}\n"},
+          [](const std::string &) { return std::optional<Source>{}; },
+          constructorDiagnostics, indexedLibrary);
+      auto constructorNames =
+          constructorModule
+              ? resolution::resolve(*constructorModule, constructorDiagnostics,
+                                    indexedLibrary.compiledSourcePackages)
+              : nullptr;
+      auto constructorChecked =
+          constructorModule
+              ? check(std::move(*constructorModule), constructorDiagnostics,
+                      constructorNames, true, {}, nullptr,
+                      indexedContracts.declarations)
+              : std::nullopt;
+      if (!constructorDiagnostics.empty())
+        errors(constructorDiagnostics);
+      expect(bool(constructorChecked),
+             "indexed constructor catalogs retain constrained alternatives");
+      bool dormantConstructor = false;
+      for (const auto &group : indexedContracts.declarations->constructorGroups)
+        for (std::size_t i = 0; i < group->headers.size(); ++i)
+          if (types->product(group->headers[i].origin).name ==
+              "core::DormantConstructor")
+            dormantConstructor = !group->applicability.isMaterialized(i);
+      expect(dormantConstructor,
+             "indexed constructor selection leaves unrelated applicability "
+             "deferred");
+      auto invalidDirectory = declarations.header;
+      const std::string dormantKey = "f:core::archivedUnused511";
+      auto dormantEntry =
+          std::search(invalidDirectory.begin(), invalidDirectory.end(),
+                      dormantKey.begin(), dormantKey.end());
+      expect(dormantEntry != invalidDirectory.end(),
+             "fixture has an archive-backed unused name lookup");
+      if (dormantEntry != invalidDirectory.end()) {
+        auto payload = dormantEntry + dormantKey.size();
+        expect(invalidDirectory.end() - payload >= 3 && *payload == 2,
+               "unused lookup has its framed stable declaration ID");
+        if (invalidDirectory.end() - payload >= 3 && *payload == 2) {
+          payload[1] = 0xff;
+          payload[2] = 0x7f;
+          auto storage = std::make_shared<const std::vector<std::uint8_t>>(
+              std::move(invalidDirectory));
+          expect(!decodeLibraryHeader(*storage, decode, storage,
+                                      metadata::ValidationMode::OnDemand),
+                 "mounting rejects malformed unused declaration lookup IDs");
+        }
+      }
+    }
     auto storage =
         std::make_shared<const std::vector<std::uint8_t>>(transientBytes);
     auto contracts = importLibraryDeclarations(
@@ -600,6 +759,7 @@ fn main(): i32 {
     if (!bodies)
       return std::nullopt;
     auto bindings = std::make_shared<lowering::ImportedBodies>();
+    bindings->statics = std::move(bodies.program.statics);
     for (std::size_t i = 0; i < sourceFunctionCount; ++i)
       bindings->functions.emplace(i,
                                   std::move(bodies.program.functions.edit(i)));
@@ -619,6 +779,79 @@ fn main(): i32 {
     metadata.functions.clear();
     metadata.statics.clear();
     metadata.closureFunctions.clear();
+    if (indexedProgram) {
+      const auto functions = indexedProgram->functions;
+      const auto admitted = functions.admittedSize();
+      Diagnostics indexedDiagnostics;
+      pipeline::PackageOwners owners(library.compiledSourcePackages.begin(),
+                                     library.compiledSourcePackages.end());
+      auto indexedImporter =
+          [&](const Module &, const resolution::Resolution &,
+              Diagnostics &) -> std::optional<pipeline::ImportedProgram> {
+        return pipeline::ImportedProgram{indexedDeclarations, bindings,
+                                         metadata};
+      };
+      auto indexedPrepared = pipeline::prepare(
+          std::move(*indexedProgram), indexedDiagnostics, true, {}, {}, owners,
+          nullptr, library.compiledSourcePackages, indexedImporter);
+      if (!indexedDiagnostics.empty())
+        errors(indexedDiagnostics);
+      expect(indexedPrepared && functions.admittedSize() == admitted,
+             "production lowering preserves sparse admission through closure "
+             "default discovery and package ownership");
+      pipeline::FunctionQueries queries;
+      std::string querySource =
+          "copy type Item { value: i32 }\n"
+          "alias Word = Item;\n"
+          "fn seed(): i32 { 3 }\n"
+          "fn sample(): i32 { let item: Word = Item(seed()); item.value }\n"
+          "fn main(): i32 { core.answer(sample()) }\n";
+      for (unsigned revision = 0; revision < 3; ++revision) {
+        if (revision == 2)
+          querySource.replace(querySource.find("{ 3 }"), 5, "{ 4 }");
+        auto prepareQuery = [&](pipeline::FunctionQueries *cache,
+                                Diagnostics &diagnostics) {
+          auto tree = resolution::load({"indexed-query.mt", querySource},
+                                       provider, diagnostics, indexedLibrary);
+          return tree ? pipeline::prepare(std::move(*tree), diagnostics, true,
+                                          {}, {}, owners, nullptr,
+                                          library.compiledSourcePackages,
+                                          indexedImporter, cache)
+                      : std::optional<pipeline::PreparedProgram>{};
+        };
+        Diagnostics queryDiagnostics, freshDiagnostics;
+        auto before = queries.hits();
+        auto reused = prepareQuery(&queries, queryDiagnostics);
+        auto fresh = prepareQuery(nullptr, freshDiagnostics);
+        if (!queryDiagnostics.empty())
+          errors(queryDiagnostics);
+        if (!freshDiagnostics.empty())
+          errors(freshDiagnostics);
+        expect(reused && fresh &&
+                   queries.hits() - before == (revision == 0   ? 0u
+                                               : revision == 1 ? 3u
+                                                               : 2u),
+               "native-backed source queries replay local products and aliases "
+               "without invalidating independent functions");
+        if (!reused || !fresh)
+          break;
+        auto reusedProgram = pipeline::compile(*reused, queryDiagnostics);
+        auto freshProgram = pipeline::compile(*fresh, freshDiagnostics);
+        expect(reusedProgram && freshProgram,
+               "native-backed source query replay preserves executable "
+               "admission");
+        if (reusedProgram && freshProgram) {
+          std::ostringstream reusedIR, freshIR;
+          ir::print(reusedProgram->program(), reusedIR);
+          ir::print(freshProgram->program(), freshIR);
+          expect(reusedIR.str() == freshIR.str(),
+                 "native-backed source query replay matches fresh executable "
+                 "IR after a semantic edit");
+        }
+      }
+      expect(functions.admittedSize() == admitted,
+             "native-backed source query replay does not admit unused headers");
+    }
     return pipeline::ImportedProgram{imported, std::move(bindings),
                                      std::move(metadata)};
   };
@@ -896,7 +1129,7 @@ fn main(): i32 {
          "header mounting rejects trailing bytes");
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
-      1 + std::string_view("mettle.checked-contracts.18").size();
+      1 + std::string_view("mettle.checked-contracts.19").size();
   oversized[inventoryOffset] = 0xff;
   oversized.insert(oversized.begin() + inventoryOffset + 1, 8, 0xff);
   oversized.insert(oversized.begin() + inventoryOffset + 9, 0x01);

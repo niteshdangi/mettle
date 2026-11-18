@@ -2,6 +2,61 @@
 #include <algorithm>
 
 namespace mettle {
+void Checker::admitConstant(std::string_view canonical) {
+  const auto &imports = checked.importedDeclarations;
+  if (!imports || !imports->catalog ||
+      inherentConstantNames.contains(std::string(canonical)))
+    return;
+  auto ordinal = imports->catalog->namedConstant(canonical);
+  if (!ordinal)
+    return;
+  const auto &constant = imports->inherentConstants.at(*ordinal);
+  auto selectedOwner = imports->catalog->constantOwner(*ordinal);
+  if (!selectedOwner ||
+      selectedOwner->first >= module.implementations.nativeSize())
+    throw metadata::InvalidMetadata("invalid associated constant owner");
+  auto owner = *selectedOwner;
+  inherentConstantNames.emplace(constant.name, inherentConstants.size());
+  inherentConstants.push_back(
+      {nullptr,
+       nullptr,
+       constant.target,
+       constant.declaredType,
+       constant.value,
+       static_cast<unsigned char>(constant.initializer ? 0 : 2),
+       constant.materialized,
+       constant.initializer,
+       {}});
+  auto &mounted = inherentConstants.back();
+  mounted.importedContract = &constant;
+  mounted.loadSyntax = [this, owner, declaration = &constant](auto &value) {
+    const auto &implementation = module.implementations[owner.first];
+    if (owner.second >= implementation.associated.size() ||
+        implementation.span != declaration->implementation ||
+        implementation.associated[owner.second].span !=
+            declaration->declaration ||
+        !implementation.associated[owner.second].constant)
+      throw metadata::InvalidMetadata(
+          "associated constant does not match its indexed declaration");
+    value.implementation = &implementation;
+    value.declaration = &implementation.associated[owner.second];
+  };
+}
+std::size_t CheckedModule::nativeDefaultCount() const {
+  return importedDeclarations && importedDeclarations->catalog
+             ? importedDeclarations->catalog->defaultCount()
+             : 0;
+}
+
+std::optional<std::size_t>
+CheckedModule::nativeDefaultOrdinal(std::size_t function,
+                                    std::size_t parameter) const {
+  return importedDeclarations && importedDeclarations->catalog
+             ? importedDeclarations->catalog->defaultOrdinal(function,
+                                                             parameter)
+             : std::nullopt;
+}
+
 bool CheckedModule::imported(std::size_t function) const {
   return function < tree.functions.size() && importedDeclarations &&
          importedDeclarations->functions.contains(
@@ -30,6 +85,8 @@ bool CheckedModule::hasDefault(std::size_t function,
 bool Checker::imported(Span span) const {
   const auto key = std::tuple{span.source, span.begin, span.end};
   const auto &imports = checked.importedDeclarations;
+  if (imports && imports->catalog && imports->catalog->source(span.source))
+    return true;
   return importedSpans.contains(key) ||
          (imports && imports->index &&
           std::binary_search(imports->index->spans.begin(),
@@ -162,6 +219,8 @@ void Checker::importDeclarations() {
     return std::weak_ptr(importedSyntaxIndex);
   };
   for (const auto &[index, retained] : imports->functions) {
+    if (index < imports->functions.nativeSize())
+      continue;
     if (imports->index && index < module.functions.size())
       if (index < imports->index->functions.size() &&
           imports->index->functions[index].declaration.get() ==
@@ -217,7 +276,7 @@ void Checker::importDeclarations() {
     }
   }
   auto seed = [&](auto &syntax, const auto &contracts) {
-    for (std::size_t i = 0; i < syntax.size(); ++i) {
+    for (std::size_t i = syntax.nativeSize(); i < syntax.size(); ++i) {
       const auto &item = syntax.header(i);
       if (importedType(item.span, contracts)) {
         remember(item.span);
@@ -231,11 +290,14 @@ void Checker::importDeclarations() {
   seed(module.aliases, imports->aliases);
   seed(module.interfaces, imports->interfaces);
   seed(module.implementations, imports->implementations);
-  for (const auto &item : imports->products)
-    typeNames.emplace(item->name, item->type);
-  for (const auto &item : imports->aliases)
-    typeNames.emplace(item->name, item->type);
-  for (std::size_t i = 0; i < module.aliases.size(); ++i)
+  for (std::size_t i = imports->catalog ? imports->nativeTypeCounts[0] : 0;
+       i < imports->products.size(); ++i)
+    typeNames.emplace(imports->products[i]->name, imports->products[i]->type);
+  for (std::size_t i = imports->catalog ? imports->nativeTypeCounts[1] : 0;
+       i < imports->aliases.size(); ++i)
+    typeNames.emplace(imports->aliases[i]->name, imports->aliases[i]->type);
+  for (std::size_t i = module.aliases.nativeSize(); i < module.aliases.size();
+       ++i)
     if (!imports->index || i >= imports->index->aliasHeaders.size() ||
         imports->index->aliasHeaders[i].get() != &module.aliases.header(i))
       if (auto contract =
@@ -250,8 +312,9 @@ void Checker::importDeclarations() {
               }
             });
       }
-  for (const auto &constant : imports->inherentConstants)
-    expressions(constant.initializer);
+  for (std::size_t i = imports->nativeConstantCount;
+       i < imports->inherentConstants.size(); ++i)
+    expressions(imports->inherentConstants[i].initializer);
   auto bindConstant = [&](const ImportedInherentConstant &constant,
                           std::size_t implementation, std::size_t associated) {
     const auto &owner = module.implementations.header(implementation);
@@ -275,7 +338,8 @@ void Checker::importDeclarations() {
       value.declaration = &syntax.associated.at(associated);
     };
   };
-  for (std::size_t c = 0; c < imports->inherentConstants.size(); ++c) {
+  for (std::size_t c = imports->nativeConstantCount;
+       c < imports->inherentConstants.size(); ++c) {
     const auto &constant = imports->inherentConstants[c];
     if (imports->index && c < imports->index->constants.size()) {
       const auto &binding = imports->index->constants[c];
@@ -287,7 +351,8 @@ void Checker::importDeclarations() {
         continue;
       }
     }
-    for (std::size_t o = 0; o < module.implementations.size(); ++o)
+    for (std::size_t o = module.implementations.nativeSize();
+         o < module.implementations.size(); ++o)
       if (module.implementations.header(o).span.source ==
               constant.implementation.source &&
           module.implementations.header(o).span.begin ==
@@ -320,6 +385,8 @@ void Checker::importDeclarations() {
       }
   }
   for (const auto &[index, facts] : imports->statics) {
+    if (module.statics.native(index))
+      continue;
     if (index >= module.statics.size()) {
       error("metadata", {}, "checked static index is invalid");
       continue;
@@ -350,9 +417,10 @@ void Checker::importDeclarations() {
     error("metadata", {}, "imported closure inventory is not contiguous");
   *checked.interfaceData = imports->checkingDatabase;
   bool mountedImplementations =
-      imports->index && imports->index->implementationHeaders.size() <=
-                            module.implementations.size();
-  if (mountedImplementations)
+      imports->catalog ||
+      (imports->index && imports->index->implementationHeaders.size() <=
+                             module.implementations.size());
+  if (mountedImplementations && !imports->catalog)
     for (std::size_t i = 0; i < imports->index->implementationHeaders.size();
          ++i)
       if (imports->index->implementationHeaders[i].get() !=
@@ -384,7 +452,8 @@ void Checker::importDeclarations() {
       }
     }
   }
-  for (std::size_t i = 0; i < module.interfaces.size(); ++i)
+  for (std::size_t i = module.interfaces.nativeSize();
+       i < module.interfaces.size(); ++i)
     if (imported(module.interfaces.header(i).span) &&
         (i >= checked.interfaceData->definitions.size() ||
          (imports->index && i < imports->index->interfaceNames.size()
@@ -402,6 +471,26 @@ void Checker::retainDeclarations() {
   result->checkingDatabase = std::move(checkingInterfaces);
   result->database = *checked.interfaceData;
   result->constructorGroups = constructorGroups;
+  const auto &imports = checked.importedDeclarations;
+  if (imports) {
+    result->catalog = imports->catalog;
+    result->nativeTypeCounts = imports->nativeTypeCounts;
+    if (imports->catalog) {
+      result->nativeConstantCount = imports->nativeConstantCount;
+      result->inherentConstants = imports->inherentConstants;
+      result->inherentConstants.resize(imports->nativeConstantCount);
+    }
+    std::size_t kind = 0;
+    for (auto [destination, source] :
+         {std::pair{&result->products, &imports->products},
+          std::pair{&result->aliases, &imports->aliases},
+          std::pair{&result->interfaces, &imports->interfaces},
+          std::pair{&result->implementations, &imports->implementations},
+          std::pair{&result->associated, &imports->associated}}) {
+      *destination = *source;
+      destination->resize(imports->nativeTypeCounts[kind++]);
+    }
+  }
   auto environment = [](const GenericEnvironment &value) {
     return DeclarationEnvironment{value.names,      value.bounds,
                                   value.parameters, value.defaults,
@@ -444,7 +533,8 @@ void Checker::retainDeclarations() {
     collect(collect, *node);
     return result;
   };
-  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i) {
     if (checked.imported(i))
       continue;
     const auto &source = module.functions[i];
@@ -484,16 +574,16 @@ void Checker::retainDeclarations() {
         static_cast<std::uint32_t>(i),
         std::make_shared<const ImportedFunction>(std::move(contract)));
   }
-  for (std::size_t i = 0; i < checked.staticStorage.size(); ++i)
+  for (std::size_t i = module.statics.nativeSize();
+       i < checked.staticStorage.size(); ++i)
     result->statics.emplace(static_cast<std::uint32_t>(i),
                             checked.staticStorage[i]);
-  const auto &imports = checked.importedDeclarations;
   auto retain = [&](const auto &syntax, const auto &environments,
                     auto &destination, bool named,
                     const ImportedDeclarations::TypeTable *imported) {
     auto &&headers = [&]() -> decltype(auto) {
-      if constexpr (requires { syntax.headers(); })
-        return syntax.headers();
+      if constexpr (requires { syntax.localHeaders(); })
+        return syntax.localHeaders();
       else
         return (syntax);
     }();
@@ -540,15 +630,17 @@ void Checker::retainDeclarations() {
   retain(module.implementations, implementationGenerics,
          result->implementations, false,
          imports ? &imports->implementations : nullptr);
-  for (const auto &owner : module.interfaces.headers())
+  for (const auto &owner : module.interfaces.localHeaders())
     retain(owner.associated, associatedGenerics, result->associated, false,
            imports ? &imports->associated : nullptr);
-  for (const auto &owner : module.implementations.headers())
+  for (const auto &owner : module.implementations.localHeaders())
     retain(owner.associated, associatedGenerics, result->associated, false,
            imports ? &imports->associated : nullptr);
   for (const auto &[name, index] : inherentConstantNames) {
     const auto &constant = inherentConstants[index];
     if (constant.importedContract) {
+      if (imports && imports->catalog && imports->catalog->namedConstant(name))
+        continue;
       auto retained = *constant.importedContract;
       retained.value = constant.value;
       retained.materialized = constant.materialized;

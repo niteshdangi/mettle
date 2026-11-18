@@ -154,6 +154,124 @@ int main() {
     expect(consumer.product(imported.roots[0]).fields[0].name == "payload",
            "demand-loaded type mutation changed its retained snapshot");
   }
+  {
+    TypeStore producer;
+    const std::array categories{
+        std::pair{TypeParameterKind::Type, Type::Unknown},
+        std::pair{TypeParameterKind::Constant, Type::I32},
+        std::pair{TypeParameterKind::Value, Type::I32},
+        std::pair{TypeParameterKind::Expression, Type::I32},
+        std::pair{TypeParameterKind::Projection, Type::Unknown},
+        std::pair{TypeParameterKind::Projection, Type::I32}};
+    std::vector<Type> roots;
+    for (const auto &[kind, valueType] : categories) {
+      auto type = producer.declareImportedType(ImportedTypeKind::Parameter);
+      TypeParameter parameter;
+      parameter.kind = kind;
+      parameter.valueType = valueType;
+      parameter.operands = {Type::Unknown};
+      producer.defineImportedType(type, std::move(parameter));
+      roots.push_back(type);
+    }
+    ErasedType erased;
+    erased.declaration = 7;
+    erased.methodOwners = {Type::Unknown};
+    auto interface = producer.declareImportedType(ImportedTypeKind::Erased);
+    producer.defineImportedType(interface, std::move(erased));
+    roots.push_back(interface);
+    auto symbols = symbolMaps();
+    symbols.definition = [](Type type) {
+      return std::optional(
+          DefinitionIdentity{"scalars", std::to_string(type.index()), 0});
+    };
+    auto encoded =
+        exportTypeGraph(producer, roots, symbols, ValidationMode::OnDemand);
+    expect(bool(encoded), encoded.error);
+    auto retained = std::make_shared<const TypeGraphSymbols>(symbolMaps(100));
+    TypeStore consumer;
+    auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
+                                    ValidationMode::OnDemand, retained);
+    expect(bool(imported), imported.error);
+    auto copy = consumer;
+    encoded.bytes.clear();
+    retained.reset();
+    for (std::size_t i = 0; i < categories.size(); ++i) {
+      const auto [kind, valueType] = categories[i];
+      bool parameter =
+          kind == TypeParameterKind::Type ||
+          (kind == TypeParameterKind::Projection && valueType == Type::Unknown);
+      expect(copy.isParameter(imported.roots[i]) == parameter &&
+                 copy.isConstant(imported.roots[i]) == !parameter &&
+                 copy.isConstParameter(imported.roots[i]) ==
+                     (kind == TypeParameterKind::Constant) &&
+                 copy.isProjection(imported.roots[i]) ==
+                     (kind == TypeParameterKind::Projection),
+             "admitted scalar categories must not demand invalid parameter "
+             "descriptors");
+      bool rejected = false;
+      try {
+        (void)copy.parameter(imported.roots[i]);
+      } catch (const InvalidMetadata &) {
+        rejected = true;
+      }
+      expect(rejected,
+             "scalar parameter facts must not publish unchecked descriptors");
+    }
+    expect(copy.erasedDeclaration(imported.roots.back()) == 107 &&
+               consumer.erasedDeclaration(imported.roots.back()) == 107,
+           "admitted erased declarations retain symbol remapping across "
+           "copies without descriptor demand");
+    bool rejected = false;
+    try {
+      (void)copy.erased(imported.roots.back());
+    } catch (const InvalidMetadata &) {
+      rejected = true;
+    }
+    expect(rejected,
+           "scalar erased facts must not publish unchecked descriptors");
+  }
+  {
+    TypeStore producer;
+    auto scope = producer.regions().binder();
+    auto region = producer.regions().bound(scope, "carrier");
+    std::array<Type, 2> roots;
+    for (std::size_t i = 0; i < roots.size(); ++i) {
+      roots[i] = producer.declareImportedType(ImportedTypeKind::View);
+      producer.defineImportedType(roots[i], ViewType{i ? Type::I32 : Type::Unit,
+                                                     ParameterMode::Value,
+                                                     "invalid", region});
+    }
+    auto retained = std::make_shared<const TypeGraphSymbols>();
+    auto encoded =
+        exportTypeGraph(producer, roots, *retained, ValidationMode::OnDemand);
+    expect(bool(encoded), encoded.error);
+    TypeStore consumer;
+    auto existing = consumer.regions().binder();
+    auto prior = consumer.regions().bound(existing, "prior");
+    auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
+                                    ValidationMode::OnDemand, retained);
+    expect(bool(imported), imported.error);
+    auto copy = consumer;
+    encoded.bytes.clear();
+    retained.reset();
+    auto carrier = copy.unitViewRegion(imported.roots[0]);
+    expect(carrier && *carrier != prior && *carrier != region &&
+               copy.regions().get(*carrier).name == "carrier" &&
+               consumer.unitViewRegion(imported.roots[0]) == carrier &&
+               !copy.unitViewRegion(imported.roots[1]),
+           "admitted view scalars remap retained region carriers without "
+           "demanding unit or non-unit descriptors");
+    for (auto type : imported.roots) {
+      bool rejected = false;
+      try {
+        (void)copy.view(type);
+      } catch (const InvalidMetadata &) {
+        rejected = true;
+      }
+      expect(rejected,
+             "scalar view facts must not publish unchecked descriptors");
+    }
+  }
   for (auto destination : {17u, 0x89abcdefu}) {
     TypeStore producer;
     ErasedType descriptor;
@@ -186,13 +304,165 @@ int main() {
   }
   {
     TypeStore producer;
+    ErasedType descriptor;
+    descriptor.name = "any Alias";
+    descriptor.declaration = 3;
+    descriptor.arguments = {Type::I32};
+    auto first = producer.erasedType(descriptor);
+    descriptor.declaration = 7;
+    descriptor.arguments = {Type::Bool};
+    auto second = producer.erasedType(descriptor);
+    auto maps = symbolMaps();
+    unsigned resolutions = 0;
+    maps.resolve = [&](SymbolKind kind,
+                       std::string_view name) -> std::optional<std::uint32_t> {
+      ++resolutions;
+      if (kind == SymbolKind::Interface &&
+          (name == symbolName(kind, 3) || name == symbolName(kind, 7)))
+        return 107;
+      return {};
+    };
+    auto retained = std::make_shared<const TypeGraphSymbols>(maps);
+    auto encoded = exportTypeGraph(producer, std::array{first, second}, maps,
+                                   ValidationMode::OnDemand);
+    expect(bool(encoded), encoded.error);
+    TypeStore original;
+    auto imported = importTypeGraph(original, encoded.bytes, *retained,
+                                    ValidationMode::OnDemand, retained);
+    expect(bool(imported), imported.error);
+    auto changed = original;
+    descriptor.declaration = 107;
+    expect(changed.erasedType(descriptor) == imported.roots[1],
+           "archive interface lookup preserves every resolved symbol alias");
+    descriptor.arguments = {Type::I32};
+    expect(original.erasedType(descriptor) == imported.roots[0] &&
+               resolutions == 2,
+           "demanded interface symbols resolve once across copied stores");
+    descriptor.declaration = 999;
+    auto local = changed.erasedType(descriptor);
+    expect(changed.erasedType(descriptor) == local &&
+               local != imported.roots[0],
+           "consumer-only interface identities are ordinary archive misses");
+  }
+  {
+    TypeStore producer;
+    auto unused = producer.declareProduct("Unused", true);
+    producer.defineProduct(unused, {{"invalid", Type::Unknown}});
+    auto first = producer.declareProduct("Shared", true);
+    producer.defineProduct(first, {{"value", Type::I32}});
+    auto vector = producer.vectorType("Shared", Type::I32, 4, 16);
+    auto second = producer.declareProduct("Shared", true);
+    producer.defineProduct(second, {{"value", Type::Bool}});
+    auto suffix = producer.declareProduct("SharedSuffix", true);
+    producer.defineProduct(suffix, {{"value", Type::I64}});
+    TypeGraphSymbols symbols;
+    symbols.definition = [](Type type) {
+      return std::optional(DefinitionIdentity{
+          "names", "logical" + std::to_string(type.index()), std::nullopt});
+    };
+    auto retained = std::make_shared<const TypeGraphSymbols>(symbols);
+    auto encoded = exportTypeGraph(
+        producer, std::array{unused, first, vector, second, suffix}, *retained,
+        ValidationMode::OnDemand);
+    expect(bool(encoded), encoded.error);
+    TypeStore original;
+    auto imported = importTypeGraph(original, encoded.bytes, *retained,
+                                    ValidationMode::OnDemand, retained);
+    expect(bool(imported), imported.error);
+    auto copy = original;
+    encoded.bytes.clear();
+    expect(!copy.findProduct("Missing") &&
+               !copy.findProduct("logical" + std::to_string(first.index())) &&
+               copy.findProduct("Shared") == imported.roots[1] &&
+               copy.findProduct("SharedSuffix") == imported.roots[4] &&
+               copy.vectorType("Shared", Type::I32, 4, 16) == imported.roots[2],
+           "native name queries preserve descriptor spellings and archive "
+           "order without reading unrelated records");
+    auto local = copy.vectorType("LocalVector", Type::I32, 4, 16);
+    expect(copy.findProduct("LocalVector") == local &&
+               copy.vectorType("LocalVector", Type::I32, 4, 16) == local &&
+               !original.findProduct("LocalVector"),
+           "native name misses preserve consumer-local vector interning");
+  }
+  {
+    TypeStore producer;
+    auto product = producer.declareProduct("Visible", true);
+    producer.defineProduct(product, {{"value", Type::I32}});
+    TypeGraphSymbols symbols;
+    symbols.definition = [](Type) {
+      return std::optional(
+          DefinitionIdentity{"names", "logical", std::nullopt});
+    };
+    auto retained = std::make_shared<const TypeGraphSymbols>(symbols);
+    auto encoded = exportTypeGraph(producer, std::array{product}, *retained,
+                                   ValidationMode::OnDemand);
+    expect(bool(encoded), encoded.error);
+    constexpr std::string_view name = "Visible";
+    auto fullName = std::find_end(encoded.bytes.begin(), encoded.bytes.end(),
+                                  name.begin(), name.end());
+    expect(fullName != encoded.bytes.end(),
+           "named product fixture must retain its full descriptor name");
+    *fullName = 'v';
+    TypeStore consumer;
+    auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
+                                    ValidationMode::OnDemand, retained);
+    expect(bool(imported), imported.error);
+    bool rejected = false;
+    try {
+      (void)consumer.findProduct(name);
+    } catch (const InvalidMetadata &) {
+      rejected = true;
+    }
+    expect(rejected,
+           "demanded product names must match the admitted name projection");
+  }
+  {
+    TypeStore producer;
+    auto used = producer.pointerType(Type::I32, ParameterMode::Read);
+    auto unused = producer.pointerType(Type::Bool, ParameterMode::Read);
+    auto retained = std::make_shared<const TypeGraphSymbols>();
+    auto encoded = exportTypeGraph(producer, std::array{used, unused},
+                                   *retained, ValidationMode::OnDemand);
+    expect(bool(encoded), encoded.error);
+    auto indexOffset = 36 + u32(encoded.bytes, 16) + 4 * u32(encoded.bytes, 24);
+    auto table = indexOffset + 4;
+    auto groups = u32(encoded.bytes, table);
+    auto records = table + 4 + 4 * (groups + 1);
+    auto last = records + u32(encoded.bytes, table + 4 * groups);
+    auto keySize = u32(encoded.bytes, last);
+    for (bool corruptReference : {false, true}) {
+      auto malformed = encoded.bytes;
+      if (corruptReference)
+        put32(malformed, last + 8 + keySize, u32(malformed, 16));
+      else
+        put32(malformed, last + 5, Type::U64.index());
+      TypeStore consumer;
+      auto imported = importTypeGraph(consumer, malformed, *retained,
+                                      ValidationMode::OnDemand, retained);
+      expect(!imported && consumer.storedTypeCount() == 0,
+             "unused lookup references and projection mismatches must reject "
+             "the entire import transaction");
+    }
+    auto projection = indexOffset + 4 + u32(encoded.bytes, indexOffset) + 1;
+    auto full = projection + 4 + u32(encoded.bytes, projection);
+    projection = full + 4 + u32(encoded.bytes, full) + 1;
+    auto malformed = encoded.bytes;
+    put32(malformed, projection + 4, UINT32_MAX);
+    TypeStore consumer;
+    expect(!importTypeGraph(consumer, malformed, *retained,
+                            ValidationMode::OnDemand, retained) &&
+               consumer.storedTypeCount() == 0,
+           "unused structural projections reject dangling type references");
+  }
+  {
+    TypeStore producer;
     auto callable = producer.callableType(CallableType{});
     auto retained = std::make_shared<const TypeGraphSymbols>();
     auto encoded = exportTypeGraph(producer, std::array{callable}, *retained,
                                    ValidationMode::OnDemand);
     expect(bool(encoded), encoded.error);
-    auto identityFrame =
-        36 + u32(encoded.bytes, 16) + 4 * u32(encoded.bytes, 24) + 1;
+    auto indexOffset = 36 + u32(encoded.bytes, 16) + 4 * u32(encoded.bytes, 24);
+    auto identityFrame = indexOffset + 4 + u32(encoded.bytes, indexOffset) + 1;
     auto fullRecord = identityFrame + 4 + u32(encoded.bytes, identityFrame) + 4;
     put32(encoded.bytes, fullRecord + 12, Type::Bool.index());
     TypeStore consumer;
@@ -228,6 +498,24 @@ int main() {
     four = imported.roots[0];
     pointer = imported.roots[1];
     original.shareInterning();
+    std::atomic<bool> matched = true;
+    {
+      std::vector<std::jthread> readers;
+      for (unsigned i = 0; i < 4; ++i)
+        readers.emplace_back([snapshot = original, &matched, &imported, four,
+                              pointer]() mutable {
+          if (snapshot.structural(AggregateKind::Array, {Type::I32}, 4) !=
+                  four ||
+              snapshot.structural(AggregateKind::Array, {Type::I32}, 6) !=
+                  imported.roots[2] ||
+              snapshot.structural(AggregateKind::Array, {Type::I64}, 7) !=
+                  imported.roots[3] ||
+              snapshot.pointerType(four, ParameterMode::Read) != pointer)
+            matched = false;
+        });
+    }
+    expect(matched,
+           "copied native stores share race-free demanded lookup groups");
     auto changed = original;
     expect(changed.structural(AggregateKind::Array, {Type::I32}, 4) == four &&
                changed.structural(AggregateKind::Array, {Type::I32}, 6) ==
@@ -255,6 +543,158 @@ int main() {
             original.product(four).fields.front().type == Type::I32 &&
             original.pointerType(four, ParameterMode::Read) == pointer,
         "mutating an imported key invalidates only its consumer index");
+    auto local = changed.declareProduct("Local", true);
+    changed.defineProduct(local, {{"value", Type::I32}});
+    auto localPointer = changed.pointerType(local, ParameterMode::Read);
+    auto scope = changed.regions().binder();
+    auto region = changed.regions().bound(scope, "local");
+    auto localView = changed.viewType(four, ParameterMode::Read, region);
+    expect(changed.pointerType(local, ParameterMode::Read) == localPointer &&
+               changed.viewType(four, ParameterMode::Read, region) == localView,
+           "consumer-only types and regions are ordinary archive misses");
+  }
+  {
+    using Records = TypeRecords<std::string, true>;
+    constexpr auto pageCapacity = 4096 / sizeof(std::string);
+    constexpr auto prefixSize = pageCapacity * 32768 + 3;
+    std::atomic<unsigned> loaded = 0;
+    Records records;
+    auto loader =
+        std::make_shared<const Records::Loader>([&](std::size_t value) {
+          ++loaded;
+          if (value == prefixSize - 1)
+            expect(std::as_const(records)[0] == "0",
+                   "a prefix loader could not read another prefix page");
+          return std::to_string(value);
+        });
+    records.reserve(prefixSize + 1);
+    records.deferPrefix(prefixSize, loader);
+    loader.reset();
+    auto snapshot = records;
+    expect(records.size() == prefixSize && loaded == 0 &&
+               !records.isMaterialized(0) &&
+               !snapshot.isMaterialized(prefixSize - 1),
+           "reserving or inspecting a deferred prefix loaded unused records");
+    const std::array indices{pageCapacity - 1, pageCapacity, prefixSize - 1};
+    std::vector<std::jthread> readers;
+    for (unsigned i = 0; i < 12; ++i)
+      readers.emplace_back([&, i] {
+        const auto &table = i < 6 ? records : snapshot;
+        auto index = indices[i % indices.size()];
+        expect(table[index] == std::to_string(index),
+               "concurrent prefix reads lost an absolute record index");
+      });
+    readers.clear();
+    expect(loaded == indices.size() + 1 &&
+               records.isMaterialized(pageCapacity) &&
+               snapshot.isMaterialized(pageCapacity - 1) &&
+               !records.isMaterialized(pageCapacity + 1),
+           "prefix copies did not share exactly-once read materialization");
+    auto retained = records.retain(prefixSize - 1);
+    snapshot.edit(prefixSize - 1) = "changed";
+    records.clear();
+    snapshot.clear();
+    expect(*retained == std::to_string(prefixSize - 1),
+           "retaining a prefix record lost its immutable page");
+  }
+  {
+    using Records = TypeRecords<std::string, true>;
+    constexpr auto pageCapacity = 4096 / sizeof(std::string);
+    constexpr auto prefixSize = pageCapacity + 3;
+    unsigned loaded = 0;
+    auto loader =
+        std::make_shared<const Records::Loader>([&](std::size_t value) {
+          ++loaded;
+          return std::to_string(value);
+        });
+    Records records;
+    records.deferPrefix(prefixSize, loader);
+    auto snapshot = records;
+    records.push_back("local");
+    expect(loaded == 0 && records.back() == "local" &&
+               snapshot.size() == prefixSize,
+           "appending into a partial prefix page loaded deferred slots");
+    records.edit(pageCapacity) = "changed";
+    expect(snapshot[pageCapacity] == std::to_string(pageCapacity) &&
+               records[pageCapacity] == "changed" &&
+               records[pageCapacity + 1] == std::to_string(pageCapacity + 1),
+           "prefix mutation changed a snapshot or lost an unpopulated slot");
+    auto borrowed = std::make_shared<const std::string>("borrowed");
+    records.push_shared(borrowed);
+    auto borrowedSnapshot = records;
+    records.edit(prefixSize + 1) = "owned";
+    expect(*borrowed == "borrowed" &&
+               borrowedSnapshot[prefixSize + 1] == "borrowed" &&
+               records[prefixSize + 1] == "owned",
+           "editing a borrowed record in a prefix tail changed its snapshot");
+    records.resize(pageCapacity + 1);
+    auto trimmed = records;
+    records.resize(prefixSize + 1);
+    expect(records[pageCapacity + 1].empty() && records.back().empty() &&
+               trimmed.size() == pageCapacity + 1 &&
+               borrowedSnapshot[pageCapacity + 1] ==
+                   std::to_string(pageCapacity + 1),
+           "regrowing a truncated prefix resurrected deferred records");
+    records.resize(pageCapacity);
+    records.push_back("boundary");
+    expect(records.back() == "boundary" &&
+               snapshot[pageCapacity] == std::to_string(pageCapacity),
+           "replacing a prefix page changed the original snapshot");
+    Records moved = std::move(records);
+    records.deferPrefix(1, loader);
+    expect(records[0] == "0" && moved.back() == "boundary",
+           "moving a prefix did not preserve its records or empty source");
+    Records assigned;
+    assigned = std::move(moved);
+    moved.push_back("reused");
+    expect(assigned.back() == "boundary" && moved.front() == "reused",
+           "move assignment retained prefix state in the empty source");
+  }
+  {
+    using Records = TypeRecords<std::string>;
+    unsigned attempts = 0;
+    Records records;
+    auto loader =
+        std::make_shared<const Records::Loader>([&](std::size_t value) {
+          if (++attempts == 1)
+            throw std::runtime_error("retry prefix record");
+          return std::to_string(value);
+        });
+    records.deferPrefix(3, loader);
+    auto snapshot = records;
+    bool threw = false;
+    try {
+      (void)std::as_const(records)[1];
+    } catch (const std::runtime_error &) {
+      threw = true;
+    }
+    expect(threw && !records.isMaterialized(1) &&
+               std::as_const(snapshot)[1] == "1" &&
+               std::as_const(records)[1] == "1" && attempts == 2,
+           "a failed prefix load was published or did not retry once");
+    records[1] = "mutable";
+    expect(std::as_const(snapshot)[1] == "1",
+           "mutable prefix indexing exposed a shared cached record");
+    bool rejected = false;
+    try {
+      records.deferPrefix(1, loader);
+    } catch (const std::logic_error &) {
+      rejected = true;
+    }
+    expect(rejected, "a deferred prefix replaced nonempty records");
+    records.clear();
+    rejected = false;
+    try {
+      records.deferPrefix(1, {});
+    } catch (const std::invalid_argument &) {
+      rejected = true;
+    }
+    expect(rejected && records.empty(),
+           "a null prefix loader was accepted or changed the record count");
+    records.deferPrefix(0, loader);
+    records.resize(2);
+    expect(std::as_const(records)[1].empty(),
+           "an empty deferred prefix supplied a loader to local records");
   }
   {
     TypeRecords<std::string> records;
@@ -1309,16 +1749,18 @@ int main() {
     producer.defineProduct(b, {{"first", Type::I64}, {"second", Type::Bool}});
     auto maps = symbolMaps();
     maps.definition = [&](Type type) -> std::optional<DefinitionIdentity> {
-      return DefinitionIdentity{"pkg", type == a ? "One" : "Two", {}};
+      return DefinitionIdentity{
+          "pkg", type == a ? "identityOne" : "identityTwo", {}};
     };
     for (auto mode : {ValidationMode::Eager, ValidationMode::OnDemand}) {
       auto encoded = exportTypeGraph(producer, std::array{a, b}, maps, mode);
       expect(static_cast<bool>(encoded), encoded.error);
-      constexpr std::string_view two = "Two";
+      constexpr std::string_view two = "identityTwo";
+      constexpr std::string_view one = "identityOne";
       auto found = std::search(encoded.bytes.begin(), encoded.bytes.end(),
                                two.begin(), two.end());
       expect(found != encoded.bytes.end(), "duplicate identity fixture");
-      std::copy_n("One", 3, found);
+      std::copy(one.begin(), one.end(), found);
       failedUnchanged(encoded.bytes, symbols);
       TypeStore fresh;
       auto retained = std::make_shared<const TypeGraphSymbols>(maps);

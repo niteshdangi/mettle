@@ -203,7 +203,8 @@ ProductLayout Checker::productLayout(const Module::Product &product) {
   return layout;
 }
 void Checker::machineDeclarations() {
-  for (std::size_t i = 0; i < module.products.size(); ++i) {
+  for (std::size_t i = module.products.nativeSize(); i < module.products.size();
+       ++i) {
     if (imported(module.products.header(i).span))
       continue;
     const auto &declaration = module.products[i];
@@ -282,14 +283,16 @@ void Checker::machineDeclarations() {
     for (auto type : resolved.typeArguments)
       validateLayout(type, syntax->span);
   }
-  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i) {
     if (imported(module.functions.header(i).span))
       continue;
     validateLayout(checked.functions[i].result, module.functions[i].span);
     for (const auto &local : checked.functions[i].locals)
       validateLayout(local.type, local.span);
   }
-  for (std::size_t i = 0; i < checked.staticStorage.size(); ++i)
+  for (std::size_t i = module.statics.nativeSize();
+       i < checked.staticStorage.size(); ++i)
     validateLayout(checked.staticStorage[i].type,
                    module.statics.header(i).span);
   auto floatingPolicy = [&](const Attribute &attribute,
@@ -357,7 +360,28 @@ void Checker::machineDeclarations() {
   };
   std::map<std::string, std::pair<Type, bool>> symbols;
   std::set<std::string> functionSymbols;
-  for (std::size_t index = 0; index < module.functions.size(); ++index) {
+  auto nativeSymbols = [&](const std::string &name) {
+    if (!checked.importedDeclarations || !checked.importedDeclarations->catalog)
+      return;
+    const auto &catalog = *checked.importedDeclarations->catalog;
+    for (auto function : catalog.externalFunctions(name)) {
+      functionSymbols.insert(name);
+      auto [found, inserted] = symbols.try_emplace(
+          name, checked.types->callableType(functionSignature(function)),
+          checked.hasBody(function));
+      if (!inserted)
+        found->second.second |= checked.hasBody(function);
+    }
+    for (auto storage : catalog.externalStatics(name)) {
+      auto definition = !module.statics.header(storage).foreignDeclaration;
+      auto [found, inserted] = symbols.try_emplace(
+          name, checked.staticStorage[storage].type, definition);
+      if (!inserted)
+        found->second.second |= definition;
+    }
+  };
+  for (std::size_t index = module.functions.nativeSize();
+       index < module.functions.size(); ++index) {
     if (imported(module.functions.header(index).span)) {
       const auto symbol =
           checked.importedDeclarations->functions.at(index).externalSymbol();
@@ -533,6 +557,12 @@ void Checker::machineDeclarations() {
     }
     auto signature = checked.types->callableType(
         functionSignature(module.functions.indexOf(&function)));
+    nativeSymbols(symbol);
+    if (checked.importedDeclarations && checked.importedDeclarations->catalog &&
+        !checked.importedDeclarations->catalog->externalStatics(symbol).empty())
+      error("signature", function.span,
+            "conflicting external function and storage symbol '" + symbol +
+                "'");
     if (auto found = symbols.find(symbol); found != symbols.end()) {
       if (found->second.first != signature ||
           (found->second.second && function.body.get()))
@@ -547,10 +577,12 @@ void Checker::machineDeclarations() {
   for (auto &closure : checked.closureBodies)
     if (!closure->imported)
       closure->function.floatingPolicy = facts(*closure->parent).floatingPolicy;
-  for (std::size_t i = 0; i < module.statics.size(); ++i) {
+  for (std::size_t i = module.statics.nativeSize(); i < module.statics.size();
+       ++i) {
     const auto &storage = checked.staticStorage[i];
     if (storage.externalName.empty())
       continue;
+    nativeSymbols(storage.externalName);
     if (functionSymbols.contains(storage.externalName)) {
       error("signature", module.statics.header(i).span,
             "conflicting external function and storage symbol '" +

@@ -156,6 +156,7 @@ int Checker::transfer(Node &n, bool reachable) {
 }
 bool Checker::implementsProtocol(Type type, std::string_view interface,
                                  Span span) {
+  admitNative(interface);
   auto found = interfaceNames.find(std::string(interface));
   if (found == interfaceNames.end())
     return false;

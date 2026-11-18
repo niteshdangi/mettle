@@ -97,8 +97,8 @@ void Checker::structuralPropertyDeclaration(
 void Checker::interfaceImplementations() {
   auto &database = *checked.interfaceData;
   auto *saved = genericEnvironment;
-  for (std::size_t function = 0; function < module.functions.size();
-       ++function) {
+  for (std::size_t function = module.functions.nativeSize();
+       function < module.functions.size(); ++function) {
     const auto &syntax = module.functions.header(function);
     if (imported(syntax.span))
       continue;
@@ -122,7 +122,8 @@ void Checker::interfaceImplementations() {
         1 + database.definitions[interface->second].parameters.size();
     methods.push_back(std::move(method));
   }
-  for (std::size_t i = 0; i < module.implementations.size(); ++i) {
+  for (std::size_t i = module.implementations.nativeSize();
+       i < module.implementations.size(); ++i) {
     if (imported(module.implementations.header(i).span))
       continue;
     const auto &syntax = module.implementations[i];
@@ -430,8 +431,8 @@ void Checker::interfaceImplementations() {
            ++method) {
         const auto &required = definition.methods[method];
         std::optional<int> provided;
-        for (std::size_t function = 0; function < module.functions.size();
-             ++function) {
+        for (std::size_t function = module.functions.nativeSize();
+             function < module.functions.size(); ++function) {
           const auto &candidate = module.functions.header(function);
           if ((candidate.implementation == static_cast<int>(i) ||
                std::find(syntax.methodFunctions.begin(),
@@ -530,8 +531,8 @@ void Checker::interfaceImplementations() {
       if (syntax.unsafeImplementation)
         error("type", syntax.span,
               "unsafe extend requires an unsafe interface or native property");
-      for (std::size_t function = 0; function < module.functions.size();
-           ++function) {
+      for (std::size_t function = module.functions.nativeSize();
+           function < module.functions.size(); ++function) {
         const auto &header = module.functions.header(function);
         if (header.implementation != static_cast<int>(i) || header.constructor)
           continue;
@@ -995,8 +996,9 @@ void Checker::checkInterfaceContracts() {
 
 void Checker::finalizeInterfaces() {
   for (std::size_t i = 0; i < checked.interfaceData->definitions.size(); ++i) {
-    if (i < module.interfaces.size() &&
-        imported(module.interfaces.header(i).span))
+    if (module.interfaces.native(i) ||
+        (i < module.interfaces.size() &&
+         imported(module.interfaces.header(i).span)))
       continue;
     for (std::size_t m = 0;
          m <
@@ -1006,7 +1008,7 @@ void Checker::finalizeInterfaces() {
                              .definitions[i]
                              .methods[m]
                              .function;
-      if (imported(module.functions.header(index).span))
+      if (checked.imported(index))
         continue;
       const auto &function = module.functions[index];
       const auto &facts = checked.function(index);
@@ -1030,6 +1032,10 @@ void Checker::finalizeInterfaces() {
 }
 
 std::optional<Type> Checker::associatedConstant(const Node &node) {
+  auto findConstant = [&](const std::string &name) {
+    admitConstant(name);
+    return inherentConstantNames.find(name);
+  };
   if (node.kind == Kind::Name && node.annotation.form == TypeForm::Projection &&
       node.annotation.elements.size() == 2) {
     auto subject = annotation(node.annotation.elements[0], node.span);
@@ -1044,8 +1050,8 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
     auto canonical =
         checked.symbols->lookup(nameModule(node.span, node.context), node.text,
                                 resolution::Namespace::Value, node.span);
-    auto resolved = canonical ? inherentConstantNames.find(*canonical)
-                              : inherentConstantNames.end();
+    auto resolved =
+        canonical ? findConstant(*canonical) : inherentConstantNames.end();
     if (resolved == inherentConstantNames.end())
       return std::nullopt;
     auto subject = inherentConstants[resolved->second].target;
@@ -1071,7 +1077,9 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
   }
   // Only annotate the prefix when some inherent constant has this member;
   // otherwise a qualified variant would report missing generic arguments.
-  bool memberDeclared = false;
+  bool memberDeclared =
+      checked.importedDeclarations && checked.importedDeclarations->catalog &&
+      checked.importedDeclarations->catalog->constantMember(member);
   for (const auto &[name, index] : inherentConstantNames)
     if (name.size() > member.size() + 2 && name.ends_with(member) &&
         name.compare(name.size() - member.size() - 2, 2, "::") == 0) {
@@ -1091,14 +1099,14 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
   if (auto builtin = builtinType(prefix);
       builtin != Type::Unknown &&
       (subject == Type::Unknown || subject == builtin))
-    if (auto found = inherentConstantNames.find(prefix + "::" + member);
+    if (auto found = findConstant(prefix + "::" + member);
         found != inherentConstantNames.end())
       return inherentConstantValue(found->second, builtin, &node);
   if ((isInteger(subject) || isFloating(subject) || subject == Type::Char ||
        subject == Type::Bool) &&
       builtinType(prefix) == Type::Unknown)
-    if (auto found = inherentConstantNames.find(
-            displayType(*checked.types, subject) + "::" + member);
+    if (auto found =
+            findConstant(displayType(*checked.types, subject) + "::" + member);
         found != inherentConstantNames.end())
       return inherentConstantValue(found->second, subject, &node);
   if (checked.types->isProduct(subject)) {
@@ -1106,13 +1114,13 @@ std::optional<Type> Checker::associatedConstant(const Node &node) {
     if (checked.types->product(ownerType).genericOrigin != Type::Unknown)
       ownerType = checked.types->product(ownerType).genericOrigin;
     auto key = checked.types->product(ownerType).name + "::" + member;
-    auto candidate = inherentConstantNames.find(key);
+    auto candidate = findConstant(key);
     auto lookupName = prefix == "Self" ? key : node.text;
     auto canonical =
         checked.symbols->lookup(nameModule(node.span, node.context), lookupName,
                                 resolution::Namespace::Value, node.span);
-    auto resolved = canonical ? inherentConstantNames.find(*canonical)
-                              : inherentConstantNames.end();
+    auto resolved =
+        canonical ? findConstant(*canonical) : inherentConstantNames.end();
     if (resolved != inherentConstantNames.end())
       return inherentConstantValue(resolved->second, subject, &node);
     if (candidate != inherentConstantNames.end()) {

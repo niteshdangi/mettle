@@ -348,12 +348,52 @@ struct Function {
   Span variadicSpan{};
   SyntaxContextPtr lexicalContext{};
 };
+enum class DeclarationNamespace { Type, Value, Module, Macro };
+struct NativeBinding {
+  DeclarationNamespace space = DeclarationNamespace::Type;
+  std::string module, name, canonical, boundary;
+  Span span{};
+  std::optional<std::string> target;
+  bool publicBoundary = false;
+  bool explicitBinding = true;
+};
+struct NativeItem {
+  Span span{};
+  std::string module, canonical, boundary;
+  bool publicBoundary = false;
+};
+class NativeDeclarationIndex {
+public:
+  virtual ~NativeDeclarationIndex() = default;
+  virtual std::vector<NativeBinding>
+  lookup(std::string_view module, std::string_view name,
+         DeclarationNamespace space) const = 0;
+  virtual std::vector<NativeBinding> glob(std::string_view module) const = 0;
+  virtual std::vector<NativeBinding>
+  associated(std::string_view owner, std::string_view name) const = 0;
+  virtual std::optional<NativeItem> item(Span span) const = 0;
+  virtual std::optional<std::string>
+  alias(std::string_view canonical) const = 0;
+  virtual bool source(SourceId source) const = 0;
+  virtual std::optional<std::string>
+  builtinMethod(std::string_view name) const = 0;
+  virtual bool iteratorMethod(std::string_view name) const = 0;
+  virtual bool associatedOwner(std::string_view canonical) const = 0;
+  virtual bool hasExternalLibraries() const = 0;
+  virtual std::vector<std::string> exportAssociatedOwners() const = 0;
+  virtual std::vector<std::pair<std::string, NativeBinding>>
+  exportBindings() const = 0;
+  virtual std::vector<NativeItem> exportItems() const = 0;
+  virtual std::vector<std::pair<std::string, std::string>>
+  exportAliases() const = 0;
+};
 struct Module {
   std::vector<Token> tokens;
   // Spans of text-literal expressions; the loader uses them to mount the
   // library that defines Text.
   std::vector<Span> textLiterals;
   Declarations<Function> functions;
+  std::vector<std::shared_ptr<const NativeDeclarationIndex>> nativeDeclarations;
   struct Static {
     std::string name;
     TypeSyntax annotation;

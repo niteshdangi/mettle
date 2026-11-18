@@ -479,16 +479,23 @@ database, and consumer coherence compares only pairs containing a source rule.
 Native type interning indices have one immutable shared prefix and
 consumer-local additions;
 lookups preserve full identity checks and canonical ordering across both.
-Imported candidate groups borrow immutable descriptor keys and address one
-contiguous ordinal array; their retained index owner outlives every borrowed key.
+Imported candidate groups use immutable archive projections and contiguous
+ordinal arrays; retained archive owners outlive their borrowed lookup data.
 Changing an imported identity key invalidates the consumer's index, not its
 shared prefix in other consumers. Generic function and type environments are
 materialized on first use rather than recreated for every imported declaration.
-Declaration archives persist compact query projections separately from framed
-syntax. Admission decodes the projection without traversing discarded type
-syntax; demanded syntax must reproduce its admitted projection. Item attributes
-remain in query records, so driver linkage discovery does not materialize
-functions or statics. Interface phases share unchanged immutable records and
+Declaration header schema 5 and checked contracts 19 persist producer-built
+module/name and declaration-ID directories separately from framed syntax and
+signatures. Consumers reserve stable native declaration ranges without building
+header or parameter inventories. Resolution queries those immutable directories
+with a consumer-local overlay; demanded records must reproduce their admitted
+projections. Deferred readers retain archive storage, source mappings and
+resolver lifetimes. Defaults/private helpers use indexed native ordinals;
+checking, closure discovery, lowering and package mapping enumerate local or
+demanded declarations rather than the reserved range. Producer-persisted link
+presence preserves external-library caching decisions without scanning unused
+function/static attributes.
+Interface phases share unchanged immutable records and
 encode only phase replacements, retaining phase-specific selection contracts.
 Interface database admission validates framed records and their references
 without retaining full definitions, implementations or structural-property
@@ -497,12 +504,12 @@ groups and declaration spans. Checking and finalized phases share unchanged
 deferred records; consumer mutations detach locally. Selection and coherence use
 the compact indexes before demanding candidate details, without hiding imported
 implementations or weakening cross-boundary overlap checks.
-Compact IR admission streams and validates all locals and lexical scopes,
-retaining only the parameter/special-slot prefix without temporary full
-functions or repeated demanded-header decoding. Nested readers borrow their
-record's string table. The indexed body loader restores body-local storage,
-scopes and loop metadata before CFG validation. Archive storage and remap tables
-remain owned by the shared import.
+IR v13 admission indexes callable signatures, linkage and generic information
+without traversing private locals, lexical scopes or array-loop metadata.
+Those records remain in the authenticated deferred implementation payload.
+Demand authenticates and decodes that payload before CFG validation; nested
+readers borrow its string table. Archive storage and remap tables remain owned
+by the shared import.
 
 **Source function queries.** Resident requests also retain successful user
 declaration/type contracts and pre-normalization symbolic IR. Reuse requires
@@ -563,17 +570,32 @@ loading their executable bodies. Demanded generic bodies still specialize and
 pass concrete IR admission; executable builds retain the native object and
 cross-object optimization policy.
 
-Fresh graph admission retains validated serialized record slices, compact
-indexes and normalized canonical identity keys before publishing a transactional
-typed store, not a whole-graph descriptor arena. Owned and borrowed records share
-one wire schema and semantic validator; schema-derived minimum sizes bound
-allocations before shell creation and sequence reservation. Symbol callbacks run
-only after structural admission. Flat graph edges retain cycle/depth validation.
-Imported interning shares immutable borrowed-key tables with consumer-local
-additions and exact identity comparisons. Reads materialize individual descriptors
-from retained immutable bytes and resolved ordinal tables; canonical fallback
-keeps ordinary eager admission. Dense identities, region tables and complete
-structural validation remain eager. The destination remains unchanged on failure.
+Indexed type-graph v5 admission retains archive-backed record, projection and
+lookup directories rather than building consumer shells, compact descriptor
+inventories or retained canonical keys. A stable native TypeId address range
+reserves identities without constructing its Entry or descriptor records.
+Consumer-local types start after that range; copying a store preserves native
+identities without allowing later native demand to collide with local IDs.
+Kind, parameter-category and erased-declaration queries read admitted archive
+facts without constructing Entry or descriptor records. Materialized consumer
+overrides remain authoritative; the prefix and scalar readers retain their
+archive owner.
+Sparse deferred prefixes allocate pages on demand, share immutable read caches
+and detach before mutation. Published pages support concurrent const reads
+without a steady-state cache mutex or shared-pointer copy.
+
+The producer builds interning candidate indexes. Admission validates their
+framing, ordering, candidate membership and correspondence to scratch
+projections, alongside all structural references, nominal identities, roots
+and regional cycles. Fingerprint collisions receive exact canonical-key
+comparisons. Actual duplicate nonnominal identities retain the ordinary eager
+canonicalization path, including aliases that resolve to the same symbol.
+Region tables and structural validation remain eager, not consumer type records.
+On the unique-identity indexed path, interning searches immutable archive
+directories and retains candidate vectors only for requested keys. Demanded
+records must reproduce their admitted projections and pass dependency-closure
+validation before publication. Owned and borrowed records share one wire schema
+and semantic validator; the destination remains unchanged on admission failure.
 
 The admitted graph retains its immutable archive owner or snapshots caller bytes.
 Borrowed descriptors are constructed only when inspected.

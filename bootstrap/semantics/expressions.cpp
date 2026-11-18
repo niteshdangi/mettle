@@ -72,6 +72,7 @@ void Checker::function(Function &f) {
     if (scopes.back().contains(nameKey(f.variadicCursor, f.variadicSpan)))
       error("name", f.variadicSpan, "duplicate variadic cursor binding");
     auto cursor = checked.types->structural(AggregateKind::VarArgs, {});
+    admitNative("core::ffi::VaList");
     if (auto canonical = typeNames.find("core::ffi::VaList");
         canonical != typeNames.end())
       cursor = canonical->second;
@@ -111,6 +112,7 @@ Type Checker::textLiteralType(const Node &n) {
     return checked.types->viewType(payload, ParameterMode::Read,
                                    RegionId::Static);
   }
+  admitNative("core::text::Text");
   auto text = typeNames.find("core::text::Text");
   if (text == typeNames.end()) {
     if (bytes)

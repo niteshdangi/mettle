@@ -330,6 +330,8 @@ RegionId Checker::regionReference(const LexicalNameSyntax &name, Span span) {
         outer.names.contains(nameKey(name)))
       return outer.names.at(nameKey(name));
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
+    if (module.functions.native(i) && !module.functions.isMaterialized(i))
+      continue;
     const auto &header = module.functions.header(i);
     if (header.span.source != span.source || header.span.begin > span.begin ||
         span.end > header.span.end)
@@ -452,7 +454,10 @@ Checker::AnnotationRegions &Checker::functionRegions(const Function &function) {
     const auto &owner = module.implementations[function.implementation];
     add(owner.genericParameters, owner.constraints);
   } else if (function.implementation < 0 && !function.interfaceOwner.empty()) {
-    for (std::size_t i = 0; i < module.interfaces.size(); ++i) {
+    auto name = typeName(function.interfaceOwner, function.span);
+    auto declaration = interfaceNames.find(name);
+    if (declaration != interfaceNames.end()) {
+      auto i = declaration->second;
       const auto &header = module.interfaces.header(i);
       if (header.name == function.interfaceOwner ||
           definitionName(header.span, header.name) ==
@@ -462,7 +467,6 @@ Checker::AnnotationRegions &Checker::functionRegions(const Function &function) {
           add({}, owner.constraints);
         else
           add(owner.genericParameters, owner.constraints);
-        break;
       }
     }
   } else if (!copiedParameters && !function.owner.empty()) {
@@ -473,7 +477,8 @@ Checker::AnnotationRegions &Checker::functionRegions(const Function &function) {
     if (!owners.empty())
       selected = owners.front();
     if (!selected)
-      for (std::size_t i = 0; i < module.products.size(); ++i)
+      for (std::size_t i = module.products.nativeSize();
+           i < module.products.size(); ++i)
         if (module.products.header(i).name == function.owner) {
           selected = &module.products[i];
           break;
@@ -610,6 +615,29 @@ private:
   }
   std::map<std::size_t, RegionSeed> seeds;
   const ImportedDeclarations *imports;
+  std::optional<std::size_t>
+  interfaceDeclaration(const Function &function) const {
+    if (imports && imports->catalog) {
+      std::string canonical;
+      if (function.interfaceOwner.find("::") == std::string::npos)
+        for (const auto &part : function.item.scope) {
+          if (!canonical.empty())
+            canonical += "::";
+          canonical += part;
+        }
+      if (!canonical.empty())
+        canonical += "::";
+      canonical += function.interfaceOwner;
+      if (auto native = imports->catalog->namedType(canonical);
+          native && native->first == 2)
+        return native->second;
+    }
+    for (std::size_t i = module.interfaces.nativeSize();
+         i < module.interfaces.size(); ++i)
+      if (module.interfaces.header(i).name == function.interfaceOwner)
+        return i;
+    return std::nullopt;
+  }
   std::function<Type(
       Type, std::span<const TypeBinding>, std::size_t, Span,
       const RegionEnvironment &, const std::function<Type(Type, Span)> &,
@@ -2468,13 +2496,9 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
       instantiateOwnerRegions(implementation.genericParameters,
                               implementation.target.regions);
     } else if (!method.interfaceOwner.empty()) {
-      auto headers = module.interfaces.headers();
-      auto owner = std::find_if(
-          headers.begin(), headers.end(), [&](const auto &candidate) {
-            return candidate.name == method.interfaceOwner;
-          });
-      if (owner != headers.end())
-        instantiateOwnerRegions(owner->genericParameters, {});
+      if (auto owner = interfaceDeclaration(method))
+        instantiateOwnerRegions(module.interfaces[*owner].genericParameters,
+                                {});
     }
   }
   for (auto region : signature.backing)
@@ -4364,12 +4388,10 @@ Type RegionPass::callableBound(Type type, RegionContext &context, Span span) {
           break;
         }
     if (!bound && !function.interfaceOwner.empty())
-      for (std::size_t i = 0; i < module.interfaces.size(); ++i)
-        if (module.interfaces.header(i).name == function.interfaceOwner) {
-          const auto &owner = module.interfaces[i];
-          bound = declared(owner.genericParameters, owner.constraints);
-          break;
-        }
+      if (auto declaration = interfaceDeclaration(function)) {
+        const auto &owner = module.interfaces[*declaration];
+        bound = declared(owner.genericParameters, owner.constraints);
+      }
     if (bound)
       return decorate(types.parameter(type).callableConstraint, *bound, context,
                       span);
@@ -4569,7 +4591,8 @@ void RegionPass::run() {
   }
   if (!diagnostics.empty())
     return;
-  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i) {
     if (module.functions.header(i).item.checkedImport)
       continue;
     const auto &syntax = module.functions[i];
@@ -4686,14 +4709,11 @@ void RegionPass::run() {
     if (!syntax.asyncDefaultFutureInferred ||
         syntax.asyncDefaultBodyResult.form != TypeForm::Opaque)
       return signatureFor(index).result;
-    auto headers = module.interfaces.headers();
-    auto owner = std::find_if(headers.begin(), headers.end(),
-                              [&](const auto &candidate) {
-                                return candidate.name == syntax.interfaceOwner;
-                              });
-    if (owner == headers.end())
+    auto selected = interfaceDeclaration(syntax);
+    if (!selected)
       return signatureFor(index).result;
-    const auto declaration = static_cast<std::size_t>(owner - headers.begin());
+    const auto declaration = *selected;
+    const auto *owner = &module.interfaces[declaration];
     if (declaration >= interfaceData.definitions.size())
       return signatureFor(index).result;
     const auto &definition =
@@ -4775,7 +4795,8 @@ void RegionPass::run() {
     }
     return decorate(future, TypeSyntax{}, context, syntax.span, fallback);
   };
-  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i) {
     if (module.functions.header(i).item.checkedImport)
       continue;
     currentFunction = i;
@@ -5115,7 +5136,8 @@ void Checker::checkRegions() {
   auto *saved = current;
   auto *savedEnvironment = genericEnvironment;
   for (std::size_t index = 0; index < module.functions.size(); ++index) {
-    if (imported(module.functions.header(index).span)) {
+    if (module.functions.native(index) ||
+        imported(module.functions.header(index).span)) {
       if (!module.functions.isMaterialized(index))
         continue;
       const auto &function = module.functions[index];
@@ -5144,7 +5166,7 @@ void Checker::checkRegions() {
   genericEnvironment = savedEnvironment;
   if (!diagnostics.empty())
     return;
-  for (const auto &product : module.products.headers())
+  for (const auto &product : module.products.localHeaders())
     products.emplace_back(
         typeNames.at(definitionName(product.span, product.name)), &product);
   RegionPass(

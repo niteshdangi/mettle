@@ -12,8 +12,8 @@ void Checker::interfaceHeaders() {
   }
   auto &database = *checked.interfaceData;
   database.definitions.resize(module.interfaces.size());
-  std::size_t declarationIndex = 0;
-  for (const auto &syntax : module.interfaces.headers()) {
+  std::size_t declarationIndex = module.interfaces.nativeSize();
+  for (const auto &syntax : module.interfaces.localHeaders()) {
     auto name = definitionName(syntax.span, syntax.name);
     const auto index = declarationIndex++;
     if (!interfaceNames.emplace(name, index).second) {
@@ -35,7 +35,8 @@ void Checker::interfaceHeaders() {
   }
   if (!diagnostics.empty())
     return;
-  for (std::size_t index = 0; index < module.interfaces.size(); ++index) {
+  for (std::size_t index = module.interfaces.nativeSize();
+       index < module.interfaces.size(); ++index) {
     if (imported(module.interfaces.header(index).span))
       continue;
     const auto &syntax = module.interfaces[index];
@@ -119,7 +120,13 @@ bool Checker::interfaceHasFunctions(const std::string &canonical) const {
       interfaceFunctionOwners.try_emplace(canonical, false);
   if (inserted)
     cached->second = [&] {
-      auto headers = module.functions.headers();
+      if (checked.importedDeclarations && checked.importedDeclarations->catalog)
+        if (auto native =
+                checked.importedDeclarations->catalog->namedType(canonical);
+            native && native->first == 2)
+          return !(*checked.interfaceData->importedDefinitions)[native->second]
+                      .methods.empty();
+      auto headers = module.functions.localHeaders();
       return std::any_of(
           headers.begin(), headers.end(), [&](const Function &function) {
             return function.implementation < 0 &&
@@ -633,7 +640,8 @@ Type Checker::normalizeCallType(Type type,
 
 void Checker::interfaceSignatures() {
   auto *saved = genericEnvironment;
-  for (std::size_t i = 0; i < module.interfaces.size(); ++i) {
+  for (std::size_t i = module.interfaces.nativeSize();
+       i < module.interfaces.size(); ++i) {
     if (imported(module.interfaces.header(i).span))
       continue;
     const auto &syntax = module.interfaces[i];
@@ -788,7 +796,8 @@ void Checker::interfaceSignatures() {
   };
   for (std::size_t index = 0; index < states.size(); ++index)
     visit(index, 0);
-  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i) {
     if (imported(module.functions.header(i).span))
       continue;
     const auto &function = module.functions[i];

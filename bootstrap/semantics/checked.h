@@ -173,23 +173,44 @@ struct ImportedFunction;
 class ImportedFunctionReference;
 class FunctionFactsTable {
 public:
-  void resize(std::size_t count) {
-    local.resize(count);
-    borrowed.resize(count);
-    deferred.resize(count);
+  void bindNative(
+      std::size_t count,
+      std::function<const ImportedFunctionReference &(std::size_t)> load) {
+    nativeCount = count;
+    native = std::move(load);
   }
-  std::size_t size() const { return local.size(); }
+  void resize(std::size_t count) {
+    auto own = count - nativeCount;
+    local.resize(own);
+    borrowed.resize(own);
+    deferred.resize(own);
+  }
+  std::size_t size() const { return nativeCount + local.size(); }
   void bind(std::size_t index, const FunctionFacts &facts) {
+    if (index < nativeCount) {
+      nativeLocal[index] = std::make_unique<FunctionFacts>(facts);
+      return;
+    }
+    index -= nativeCount;
     local.at(index).reset();
     borrowed.at(index) = &facts;
     deferred.at(index) = nullptr;
   }
   void bind(std::size_t index, const ImportedFunctionReference &function) {
+    if (index < nativeCount)
+      return;
+    index -= nativeCount;
     local.at(index).reset();
     borrowed.at(index) = nullptr;
     deferred.at(index) = &function;
   }
   const FunctionFacts &at(std::size_t index) const {
+    if (index < nativeCount) {
+      if (auto found = nativeLocal.find(index); found != nativeLocal.end())
+        return *found->second;
+      return materialize(native(index));
+    }
+    index -= nativeCount;
     if (const auto &value = local.at(index))
       return *value;
     if (auto value = borrowed.at(index))
@@ -200,15 +221,27 @@ public:
     return uninitialized;
   }
   FunctionFacts &at(std::size_t index) {
+    if (index < nativeCount) {
+      if (auto found = nativeLocal.find(index); found != nativeLocal.end())
+        return *found->second;
+      auto value =
+          std::make_unique<FunctionFacts>(std::as_const(*this).at(index));
+      return *nativeLocal.emplace(index, std::move(value)).first->second;
+    }
+    index -= nativeCount;
     auto &value = local.at(index);
     if (!value)
-      value = std::make_unique<FunctionFacts>(std::as_const(*this).at(index));
+      value = std::make_unique<FunctionFacts>(
+          std::as_const(*this).at(index + nativeCount));
     return *value;
   }
   const FunctionFacts &operator[](std::size_t index) const { return at(index); }
   FunctionFacts &operator[](std::size_t index) { return at(index); }
 
 private:
+  std::size_t nativeCount = 0;
+  std::function<const ImportedFunctionReference &(std::size_t)> native;
+  std::map<std::size_t, std::unique_ptr<FunctionFacts>> nativeLocal;
   std::vector<std::unique_ptr<FunctionFacts>> local;
   // CheckedModule owns the imported declaration snapshot for these references.
   std::vector<const FunctionFacts *> borrowed;
@@ -300,7 +333,7 @@ public:
     auto found = iterations.find(&node);
     return found == iterations.end() ? nullptr : &found->second;
   }
-  const std::vector<StaticFacts> &statics() const { return staticStorage; }
+  const TypeRecords<StaticFacts> &statics() const { return staticStorage; }
   std::shared_ptr<const TypeStore> typeStore() const { return types; }
   const resolution::Resolution &namespaces() const { return *symbols; }
   const interfaces::Database &interfaceDatabase() const {
@@ -319,6 +352,9 @@ public:
     return closureBodies;
   }
   bool imported(std::size_t function) const;
+  std::size_t nativeDefaultCount() const;
+  std::optional<std::size_t> nativeDefaultOrdinal(std::size_t function,
+                                                  std::size_t parameter) const;
   bool hasBody(std::size_t function) const;
   bool hasDefault(std::size_t function, std::size_t parameter) const;
 
@@ -345,7 +381,7 @@ private:
   std::unordered_map<const Node *, IterationPlan> iterations;
   FunctionFactsTable functions;
   std::vector<std::vector<std::size_t>> declarationDependencies;
-  std::vector<StaticFacts> staticStorage;
+  TypeRecords<StaticFacts> staticStorage;
   std::vector<std::unique_ptr<ClosureFacts>> closureBodies;
   std::shared_ptr<TypeStore> types = std::make_shared<TypeStore>();
   std::shared_ptr<const resolution::Resolution> symbols;

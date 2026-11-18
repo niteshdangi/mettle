@@ -521,11 +521,14 @@ int Checker::call(Node &n, bool reachable) {
       signature = {field};
     }
   } else {
+    admitNative(name);
     auto found = names.find(name);
     if (found == names.end() && n.children[0]->kind == Kind::Name &&
         n.children[0]->annotation.form != TypeForm::Projection)
-      if (auto resolved = staticInterfaceCall(n, reachable))
+      if (auto resolved = staticInterfaceCall(n, reachable)) {
+        admitNative(*resolved);
         found = names.find(name = *resolved);
+      }
     if (found == names.end()) {
       if (auto primitive = targetCall(n, reachable))
         return *primitive;

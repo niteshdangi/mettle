@@ -1254,10 +1254,15 @@ int build(const Options &requested,
   };
   bool externalLibraries =
       tree && (!options.extraLibraries.empty() ||
-               std::any_of(tree->functions.headers().begin(),
-                           tree->functions.headers().end(), linked) ||
-               std::any_of(tree->statics.headers().begin(),
-                           tree->statics.headers().end(), linked));
+               std::any_of(tree->nativeDeclarations.begin(),
+                           tree->nativeDeclarations.end(),
+                           [](const auto &catalog) {
+                             return catalog->hasExternalLibraries();
+                           }) ||
+               std::any_of(tree->functions.localHeaders().begin(),
+                           tree->functions.localHeaders().end(), linked) ||
+               std::any_of(tree->statics.localHeaders().begin(),
+                           tree->statics.localHeaders().end(), linked));
   // `-g` builds are never cached: paths and the Darwin dSYM are outputs that
   // the cache does not store.
   if (tree && options.command == "build" && !options.debugInfo &&

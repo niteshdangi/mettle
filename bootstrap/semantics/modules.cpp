@@ -3,12 +3,63 @@
 #include <limits>
 
 namespace mettle {
+void Checker::admitNative(std::string_view canonical) const {
+  const auto &imports = checked.importedDeclarations;
+  if (!imports || !imports->catalog)
+    return;
+  auto &self = *const_cast<Checker *>(this);
+  if (auto function = imports->catalog->function(canonical))
+    self.names.emplace(std::string(canonical), *function);
+  if (auto type = imports->catalog->namedType(canonical)) {
+    auto [kind, index] = *type;
+    const ImportedDeclarations::TypeTable *table = nullptr;
+    Span span;
+    switch (kind) {
+    case 0:
+      table = &imports->products;
+      if (index >= module.products.nativeSize())
+        throw metadata::InvalidMetadata(
+            "native product lookup exceeds its declaration directory");
+      span = module.products.header(index).span;
+      break;
+    case 1:
+      table = &imports->aliases;
+      if (index >= module.aliases.nativeSize())
+        throw metadata::InvalidMetadata(
+            "native alias lookup exceeds its declaration directory");
+      span = module.aliases.header(index).span;
+      self.aliases.emplace(std::string(canonical), index);
+      if (index < self.aliasStates.size())
+        self.aliasStates[index] = 2;
+      break;
+    case 2:
+      if (index >= module.interfaces.nativeSize())
+        throw metadata::InvalidMetadata(
+            "native interface lookup exceeds its declaration directory");
+      self.interfaceNames.emplace(std::string(canonical), index);
+      break;
+    default:
+      break;
+    }
+    if (table) {
+      auto declaration = imports->findType(span, *table);
+      if (!declaration)
+        throw metadata::InvalidMetadata(
+            "native type has no indexed declaration contract");
+      if (declaration->name != canonical)
+        throw metadata::InvalidMetadata(
+            "native type lookup does not match its declaration");
+      self.typeNames.emplace(std::string(canonical), declaration->type);
+    }
+  }
+}
 resolution::ModuleId
 Checker::nameModule(Span span, std::optional<SyntaxContextPtr> context,
                     bool visibilityOnly) const {
   auto lexical = context ? *context : diagnostics.syntaxContext(span);
   if (!lexical)
     return checked.symbols->moduleOf(span);
+  checked.symbols->moduleOf(lexical->definition);
   resolution::ModuleId moduleId = 0;
   const auto &modules = checked.symbols->modules();
   for (const auto &part : lexical->scope) {
@@ -42,10 +93,21 @@ std::string Checker::definitionName(Span span,
 
 const std::vector<const Module::Product *> &
 Checker::productsNamed(const std::string &name) const {
-  if (productIndex.empty())
-    for (const auto &product : module.products.headers())
+  const auto &imports = checked.importedDeclarations;
+  if (imports && imports->catalog)
+    if (auto declaration = imports->catalog->namedType(name);
+        declaration && declaration->first == 0) {
+      auto &found = productIndex[name];
+      if (found.empty())
+        found.push_back(&module.products[declaration->second]);
+      return found;
+    }
+  if (!localProductsIndexed) {
+    for (const auto &product : module.products.localHeaders())
       productIndex[definitionName(product.span, product.name)].push_back(
           &product);
+    localProductsIndexed = true;
+  }
   static const std::vector<const Module::Product *> none;
   auto found = productIndex.find(name);
   if (found != productIndex.end())
@@ -66,8 +128,10 @@ std::string Checker::typeName(std::string_view spelling, Span span,
     spelling = owner;
   auto resolved = checked.symbols->lookup(nameModule(span, context), spelling,
                                           resolution::Namespace::Type, span);
-  if (resolved)
+  if (resolved) {
+    admitNative(*resolved);
     return *resolved;
+  }
   if (builtinType(spelling) != Type::Unknown)
     return std::string(spelling);
   return {};
@@ -79,8 +143,10 @@ Checker::callableName(std::string_view spelling, std::string_view owner,
                       std::optional<SyntaxContextPtr> lexical) const {
   auto context = nameModule(span, lexical);
   if (auto resolved = checked.symbols->lookup(
-          context, spelling, resolution::Namespace::Value, span))
+          context, spelling, resolution::Namespace::Value, span)) {
+    admitNative(*resolved);
     return *resolved;
+  }
   if (auto type = typeName(spelling, span, owner, lexical); !type.empty())
     return type;
   auto separator = spelling.rfind("::");

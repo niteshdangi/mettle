@@ -420,21 +420,53 @@ struct ImportedTypeIndex {
   std::uint32_t declaration = 0;
   bool closure = false;
 };
+struct ImportedTypeQuery {
+  enum class Kind {
+    Generic,
+    Regional,
+    Aggregate,
+    View,
+    Pointer,
+    Slice,
+    Erased,
+    Operand,
+    Callable,
+    Constant,
+    NamedProduct
+  };
+  Kind kind;
+  ImportedTypeIndex key;
+  std::string_view name{};
+};
+struct ImportedTypeScalars {
+  TypeParameterKind parameterKind = TypeParameterKind::Type;
+  Type valueType = Type::Unknown;
+  std::uint32_t declaration = 0;
+  Type payload = Type::Unknown;
+  RegionId region = RegionId::Unspecified;
+};
 class TypeStore {
 public:
   class DefinitionSnapshot;
   // Shells belong only to a transactional staging store until graph validation.
   Type declareImportedType(ImportedTypeKind kind);
+  void reserveImportedTypes(std::span<const ImportedTypeKind> kinds,
+                            std::shared_ptr<const void> owner);
   void defineImportedType(Type type, ImportedTypeDefinition definition);
   using ImportedDefinitionLoader =
       std::function<ImportedTypeDefinition(std::size_t)>;
   using BorrowedDefinitionLoader =
       std::function<BorrowedTypeDefinition(std::size_t)>;
+  using ImportedTypeLookup =
+      std::function<std::span<const std::uint32_t>(const ImportedTypeQuery &)>;
+  using ImportedTypeScalarLookup =
+      std::function<ImportedTypeScalars(std::size_t)>;
   void deferImportedDefinitions(
       std::span<const Type> ids, std::span<const ImportedTypeIndex> index,
       std::shared_ptr<const ImportedDefinitionLoader> loader,
       std::shared_ptr<const BorrowedDefinitionLoader> borrowed = {},
-      std::shared_ptr<const void> indexOwner = {});
+      std::shared_ptr<const void> indexOwner = {},
+      ImportedTypeLookup resolve = {}, ImportedTypeScalarLookup scalars = {});
   void remapImportedSymbols(std::span<const Type> types,
                             const ImportedSymbolRemap &symbols);
   ImportedTypeDefinition importedDefinition(Type type) const;
@@ -635,8 +667,10 @@ private:
     return visitor(*record);
   }
   std::optional<BorrowedTypeDefinition> borrowedDefinition(Type type) const;
+  std::span<const Type> retainedCoroutineInterior(Type type) const;
   std::pair<TypeParameterKind, Type> parameterCategory(Type type) const;
   std::shared_ptr<const BorrowedDefinitionLoader> borrowedDefinitions;
+  ImportedTypeScalarLookup importedScalars;
   std::size_t borrowedDefinitionCount = 0;
   mutable CoroutineLayout coroutineLayouts;
   std::unordered_map<std::uint32_t, std::vector<Type>> coroutineInteriors;
@@ -656,11 +690,20 @@ private:
     Slice,
     Pointer
   };
+  static EntryKind importedEntryKind(ImportedTypeKind kind);
+  EntryKind entryKind(Type type) const {
+    auto index = type.index() - builtinTypeCount;
+    return index < reservedImportedKinds.size()
+               ? importedEntryKind(reservedImportedKinds[index])
+               : entries[index].kind;
+  }
   struct Entry {
     EntryKind kind;
     std::size_t index;
   };
-  std::vector<Entry> entries;
+  TypeRecords<Entry, true> entries;
+  std::size_t reservedImportedTypes = 0;
+  std::span<const ImportedTypeKind> reservedImportedKinds;
   TypeRecords<ProductType> products;
   TypeRecords<ViewType> views;
   TypeRecords<SliceType> slices;
@@ -751,6 +794,7 @@ private:
     std::size_t synced = 0;
     std::shared_ptr<const LookupData> base;
     std::shared_ptr<const ImportedLookupData> imported;
+    ImportedTypeLookup resolve;
     LookupData local;
   } lookup;
   void syncLookup();
@@ -802,8 +846,9 @@ private:
       return values ? std::span<const std::uint32_t>(*values)
                     : std::span<const std::uint32_t>{};
     };
-    return {lookup.imported ? importedTable(table).find(key)
-                            : std::span<const std::uint32_t>{},
+    return {lookup.resolve    ? lookup.resolve(importedQuery(table, key))
+            : lookup.imported ? importedTable(table).find(key)
+                              : std::span<const std::uint32_t>{},
             lookup.base ? owned(*lookup.base)
                         : std::span<const std::uint32_t>{},
             owned(lookup.local)};
@@ -815,14 +860,59 @@ private:
     const auto *local = found(lookup.local.*table, key);
     const auto *base =
         lookup.base ? found(lookup.base.get()->*table, key) : nullptr;
-    const auto imported = lookup.imported ? importedTable(table).find(key)
-                                          : std::span<const std::uint32_t>{};
+    const auto imported = lookup.resolve
+                              ? lookup.resolve(importedQuery(table, key))
+                          : lookup.imported ? importedTable(table).find(key)
+                                            : std::span<const std::uint32_t>{};
     std::optional<std::uint32_t> result;
     if (!imported.empty())
       result = imported.front();
     for (const auto *part : {base, local})
       if (part && (!result || *part < *result))
         result = *part;
+    return result;
+  }
+  template <class Key, class Value>
+  static ImportedTypeQuery
+  importedQuery(const std::map<Key, Value> LookupData::*table, const Key &key) {
+    using Kind = ImportedTypeQuery::Kind;
+    ImportedTypeQuery result{Kind::Aggregate, {}};
+    auto &index = result.key;
+    if constexpr (std::is_same_v<Key, Type>) {
+      if constexpr (std::is_same_v<Value, std::uint32_t>)
+        result.kind = Kind::Slice;
+      else
+        result.kind = table == &LookupData::genericInstances ? Kind::Generic
+                                                             : Kind::Regional;
+      index.payload = key;
+    } else if constexpr (std::is_same_v<Key, std::vector<Type>>) {
+      result.kind =
+          table == &LookupData::aggregates ? Kind::Aggregate : Kind::Operand;
+      index.key = key;
+    } else if constexpr (std::is_same_v<Key, CallableKey>) {
+      result.kind = Kind::Callable;
+      index.regionUniverse = std::get<0>(key);
+      index.callableRegionParameters = std::get<1>(key);
+      index.callableParameterRegions = std::get<2>(key);
+      index.callableRegionRequirements = std::get<3>(key);
+      index.key = std::get<4>(key);
+    } else if constexpr (std::is_same_v<Key, std::uint32_t>) {
+      result.kind = Kind::Erased;
+      index.declaration = key;
+    } else if constexpr (std::is_same_v<Key, std::pair<Type, int>>) {
+      result.kind = Kind::Pointer;
+      index.payload = key.first;
+      index.mode = static_cast<ParameterMode>(key.second);
+    } else if constexpr (std::is_same_v<Key, std::tuple<Type, int, RegionId>>) {
+      result.kind = Kind::View;
+      index.payload = std::get<0>(key);
+      index.mode = static_cast<ParameterMode>(std::get<1>(key));
+      index.region = std::get<2>(key);
+    } else {
+      result.kind = Kind::Constant;
+      index.valueType = key.first;
+      index.magnitude = key.second;
+    }
     return result;
   }
   template <class Match>
@@ -844,7 +934,7 @@ private:
 };
 class TypeStore::DefinitionSnapshot {
   friend class TypeStore;
-  std::vector<Entry> entries;
+  TypeRecords<Entry, true> entries;
   TypeRecords<ProductType> products;
   TypeRecords<ViewType> views;
   TypeRecords<SliceType> slices;

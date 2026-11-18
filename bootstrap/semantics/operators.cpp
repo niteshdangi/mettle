@@ -66,6 +66,7 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
                    [&](const auto &item) { return item.token == token; });
   if (protocol == protocols.end())
     return std::nullopt;
+  admitNative(protocol->interface);
   auto interface = interfaceNames.find(std::string(protocol->interface));
   if (interface == interfaceNames.end()) {
     bool comparison = node.text == "==" || node.text == "!=" ||
@@ -256,6 +257,7 @@ std::optional<int> Checker::operatorCall(Node &node, int left, int right,
     parameter = normalizeGenericType(parameter, bindings, node.span);
   genericObligations(environment, bindings, node.span);
   if (ranged) {
+    admitNative("core::ops::RangeEnd");
     auto bound = typeNames.find("core::ops::RangeEnd");
     bool valid = bound != typeNames.end() && parameters[1] == Type::Usize &&
                  parameters[2] == bound->second &&

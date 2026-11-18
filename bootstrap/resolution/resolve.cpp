@@ -56,7 +56,8 @@ std::optional<std::uint32_t> Resolution::packageOf(Span span) const {
   if (auto found = sourcePackages.find(span.source);
       found != sourcePackages.end())
     return found->second;
-  if (rawPackageInput && intervals.contains(span.source))
+  if (rawPackageInput &&
+      (intervals.contains(span.source) || nativeItem(span).has_value()))
     return 0;
   return std::nullopt;
 }
@@ -130,6 +131,8 @@ const Resolution::Item *Resolution::exact(Span span) const {
 }
 
 ModuleId Resolution::moduleOf(Span span) const {
+  if (auto item = nativeItem(span))
+    return nativeModule(item->module);
   auto found = intervals.find(span.source);
   if (found == intervals.end())
     return 0;
@@ -156,12 +159,74 @@ ModuleId Resolution::moduleOf(Span span) const {
 std::string Resolution::canonical(Span span) const {
   if (const auto *item = exact(span))
     return item->canonical;
+  if (auto item = nativeItem(span))
+    return item->canonical;
   return {};
 }
 bool Resolution::accessible(Span declaration, ModuleId from) const {
   if (const auto *item = exact(declaration))
     return inside(from, item->boundary);
+  if (auto item = nativeItem(declaration))
+    return item->publicBoundary || inside(from, nativeModule(item->boundary));
   return false;
+}
+
+ModuleId Resolution::nativeModule(std::string_view canonical) const {
+  if (canonical.empty())
+    return 0;
+  if (auto found = nativeModules.find(canonical); found != nativeModules.end())
+    return found->second;
+  auto separator = canonical.rfind("::");
+  auto parent = separator == std::string_view::npos
+                    ? 0
+                    : nativeModule(canonical.substr(0, separator));
+  auto name =
+      canonical.substr(separator == std::string_view::npos ? 0 : separator + 2);
+  auto id = static_cast<ModuleId>(moduleInfos.size());
+  moduleInfos.push_back({parent, std::string(name), std::string(canonical)});
+  scopes.emplace_back();
+  nativeModules.emplace(canonical, id);
+  return id;
+}
+
+std::optional<NativeItem> Resolution::nativeItem(Span span) const {
+  for (const auto &index : nativeDeclarations)
+    if (index->source(span.source))
+      if (auto item = index->item(span))
+        return item;
+  return std::nullopt;
+}
+
+std::size_t Resolution::nativeDefinition(const NativeBinding &binding) const {
+  auto key = std::tuple{binding.space, binding.canonical, binding.span.source,
+                        binding.span.begin, binding.span.end};
+  if (auto found = nativeDefinitions.find(key);
+      found != nativeDefinitions.end())
+    return found->second;
+  auto id = definitions.size();
+  definitions.push_back(
+      {binding.space, nativeModule(binding.module),
+       binding.publicBoundary ? publicBoundary : nativeModule(binding.boundary),
+       binding.name, binding.canonical, binding.span,
+       binding.target ? std::optional(nativeModule(*binding.target))
+                      : std::nullopt});
+  nativeDefinitions.emplace(std::move(key), id);
+  return id;
+}
+
+void Resolution::nativeBindings(ModuleId module, std::string_view name,
+                                Namespace space) const {
+  if (!nativeLookups.emplace(module, space, std::string(name)).second)
+    return;
+  auto canonical = moduleInfos[module].canonical;
+  for (const auto &index : nativeDeclarations)
+    for (const auto &binding : index->lookup(canonical, name, space)) {
+      auto definition = nativeDefinition(binding);
+      auto boundary = binding.publicBoundary ? publicBoundary
+                                             : nativeModule(binding.boundary);
+      scopes[module].bindings[key(space, name)].push_back(
+          {definition, boundary, binding.explicitBinding, {}});
+    }
 }
 
 std::vector<std::size_t> Resolution::find(ModuleId module,
@@ -169,6 +234,7 @@ std::vector<std::size_t> Resolution::find(ModuleId module,
                                           Namespace space,
                                           ModuleId from) const {
   std::vector<std::size_t> result;
+  nativeBindings(module, name, space);
   auto bindingKey = key(space, name);
   if (dependencies)
     dependencies->emplace_back(module, bindingKey);
@@ -209,8 +275,18 @@ Resolution::associatedType(std::string canonical) const {
   std::unordered_set<std::string> visited;
   for (;;) {
     auto alias = aliasTargets.find(canonical);
-    if (alias == aliasTargets.end())
-      return canonical;
+    if (alias == aliasTargets.end()) {
+      std::optional<std::string> target;
+      for (const auto &index : nativeDeclarations)
+        if ((target = index->alias(canonical)))
+          break;
+      if (!target)
+        return canonical;
+      if (!visited.insert(canonical).second)
+        return std::nullopt;
+      canonical = std::move(*target);
+      continue;
+    }
     if (!visited.insert(canonical).second)
       return std::nullopt;
     auto target = lookup(alias->second.first, alias->second.second,
@@ -229,14 +305,23 @@ std::vector<std::size_t> Resolution::associated(std::string canonical,
     return {};
   if (dependencies)
     dependencies->emplace_back(publicBoundary, *type);
+  auto [native, inserted] =
+      nativeAssociated.try_emplace(std::pair{*type, std::string(name)});
+  if (inserted)
+    for (const auto &index : nativeDeclarations)
+      for (const auto &binding : index->associated(*type, name))
+        native->second.push_back(nativeDefinition(binding));
   auto found = associatedItems.find(*type);
-  if (found == associatedItems.end())
-    return {};
   std::vector<std::size_t> matches;
-  for (auto index : found->second)
-    if (definitions[index].name == name &&
-        inside(from, definitions[index].boundary))
-      matches.push_back(index);
+  auto append = [&](const auto &candidates) {
+    for (auto index : candidates)
+      if (definitions[index].name == name &&
+          inside(from, definitions[index].boundary))
+        matches.push_back(index);
+  };
+  if (found != associatedItems.end())
+    append(found->second);
+  append(native->second);
   return matches;
 }
 
@@ -247,6 +332,100 @@ std::optional<std::string> Resolution::associatedItem(std::string type,
   if (matches.size() != 1)
     return std::nullopt;
   return definitions[matches.front()].canonical;
+}
+
+std::vector<std::string> Resolution::archiveAssociatedOwners() const {
+  std::set<std::string> owners;
+  for (const auto &[name, members] : associatedItems) {
+    (void)members;
+    owners.insert(name);
+  }
+  for (const auto &index : nativeDeclarations)
+    for (auto &name : index->exportAssociatedOwners())
+      owners.insert(std::move(name));
+  return {owners.begin(), owners.end()};
+}
+
+std::vector<std::pair<std::string, NativeBinding>>
+Resolution::archiveBindings(std::span<const SourceId> omitImportSources) const {
+  std::vector<std::pair<std::string, NativeBinding>> result;
+  auto binding = [&](const Definition &definition, ModuleId boundary,
+                     bool explicitBinding) {
+    return NativeBinding{
+        definition.space,
+        moduleInfos[definition.module].canonical,
+        definition.name,
+        definition.canonical,
+        boundary == publicBoundary ? std::string{}
+                                   : moduleInfos[boundary].canonical,
+        definition.span,
+        definition.target
+            ? std::optional(moduleInfos[*definition.target].canonical)
+            : std::nullopt,
+        boundary == publicBoundary,
+        explicitBinding};
+  };
+  for (std::size_t module = 0; module < scopes.size(); ++module)
+    for (const auto &[name, bindings] : scopes[module].bindings) {
+      auto explicitPresent =
+          std::any_of(bindings.begin(), bindings.end(),
+                      [](const auto &item) { return item.explicitBinding; });
+      for (const auto &item : bindings)
+        if (!explicitPresent || item.explicitBinding) {
+          if (item.import && *item.import < importSpans.size() &&
+              std::find(omitImportSources.begin(), omitImportSources.end(),
+                        importSpans[*item.import].source) !=
+                  omitImportSources.end())
+            continue;
+          auto entry = binding(definitions[item.definition], item.boundary,
+                               item.explicitBinding);
+          entry.name = std::string_view(name).substr(2);
+          result.emplace_back(moduleInfos[module].canonical, std::move(entry));
+        }
+    }
+  for (const auto &[owner, members] : associatedItems)
+    for (auto item : members)
+      result.emplace_back(
+          "@" + owner,
+          binding(definitions[item], definitions[item].boundary, true));
+  for (const auto &index : nativeDeclarations) {
+    auto inherited = index->exportBindings();
+    result.insert(result.end(), std::make_move_iterator(inherited.begin()),
+                  std::make_move_iterator(inherited.end()));
+  }
+  return result;
+}
+
+std::vector<NativeItem> Resolution::archiveItems() const {
+  std::vector<NativeItem> result;
+  result.reserve(items.size());
+  for (const auto &item : items)
+    result.push_back(
+        {item.span, moduleInfos[item.module].canonical, item.canonical,
+         item.boundary == publicBoundary ? std::string{}
+                                         : moduleInfos[item.boundary].canonical,
+         item.boundary == publicBoundary});
+  for (const auto &index : nativeDeclarations) {
+    auto inherited = index->exportItems();
+    result.insert(result.end(), std::make_move_iterator(inherited.begin()),
+                  std::make_move_iterator(inherited.end()));
+  }
+  return result;
+}
+
+std::vector<std::pair<std::string, std::string>>
+Resolution::archiveAliases() const {
+  std::vector<std::pair<std::string, std::string>> result;
+  for (const auto &[name, target] : aliasTargets)
+    if (auto resolved =
+            lookup(target.first, target.second, Namespace::Type, {}))
+      result.emplace_back(name, std::move(*resolved));
+  for (const auto &index : nativeDeclarations) {
+    auto inherited = index->exportAliases();
+    result.insert(result.end(), std::make_move_iterator(inherited.begin()),
+                  std::make_move_iterator(inherited.end()));
+  }
+  return result;
 }
 
 ModuleId Resolution::packageRoot(ModuleId module) const {
@@ -357,6 +536,9 @@ public:
   Resolver(const Module &tree, Diagnostics &diagnostics,
            const SourcePackages &packages)
       : tree(tree), diagnostics(diagnostics) {
+    result.nativeDeclarations = tree.nativeDeclarations;
+    for (const auto &item : tree.imports)
+      result.importSpans.push_back(item.span);
     result.rawPackageInput = packages.empty();
     for (const auto &[source, identity] : packages) {
       if (identity.empty())
@@ -373,6 +555,7 @@ public:
     result.packageNames = tree.packageNames;
     result.packageNames.try_emplace("", "main");
     moduleNames.emplace("", 0);
+    result.nativeModules.emplace("", 0);
   }
 
   std::shared_ptr<const Resolution> run() {
@@ -385,7 +568,7 @@ public:
     prelude();
     for (auto &entry : associatedFunctions)
       collectAssociatedFunction(entry);
-    for (const auto &implementation : tree.implementations.headers())
+    for (const auto &implementation : tree.implementations.localHeaders())
       collectAssociatedConstants(implementation);
     if (!diagnostics.empty())
       return {};
@@ -449,6 +632,10 @@ private:
       prefix.push_back(part);
       auto canonical = join(prefix);
       auto found = moduleNames.find(canonical);
+      if (found == moduleNames.end())
+        if (auto native = result.nativeModules.find(canonical);
+            native != result.nativeModules.end())
+          found = moduleNames.emplace(canonical, native->second).first;
       if (found != moduleNames.end()) {
         parent = found->second;
         continue;
@@ -457,6 +644,7 @@ private:
       result.moduleInfos.push_back({parent, part, canonical});
       result.scopes.emplace_back();
       moduleNames.emplace(canonical, id);
+      result.nativeModules.emplace(canonical, id);
       parent = id;
     }
     return parent;
@@ -485,9 +673,16 @@ private:
                       "duplicate explicit binding '" + std::string(name) + "'");
   }
 
+  bool nativeSource(SourceId source) const {
+    return std::any_of(
+        result.nativeDeclarations.begin(), result.nativeDeclarations.end(),
+        [&](const auto &index) { return index->source(source); });
+  }
+
   void define(Namespace space, ModuleId module, ModuleId visible,
               std::string name, std::string canonical, Span span,
               std::optional<ModuleId> target = {}) {
+    result.nativeBindings(module, name, space);
     auto &bindings = result.scopes[module].bindings[key(space, name)];
     if (!bindings.empty()) {
       auto kind = space == Namespace::Type     ? "type"
@@ -506,11 +701,17 @@ private:
 
   void collectModules() {
     for (const auto &declaration : tree.modules) {
+      if (declaration.item.checkedImport ||
+          nativeSource(declaration.span.source))
+        continue;
       auto path = declaration.item.scope;
       path.push_back(declaration.name);
       scope(path);
     }
     for (const auto &declaration : tree.modules) {
+      if (declaration.item.checkedImport ||
+          nativeSource(declaration.span.source))
+        continue;
       auto parent = scope(declaration.item.scope);
       auto path = declaration.item.scope;
       path.push_back(declaration.name);
@@ -531,13 +732,15 @@ private:
 
   void collectItems() {
     for (const auto &macro : tree.macros) {
+      if (nativeSource(macro.span.source))
+        continue;
       auto module = scope(macro.item.scope);
       auto visible = boundary(macro.item, module, macro.span);
       auto name = itemName(module, macro.name);
       result.items.push_back({macro.span, module, name, visible});
       define(Namespace::Macro, module, visible, macro.name, name, macro.span);
     }
-    for (const auto &storage : tree.statics.headers()) {
+    for (const auto &storage : tree.statics.localHeaders()) {
       auto module = scope(storage.item.scope);
       auto visible = boundary(storage.item, module, storage.span);
       auto name = itemName(module, storage.name);
@@ -545,7 +748,7 @@ private:
       define(Namespace::Value, module, visible, storage.name, name,
              storage.span);
     }
-    for (const auto &interface : tree.interfaces.headers()) {
+    for (const auto &interface : tree.interfaces.localHeaders()) {
       auto module = scope(interface.item.scope);
       auto visible = boundary(interface.item, module, interface.span);
       auto name = itemName(module, interface.name);
@@ -554,7 +757,8 @@ private:
              interface.span);
       result.associatedItems.try_emplace(name);
     }
-    for (std::size_t i = 0; i < tree.implementations.size(); ++i) {
+    for (std::size_t i = tree.implementations.nativeSize();
+         i < tree.implementations.size(); ++i) {
       const auto &implementation = tree.implementations.header(i);
       if (implementation.shorthand)
         continue;
@@ -564,7 +768,7 @@ private:
            itemName(module, "<impl." + std::to_string(i) + ">"),
            boundary(implementation.item, module, implementation.span)});
     }
-    for (const auto &product : tree.products.headers()) {
+    for (const auto &product : tree.products.localHeaders()) {
       auto module = scope(product.item.scope);
       auto visible = boundary(product.item, module, product.span);
       auto name = itemName(module, product.name);
@@ -594,7 +798,7 @@ private:
             {field.span, module, {}, boundary(item, module, field.span)});
       }
     }
-    for (const auto &alias : tree.aliases.headers()) {
+    for (const auto &alias : tree.aliases.localHeaders()) {
       auto module = scope(alias.item.scope);
       auto name = itemName(module, alias.name);
       auto visible = boundary(alias.item, module, alias.span);
@@ -604,7 +808,7 @@ private:
           alias.target.view.empty() && alias.target.form == TypeForm::Named)
         result.aliasTargets.emplace(name, std::pair{module, alias.target.name});
     }
-    for (const auto &function : tree.functions.headers()) {
+    for (const auto &function : tree.functions.localHeaders()) {
       auto module = scope(function.item.scope);
       auto name = itemName(module, function.name);
       auto visible = boundary(function.item, module, function.span);
@@ -756,6 +960,7 @@ private:
       auto canonical = result.lookup(from, spelling, space, {}, nullptr);
       if (!canonical)
         continue;
+      indexDefinitions();
       const auto &definitions =
           canonicalDefinitions[static_cast<std::size_t>(space)];
       auto [first, last] = definitions.equal_range(*canonical);
@@ -843,10 +1048,24 @@ private:
           return false;
         if (result.dependencies)
           result.dependencies->emplace_back(publicBoundary, *canonical);
-        if (!result.associatedItems.contains(*canonical))
+        std::set<std::size_t> members;
+        if (auto local = result.associatedItems.find(*canonical);
+            local != result.associatedItems.end()) {
+          resolved = true;
+          members.insert(local->second.begin(), local->second.end());
+        }
+        for (const auto &index : result.nativeDeclarations)
+          if (index->associatedOwner(*canonical)) {
+            resolved = true;
+            for (const auto &binding : index->glob("@" + *canonical)) {
+              auto candidates =
+                  result.associated(*canonical, binding.name, module);
+              members.insert(candidates.begin(), candidates.end());
+            }
+          }
+        if (!resolved)
           return false;
-        resolved = true;
-        for (auto definition : result.associatedItems.at(*canonical)) {
+        for (auto definition : members) {
           const auto &entry = result.definitions[definition];
           if (result.inside(module, entry.boundary))
             changed |= bind(module, entry.name, {definition, entry.boundary},
@@ -856,6 +1075,10 @@ private:
       }
       resolved = true;
       auto imported = *result.definitions[target[0].definition].target;
+      auto canonical = result.moduleInfos[imported].canonical;
+      for (const auto &index : result.nativeDeclarations)
+        for (const auto &binding : index->glob(canonical))
+          result.nativeBindings(imported, binding.name, binding.space);
       if (result.dependencies)
         result.dependencies->emplace_back(imported, std::string{});
       std::vector<std::pair<std::string_view, Target>> selfBindings;
@@ -934,6 +1157,12 @@ private:
 
   void imports() {
     std::vector<bool> resolved(tree.imports.size());
+    for (std::size_t i = 0; i < tree.imports.size(); ++i)
+      resolved[i] =
+          std::any_of(result.nativeDeclarations.begin(),
+                      result.nativeDeclarations.end(), [&](const auto &index) {
+                        return index->source(tree.imports[i].span.source);
+                      });
     auto reserve = [&](const Module::Import &declaration, bool add) {
       if (declaration.glob)
         return;
@@ -956,18 +1185,21 @@ private:
         for (const auto &entry : declaration.names)
           update(entry.alias.empty() ? entry.name : entry.alias);
     };
-    for (const auto &declaration : tree.imports)
-      reserve(declaration, true);
+    for (std::size_t i = 0; i < tree.imports.size(); ++i)
+      if (!resolved[i])
+        reserve(tree.imports[i], true);
     const auto functionsBegin = tree.imports.size();
     const auto constantsBegin = functionsBegin + associatedFunctions.size();
-    queuedImports.resize(constantsBegin + tree.implementations.size());
+    queuedImports.resize(constantsBegin + tree.implementations.size() -
+                         tree.implementations.nativeSize());
     registeredDependencies.resize(queuedImports.size());
     for (std::size_t i = constantsBegin; i < queuedImports.size(); ++i)
       enqueue(i);
     for (std::size_t i = functionsBegin; i < constantsBegin; ++i)
       enqueue(i);
     for (std::size_t i = 0; i < tree.imports.size(); ++i)
-      enqueue(i);
+      if (!resolved[i])
+        enqueue(i);
     std::vector<Dependency> dependencies;
     while (!readyImports.empty()) {
       auto i = readyImports.front();
@@ -976,8 +1208,8 @@ private:
       dependencies.clear();
       result.dependencies = &dependencies;
       if (i >= constantsBegin)
-        collectAssociatedConstants(
-            tree.implementations.header(i - constantsBegin));
+        collectAssociatedConstants(tree.implementations.header(
+            i - constantsBegin + tree.implementations.nativeSize()));
       else if (i >= functionsBegin)
         collectAssociatedFunction(associatedFunctions[i - functionsBegin]);
       else {

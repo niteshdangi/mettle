@@ -113,9 +113,7 @@ std::vector<Type> TypeStore::referencedTypes(Type type) const {
       add(value.vector->element);
     if (value.callable >= 0)
       signature(callables.at(static_cast<std::size_t>(value.callable)));
-    if (auto interior = coroutineInteriors.find(type.index());
-        interior != coroutineInteriors.end())
-      addAll(interior->second);
+    addAll(retainedCoroutineInterior(type));
     break;
   }
   case EntryKind::View:
@@ -201,14 +199,108 @@ Type TypeStore::declareImportedType(ImportedTypeKind kind) {
   }
   return result;
 }
+TypeStore::EntryKind TypeStore::importedEntryKind(ImportedTypeKind kind) {
+  switch (kind) {
+  case ImportedTypeKind::Product:
+    return EntryKind::Product;
+  case ImportedTypeKind::Parameter:
+    return EntryKind::Parameter;
+  case ImportedTypeKind::View:
+    return EntryKind::View;
+  case ImportedTypeKind::Pointer:
+    return EntryKind::Pointer;
+  case ImportedTypeKind::Slice:
+    return EntryKind::Slice;
+  case ImportedTypeKind::Callable:
+    return EntryKind::Callable;
+  case ImportedTypeKind::Erased:
+    return EntryKind::Erased;
+  }
+  throw std::invalid_argument("invalid imported type kind");
+}
+void TypeStore::reserveImportedTypes(std::span<const ImportedTypeKind> kinds,
+                                     std::shared_ptr<const void> owner) {
+  if (!entries.empty() || !owner ||
+      kinds.size() >
+          std::numeric_limits<std::uint32_t>::max() - builtinTypeCount)
+    throw std::invalid_argument("imported type ranges require a fresh store");
+  auto loader = std::make_shared<const TypeRecords<Entry, true>::Loader>(
+      [kinds, owner = std::move(owner)](std::size_t i) -> Entry {
+        return {importedEntryKind(kinds[i]), i};
+      });
+  entries.deferPrefix(kinds.size(), std::move(loader));
+  reservedImportedTypes = kinds.size();
+  reservedImportedKinds = kinds;
+}
 void TypeStore::deferImportedDefinitions(
     std::span<const Type> ids, std::span<const ImportedTypeIndex> index,
     std::shared_ptr<const ImportedDefinitionLoader> loader,
     std::shared_ptr<const BorrowedDefinitionLoader> borrowed,
-    std::shared_ptr<const void> indexOwner) {
-  if (!loader || ids.size() != entries.size() || index.size() != ids.size() ||
-      lookup.synced || lookup.base || lookup.imported)
+    std::shared_ptr<const void> indexOwner, ImportedTypeLookup resolve,
+    ImportedTypeScalarLookup scalars) {
+  if (!loader || ids.size() != entries.size() ||
+      (!resolve && index.size() != ids.size()) || lookup.synced ||
+      lookup.base || lookup.imported || lookup.resolve)
     throw std::invalid_argument("deferred definitions require a fresh graph");
+  if (resolve) {
+    if (reservedImportedTypes != ids.size() || !borrowed)
+      throw std::invalid_argument(
+          "indexed imports require a reserved type range");
+    auto productLoader =
+        std::make_shared<const TypeRecords<ProductType>::Loader>(
+            [loader](std::size_t i) {
+              auto value = std::get<ImportedProduct>((*loader)(i));
+              if (value.closure &&
+                  i > static_cast<std::size_t>(std::numeric_limits<int>::max()))
+                throw std::length_error(
+                    "closure signature index limit exceeded");
+              value.descriptor.callable =
+                  value.closure ? static_cast<int>(i) : -1;
+              return std::move(value.descriptor);
+            });
+    auto viewLoader = std::make_shared<const TypeRecords<ViewType>::Loader>(
+        [loader](std::size_t i) {
+          auto value = (*loader)(i);
+          if (auto view = std::get_if<ViewType>(&value))
+            return *view;
+          return std::move(std::get<ImportedPointer>(value).descriptor);
+        });
+    auto callableLoader =
+        std::make_shared<const TypeRecords<CallableType>::Loader>(
+            [loader](std::size_t i) {
+              auto value = (*loader)(i);
+              if (auto callable = std::get_if<CallableType>(&value))
+                return *callable;
+              auto &product = std::get<ImportedProduct>(value);
+              if (!product.closure)
+                throw std::logic_error("deferred closure has no signature");
+              return std::move(*product.closure);
+            });
+    products.deferPrefix(ids.size(), std::move(productLoader));
+    views.deferPrefix(ids.size(), std::move(viewLoader));
+    slices.deferPrefix(ids.size(),
+                       std::make_shared<const TypeRecords<SliceType>::Loader>(
+                           [loader](std::size_t i) {
+                             return std::get<SliceType>((*loader)(i));
+                           }));
+    parameters.deferPrefix(
+        ids.size(), std::make_shared<const TypeRecords<TypeParameter>::Loader>(
+                        [loader](std::size_t i) {
+                          return std::get<TypeParameter>((*loader)(i));
+                        }));
+    callables.deferPrefix(ids.size(), std::move(callableLoader));
+    erasedTypes.deferPrefix(
+        ids.size(), std::make_shared<const TypeRecords<ErasedType>::Loader>(
+                        [loader](std::size_t i) {
+                          return std::get<ErasedType>((*loader)(i));
+                        }));
+    lookup.resolve = std::move(resolve);
+    lookup.synced = entries.size();
+    borrowedDefinitions = std::move(borrowed);
+    borrowedDefinitionCount = ids.size();
+    importedScalars = std::move(scalars);
+    return;
+  }
   auto imported = indexOwner ? std::make_shared<ImportedLookupData>() : nullptr;
   if (imported)
     imported->owner = std::move(indexOwner);
@@ -407,22 +499,54 @@ TypeStore::borrowedDefinition(Type type) const {
     return std::nullopt;
   return (*borrowedDefinitions)(ordinal);
 }
+std::span<const Type> TypeStore::retainedCoroutineInterior(Type type) const {
+  if (auto found = coroutineInteriors.find(type.index());
+      found != coroutineInteriors.end())
+    return found->second;
+  if (borrowedDefinitions && type.index() >= builtinTypeCount &&
+      type.index() - builtinTypeCount < reservedImportedTypes) {
+    auto definition = (*borrowedDefinitions)(type.index() - builtinTypeCount);
+    if (auto product =
+            std::get_if<const BasicImportedProduct<BorrowedTypeStorage> *>(
+                &definition))
+      return (*product)->coroutineInterior;
+  }
+  return {};
+}
 std::optional<RegionId> TypeStore::unitViewRegion(Type type) const {
   if (!isView(type))
     return std::nullopt;
+  auto ordinal = type.index() - builtinTypeCount;
+  if (importedScalars && ordinal < reservedImportedTypes &&
+      !views.isMaterialized(ordinal)) {
+    auto scalars = importedScalars(ordinal);
+    return scalars.payload == Type::Unit ? std::optional(scalars.region)
+                                         : std::nullopt;
+  }
   return inspectView(type, [](const auto &record) -> std::optional<RegionId> {
     return record.payload == Type::Unit ? std::optional(record.region)
                                         : std::nullopt;
   });
 }
 std::uint32_t TypeStore::erasedDeclaration(Type type) const {
+  auto ordinal = type.index() - builtinTypeCount;
+  if (importedScalars && ordinal < reservedImportedTypes &&
+      reservedImportedKinds[ordinal] == ImportedTypeKind::Erased &&
+      !erasedTypes.isMaterialized(ordinal))
+    return importedScalars(ordinal).declaration;
   return inspectErased(type,
                        [](const auto &record) { return record.declaration; });
 }
 ImportedTypeKind TypeStore::importedKind(Type type) const {
   if (type.index() < builtinTypeCount || !contains(type))
     throw std::invalid_argument("imported definition requires a stored type");
-  switch (entries[type.index() - builtinTypeCount].kind) {
+  auto index = type.index() - builtinTypeCount;
+  if (index < reservedImportedKinds.size()) {
+    auto kind = reservedImportedKinds[index];
+    (void)importedEntryKind(kind);
+    return kind;
+  }
+  switch (entryKind(type)) {
   case EntryKind::Product:
     return ImportedTypeKind::Product;
   case EntryKind::View:
@@ -449,9 +573,8 @@ ImportedTypeDefinition TypeStore::importedDefinition(Type type) const {
     if (result.descriptor.callable >= 0)
       result.closure = callable(type);
     result.descriptor.callable = -1;
-    if (auto held = coroutineInteriors.find(type.index());
-        held != coroutineInteriors.end())
-      result.coroutineInterior = held->second;
+    auto held = retainedCoroutineInterior(type);
+    result.coroutineInterior.assign(held.begin(), held.end());
     return result;
   }
   case ImportedTypeKind::View:
@@ -473,12 +596,9 @@ ImportedTypeDefinitionView TypeStore::importedDefinitionView(Type type) const {
   switch (importedKind(type)) {
   case ImportedTypeKind::Product: {
     const auto &descriptor = product(type);
-    auto interior = coroutineInteriors.find(type.index());
     return ImportedProductView{
         descriptor, descriptor.callable >= 0 ? &callable(type) : nullptr,
-        interior != coroutineInteriors.end()
-            ? std::span<const Type>(interior->second)
-            : std::span<const Type>{}};
+        retainedCoroutineInterior(type)};
   }
   case ImportedTypeKind::View:
     return &view(type);
@@ -508,6 +628,7 @@ void TypeStore::defineImportedType(Type type,
           if constexpr (std::is_same_v<T, ImportedProduct>) {
             const auto &prior = products[entry.index];
             changedKey =
+                prior.name != record.descriptor.name ||
                 prior.genericOrigin != record.descriptor.genericOrigin ||
                 prior.regionOrigin != record.descriptor.regionOrigin ||
                 prior.components != record.descriptor.components;
@@ -555,7 +676,8 @@ void TypeStore::defineImportedType(Type type,
             }
           }
           products[entry.index] = std::move(record.descriptor);
-          if (!record.coroutineInterior.empty())
+          if (!record.coroutineInterior.empty() ||
+              type.index() - builtinTypeCount < reservedImportedTypes)
             coroutineInteriors[type.index()] =
                 std::move(record.coroutineInterior);
           else

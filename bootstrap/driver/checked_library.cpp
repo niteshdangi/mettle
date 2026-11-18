@@ -25,38 +25,6 @@ struct ImportedStorage {
   ir::FunctionBodyVerifier verifyIRBody, verifyDeclarationPayload;
   std::shared_ptr<const void> backing;
 };
-struct SymbolNameHash {
-  using is_transparent = void;
-  std::size_t operator()(std::string_view name) const {
-    return std::hash<std::string_view>{}(name);
-  }
-};
-// Symbol names by kind; lookups take a view and never allocate.
-class SymbolTable {
-public:
-  bool emplace(metadata::SymbolKind kind, std::string name, std::uint32_t index,
-               std::uint32_t *existing) {
-    auto [slot, inserted] =
-        byKind[static_cast<std::size_t>(kind)].emplace(std::move(name), index);
-    if (!inserted)
-      *existing = slot->second;
-    return inserted;
-  }
-  std::optional<std::uint32_t> find(metadata::SymbolKind kind,
-                                    std::string_view name) const {
-    const auto &names = byKind[static_cast<std::size_t>(kind)];
-    auto found = names.find(name);
-    if (found == names.end())
-      return std::nullopt;
-    return found->second;
-  }
-
-private:
-  std::array<std::unordered_map<std::string, std::uint32_t, SymbolNameHash,
-                                std::equal_to<>>,
-             5>
-      byKind;
-};
 constexpr std::string_view nativePackage = "native:standard-library";
 constexpr std::array<std::string_view, 3> nativeRoots{"core", "alloc", "std"};
 
@@ -665,9 +633,11 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
       options.libraryQueries
           ? options.libraryQueries->findHeader(root, archiveContent, sourceIds)
           : nullptr;
-  auto decoded = retained ? copyLibraryHeader(*retained)
-                          : decodeLibraryHeader(archive.header, references,
-                                                archive.header.owner());
+  auto decoded = retained
+                     ? copyLibraryHeader(*retained)
+                     : decodeLibraryHeader(archive.header, references,
+                                           archive.header.owner(),
+                                           metadata::ValidationMode::OnDemand);
   if (!decoded) {
     error = decoded.error;
     return false;
@@ -699,12 +669,6 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
   functions = header.module->functions.size();
   statics = header.module->statics.size();
   interfaces = header.module->interfaces.size();
-  for (std::size_t i = 0; i < functions; ++i)
-    for (std::size_t j = 0;
-         j < header.module->functions.header(i).parameters.size(); ++j)
-      if (header.module->functions.header(i).parameters[j].compiledDefault)
-        defaults.emplace_back(static_cast<std::uint32_t>(i),
-                              static_cast<std::uint32_t>(j));
   macros = std::make_shared<const expansion::MacroLibrary>(std::move(*rules));
   registration.published = true;
   for (const auto &[revision, path] : archive.sourceModules) {
@@ -762,64 +726,30 @@ CheckedLibrary::import(const Module &module,
   if (!archive.verifyIRBody || !archive.verifyDeclarationPayload)
     return fail(
         "compiled library is missing authenticated payload commitments");
-  auto symbols = std::make_shared<SymbolTable>();
+  auto catalog = header.index;
+  if (!catalog)
+    return fail("compiled library declaration directory is absent");
   auto packageIndices =
       std::make_shared<std::map<std::string, std::uint32_t>>();
-  std::vector<std::string> functionSymbols(functions);
-  std::vector<std::string_view> functionNames(functions);
-  const auto functionPrefix =
-      std::string(nativePackage) + ":" +
-      std::to_string(static_cast<unsigned>(metadata::SymbolKind::Function)) +
-      ":";
-  std::size_t closureCount = 0;
-  for (const auto &symbol : header.symbols) {
-    if (symbol.kind == metadata::SymbolKind::Package) {
-      auto destination = resolution.packageIndex(symbol.definition);
+  auto closureCount = catalog->symbolCount(metadata::SymbolKind::Closure);
+  for (std::uint32_t i = 0;
+       i < catalog->symbolCount(metadata::SymbolKind::Package); ++i)
+    if (auto symbol = catalog->symbol(metadata::SymbolKind::Package, i)) {
+      auto destination = resolution.packageIndex(symbol->definition);
       if (!destination)
         return fail("compiled package identity is absent from the consumer");
-      packageIndices->emplace(symbol.definition, *destination);
-      continue;
+      packageIndices->emplace(symbol->definition, *destination);
     }
-    auto index = symbol.index;
-    switch (symbol.kind) {
-    case metadata::SymbolKind::Function:
-      if (index >= functions)
-        return fail("compiled function inventory exceeds the mounted header");
-      if (!symbol.definition.starts_with(functionPrefix) ||
-          symbol.definition.size() == functionPrefix.size())
-        return fail("invalid compiled function identity");
-      functionSymbols[index] = symbol.definition;
-      functionNames[index] =
-          std::string_view(symbol.definition).substr(functionPrefix.size());
-      break;
-    case metadata::SymbolKind::Interface:
-      if (index >= interfaces)
-        return fail("compiled interface inventory exceeds the mounted header");
-      break;
-    case metadata::SymbolKind::Static:
-      if (index >= statics)
-        return fail("compiled static inventory exceeds the mounted header");
-      break;
-    case metadata::SymbolKind::Closure:
-      if (index >= limits::functions)
-        return fail("compiled closure inventory exceeds the compiler limit");
-      closureCount = std::max(closureCount, std::size_t(index) + 1);
-      break;
-    case metadata::SymbolKind::Package:
-      break;
-    }
-    std::uint32_t existing = 0;
-    if (!symbols->emplace(symbol.kind, symbol.definition, index, &existing) &&
-        existing != index)
-      return fail("conflicting compiled declaration identities");
-  }
-  if (std::any_of(functionSymbols.begin(), functionSymbols.end(),
-                  [](const auto &name) { return name.empty(); }))
+  if (catalog->symbolCount(metadata::SymbolKind::Function) != functions ||
+      catalog->symbolCount(metadata::SymbolKind::Static) != statics ||
+      catalog->symbolCount(metadata::SymbolKind::Interface) != interfaces)
     return fail("compiled function inventory is incomplete");
   std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t>
       defaultDestinations;
-  std::size_t defaultCount = 0;
-  for (std::size_t i = 0; i < module.functions.size(); ++i)
+  auto nativeDefaults = catalog->defaultCount();
+  std::size_t defaultCount = nativeDefaults;
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i)
     for (std::size_t j = 0; j < module.functions.header(i).parameters.size();
          ++j) {
       const auto &parameter = module.functions.header(i).parameters[j];
@@ -833,16 +763,6 @@ CheckedLibrary::import(const Module &module,
                     static_cast<std::uint32_t>(j)},
           static_cast<std::uint32_t>(module.functions.size() + defaultCount++));
     }
-  for (auto [function, parameter] : defaults) {
-    auto found = defaultDestinations.find({function, parameter});
-    if (found == defaultDestinations.end())
-      return fail("compiled default helper is absent from the mounted header");
-    std::uint32_t existing = 0;
-    symbols->emplace(metadata::SymbolKind::Function,
-                     functionSymbols[function] +
-                         ":default:" + std::to_string(parameter),
-                     found->second, &existing);
-  }
   auto supportBase = module.functions.size() + defaultCount;
   auto prefix = supportPrefix(root, archiveKey);
   auto largestSupportOrdinal = std::make_shared<std::atomic<std::int64_t>>(-1);
@@ -853,7 +773,8 @@ CheckedLibrary::import(const Module &module,
     return archive.sources.resolve(source);
   };
   references.symbol =
-      [symbols, packageIndices, prefix, supportBase, largestSupportOrdinal,
+      [catalog, functionCount = module.functions.size(), packageIndices, prefix,
+       supportBase, largestSupportOrdinal,
        supportLimit](metadata::SymbolKind kind,
                      std::string_view name) -> std::optional<std::uint32_t> {
     if (kind == metadata::SymbolKind::Package) {
@@ -861,8 +782,24 @@ CheckedLibrary::import(const Module &module,
       return found == packageIndices->end() ? std::nullopt
                                             : std::optional{found->second};
     }
-    if (auto found = symbols->find(kind, name))
+    if (auto found = catalog->symbol(kind, name))
       return found;
+    if (kind == metadata::SymbolKind::Function) {
+      auto delimiter = name.rfind(":default:");
+      if (delimiter != std::string_view::npos) {
+        auto function = catalog->symbol(kind, name.substr(0, delimiter));
+        auto parameterText = name.substr(delimiter + 9);
+        std::uint32_t parameter = 0;
+        auto parsed = std::from_chars(
+            parameterText.data(), parameterText.data() + parameterText.size(),
+            parameter);
+        if (function && parsed.ec == std::errc{} &&
+            parsed.ptr == parameterText.data() + parameterText.size())
+          if (auto ordinal = catalog->defaultOrdinal(*function, parameter))
+            return static_cast<std::uint32_t>(functionCount + *ordinal);
+        return std::nullopt;
+      }
+    }
     if (kind != metadata::SymbolKind::Function || !name.starts_with(prefix))
       return std::nullopt;
     name.remove_prefix(prefix.size());
@@ -897,6 +834,7 @@ CheckedLibrary::import(const Module &module,
   for (const auto &source : archive.sources.snapshots())
     integer(source.id);
   integer(supportBase);
+  integer(nativeDefaults);
   integer(defaultDestinations.size());
   for (const auto &[parameter, destination] : defaultDestinations) {
     integer(parameter.first);
@@ -945,8 +883,8 @@ CheckedLibrary::import(const Module &module,
                  });
   auto declarations = importLibraryDeclarations(
       storage->declarations, types, *retainedReferences, &module, storage,
-      retainedReferences, metadata::ValidationMode::OnDemand, functionNames,
-      storage->verifyDeclarationPayload);
+      retainedReferences, metadata::ValidationMode::OnDemand, {},
+      storage->verifyDeclarationPayload, catalog);
   if (!declarations)
     return fail(declarations.error);
   if (declarations.declarations->closures.size() != closureCount)
@@ -954,35 +892,34 @@ CheckedLibrary::import(const Module &module,
   auto decoded = pendingIR.get();
   if (!decoded)
     return fail(decoded.error);
-  if (decoded.program.functions.size() < functions + defaults.size() ||
+  if (decoded.program.functions.size() < functions + nativeDefaults ||
       decoded.program.statics.size() != statics)
     return fail("compiled IR definitions do not match the declaration header");
   auto supportCount =
-      decoded.program.functions.size() - functions - defaults.size();
+      decoded.program.functions.size() - functions - nativeDefaults;
   supportLimit->store(supportCount);
   if (largestSupportOrdinal->load() >= static_cast<std::int64_t>(supportCount))
     return fail("compiled support identity exceeds its artifact-local table");
   auto bodies = std::make_shared<lowering::ImportedBodies>();
   std::vector<std::optional<std::size_t>> supportRecords(supportCount);
-  std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>>
-      importedDefaults;
-  for (auto entry : defaults)
-    importedDefaults.emplace(defaultDestinations.at(entry), entry);
   std::set<std::uint32_t> assigned;
   for (std::size_t i = 0; i < decoded.program.functions.size(); ++i) {
     auto destination = decoded.functionDestinations[i];
     if (!assigned.insert(destination).second)
       return fail("duplicate compiled function destination");
     if (destination < functions) {
-      if (decoded.functionIdentities[i] != functionSymbols[destination])
+      auto symbol =
+          catalog->symbol(metadata::SymbolKind::Function, destination);
+      if (!symbol || decoded.functionIdentities[i] != symbol->definition)
         return fail("compiled function identity does not match its header");
       bodies->functionRecords.emplace(destination, i);
     } else if (destination < supportBase) {
-      auto found = importedDefaults.find(destination);
-      if (found == importedDefaults.end())
+      if (destination < module.functions.size() ||
+          destination - module.functions.size() >= nativeDefaults)
         return fail("compiled body occupies a consumer default-helper slot");
       decoded.program.functionIndex[i].name = decoded.functionIdentities[i];
-      bodies->defaultRecords.emplace(found->second, i);
+      bodies->defaultRecords.emplace(
+          catalog->defaultAt(destination - module.functions.size()), i);
     } else if (destination - supportBase < supportCount) {
       decoded.program.functionIndex[i].name = decoded.functionIdentities[i];
       supportRecords[destination - supportBase] = i;
@@ -991,13 +928,14 @@ CheckedLibrary::import(const Module &module,
     }
   }
   if (bodies->functionRecords.size() != functions ||
-      bodies->defaultRecords.size() != defaults.size())
+      bodies->defaultRecords.size() != nativeDefaults)
     return fail("compiled IR is missing a source function or default helper");
   for (auto record : supportRecords)
     if (!record)
       return fail("compiled support destinations contain a gap");
   bodies->supportRecords = std::move(supportRecords);
   bodies->headers = std::move(decoded.program.functions);
+  bodies->statics = std::move(decoded.program.statics);
   bodies->headerIndex = std::move(decoded.program.functionIndex);
   if (!decoded.lazyFunctions)
     return fail("compiled IR function body loader is absent");

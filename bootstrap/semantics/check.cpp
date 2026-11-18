@@ -95,10 +95,15 @@ Checker::functionDependencies(const Function &function) {
             result.push_back(candidate.function);
       }
     } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Field) {
-      for (std::size_t i = 0; i < module.functions.size(); ++i)
+      for (std::size_t i = module.functions.nativeSize();
+           i < module.functions.size(); ++i)
         if (module.functions.header(i).name.ends_with("." +
                                                       n.children[0]->text))
           result.push_back(i);
+      if (checked.importedDeclarations && checked.importedDeclarations->catalog)
+        for (auto function : checked.importedDeclarations->catalog->methods(
+                 n.children[0]->text))
+          result.push_back(function);
     }
     if (auto plan = checked.iterations.find(&n);
         plan != checked.iterations.end())
@@ -136,7 +141,7 @@ void Checker::inferFunctionResult(Function &f) {
   annotationRegionScopes.clear();
   prepareFunction(f);
   for (auto dependency : functionDependencies(f))
-    if (!imported(module.functions.header(dependency).span) &&
+    if (!checked.imported(dependency) &&
         !checkedFunctions.contains(&module.functions[dependency]))
       inferFunctionResult(module.functions.edit(dependency));
   if (f.body.get()) {
@@ -178,7 +183,8 @@ std::optional<CheckedModule> Checker::run() {
   auto sourceFunctionCount = module.functions.size();
   module.functions.reserve(sourceFunctionCount + module.statics.size());
   auto createInitializers = [&](bool interfaceImplementations) {
-    for (std::size_t i = 0; i < module.implementations.size(); ++i) {
+    for (std::size_t i = module.implementations.nativeSize();
+         i < module.implementations.size(); ++i) {
       const auto &owner = module.implementations.header(i);
       if (owner.item.checkedImport)
         continue;
@@ -216,7 +222,8 @@ std::optional<CheckedModule> Checker::run() {
   createInitializers(true);
   const auto keptFunctionCount = module.functions.size();
   staticInitializerFunctions.assign(module.statics.size(), -1);
-  for (std::size_t index = 0; index < module.statics.size(); ++index) {
+  for (std::size_t index = module.statics.nativeSize();
+       index < module.statics.size(); ++index) {
     const auto &stored = module.statics.header(index);
     if (stored.foreignDeclaration || !stored.initializer.get() ||
         !needsConstantTypeCheck(needsConstantTypeCheck, *stored.initializer))
@@ -239,14 +246,21 @@ std::optional<CheckedModule> Checker::run() {
     module.functions.push_back(std::move(initializer));
   }
   createInitializers(false);
-  checked.functions.resize(module.functions.size());
   const auto &imports = checked.importedDeclarations;
+  if (imports && module.functions.nativeSize())
+    checked.functions.bindNative(
+        module.functions.nativeSize(),
+        [imports](std::size_t index) -> const ImportedFunctionReference & {
+          return imports->functions.at(index);
+        });
+  checked.functions.resize(module.functions.size());
   std::map<std::string, std::size_t> constructorOrdinals;
   if (imports && imports->index) {
     names = imports->index->functionNames;
     constructorOrdinals = imports->index->constructorOrdinals;
   }
-  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i) {
     const auto &f = module.functions.header(i);
     if (imports && imports->index && i < imports->index->functions.size()) {
       const auto &mounted = imports->index->functions[i];
@@ -286,10 +300,19 @@ std::optional<CheckedModule> Checker::run() {
           module.functions.header(existing->second).constructor))
       error("name", f.span, "duplicate function '" + displayPath(f.name) + "'");
   }
+  if (imports && imports->catalog && module.statics.nativeSize())
+    checked.staticStorage.deferPrefix(
+        module.statics.nativeSize(),
+        std::make_shared<const TypeRecords<StaticFacts>::Loader>(
+            [imports](std::size_t index) {
+              return imports->statics.at(index);
+            }));
   checked.staticStorage.resize(module.statics.size());
   staticStates.resize(module.statics.size());
   staticTypeStates.resize(module.statics.size());
-  for (std::size_t i = 0; i < module.statics.size(); ++i) {
+  std::fill_n(staticTypeStates.begin(), module.statics.nativeSize(), 2);
+  for (std::size_t i = module.statics.nativeSize(); i < module.statics.size();
+       ++i) {
     auto &storage = checked.staticStorage[i];
     storage.identity = i;
     storage.name = definitionName(module.statics.header(i).span,
@@ -309,7 +332,8 @@ std::optional<CheckedModule> Checker::run() {
   if (!diagnostics.empty())
     return std::nullopt;
   interfaceSignatures();
-  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i) {
     const auto &f = module.functions.header(i);
     auto contract = imports ? imports->functions.find(i)
                             : decltype(imports->functions)::const_iterator{};
@@ -365,7 +389,8 @@ std::optional<CheckedModule> Checker::run() {
     Span span;
   };
   std::vector<std::vector<AsyncCall>> asyncCalls(module.functions.size());
-  for (std::size_t caller = 0; caller < module.functions.size(); ++caller) {
+  for (std::size_t caller = module.functions.nativeSize();
+       caller < module.functions.size(); ++caller) {
     const auto &function = module.functions.header(caller);
     if (!function.asynchronous || !function.body.get())
       continue;
@@ -397,8 +422,8 @@ std::optional<CheckedModule> Checker::run() {
               selected = found->second;
           }
           if (!selected) {
-            for (std::size_t candidate = 0; candidate < module.functions.size();
-                 ++candidate) {
+            for (std::size_t candidate = module.functions.nativeSize();
+                 candidate < module.functions.size(); ++candidate) {
               const auto &method = module.functions.header(candidate);
               if (!method.asynchronous ||
                   !method.name.ends_with("." + callee.text))
@@ -499,7 +524,8 @@ std::optional<CheckedModule> Checker::run() {
           "recursive async future cycle " + description +
               " would make the future contain itself");
   };
-  for (std::size_t function = 0; function < asyncCalls.size(); ++function)
+  for (std::size_t function = module.functions.nativeSize();
+       function < asyncCalls.size(); ++function)
     if (asyncIndex[function] == -1)
       visitAsync(function);
   if (!diagnostics.empty())
@@ -620,6 +646,7 @@ std::optional<CheckedModule> Checker::run() {
     if (family == definition.associated.end())
       return;
     const auto &definitions = std::as_const(*checked.interfaceData).definitions;
+    admitNative("core::future::Future");
     auto future = interfaceNames.find("core::future::Future");
     if (future != interfaceNames.end()) {
       const auto declaration = future->second;
@@ -654,10 +681,14 @@ std::optional<CheckedModule> Checker::run() {
   };
 
   std::vector<std::vector<std::size_t>> edges(module.functions.size());
-  for (std::size_t i = 0; i < edges.size(); ++i)
+  for (std::size_t i = module.functions.nativeSize(); i < edges.size(); ++i)
     if (!module.functions.header(i).item.checkedImport)
       edges[i] = functionDependencies(module.functions[i]);
   const auto &definitions = std::as_const(*checked.interfaceData).definitions;
+  auto localFunctions = module.functions.localHeaders();
+  if (std::any_of(localFunctions.begin(), localFunctions.end(),
+                  [](const auto &function) { return function.asynchronous; }))
+    admitNative("core::future::Future");
   auto future = interfaceNames.find("core::future::Future");
   std::uint32_t futureDeclaration = 0;
   Type outputParameter = Type::Unknown;
@@ -730,6 +761,8 @@ std::optional<CheckedModule> Checker::run() {
   int next = 0;
   std::function<void(std::size_t)> visit = [&](std::size_t v) {
     index[v] = low[v] = next++;
+    if (checked.imported(v))
+      return;
     stack.push_back(v);
     active[v] = true;
     for (auto w : edges[v]) {
@@ -751,7 +784,7 @@ std::optional<CheckedModule> Checker::run() {
         break;
     }
     for (auto w : component) {
-      if (imported(module.functions.header(w).span))
+      if (checked.imported(w))
         continue;
       auto &f = module.functions.edit(w);
       if (!checkedFunctions.contains(&f)) {
@@ -764,7 +797,7 @@ std::optional<CheckedModule> Checker::run() {
     resolveGenericCalls();
     fields();
     for (auto w : component) {
-      if (imported(module.functions.header(w).span))
+      if (checked.imported(w))
         continue;
       publishAsyncDefault(module.functions.edit(w));
       bindInferredAsyncOutput(module.functions.edit(w));
@@ -783,7 +816,7 @@ std::optional<CheckedModule> Checker::run() {
         error("type", f.span, "cannot infer recursive result; add ': Type'");
     }
   };
-  for (std::size_t i = 0; i < edges.size(); ++i)
+  for (std::size_t i = module.functions.nativeSize(); i < edges.size(); ++i)
     if (index[i] == -1)
       visit(i);
   checked.declarationDependencies = std::move(edges);
@@ -791,7 +824,8 @@ std::optional<CheckedModule> Checker::run() {
 
   finishClosures();
   if (outputParameter != Type::Unknown) {
-    for (std::size_t i = 0; i < module.functions.size(); ++i) {
+    for (std::size_t i = module.functions.nativeSize();
+         i < module.functions.size(); ++i) {
       const auto &function = module.functions.header(i);
       bool outputInferred = function.asyncOutput.empty();
       if (!function.asynchronous || !function.body.get() ||
@@ -883,7 +917,7 @@ std::optional<CheckedModule> Checker::run() {
               "associated default type does not satisfy Unpin");
     }
   }
-  for (const auto &function : module.functions.headers())
+  for (const auto &function : module.functions.localHeaders())
     if (!function.item.checkedImport && function.asyncDefaultFutureInferred) {
       auto body = inference.value(asyncDefaultBodyVariables.at(&function));
       if (body != Type::Unknown)
@@ -1101,7 +1135,7 @@ std::optional<CheckedModule> Checker::run() {
         error("type", syntax->span, "invalid scalar conversion");
     }
   }
-  for (const auto &function : module.functions.headers()) {
+  for (const auto &function : module.functions.localHeaders()) {
     if (imported(function.span))
       continue;
     const auto result = functionResult(function);

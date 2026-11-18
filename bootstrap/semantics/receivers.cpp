@@ -550,6 +550,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
 std::optional<ReceiverStep> Checker::dereferenceStep(
     Type source, bool exclusive, Span span,
     std::optional<std::vector<interfaces::Obligation>> *cachedAssumptions) {
+  admitNative(exclusive ? "core::ops::DerefMut" : "core::ops::Deref");
   auto protocol = interfaceNames.find(exclusive ? "core::ops::DerefMut"
                                                 : "core::ops::Deref");
   if (protocol == interfaceNames.end())

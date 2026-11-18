@@ -290,7 +290,20 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
     if ((!module.imported(i) || (queries && queries->contains(i))) &&
         !module.function(i).library.empty())
       result.libraries.push_back(module.function(i).library);
-  for (std::size_t i = 0; i < module.statics().size(); ++i) {
+  std::size_t staticBegin = 0;
+  if (imported &&
+      imported->statics.size() != module.syntax().statics.nativeSize()) {
+    diagnostics.error(
+        "metadata", {},
+        "imported static metadata does not match its declarations");
+    return result;
+  }
+  if (imported &&
+      imported->statics.size() == module.syntax().statics.nativeSize()) {
+    result.statics = imported->statics;
+    staticBegin = imported->statics.size();
+  }
+  for (std::size_t i = staticBegin; i < module.statics().size(); ++i) {
     const auto &facts = module.statics()[i];
     const auto &source = module.syntax().statics.header(i);
     result.statics.push_back({facts.name, facts.externalName, facts.library,
@@ -334,7 +347,16 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
                    .run(module.syntax().functions[i], i),
                false, std::nullopt);
     }
-    for (std::size_t i = 0; i < module.syntax().functions.size(); ++i)
+    if (imported) {
+      if (deferredHeader)
+        for (const auto &[parameter, record] : imported->defaultRecords)
+          takeRecord(record);
+      else
+        for (const auto &[parameter, function] : imported->defaults)
+          take(function);
+    }
+    for (std::size_t i = module.syntax().functions.nativeSize();
+         i < module.syntax().functions.size(); ++i)
       for (std::size_t p = 0;
            p < module.syntax().functions.header(i).parameters.size(); ++p)
         if (module.hasDefault(i, p)) {

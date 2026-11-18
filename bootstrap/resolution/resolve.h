@@ -15,7 +15,7 @@
 namespace mettle::resolution {
 using ModuleId = std::uint32_t;
 using SourcePackages = std::unordered_map<SourceId, std::string>;
-enum class Namespace { Type, Value, Module, Macro };
+using Namespace = DeclarationNamespace;
 
 struct ModuleInfo {
   ModuleId parent = 0;
@@ -43,6 +43,11 @@ public:
   // position in `Module::imports`) made under `name`; an empty `name` asks
   // about any of its bindings (glob imports).
   bool importUsed(std::size_t index, std::string_view name = {}) const;
+  std::vector<std::pair<std::string, NativeBinding>>
+  archiveBindings(std::span<const SourceId> omitImportSources = {}) const;
+  std::vector<std::string> archiveAssociatedOwners() const;
+  std::vector<NativeItem> archiveItems() const;
+  std::vector<std::pair<std::string, std::string>> archiveAliases() const;
 
 private:
   friend std::shared_ptr<const Resolution>
@@ -74,10 +79,11 @@ private:
     std::string canonical;
     ModuleId boundary;
   };
-  std::vector<ModuleInfo> moduleInfos;
-  std::vector<Definition> definitions;
-  std::vector<Scope> scopes;
+  mutable std::vector<ModuleInfo> moduleInfos;
+  mutable std::vector<Definition> definitions;
+  mutable std::vector<Scope> scopes;
   std::vector<Item> items;
+  std::vector<Span> importSpans;
   mutable std::vector<std::pair<ModuleId, std::string>> *dependencies = nullptr;
   bool rawPackageInput = true;
   std::unordered_map<SourceId, std::uint32_t> sourcePackages;
@@ -103,6 +109,21 @@ private:
   // the selected package.
   ModuleId packageRoot(ModuleId module) const;
   std::map<std::string, std::string> packageNames;
+  std::vector<std::shared_ptr<const NativeDeclarationIndex>> nativeDeclarations;
+  mutable std::map<std::string, ModuleId, std::less<>> nativeModules;
+  mutable std::set<std::tuple<ModuleId, Namespace, std::string>> nativeLookups;
+  mutable std::map<
+      std::tuple<Namespace, std::string, SourceId, std::size_t, std::size_t>,
+      std::size_t>
+      nativeDefinitions;
+  mutable std::map<std::pair<std::string, std::string>,
+                   std::vector<std::size_t>>
+      nativeAssociated;
+  ModuleId nativeModule(std::string_view canonical) const;
+  void nativeBindings(ModuleId module, std::string_view name,
+                      Namespace space) const;
+  std::size_t nativeDefinition(const NativeBinding &binding) const;
+  std::optional<NativeItem> nativeItem(Span span) const;
   std::vector<std::size_t> find(ModuleId module, std::string_view name,
                                 Namespace space, ModuleId from) const;
 };

@@ -40,6 +40,8 @@ public:
 
 private:
   void importDeclarations();
+  void admitNative(std::string_view canonical) const;
+  void admitConstant(std::string_view canonical);
   void retainDeclarations();
   Type functionResult(const Function &function);
   interfaces::Database checkingInterfaces;
@@ -196,6 +198,7 @@ private:
   std::vector<unsigned char> aliasStates;
   mutable std::unordered_map<std::string, std::vector<const Module::Product *>>
       productIndex;
+  mutable bool localProductsIndexed = false;
   std::unordered_map<std::string, Type> typeNames{
       {"i32", Type::I32},     {"bool", Type::Bool},   {"Unit", Type::Unit},
       {"Never", Type::Never}, {"char", Type::Char},   {"u8", Type::U8},

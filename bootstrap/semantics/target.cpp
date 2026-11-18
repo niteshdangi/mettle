@@ -5,7 +5,8 @@ namespace mettle {
 std::set<std::string> Checker::availableFeatures() const {
   auto features = guardedFeatures;
   if (current) {
-    for (std::size_t index = 0; index < module.functions.size(); ++index)
+    for (std::size_t index = module.functions.nativeSize();
+         index < module.functions.size(); ++index)
       if (current == &module.functions.header(index) ||
           (module.functions.isMaterialized(index) &&
            current == &module.functions[index]))
@@ -23,7 +24,8 @@ void Checker::requireFeatures(const std::set<std::string> &features,
           "availability");
 }
 void Checker::targetDeclarations() {
-  for (std::size_t i = 0; i < module.functions.size(); ++i) {
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i) {
     if (imported(module.functions.header(i).span))
       continue;
     const auto &function = module.functions[i];

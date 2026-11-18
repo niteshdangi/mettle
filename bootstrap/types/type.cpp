@@ -46,11 +46,21 @@ staticConstantFields(const TypeStore &types, const StaticConstant &constant) {
 
 Type TypeStore::vectorType(std::string name, Type element, unsigned lanes,
                            unsigned alignment) {
-  for (std::size_t i = 0; i < entries.size(); ++i)
-    if (entries[i].kind == EntryKind::Product &&
-        std::as_const(products)[entries[i].index].kind ==
-            AggregateKind::NativeVector &&
-        std::as_const(products)[entries[i].index].name == name)
+  auto matches = [&](std::size_t i) {
+    const auto &entry = std::as_const(entries)[i];
+    return entry.kind == EntryKind::Product &&
+           std::as_const(products)[entry.index].kind ==
+               AggregateKind::NativeVector &&
+           std::as_const(products)[entry.index].name == name;
+  };
+  if (lookup.resolve)
+    for (auto i :
+         lookup.resolve({ImportedTypeQuery::Kind::NamedProduct, {}, name}))
+      if (matches(i))
+        return Type(builtinTypeCount + i);
+  for (std::size_t i = lookup.resolve ? reservedImportedTypes : 0;
+       i < entries.size(); ++i)
+    if (matches(i))
       return Type(builtinTypeCount + static_cast<std::uint32_t>(i));
   auto result = declareProduct(std::move(name), true);
   auto &record = products[entries[result.index() - builtinTypeCount].index];
@@ -481,15 +491,15 @@ bool TypeStore::contains(Type type) const {
 }
 bool TypeStore::isProduct(Type type) const {
   return type.index() >= builtins && contains(type) &&
-         entries[type.index() - builtins].kind == EntryKind::Product;
+         entryKind(type) == EntryKind::Product;
 }
 bool TypeStore::isView(Type type) const {
   return type.index() >= builtins && contains(type) &&
-         entries[type.index() - builtins].kind == EntryKind::View;
+         entryKind(type) == EntryKind::View;
 }
 bool TypeStore::isPointer(Type type) const {
   return type.index() >= builtins && contains(type) &&
-         entries[type.index() - builtins].kind == EntryKind::Pointer;
+         entryKind(type) == EntryKind::Pointer;
 }
 Type TypeStore::pointerType(Type payload, ParameterMode mode) {
   syncLookup();
@@ -524,7 +534,7 @@ const ViewType &TypeStore::view(Type type) const {
 }
 bool TypeStore::isSlice(Type type) const {
   return type.index() >= builtins && contains(type) &&
-         entries[type.index() - builtins].kind == EntryKind::Slice;
+         entryKind(type) == EntryKind::Slice;
 }
 Type TypeStore::sliceType(Type element) {
   syncLookup();
@@ -700,7 +710,16 @@ const ProductType &TypeStore::product(Type type) const {
   return products.at(entries.at(type.index() - builtins).index);
 }
 std::optional<Type> TypeStore::findProduct(std::string_view name) const {
-  for (std::size_t i = 0; i < entries.size(); ++i) {
+  if (lookup.resolve)
+    for (auto i :
+         lookup.resolve({ImportedTypeQuery::Kind::NamedProduct, {}, name})) {
+      const auto &entry = entries[i];
+      if (entry.kind == EntryKind::Product &&
+          products[entry.index].name == name)
+        return Type(builtinTypeCount + i);
+    }
+  for (std::size_t i = lookup.resolve ? reservedImportedTypes : 0;
+       i < entries.size(); ++i) {
     const auto &entry = entries[i];
     if (entry.kind == EntryKind::Product && products[entry.index].name == name)
       return Type(builtinTypeCount + static_cast<std::uint32_t>(i));

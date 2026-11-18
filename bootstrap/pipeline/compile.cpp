@@ -415,8 +415,9 @@ public:
         for (std::size_t i = 0; i < count; ++i)
           if (!native || !native->functions.contains(i))
             dependencies(i, program.functions.at(i));
-        std::size_t helper = count;
-        for (std::size_t i = 0; i < count; ++i)
+        std::size_t helper = count + checked->nativeDefaultCount();
+        for (std::size_t i = checked->syntax().functions.nativeSize();
+             i < count; ++i)
           for (std::size_t p = 0;
                p < checked->syntax().functions.header(i).parameters.size(); ++p)
             if (checked->hasDefault(i, p)) {
@@ -464,18 +465,25 @@ public:
                         function, span);
     };
     program.functionPackages.resize(program.functions.size());
-    for (std::size_t i = 0; i < checked->syntax().functions.size() &&
-                            i < program.functionPackages.size();
-         ++i) {
-      auto source = checked->syntax().functions.header(i).span.source;
-      if (auto owner = packageOwners.find(source); owner != packageOwners.end())
-        program.functionPackages[i] = owner->second;
-    }
+    if (!packageOwners.empty())
+      for (std::size_t i = 0; i < checked->syntax().functions.size() &&
+                              i < program.functionPackages.size();
+           ++i) {
+        auto source =
+            native && native->catalog && checked->syntax().functions.native(i)
+                ? native->catalog->symbol(metadata::SymbolKind::Function, i)
+                      .value()
+                      .span.source
+                : checked->syntax().functions.header(i).span.source;
+        if (auto owner = packageOwners.find(source);
+            owner != packageOwners.end())
+          program.functionPackages[i] = owner->second;
+      }
     program.staticPackages.resize(program.statics.size());
     for (std::size_t i = 0; i < checked->syntax().statics.size() &&
                             i < program.staticPackages.size();
          ++i) {
-      auto source = checked->syntax().statics.header(i).span.source;
+      auto source = program.statics[i].span.source;
       if (auto owner = packageOwners.find(source); owner != packageOwners.end())
         program.staticPackages[i] = owner->second;
     }

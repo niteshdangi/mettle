@@ -87,7 +87,6 @@ private:
   TargetFacts target;
   std::shared_ptr<const expansion::MacroLibrary> macros;
   LibraryHeaderImport header;
-  std::vector<std::pair<std::uint32_t, std::uint32_t>> defaults;
   std::size_t functions = 0, statics = 0, interfaces = 0;
   const Options &options;
   packages::Store &store;

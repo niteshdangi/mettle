@@ -7,8 +7,12 @@ using ir::Exit;
 using ir::Op;
 
 int Builder::defaultIndex(std::size_t callee, std::size_t parameter) const {
-  std::size_t result = module.syntax().functions.size();
-  for (std::size_t f = 0; f < module.syntax().functions.size(); ++f)
+  if (auto ordinal = module.nativeDefaultOrdinal(callee, parameter))
+    return static_cast<int>(module.syntax().functions.size() + *ordinal);
+  std::size_t result =
+      module.syntax().functions.size() + module.nativeDefaultCount();
+  for (std::size_t f = module.syntax().functions.nativeSize();
+       f < module.syntax().functions.size(); ++f)
     for (std::size_t p = 0;
          p < module.syntax().functions.header(f).parameters.size(); ++p)
       if (module.hasDefault(f, p)) {

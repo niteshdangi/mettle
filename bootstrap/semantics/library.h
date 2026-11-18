@@ -223,13 +223,68 @@ struct ImportedConstructors {
   std::vector<Header> headers;
   interfaces::DatabaseRecords<interfaces::Implementation> applicability;
 };
+template <class T> class ImportedDeclarationTable {
+  using Storage = std::map<std::uint32_t, T>;
+
+public:
+  using const_iterator = typename Storage::const_iterator;
+  using Loader = std::function<T(std::uint32_t)>;
+  void mountIndexed(std::size_t count, Loader load) {
+    nativeCount = count;
+    loader = std::move(load);
+  }
+  std::size_t nativeSize() const { return nativeCount; }
+  bool contains(std::uint32_t index) const {
+    return index < nativeCount || records.contains(index);
+  }
+  const_iterator find(std::uint32_t index) const {
+    if (index < nativeCount && !records.contains(index))
+      records.emplace(index, loader(index));
+    return records.find(index);
+  }
+  const T &at(std::uint32_t index) const {
+    auto found = find(index);
+    if (found == end())
+      throw std::out_of_range("imported declaration ID");
+    return found->second;
+  }
+  template <class... Args> auto emplace(std::uint32_t index, Args &&...args) {
+    return records.emplace(index, std::forward<Args>(args)...);
+  }
+  template <class Value>
+  auto insert_or_assign(std::uint32_t index, Value &&value) {
+    return records.insert_or_assign(index, std::forward<Value>(value));
+  }
+  void erase(std::uint32_t index) { records.erase(index); }
+  const_iterator begin() const { return records.begin(); }
+  const_iterator end() const { return records.end(); }
+  std::size_t size() const {
+    return nativeCount + static_cast<std::size_t>(std::distance(
+                             records.lower_bound(nativeCount), records.end()));
+  }
+  bool empty() const { return size() == 0; }
+  std::size_t admittedSize() const { return records.size(); }
+
+private:
+  std::size_t nativeCount = 0;
+  Loader loader;
+  mutable Storage records;
+};
+using ImportedFunctionTable =
+    ImportedDeclarationTable<ImportedFunctionReference>;
+class LibraryDeclarationIndex;
 struct ImportedDeclarations {
-  using TypeTable = std::vector<std::shared_ptr<const ImportedTypeDeclaration>>;
-  std::map<std::uint32_t, ImportedFunctionReference> functions;
-  std::map<std::uint32_t, StaticFacts> statics;
+  using TypeTable =
+      TypeRecords<std::shared_ptr<const ImportedTypeDeclaration>, true>;
+  using ConstantTable = TypeRecords<ImportedInherentConstant, true>;
+  ImportedFunctionTable functions;
+  std::shared_ptr<const LibraryDeclarationIndex> catalog;
+  std::array<std::size_t, 5> nativeTypeCounts{};
+  ImportedDeclarationTable<StaticFacts> statics;
   std::map<std::uint32_t, ImportedClosure> closures;
   TypeTable products, aliases, interfaces, implementations, associated;
-  std::vector<ImportedInherentConstant> inherentConstants;
+  ConstantTable inherentConstants;
+  std::size_t nativeConstantCount = 0;
   std::vector<std::shared_ptr<const ImportedConstructors>> constructorGroups;
   interfaces::Database checkingDatabase, database;
   std::shared_ptr<const TypeStore> types;
@@ -287,6 +342,46 @@ struct DeclarationSymbolIdentity {
   Span span;
   std::string definition;
 };
+class LibraryDeclarationIndex : public NativeDeclarationIndex {
+public:
+  virtual std::optional<DeclarationSymbolIdentity>
+  symbol(metadata::SymbolKind kind, std::uint32_t index) const = 0;
+  virtual std::optional<std::uint32_t>
+  symbol(metadata::SymbolKind kind, std::string_view identity) const = 0;
+  virtual std::size_t symbolCount(metadata::SymbolKind kind) const = 0;
+  virtual std::size_t defaultCount() const = 0;
+  virtual std::pair<std::uint32_t, std::uint32_t>
+  defaultAt(std::size_t ordinal) const = 0;
+  virtual std::optional<std::size_t>
+  defaultOrdinal(std::uint32_t function, std::uint32_t parameter) const = 0;
+  virtual std::optional<std::size_t> typeOrdinal(std::size_t kind,
+                                                 Span span) const = 0;
+  virtual std::optional<std::uint32_t>
+  function(std::string_view canonical) const = 0;
+  virtual std::optional<std::string>
+  functionName(std::uint32_t index) const = 0;
+  virtual std::optional<std::pair<std::size_t, std::size_t>>
+  namedType(std::string_view canonical) const = 0;
+  virtual std::vector<std::uint32_t> methods(std::string_view name) const = 0;
+  virtual std::size_t constructorCount() const = 0;
+  virtual bool constructor(std::uint32_t function) const = 0;
+  virtual std::optional<std::uint32_t>
+  namedStatic(std::string_view canonical) const = 0;
+  virtual std::vector<std::uint32_t>
+  externalStatics(std::string_view symbol) const = 0;
+  virtual std::vector<std::uint32_t>
+  externalFunctions(std::string_view symbol) const = 0;
+  virtual std::optional<std::uint32_t>
+  destructor(std::string_view owner) const = 0;
+  virtual std::optional<std::uint32_t>
+  namedConstant(std::string_view canonical) const = 0;
+  virtual std::optional<std::pair<std::size_t, std::size_t>>
+  constantOwner(std::uint32_t ordinal) const = 0;
+  virtual bool constantMember(std::string_view name) const = 0;
+  virtual std::size_t typeCount(std::size_t category) const = 0;
+  virtual std::size_t constantCount() const = 0;
+  virtual std::size_t associatedCount(std::size_t implementation) const = 0;
+};
 struct DeclarationInventory {
   std::vector<DeclarationTypeIdentity> types;
   std::vector<DeclarationSymbolIdentity> symbols;
@@ -299,6 +394,7 @@ struct LibraryDeclarationExport {
 };
 struct LibraryHeaderImport {
   std::optional<Module> module;
+  std::shared_ptr<const LibraryDeclarationIndex> index;
   std::vector<DeclarationSymbolIdentity> symbols;
   struct TypeIdentity {
     std::uint32_t reference = 0;
@@ -341,10 +437,11 @@ LibraryDeclarationExport
 exportLibraryDeclarations(const CheckedModule &module,
                           const metadata::EncodeReferences &references,
                           std::span<const SourceId> omitImportSources = {});
-LibraryHeaderImport
-decodeLibraryHeader(std::span<const std::uint8_t> bytes,
-                    const metadata::DecodeReferences &references,
-                    std::shared_ptr<const void> backing = nullptr);
+LibraryHeaderImport decodeLibraryHeader(
+    std::span<const std::uint8_t> bytes,
+    const metadata::DecodeReferences &references,
+    std::shared_ptr<const void> backing = nullptr,
+    metadata::ValidationMode validation = metadata::ValidationMode::Eager);
 LibraryHeaderImport copyLibraryHeader(const LibraryHeaderImport &header);
 LibraryDeclarationImport importLibraryDeclarations(
     std::span<const std::uint8_t> bytes, std::shared_ptr<TypeStore> types,
@@ -356,5 +453,6 @@ LibraryDeclarationImport importLibraryDeclarations(
     metadata::ValidationMode validation = metadata::ValidationMode::Eager,
     std::span<const std::string_view> functionNames = {},
     std::function<bool(std::size_t, std::span<const std::uint8_t>)>
-        verifyPayload = {});
+        verifyPayload = {},
+    std::shared_ptr<const LibraryDeclarationIndex> catalog = nullptr);
 } // namespace mettle

@@ -15,6 +15,10 @@ Checker::staticName(std::string_view name, Span span,
                                            resolution::Namespace::Value, span);
   if (!canonical)
     return std::nullopt;
+  if (checked.importedDeclarations && checked.importedDeclarations->catalog)
+    if (auto native =
+            checked.importedDeclarations->catalog->namedStatic(*canonical))
+      return *native;
   auto found = staticNames.find(*canonical);
   return found == staticNames.end() ? std::nullopt
                                     : std::optional(found->second);
@@ -43,7 +47,8 @@ void Checker::staticNamesAndTypes() {
     if (source.initializer.get())
       qualifyDottedPaths(*source.initializer);
   inherentConstantNamesAndTypes();
-  for (std::size_t i = 0; i < module.statics.size(); ++i)
+  for (std::size_t i = module.statics.nativeSize(); i < module.statics.size();
+       ++i)
     staticType(i);
   staticsDeclared = true;
   // Resolve any values not forced by type annotations after storage types are
@@ -77,7 +82,8 @@ Type Checker::staticType(std::size_t index) {
 
 void Checker::inherentConstantNamesAndTypes() {
   auto *saved = genericEnvironment;
-  for (std::size_t i = 0; i < module.implementations.size(); ++i) {
+  for (std::size_t i = module.implementations.nativeSize();
+       i < module.implementations.size(); ++i) {
     if (imported(module.implementations.header(i).span))
       continue;
     const auto &syntax = module.implementations[i];
@@ -163,6 +169,7 @@ void Checker::inherentConstantNamesAndTypes() {
                                    {},
                                    {},
                                    {}});
+      admitConstant(owner + "::" + item.name);
       if (!inherentConstantNames.emplace(owner + "::" + item.name, index)
                .second)
         error("name", item.span, "duplicate associated constant");
@@ -174,7 +181,8 @@ void Checker::inherentConstantNamesAndTypes() {
 
 void Checker::staticDeclarations() {
   genericEnvironment = nullptr;
-  for (std::size_t i = 0; i < module.statics.size(); ++i) {
+  for (std::size_t i = module.statics.nativeSize(); i < module.statics.size();
+       ++i) {
     if (imported(module.statics.header(i).span))
       continue;
     const auto &source = module.statics[i];
@@ -227,10 +235,16 @@ void Checker::staticDeclarations() {
     }
   }
   std::map<std::string, std::size_t> identities;
-  for (std::size_t i = 0; i < module.statics.size(); ++i) {
+  for (std::size_t i = module.statics.nativeSize(); i < module.statics.size();
+       ++i) {
     const auto &storage = checked.staticStorage[i];
     if (storage.externalName.empty())
       continue;
+    if (checked.importedDeclarations && checked.importedDeclarations->catalog)
+      for (auto native : checked.importedDeclarations->catalog->externalStatics(
+               storage.externalName))
+        identities.try_emplace(storage.externalName,
+                               checked.staticStorage[native].identity);
     auto [found, inserted] = identities.emplace(storage.externalName, i);
     if (!inserted) {
       auto previous = found->second;
@@ -243,14 +257,18 @@ void Checker::staticDeclarations() {
         found->second = i;
     }
   }
-  for (auto &storage : checked.staticStorage)
+  for (std::size_t i = module.statics.nativeSize();
+       i < checked.staticStorage.size(); ++i) {
+    auto &storage = checked.staticStorage[i];
     if (!storage.externalName.empty())
       storage.identity = identities.at(storage.externalName);
+  }
 }
 void Checker::staticInitializers() {
   genericEnvironment = nullptr;
   unsafeDepth = 0;
-  for (std::size_t i = 0; i < module.statics.size(); ++i)
+  for (std::size_t i = module.statics.nativeSize(); i < module.statics.size();
+       ++i)
     if (!module.statics.header(i).foreignDeclaration)
       staticValue(i);
 }
@@ -260,6 +278,8 @@ std::optional<StaticConstant> Checker::staticValue(std::size_t index) {
   if (staticType(index) == Type::Unknown)
     return std::nullopt;
   auto &storage = checked.staticStorage[index];
+  if (module.statics.native(index) && storage.initializer)
+    return storage.initializer;
   if (staticStates[index] == 2)
     return storage.initializer;
   auto &source = module.statics.edit(index);
@@ -755,20 +775,29 @@ std::optional<StaticConstant> Checker::staticInitializer(const Node &node,
         return fail("constant product constructor type does not match");
     }
     if (!intrinsic) {
+      auto constructorOwner = type;
+      while (checked.types->product(constructorOwner).regionOrigin !=
+             Type::Unknown)
+        constructorOwner =
+            checked.types->product(constructorOwner).regionOrigin;
+      if (auto generic = checked.types->product(constructorOwner).genericOrigin;
+          generic != Type::Unknown)
+        constructorOwner = generic;
       if (implementationsRegistered && diagnostics.empty()) {
-        auto owner = type;
-        while (checked.types->product(owner).regionOrigin != Type::Unknown)
-          owner = checked.types->product(owner).regionOrigin;
-        if (auto generic = checked.types->product(owner).genericOrigin;
-            generic != Type::Unknown)
-          owner = generic;
-        if (constructors.contains(owner))
+        if (constructors.contains(constructorOwner))
           return fail("const-function execution is not implemented");
-      } else
-        for (const auto &function : module.functions.headers())
+      } else {
+        if (checked.importedDeclarations)
+          for (const auto &group :
+               checked.importedDeclarations->constructorGroups)
+            for (const auto &constructor : group->headers)
+              if (constructor.origin == constructorOwner)
+                return fail("const-function execution is not implemented");
+        for (const auto &function : module.functions.localHeaders())
           if (function.constructor &&
               typeName(function.owner, function.span) == origin)
             return fail("const-function execution is not implemented");
+      }
     }
     if (record.layout.unionType) {
       if (node.children.size() != 2 || node.children[1]->name.empty())

@@ -59,7 +59,7 @@ std::vector<std::size_t> Checker::carriedResultSources(
       if (auto found = scope.names.find(name); found != scope.names.end())
         return found->second;
     }
-    for (const auto &function : module.functions.headers())
+    for (const auto &function : module.functions.localHeaders())
       if (function.span.source == span.source &&
           function.span.begin <= span.begin && span.end <= function.span.end) {
         const auto &scope = functionRegions(function);

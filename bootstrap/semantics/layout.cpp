@@ -100,7 +100,8 @@ void Checker::checkBorrowAlignment() {
       if (parameter.defaultValue.get())
         walk(*parameter.defaultValue);
   };
-  for (std::size_t i = 0; i < module.functions.size(); ++i)
+  for (std::size_t i = module.functions.nativeSize();
+       i < module.functions.size(); ++i)
     if (!checked.imported(i))
       function(module.functions[i], checked.function(i));
   for (const auto &closure : checked.closureBodies)

@@ -6,20 +6,21 @@
 
 namespace mettle {
 void Checker::products() {
-  std::vector<Type> identities;
+  std::vector<Type> identities(module.products.size(), Type::Unknown);
   std::vector<Type> defined;
-  for (std::size_t i = 0; i < module.products.size(); ++i) {
+  for (std::size_t i = module.products.nativeSize(); i < module.products.size();
+       ++i) {
     const auto &product = module.products.header(i);
-    identities.push_back(
-        typeNames.at(definitionName(product.span, product.name)));
+    identities[i] = typeNames.at(definitionName(product.span, product.name));
     if (!imported(product.span)) {
-      defined.push_back(identities.back());
-      checked.types->setProductLayout(identities.back(),
+      defined.push_back(identities[i]);
+      checked.types->setProductLayout(identities[i],
                                       productLayout(module.products[i]));
     }
   }
   std::vector<std::vector<Span>> fieldSpans(module.products.size());
-  for (std::size_t i = 0; i < module.products.size(); ++i) {
+  for (std::size_t i = module.products.nativeSize(); i < module.products.size();
+       ++i) {
     if (imported(module.products.header(i).span))
       continue;
     const auto &product = module.products[i];
@@ -111,7 +112,8 @@ void Checker::products() {
     structural.erase(type);
   };
   visit = [&](std::size_t index, unsigned depth, Span use) {
-    if (imported(module.products.header(index).span))
+    if (module.products.native(index) ||
+        imported(module.products.header(index).span))
       return;
     if (depth > limits::typeDepth) {
       error("limit", module.products[index].span,
@@ -169,7 +171,7 @@ void Checker::products() {
     }
     state[index] = 2;
   };
-  for (std::size_t i = 0; i < identities.size(); ++i)
+  for (std::size_t i = module.products.nativeSize(); i < identities.size(); ++i)
     visit(i, 0, module.products.header(i).span);
   if (!diagnostics.empty())
     return;

@@ -67,7 +67,7 @@ void TypeStore::setErasedParents(Type type, std::vector<Type> parents) {
 }
 bool TypeStore::isErased(Type type) const {
   return contains(type) && type.index() >= builtinTypeCount &&
-         entries[type.index() - builtinTypeCount].kind == EntryKind::Erased;
+         entryKind(type) == EntryKind::Erased;
 }
 const ErasedType &TypeStore::erased(Type type) const {
   return erasedTypes.at(entries.at(type.index() - builtinTypeCount).index);

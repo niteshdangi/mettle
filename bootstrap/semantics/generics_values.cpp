@@ -40,6 +40,9 @@ void Checker::explicitGenericBindings(const Function &function,
                                       const GenericEnvironment &environment,
                                       std::vector<TypeBinding> &bindings,
                                       Span span, bool ownerResolved) {
+  if (callee.genericArguments.empty() &&
+      (ownerResolved || callee.ownerGenericArguments.empty()))
+    return;
   std::vector<const GenericParameter *> owner, selected;
   if (function.implementation < 0 && !function.owner.empty())
     for (const auto *product :
