@@ -132,52 +132,60 @@ int compile(const lsp::Json &request,
 }
 } // namespace
 
-int compilationServer(std::istream &input, std::ostream &output) {
-  auto queries = std::make_shared<LibraryQueries>();
-  auto functions = std::make_shared<pipeline::FunctionQueries>();
+CompilationSession::CompilationSession()
+    : queries(std::make_shared<LibraryQueries>()),
+      functions(std::make_shared<pipeline::FunctionQueries>()) {
   (void)compilerIdentity();
+}
+
+lsp::Json CompilationSession::request(const lsp::Json &request) {
+  std::string standardOutput, standardError;
+  int status = 2;
+  const auto previousHits = queries->hits();
+  const auto previousFunctions = functions->hits();
+  const auto previousInstances = functions->specializationHits();
+  {
+    std::cout.flush();
+    std::cerr.flush();
+    CapturedStream outputCapture(stdout), errorCapture(stderr);
+    if (request.type() != lsp::Json::Type::Object) {
+      std::cerr
+          << "mettle: error[request]: expected one JSON object per line\n";
+    } else {
+      try {
+        status = compile(request, queries, functions);
+      } catch (const std::exception &error) {
+        std::cerr << "mettle: error[internal]: " << error.what() << '\n';
+        status = 1;
+      }
+    }
+    std::cout.flush();
+    std::cerr.flush();
+    standardOutput = outputCapture.contents();
+    standardError = errorCapture.contents();
+  }
+  auto id = request.find("id");
+  return lsp::Json::object(
+      {{"id", id ? *id : lsp::Json{}},
+       {"status", lsp::Json::integer(status)},
+       {"stdout", lsp::Json::string(std::move(standardOutput))},
+       {"stderr", lsp::Json::string(std::move(standardError))},
+       {"queryHits", lsp::Json::integer(queries->hits() - previousHits)},
+       {"functionQueryHits",
+        lsp::Json::integer(functions->hits() - previousFunctions)},
+       {"instanceQueryHits",
+        lsp::Json::integer(functions->specializationHits() -
+                           previousInstances)}});
+}
+
+int compilationServer(std::istream &input, std::ostream &output) {
+  CompilationSession session;
   std::string line;
   while (std::getline(input, line)) {
     auto request = line.size() <= limits::sourceBytes ? lsp::Json::parse(line)
                                                       : std::nullopt;
-    std::string standardOutput, standardError;
-    int status = 2;
-    const auto previousHits = queries->hits();
-    const auto previousFunctions = functions->hits();
-    const auto previousInstances = functions->specializationHits();
-    {
-      std::cout.flush();
-      std::cerr.flush();
-      CapturedStream outputCapture(stdout), errorCapture(stderr);
-      if (!request || request->type() != lsp::Json::Type::Object) {
-        std::cerr
-            << "mettle: error[request]: expected one JSON object per line\n";
-      } else {
-        try {
-          status = compile(*request, queries, functions);
-        } catch (const std::exception &error) {
-          std::cerr << "mettle: error[internal]: " << error.what() << '\n';
-          status = 1;
-        }
-      }
-      std::cout.flush();
-      std::cerr.flush();
-      standardOutput = outputCapture.contents();
-      standardError = errorCapture.contents();
-    }
-    auto id = request ? request->find("id") : nullptr;
-    auto response = lsp::Json::object(
-        {{"id", id ? *id : lsp::Json{}},
-         {"status", lsp::Json::integer(status)},
-         {"stdout", lsp::Json::string(std::move(standardOutput))},
-         {"stderr", lsp::Json::string(std::move(standardError))},
-         {"queryHits", lsp::Json::integer(queries->hits() - previousHits)},
-         {"functionQueryHits",
-          lsp::Json::integer(functions->hits() - previousFunctions)},
-         {"instanceQueryHits",
-          lsp::Json::integer(functions->specializationHits() -
-                             previousInstances)}});
-    output << response.dump() << '\n' << std::flush;
+    output << session.request(request.value_or(lsp::Json{})).dump() << '\n'
+           << std::flush;
     if (!output)
       return 1;
   }

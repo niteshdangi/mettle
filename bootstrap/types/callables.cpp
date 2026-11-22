@@ -96,6 +96,7 @@ void TypeStore::defineClosure(Type type, std::vector<TypeField> captures,
                               CallableType descriptor) {
   if (!isProduct(type) || product(type).callable < 0)
     throw std::invalid_argument("closure definition requires a closure type");
+  invalidateRegionErasure(type);
   descriptor.environment = type;
   descriptor.name = product(type).name;
   bool copy = descriptor.mode != ParameterMode::Take;
@@ -202,6 +203,7 @@ bool TypeStore::constrainCallableParameter(
     return false;
   if (prior == Type::Unknown || satisfiesCallable(contract, prior)) {
     auto erased = eraseRegions(contract);
+    invalidateRegionErasure(type);
     auto &stored = parameters.at(entries.at(type.index() - builtins).index);
     stored.callableConstraint = contract;
     stored.erasedCallableConstraint = erased;

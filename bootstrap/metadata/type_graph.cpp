@@ -731,6 +731,141 @@ CompactDefinition compactDefinitionFor(ImportedTypeKind kind) {
   }
   reject("invalid imported type kind");
 }
+template <class T> T ownCompact(const T &value) { return value; }
+std::string ownCompact(std::string_view value) { return std::string(value); }
+template <class T> auto ownCompact(BorrowedTypeSequence<T> values);
+template <class Storage>
+CallableParameter ownCompact(const BasicCallableParameter<Storage> &value) {
+  return {value.type, value.mode, ownCompact(value.name)};
+}
+template <class Storage>
+CallableType ownCompact(const BasicCallableType<Storage> &value) {
+  CallableType result;
+  result.parameters = ownCompact(value.parameters);
+  result.result = value.result;
+  result.error = value.error;
+  result.abiResult = value.abiResult;
+  result.resultSources = ownCompact(value.resultSources);
+  result.mode = value.mode;
+  result.regions = ownCompact(value.regions);
+  result.environment = value.environment;
+  result.function = value.function;
+  result.name = value.name;
+  result.regionParameters = ownCompact(value.regionParameters);
+  result.parameterRegions = ownCompact(value.parameterRegions);
+  result.regionUniverse = value.regionUniverse;
+  result.regionRequirements = ownCompact(value.regionRequirements);
+  result.resultFromEnvironment = value.resultFromEnvironment;
+  result.environmentMode = value.environmentMode;
+  result.unsafeCall = value.unsafeCall;
+  result.abi = value.abi;
+  result.variadic = value.variadic;
+  result.targetFeatures.insert(value.targetFeatures.begin(),
+                               value.targetFeatures.end());
+  return result;
+}
+template <class Storage>
+TypeField ownCompact(const BasicTypeField<Storage> &value) {
+  return {ownCompact(value.name), value.type};
+}
+template <class Storage>
+VariantType ownCompact(const BasicVariantType<Storage> &value) {
+  return {ownCompact(value.name), ownCompact(value.fields)};
+}
+template <class T> auto ownCompact(BorrowedTypeSequence<T> values) {
+  std::vector<decltype(ownCompact(std::declval<const T &>()))> result;
+  result.reserve(values.size());
+  for (const auto &value : values)
+    result.push_back(ownCompact(value));
+  return result;
+}
+ProductLayout ownCompact(const BasicProductLayout<BorrowedTypeStorage> &value) {
+  return {value.kind,
+          value.alignment,
+          value.packing,
+          value.unionType,
+          value.tag,
+          ownCompact(value.pinnedFields),
+          ownCompact(value.discriminants),
+          value.unpin,
+          ownCompact(value.unpinConditions),
+          value.conditionalUnpin};
+}
+ProductType ownCompact(const BasicProductType<BorrowedTypeStorage> &value) {
+  return {ownCompact(value.name),
+          ownCompact(value.fields),
+          value.copyRequested,
+          value.conditionalCopy,
+          ownCompact(value.copyConditions),
+          value.hasDestructor,
+          value.destructor,
+          value.kind,
+          ownCompact(value.variants),
+          ownCompact(value.components),
+          value.callable,
+          ownCompact(value.genericParameters),
+          value.genericOrigin,
+          ownCompact(value.genericArguments),
+          value.arrayCount,
+          ownCompact(value.opaqueBounds),
+          value.package,
+          value.regionOrigin,
+          ownCompact(value.regionArguments),
+          value.regionPattern,
+          ownCompact(value.layout),
+          value.nativeCleanup,
+          value.vector,
+          value.normalizedFields};
+}
+ImportedProduct ownCompact(const CompactProduct &value) {
+  ImportedProduct result{
+      ownCompact(value.descriptor), {}, ownCompact(value.coroutineInterior)};
+  if (value.closure)
+    result.closure = ownCompact(*value.closure);
+  return result;
+}
+ViewType ownCompact(const CompactView &value) {
+  return {value.payload, value.mode, ownCompact(value.name), value.region};
+}
+ImportedPointer ownCompact(const CompactPointer &value) {
+  return {ownCompact(value.descriptor)};
+}
+SliceType ownCompact(const CompactSlice &value) {
+  return {value.element, ownCompact(value.name), value.metadata};
+}
+TypeParameter ownCompact(const CompactParameter &value) {
+  return {ownCompact(value.name),
+          value.copyRequested,
+          value.sized,
+          value.kind,
+          value.valueType,
+          value.value,
+          ownCompact(value.operation),
+          ownCompact(value.operands),
+          value.callableConstraint,
+          ownCompact(value.callableLocalParameters),
+          ownCompact(value.regionArguments),
+          value.unpin,
+          value.thin,
+          value.numeric,
+          value.erasedCallableConstraint};
+}
+ErasedType ownCompact(const CompactErased &value) {
+  return {ownCompact(value.name),
+          value.declaration,
+          ownCompact(value.arguments),
+          ownCompact(value.associated),
+          ownCompact(value.methods),
+          ownCompact(value.methodTypes),
+          ownCompact(value.methodOwners),
+          ownCompact(value.methodSlots),
+          ownCompact(value.parentInterfaces),
+          ownCompact(value.regionArguments),
+          ownCompact(value.regionParameters),
+          value.regionUniverse,
+          ownCompact(value.regionRequirements),
+          value.bound};
+}
 struct MinimumRecordSize : Fields<MinimumRecordSize> {
   std::size_t bytes = 0;
   template <class T> void value(T &value) {
@@ -3165,7 +3300,6 @@ struct DeferredTypeGraph {
   std::vector<RegionId> regions;
   std::vector<RegionUniverse> universes;
   Reader::ResolvedSymbols symbols;
-  std::vector<std::array<std::size_t, Reader::symbolKinds>> symbolOffsets;
   std::vector<Record> records;
   std::shared_ptr<const CompactArena> arena;
   std::vector<CompactDefinitionView> definitions;
@@ -3187,8 +3321,6 @@ struct DeferredTypeGraph {
   mutable std::mutex lookupMutex;
   mutable std::unordered_set<std::size_t> visiting;
   mutable std::unordered_map<std::size_t, TypeGraphProof> validated;
-  mutable std::unordered_map<std::size_t, Reader::ResolvedSymbols>
-      recordSymbols;
   std::shared_ptr<CompactArena> demandedArena;
   mutable std::mutex validationMutex;
 
@@ -3251,26 +3383,13 @@ struct DeferredTypeGraph {
   ImportedTypeDefinition materialize(std::size_t index) const {
     validate(index);
     std::lock_guard lock(validationMutex);
-    const auto &slice = records.at(index);
-    TypeGraphSymbols noCallbacks;
-    Reader reader(std::span(bytes).subspan(slice.offset, slice.length),
-                  noCallbacks, header);
-    reader.types = types;
-    reader.regions = regions;
-    reader.universes = universes;
-    reader.resolvedSymbols =
-        retainedSymbols ? &recordSymbols.at(index) : &symbols;
-    if (!retainedSymbols)
-      reader.symbolOffsets = symbolOffsets.at(index);
-    auto definition = definitionFor(kinds.at(index));
-    try {
-      std::visit([&](auto &record) { reader(record); }, definition);
-      if (reader.remaining())
-        reject("trailing bytes in a deferred type record");
-    } catch (const InvalidGraph &error) {
-      throw std::logic_error("validated type record changed: " + error.message);
-    }
-    return definition;
+    const auto &definition =
+        retainedSymbols ? demandedDefinitions.at(index) : definitions.at(index);
+    return std::visit(
+        [](const auto *record) -> ImportedTypeDefinition {
+          return ownCompact(*record);
+        },
+        definition);
   }
 };
 
@@ -3538,7 +3657,6 @@ void DeferredTypeGraph::validate(std::size_t index) const {
                         actualProjection);
         if (slice.nominal != nominal(value) || expected.bytes != actual.bytes)
           reject("type record does not match its identity index");
-        recordSymbols[current] = std::move(resolved);
         demandedDefinitions.emplace(current, value);
       }
     };
@@ -3616,8 +3734,6 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     if (!demand)
       definitions.reserve(header.types);
     deferred->records.reserve(header.types);
-    if (!demand)
-      deferred->symbolOffsets.reserve(header.types);
     TypeGraphImport result;
     std::unordered_set<std::string_view> identities;
     bool uniqueKeys = true;
@@ -3682,11 +3798,6 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
           bytes.subspan(identityBegin, reader.offset - identityBegin);
       DeferredTypeGraph::Record slice;
       slice.offset = reader.offset;
-      if (!demand) {
-        auto &offsets = deferred->symbolOffsets.emplace_back();
-        for (std::size_t k = 0; k < Reader::symbolKinds; ++k)
-          offsets[k] = reader.pendingSymbols[k].size();
-      }
       auto definition = compactDefinitionFor(deferred->kinds[i]);
       if (header.indexed) {
         std::span<const std::uint8_t> payload;

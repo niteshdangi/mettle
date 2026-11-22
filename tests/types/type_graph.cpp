@@ -55,6 +55,78 @@ void put32(std::vector<std::uint8_t> &bytes, std::size_t offset,
 int main() {
   {
     TypeStore types;
+    auto scope = types.regions().binder();
+    auto region = types.regions().bound(scope, "a");
+    auto view = types.viewType(Type::I32, ParameterMode::Read, region);
+    auto parameter = types.declareParameter("T", false);
+    auto generic = types.declareProduct("Generic", false);
+    types.setGenericParameters(generic, {parameter});
+    types.defineProduct(generic, {{"value", parameter}});
+    auto instance = types.instantiateProduct(generic, {view});
+    CallableType signature;
+    signature.parameters = {{instance, ParameterMode::Read, "value"}};
+    signature.result = signature.abiResult = view;
+    signature.regionParameters = {region};
+    signature.parameterRegions = {region};
+    signature.regionUniverse = scope.universe;
+    auto callable = types.callableType(signature);
+    auto nested =
+        types.pointerType(types.sliceType(callable), ParameterMode::Mut);
+    auto erased = types.eraseRegions(nested);
+    auto snapshot = types;
+    expect(types.eraseRegions(nested) == erased,
+           "repeated region erasure preserves canonical recursive shapes");
+    types.defineImportedType(
+        view, ViewType{Type::Bool, ParameterMode::Read, "changed", region});
+    auto changed = types.eraseRegions(nested);
+    const auto &changedCallable =
+        types.callable(types.slice(types.pointer(changed).payload).element);
+    const auto &unchangedCallable = snapshot.callable(
+        snapshot.slice(snapshot.pointer(erased).payload).element);
+    expect(changed != erased &&
+               types.view(changedCallable.result).payload == Type::Bool &&
+               changedCallable.regionParameters.empty() &&
+               changedCallable.parameterRegions.empty() &&
+               changedCallable.regionUniverse == 0 &&
+               types.view(types.product(changedCallable.parameters[0].type)
+                              .genericArguments[0])
+                       .payload == Type::Bool &&
+               snapshot.eraseRegions(nested) == erased &&
+               snapshot.view(unchangedCallable.result).payload == Type::I32,
+           "region erasure invalidates dependent shapes without changing "
+           "copied-store definitions or memoized identities");
+    auto origin = types.declareProduct("Normalized", false);
+    types.defineProduct(origin, {{"value", view}});
+    auto normalized =
+        types.regionalProduct(origin, {{"value", view}}, {region}, true);
+    auto normalizedErased = types.eraseRegions(normalized);
+    types.defineProduct(normalized, {{"value", Type::I64}});
+    expect(types.product(types.eraseRegions(normalized)).fields[0].type ==
+                   Type::I64 &&
+               types.product(normalizedErased).fields[0].type != Type::I64,
+           "normalized field mutations invalidate prior erasure results");
+    auto recursive = types.regionalShell(origin, {region}, {});
+    auto recursiveView = types.viewType(recursive, ParameterMode::Read, region);
+    auto recursivePointer =
+        types.pointerType(recursiveView, ParameterMode::Read);
+    auto definition = types.importedDefinition(recursive);
+    auto &record = std::get<ImportedProduct>(definition).descriptor;
+    record.normalizedFields = true;
+    record.fields = {{"next", recursivePointer}};
+    types.defineImportedType(recursive, std::move(definition));
+    auto erasedPointer = types.eraseRegions(recursivePointer);
+    auto erasedView = types.pointer(erasedPointer).payload;
+    auto erasedRecursive = types.view(erasedView).payload;
+    expect(types.view(erasedView).region == RegionId::Unspecified &&
+               types.product(erasedRecursive).fields[0].type == erasedPointer &&
+               types.eraseRegions(recursivePointer) == erasedPointer &&
+               types.eraseRegions(recursive) == erasedRecursive &&
+               types.eraseRegions(erasedRecursive) == erasedRecursive,
+           "recursive normalized products erase regions without retaining "
+           "the source cycle or publishing incomplete memoized shells");
+  }
+  {
+    TypeStore types;
     auto leaf = types.declareProduct("Leaf", true);
     types.defineProduct(leaf, {{"value", Type::Bool}});
     auto root = leaf;
@@ -131,6 +203,13 @@ int main() {
     expect(bool(imported), imported.error);
     encoded.bytes.clear();
     retained.reset();
+    auto copy = consumer;
+    std::array<std::thread, 3> demands{
+        std::thread([&] { (void)consumer.product(imported.roots[0]); }),
+        std::thread([&] { (void)consumer.product(imported.roots[2]); }),
+        std::thread([&] { (void)copy.product(imported.roots[0]); })};
+    for (auto &demand : demands)
+      demand.join();
     expect(consumer.isCopy(imported.roots[0]) &&
                consumer.product(imported.roots[0]).fields.size() == 1,
            "demanded type dependencies lost validation or retained bytes");
@@ -402,19 +481,33 @@ int main() {
                                   name.begin(), name.end());
     expect(fullName != encoded.bytes.end(),
            "named product fixture must retain its full descriptor name");
-    *fullName = 'v';
-    TypeStore consumer;
-    auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
-                                    ValidationMode::OnDemand, retained);
-    expect(bool(imported), imported.error);
-    bool rejected = false;
-    try {
-      (void)consumer.findProduct(name);
-    } catch (const InvalidMetadata &) {
-      rejected = true;
+    auto nameOffset =
+        static_cast<std::size_t>(fullName - encoded.bytes.begin());
+    for (bool truncated : {false, true}) {
+      auto malformed = encoded.bytes;
+      if (truncated)
+        put32(malformed, nameOffset - 4, UINT32_MAX);
+      else
+        malformed[nameOffset] = 'v';
+      TypeStore consumer;
+      auto imported = importTypeGraph(consumer, malformed, *retained,
+                                      ValidationMode::OnDemand, retained);
+      expect(bool(imported), imported.error);
+      auto copy = consumer;
+      for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        for (auto *store : {&consumer, &copy}) {
+          bool rejected = false;
+          try {
+            (void)store->findProduct(name);
+          } catch (const InvalidMetadata &) {
+            rejected = true;
+          }
+          expect(rejected,
+                 "malformed payloads and identity disagreements must reject "
+                 "each demand across shared validation state");
+        }
+      }
     }
-    expect(rejected,
-           "demanded product names must match the admitted name projection");
   }
   {
     TypeStore producer;

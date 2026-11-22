@@ -1114,13 +1114,15 @@ def native_core_object_reuse():
     first.write_text("fn main(): i32 {\n"
                      "    core.native_generic(core.native_value(99, 41)) - 42\n"
                      "}\n")
-    second.write_text("fn main(): i32 {\n"
+    second.write_text("@inline(never)\n"
+                      "fn stable(value: i32): i32 { core.hint.black_box(value) }\n"
+                      "fn main(): i32 {\n"
                       "    let wide = core.native_generic(42u64)\n"
                       "    if wide != 42u64 { return 1 }\n"
-                      "    core.native_value(17, 81) - 82\n"
+                      "    stable(core.native_value(17, 81)) - 82\n"
                       "}\n")
     for profile in ("debug", "release"):
-        arguments = ["--library-dir", library, "--profile", profile]
+        arguments = ["--library-dir", library, "--profile", profile, "--standalone"]
         cold, program = explained(first, *arguments)
         assert exit_code(program) == 0
         assert "library object cache stored core " in cold, cold
@@ -1128,6 +1130,21 @@ def native_core_object_reuse():
         assert exit_code(program) == 0
         assert "cache miss" in last_cache_event(warm), warm
         assert "library object cache hit core " in warm, warm
+        edit(second, "- 82", "- 81")
+        changed_root, program = explained(second, *arguments)
+        assert exit_code(program) == 1
+        event = re.search(
+            r"machine unit cache root reused ([0-9]+) generated ([0-9]+)",
+            changed_root)
+        assert event and int(event[1]) > 0 and int(event[2]) > 0, changed_root
+        cached = program.read_bytes()
+        _, program = explained(
+            second, *arguments, "--cache-dir", evidence / f"independent-{profile}")
+        assert exit_code(program) == 1
+        assert program.read_bytes() == cached
+        _, program = explained(second, *arguments, "--no-cache")
+        assert exit_code(program) == 1
+        edit(second, "- 81", "- 82")
         edit(core, "value + 1", "value + 2")
         changed, program = explained(second, *arguments)
         assert exit_code(program) == 1
@@ -3433,6 +3450,144 @@ def driver_generic_parameter_labels():
             checked_rename(client, path, text, ranges[0]["start"], ranges, "argument")
 
 
+def driver_resident_commands():
+    if not sys.platform.startswith("linux"):
+        return
+    directory = evidence / "resident"
+    directory.mkdir()
+    library = directory / "library" / "core"
+    library.mkdir(parents=True)
+    source = library / "module.mt"
+    source.write_text("pub fn value(): i32 { 21 }\n")
+    main = directory / "main.mt"
+    main.write_text("fn helper(value: i32): i32 { value + 1 }\n"
+                    "fn main(): i32 { core.value() - 21 }\n")
+    flags = ["--library-dir", library.parent, "--explain"]
+    try:
+        first = invoke(["check", main, *flags])
+        assert "resident compiler queryHits=0" in first, first
+        main.write_text(main.read_text().replace("- 21", "- 22"))
+        second = invoke(["check", main, *flags])
+        assert re.search(r"resident compiler queryHits=[1-9]", second), second
+        assert re.search(r"functionQueryHits=[1-9]", second), second
+        stamp = source.stat()
+        source.write_text(source.read_text().replace("21", "22"))
+        os.utime(source, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        output = directory / "program"
+        changed = invoke(["build", main, *flags, "-o", output])
+        assert "resident compiler queryHits=0" in changed, changed
+        assert exit_code(output) == 0
+        expected = output.read_bytes()
+        invoke(["build", main, *flags, "--standalone", "-o", output])
+        assert output.read_bytes() == expected
+        invoke(["serve", "--stop"])
+        restarted = invoke(["check", main, *flags])
+        assert "resident compiler queryHits=0" in restarted, restarted
+    finally:
+        invoke(["serve", "--stop"])
+
+
+def driver_resident_context():
+    if not sys.platform.startswith("linux"):
+        return
+    directory = evidence / "resident-context"
+    directory.mkdir()
+    source = directory / "main.mt"
+    source.write_text('include!(env!("METTLE_RESIDENT_INPUT"));\n')
+    included = directory / "included.mt"
+    included.write_text("fn main(): i32 { 0 }\n")
+    environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
+    present = {**environment, "METTLE_RESIDENT_INPUT": str(included)}
+    absent = {key: value for key, value in environment.items()
+              if key != "METTLE_RESIDENT_INPUT"}
+    arguments = [str(mettle), "check", str(source)]
+    try:
+        good = processes.run(arguments, text=True, capture_output=True, env=present)
+        assert good.returncode == 0, good.stderr
+        bad = processes.run(arguments, text=True, capture_output=True, env=absent)
+        direct = processes.run([*arguments, "--standalone"], text=True,
+                               capture_output=True, env=absent)
+        assert bad.returncode == direct.returncode == 1
+        assert (bad.stdout, bad.stderr) == (direct.stdout, direct.stderr)
+        assert "METTLE_RESIDENT_INPUT" in bad.stderr, bad.stderr
+        binary_environment = {**present, "METTLE_RESIDENT_UNUSED": os.fsdecode(b"\xff")}
+        repeated = processes.run(arguments, text=True, capture_output=True,
+                                 env=binary_environment)
+        assert repeated.returncode == 0, repeated.stderr
+        import resource
+
+        def cpu_budget():
+            resource.setrlimit(resource.RLIMIT_CPU, (10, 10))
+
+        bounded = processes.run([*arguments, "--explain"], text=True,
+                                capture_output=True, env=present,
+                                preexec_fn=cpu_budget)
+        assert bounded.returncode == 0, bounded.stderr
+        assert "resident compiler " not in bounded.stderr, bounded.stderr
+        processes.run([str(mettle), "serve", "--stop"], check=True, env=environment)
+        clients = [subprocess.Popen(arguments, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, env=present)
+                   for _ in range(4)]
+        for client in clients:
+            out, err = client.communicate(timeout=60)
+            assert client.returncode == 0, (out, err)
+    finally:
+        processes.run([str(mettle), "serve", "--stop"], check=True, env=environment)
+
+
+def driver_resident_cancellation():
+    if not sys.platform.startswith("linux"):
+        return
+    source = evidence / "cancel.mt"
+    source.write_text("fn main(): i32 { 0 }\n")
+    linker = evidence / "waiting-linker"
+    marker = evidence / "linker-pid"
+    linker.write_text(
+        f"#!{sys.executable}\n"
+        "import os, pathlib, sys, time\n"
+        "if '--version' in sys.argv:\n"
+        "    print('resident cancellation fixture')\n"
+        "else:\n"
+        f"    pathlib.Path({str(marker)!r}).write_text(str(os.getpid()))\n"
+        "    time.sleep(60)\n")
+    linker.chmod(0o700)
+    output = evidence / "cancel-output"
+    output.write_bytes(b"preserved")
+    environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
+    client = subprocess.Popen(
+        [str(mettle), "build", str(source), "--cc", str(linker), "-o", str(output)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=environment)
+    try:
+        deadline = time.monotonic() + 60
+        while not marker.exists():
+            assert client.poll() is None, client.communicate()
+            assert time.monotonic() < deadline, "linker did not start"
+            time.sleep(0.01)
+        pid = int(marker.read_text())
+        client.terminate()
+        client.communicate(timeout=10)
+        state = Path(f"/proc/{pid}/stat")
+        while True:
+            try:
+                status = state.read_text().split(") ", 1)[1][0]
+            except FileNotFoundError:
+                break
+            if status == "Z":
+                break
+            assert time.monotonic() < deadline, "cancelled linker is still running"
+            time.sleep(0.01)
+        assert output.read_bytes() == b"preserved"
+        restarted = processes.run(
+            [str(mettle), "check", str(source)], capture_output=True,
+            env=environment)
+        assert restarted.returncode == 0, restarted.stderr
+    finally:
+        if client.poll() is None:
+            client.terminate()
+            client.communicate(timeout=10)
+        processes.run([str(mettle), "serve", "--stop"], check=True, env=environment)
+
+
 def driver_noop_changes_keep_checked_index():
     path = packages("driver-contracts/noop-checked-index.mt")
     text = path.read_text()
@@ -3463,6 +3618,8 @@ def driver_noop_changes_keep_checked_index():
 
 
 CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
+         driver_resident_commands, driver_resident_context,
+         driver_resident_cancellation,
          driver_compile_fail_requires_checking, driver_feature_backtracks,
          driver_git_host_outputs_preserve_package_paths,
          driver_host_scripts_consume_generated_context,

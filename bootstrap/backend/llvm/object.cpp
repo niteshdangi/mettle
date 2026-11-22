@@ -213,11 +213,11 @@ llvm::Error instrumentModule(llvm::Module &module, bool sanitizeAddress,
   return llvm::Error::success();
 }
 
-llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
-                       llvm::StringRef output, bool optimize,
-                       bool sanitizeAddress, bool sanitizeThread) {
+static llvm::Error prepareObject(llvm::Module &module,
+                                 const llvm::Triple &targetTriple,
+                                 llvm::TargetMachine &machine, bool optimize,
+                                 bool sanitizeAddress, bool sanitizeThread) {
   std::string diagnostic;
-  const llvm::Triple targetTriple(llvm::Triple::normalize(triple));
   if (auto *identity = llvm::dyn_cast_or_null<llvm::MDString>(
           module.getModuleFlag("mettle.target.triple"));
       identity &&
@@ -225,12 +225,8 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
         "checked target facts disagree with the object target");
-  auto created = createMachine(targetTriple, optimize);
-  if (!created)
-    return created.takeError();
-  const std::unique_ptr<llvm::TargetMachine> machine = std::move(*created);
   module.setTargetTriple(targetTriple);
-  const auto machineLayout = machine->createDataLayout();
+  const auto machineLayout = machine.createDataLayout();
   if (!module.getDataLayoutStr().empty() &&
       module.getDataLayout() != machineLayout)
     return llvm::createStringError(
@@ -257,7 +253,7 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
     llvm::ModuleAnalysisManager modules;
     llvm::PipelineTuningOptions tuning;
     tuning.SLPVectorization = true;
-    llvm::PassBuilder builder(machine.get(), tuning);
+    llvm::PassBuilder builder(&machine, tuning);
     builder.registerLoopAnalyses(loops);
     builder.registerFunctionAnalyses(functions);
     builder.registerCGSCCAnalyses(calls);
@@ -294,14 +290,20 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
                                      "invalid optimized backend module: " +
                                          diagnostic);
   }
+  return llvm::Error::success();
+}
+
+static llvm::Error writeObject(llvm::Module &module,
+                               llvm::TargetMachine &machine,
+                               llvm::StringRef output) {
   std::error_code error;
   llvm::raw_fd_ostream stream(output, error, llvm::sys::fs::OF_None);
   if (error) {
     return llvm::createStringError(error, "cannot create object file");
   }
   llvm::legacy::PassManager passes;
-  if (machine->addPassesToEmitFile(passes, stream, nullptr,
-                                   llvm::CodeGenFileType::ObjectFile)) {
+  if (machine.addPassesToEmitFile(passes, stream, nullptr,
+                                  llvm::CodeGenFileType::ObjectFile)) {
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "object emission is unavailable for target");
   }
@@ -313,6 +315,37 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
     return llvm::createStringError(error, "cannot write object file");
   }
   return llvm::Error::success();
+}
+
+llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
+                       llvm::StringRef output, bool optimize,
+                       bool sanitizeAddress, bool sanitizeThread) {
+  const llvm::Triple targetTriple(llvm::Triple::normalize(triple));
+  auto machine = createMachine(targetTriple, optimize);
+  if (!machine)
+    return machine.takeError();
+  if (auto error = prepareObject(module, targetTriple, **machine, optimize,
+                                 sanitizeAddress, sanitizeThread))
+    return error;
+  return writeObject(module, **machine, output);
+}
+
+llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
+                            llvm::StringRef symbolNamespace, bool optimize,
+                            ObjectUnitConsumer consume) {
+  const llvm::Triple targetTriple(llvm::Triple::normalize(triple));
+  auto machine = createMachine(targetTriple, optimize);
+  if (!machine)
+    return machine.takeError();
+  if (auto error = prepareObject(module, targetTriple, **machine, optimize,
+                                 false, false))
+    return error;
+  return partitionObjectModule(
+      module, symbolNamespace, [&](llvm::Module &unit) {
+        return consume(unit, [&](llvm::StringRef output) {
+          return writeObject(unit, **machine, output);
+        });
+      });
 }
 
 } // namespace mettle::backend

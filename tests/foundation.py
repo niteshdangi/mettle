@@ -127,6 +127,11 @@ def main():
             link_plan = run([*command, "-###"]).stderr
             run(command)
             run([str(program)], expected=37)
+            units = root / "units.a"
+            unit_program = root / "units"
+            run([executable, str(units), "--units"])
+            run([compiler, *linker_flags, str(units), "-o", str(unit_program)])
+            run([str(unit_program)], expected=37)
             print(json.dumps({
                 "kind": "constructed-LLVM-module-not-Mettle-source",
                 "system": platform.system(), "machine": platform.machine(),

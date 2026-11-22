@@ -280,6 +280,21 @@ public:
       }
       if (f.result == Type::Never)
         function->addFnAttr(llvm::Attribute::NoReturn);
+      if (!f.blocks.empty()) {
+        auto family = displayPath(f.name);
+        if (auto begin = family.find("<impl."); begin != std::string::npos)
+          if (auto end = family.find('>', begin); end != std::string::npos)
+            family.erase(
+                begin, end - begin + 1 +
+                           (end + 1 < family.size() && family[end + 1] == '.'));
+        if (auto arguments = family.find(".<"); arguments != std::string::npos)
+          family.resize(arguments);
+        auto *metadata =
+            llvm::MDNode::get(context, llvm::MDString::get(context, family));
+        function->setMetadata("mettle.codegen.family", metadata);
+        if (externals[index])
+          externals[index]->setMetadata("mettle.codegen.family", metadata);
+      }
       functions.push_back(function);
     }
     for (std::size_t i = 0; i < program.statics.size(); ++i)

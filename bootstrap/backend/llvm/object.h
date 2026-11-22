@@ -1,5 +1,6 @@
 #pragma once
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/Error.h"
@@ -33,5 +34,18 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
                        llvm::StringRef output, bool optimize = false,
                        bool sanitizeAddress = false,
                        bool sanitizeThread = false);
+
+using ObjectUnitEmitter =
+    llvm::function_ref<llvm::Error(llvm::StringRef output)>;
+using ObjectUnitConsumer =
+    llvm::function_ref<llvm::Error(llvm::Module &unit, ObjectUnitEmitter emit)>;
+
+llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
+                            llvm::StringRef symbolNamespace, bool optimize,
+                            ObjectUnitConsumer consume);
+
+llvm::Error
+partitionObjectModule(llvm::Module &module, llvm::StringRef symbolNamespace,
+                      llvm::function_ref<llvm::Error(llvm::Module &)> consume);
 
 } // namespace mettle::backend

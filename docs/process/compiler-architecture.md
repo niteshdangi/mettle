@@ -415,11 +415,30 @@ Changing an input, implementation set or remap invalidates the dependent result.
 Eviction drops recomputable results, never changes semantics, and releases
 superseded generations once no active consumer owns them.
 
-The resident compiler is opt-in and uses stream requests in a single process;
-ordinary command-line builds remain independent. Successful reuse must preserve
-fresh-process diagnostics, source revisions, generated code and target/profile
-separation. Resident edit latency and first-process compilation are separate
-performance endpoints; one cannot substitute for the other.
+Linux `check` and `build` automatically share a same-user local compiler keyed
+by compiler/runtime identity, working directory, selected cache directory and
+host resource limits. Finite CPU budgets use standalone execution so retained
+process time cannot exhaust a later invocation's allowance.
+`--standalone` and `--no-cache` retain independent execution; other hosts remain
+standalone. Explicit `serve` uses stream requests and exits at EOF. Both
+transports share the same compilation session and validated query stores.
+Successful reuse must preserve fresh-process diagnostics, source revisions,
+generated code and target/profile separation. Resident edit latency and
+first-process compilation are separate performance endpoints; one cannot
+substitute for the other.
+
+The automatic Linux transport authenticates both peers through native socket
+credentials. Private startup files serialize worker creation; framing preserves
+argument, environment and output bytes, including non-UTF8 operating-system
+strings. Requests propagate the caller's creation mask and complete environment;
+an environment change discards retained queries before compilation. The worker
+exits after ten idle minutes or `serve --stop` in the matching working-directory
+and cache context. Transport inactivity is bounded to ten seconds while
+receiving requests or delivering results, not while compiling. A disconnected
+compiling client terminates the isolated worker process group, including its
+linker children. Interrupted or failed requests are not automatically replayed.
+Host resource limits and other process-level execution policy require
+`--standalone` when independent process accounting is needed.
 
 The bootstrap retains one successful remapped import, one decoded header and one
 unmounted archive snapshot per native root. Decoded headers require matching
@@ -617,6 +636,17 @@ directories and retains candidate vectors only for requested keys. Demanded
 records must reproduce their admitted projections and pass dependency-closure
 validation before publication. Owned and borrowed records share one wire schema
 and semantic validator; the destination remains unchanged on admission failure.
+Owned materialization copies the already validated compact definition rather
+than decoding the full payload again. Validation, shared arena allocation and
+copying are serialized; immutable archive records remain authoritative until a
+consumer detaches its own definition.
+
+Successful region erasure is memoized within each TypeStore, including nested
+and recursive normalized identities. Store copies own independent memo tables.
+Mutation of a previously memoized definition clears the table and advances its
+revision; an in-flight traversal cannot publish against a changed revision.
+Failed erasure removes newly memoized entries rather than publishing partial
+normalization. Interned identities retain the existing allocation semantics.
 
 The admitted graph retains its immutable archive owner or snapshots caller bytes.
 Borrowed descriptors are constructed only when inspected.
@@ -862,6 +892,23 @@ failures stop compilation rather than silently switching emission paths.
 Coroutine frames use logical body identities. In split emission their body and
 unwind callbacks have hidden external linkage, and only the partition owning
 the coroutine body emits those definitions; layout-only users emit declarations.
+Whole-module O2 remains the optimization boundary. Optimized IR is partitioned
+into independently linkable machine units grouped by operation family and data
+dependencies; cleanup/drop callbacks inherit their owner's family. Native
+archive representation v3 replaces monolithic native object inputs. The linker
+extracts required units rather than reading every native function's object
+sections. Retention-sensitive assembly, initializers and other unsupported
+partition shapes preserve the monolithic path and explicit force-loading.
+
+Root cache misses still lower and optimize the complete root module. Exact
+optimized unit IR, declarations, layout, attributes and compiler/target/profile/
+overflow/sanitizer identities govern machine-code reuse; this skips unchanged
+unit emission, not whole-module O2. Native archive hits bypass native lowering,
+optimization and emission. The existing bounded Store retains aggregate unit
+buckets with current membership, validates object digests and rebuilds malformed
+archives. Family batching avoids a target-machine/codegen setup for every small
+native function; cold unit generation and warm selective linking remain separate
+performance endpoints.
 Cold source failures retain their original phase, source spans, related notes
 and generated-source provenance when forwarded into consumer diagnostics.
 

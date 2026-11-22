@@ -76,12 +76,43 @@ Type TypeStore::declaredRegions(Type type) {
   return visit(type);
 }
 Type TypeStore::eraseRegions(Type type) {
-  std::unordered_map<std::uint32_t, Type> known;
-  auto visit = [&](auto &&self, Type current) -> Type {
+  const auto revision = regionErasureRevision;
+  std::vector<std::pair<Type, Type>> active;
+  std::vector<std::uint32_t> added;
+  bool complete = false;
+  struct Rollback {
+    std::unordered_map<std::uint32_t, Type> &known;
+    const std::vector<std::uint32_t> &added;
+    const bool &complete;
+    ~Rollback() {
+      if (!complete)
+        for (auto index : added)
+          known.erase(index);
+    }
+  } rollback{erasedRegions, added, complete};
+  auto visit = [&](auto &&self, Type current, bool expanding = false) -> Type {
     if (current.index() < builtinTypeCount)
       return current;
-    if (auto found = known.find(current.index()); found != known.end())
+    if (auto found = erasedRegions.find(current.index());
+        found != erasedRegions.end())
       return found->second;
+    if (auto found = std::find_if(
+            active.begin(), active.end(),
+            [&](const auto &entry) { return entry.first == current; });
+        found != active.end() && !expanding) {
+      auto owner = std::find_if(found, active.end(), [&](const auto &entry) {
+        return isProduct(entry.first) && product(entry.first).normalizedFields;
+      });
+      if (owner == active.end())
+        throw std::invalid_argument("cyclic structural region erasure");
+      if (owner->second == Type::Unknown)
+        owner->second = regionalShell(owner->first, {},
+                                      product(owner->first).genericArguments);
+      if (owner == found)
+        return owner->second;
+      return self(self, current, true);
+    }
+    active.emplace_back(current, Type::Unknown);
     auto result = current;
     if (isPointer(current)) {
       auto descriptor = pointer(current);
@@ -112,8 +143,18 @@ Type TypeStore::eraseRegions(Type type) {
         auto origin = descriptor.regionOrigin;
         for (auto &field : fields)
           field.type = self(self, field.type);
-        result =
-            regionalProduct(self(self, origin), std::move(fields), {}, true);
+        origin = self(self, origin);
+        if (active.back().second != Type::Unknown) {
+          result = active.back().second;
+          auto definition = importedDefinition(origin);
+          auto &record = std::get<ImportedProduct>(definition).descriptor;
+          record.fields = std::move(fields);
+          record.regionOrigin = origin;
+          record.regionArguments.clear();
+          record.normalizedFields = true;
+          defineImportedType(result, std::move(definition));
+        } else
+          result = regionalProduct(origin, std::move(fields), {}, true);
       } else if (descriptor.regionOrigin != Type::Unknown)
         result = self(self, descriptor.regionOrigin);
       else if (descriptor.kind != AggregateKind::Opaque) {
@@ -138,10 +179,24 @@ Type TypeStore::eraseRegions(Type type) {
         }
       }
     }
-    known.emplace(current.index(), result);
+    active.pop_back();
+    if (revision == regionErasureRevision &&
+        !erasedRegions.contains(current.index())) {
+      added.push_back(current.index());
+      erasedRegions.emplace(current.index(), result);
+    }
+    if (revision == regionErasureRevision &&
+        result.index() >= builtinTypeCount &&
+        !erasedRegions.contains(result.index())) {
+      added.push_back(result.index());
+      erasedRegions.emplace(result.index(), result);
+    }
     return result;
   };
-  return visit(visit, type);
+  auto result = visit(visit, type);
+  regionErasureTypeCount = entries.size();
+  complete = true;
+  return result;
 }
 Type TypeStore::substituteRegions(Type type,
                                   std::span<const RegionBinding> bindings) {

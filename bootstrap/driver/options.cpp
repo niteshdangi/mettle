@@ -68,12 +68,18 @@ void usage() {
          "       mettle serve\n"
          "         (resident compiler: one JSON object per line with an "
          "arguments array for check or build; EOF stops the server)\n"
+         "       mettle serve --stop\n"
+         "         (stops the automatic resident compiler for the current "
+         "working directory and cache)\n"
          "       mettle clean [PACKAGE_DIR] [--cache-dir DIR] [--dry-run]\n"
          "         (empties the build cache; with a package also removes its "
          "target/mettle outputs)\n"
          "Build cache (builds of executables/objects): [--cache-dir DIR] "
          "[--no-cache] [--cache-limit-kib N] [--cache-max-age-days N] "
          "[--explain]\n"
+         "Linux check/build commands reuse a local compiler until it has "
+         "been idle for ten minutes. [--standalone] disables this reuse; "
+         "--no-cache also uses a standalone compiler.\n"
          "Executable output requires the runtime target (the default); use "
          "--emit object for other targets.\n"
          "Scalar/product compiler with field initialization, owned moves, "
@@ -168,6 +174,11 @@ std::optional<Options> options(int argc, char **argv) {
     }
     if (arg == "-g") {
       result.debugInfo = true;
+      continue;
+    }
+    if (arg == "--standalone" &&
+        (result.command == "check" || result.command == "build")) {
+      result.standalone = true;
       continue;
     }
     if (arg == "--no-cache" || arg == "--explain" || arg == "--dry-run") {

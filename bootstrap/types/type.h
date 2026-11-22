@@ -600,9 +600,17 @@ public:
   Type constantExpression(std::string operation, std::vector<Type> operands);
   // Pointer width of the compilation target; constant arithmetic on
   // usize/isize wraps and overflows at this width, never the host's.
-  void setPointerBits(unsigned bits) { pointerBits = bits; }
+  void setPointerBits(unsigned bits) {
+    if (pointerBits != bits)
+      invalidateRegionErasure();
+    pointerBits = bits;
+  }
   unsigned targetPointerBits() const { return pointerBits; }
-  void setVaListAbi(VaListAbi abi) { variadicAbi = abi; }
+  void setVaListAbi(VaListAbi abi) {
+    if (variadicAbi != abi)
+      invalidateRegionErasure();
+    variadicAbi = abi;
+  }
   VaListAbi vaListAbi() const { return variadicAbi; }
   std::vector<TypeField> vaListFields();
   Type projection(Type subject, Type interfaceType, std::size_t associated,
@@ -650,6 +658,18 @@ public:
   void setOpaqueBounds(Type type, std::vector<Type> bounds);
 
 private:
+  void invalidateRegionErasure() {
+    erasedRegions.clear();
+    ++regionErasureRevision;
+  }
+  void invalidateRegionErasure(Type type) {
+    if (type.index() >= builtinTypeCount &&
+        type.index() - builtinTypeCount < regionErasureTypeCount)
+      invalidateRegionErasure();
+  }
+  std::unordered_map<std::uint32_t, Type> erasedRegions;
+  std::uint64_t regionErasureRevision = 0;
+  std::size_t regionErasureTypeCount = 0;
   template <class Borrowed, class Owned, class Visitor>
   decltype(auto) inspectRecord(Type type, const TypeRecords<Owned> &records,
                                Visitor &&visitor) const {

@@ -619,6 +619,7 @@ void TypeStore::defineImportedType(Type type,
                                    ImportedTypeDefinition definition) {
   if (static_cast<std::size_t>(importedKind(type)) != definition.index())
     throw std::invalid_argument("imported type definition kind mismatch");
+  invalidateRegionErasure(type);
   auto entry = entries[type.index() - builtinTypeCount];
   bool changedKey = false;
   if (type.index() - builtinTypeCount < lookup.synced)
@@ -702,6 +703,8 @@ void TypeStore::defineImportedType(Type type,
 
 void TypeStore::remapImportedSymbols(std::span<const Type> types,
                                      const ImportedSymbolRemap &symbols) {
+  if (!types.empty())
+    invalidateRegionErasure();
   auto remap = [](std::uint32_t index, std::span<const std::uint32_t> values) {
     if (index >= values.size())
       throw std::invalid_argument("missing imported symbol remap");

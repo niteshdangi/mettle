@@ -1345,6 +1345,66 @@ source; whole-I14 source freeze and consolidated qualification remain open.
 Preserve frozen candidates and reuse unchanged-input evidence rather than
 rerunning broad passing groups.
 
+Integrated performance follow-up (2026-11-22): Linux ordinary `check`/`build`
+now reuse an authenticated local compilation session, with environment,
+creation-mask and resource-policy isolation, cancellation and a standalone
+escape hatch. Demanded type materialization copies validated compact records
+instead of decoding them again; mutation-safe store-local region erasure reuses
+successful recursive results. Whole-module O2 is preserved, while exact optimized
+machine units reuse generated code. Operation-family/data grouping, including
+owner-associated cleanup callbacks, produces selectively extracted native v3
+archives instead of monolithic native objects.
+
+Five matched pairs against `259f69ab`, with installed native caches already warm:
+
+| Workload | Normal CLI check, ms | Improvement | Normal CLI build, ms | Improvement |
+| --- | --- | --- | --- | --- |
+| P03 text scan | 208.2 -> 60.8 | 70.8% | 514.2 -> 289.6 | 43.7% |
+| P04 struct/Vec | 218.5 -> 67.6 | 69.0% | 515.9 -> 307.1 | 40.5% |
+| P05 HashMap | 275.4 -> 86.4 | 68.6% | 700.9 -> 442.1 | 36.9% |
+
+Those CLI gains include automatic residency; they are not fresh standalone
+compiler speedups. Explicit `--standalone` measurements remain separate:
+
+| Workload | Standalone check, ms | Improvement | Standalone build, ms | Improvement |
+| --- | --- | --- | --- | --- |
+| P03 text scan | 206.4 -> 198.5 | 3.9% | 514.2 -> 495.6 | 3.6% |
+| P04 struct/Vec | 216.8 -> 214.5 | 1.0% | 514.1 -> 499.0 | 3.0% |
+| P05 HashMap | 271.9 -> 267.9 | 1.5% | 699.6 -> 659.5 | 5.7% |
+
+Existing explicit-resident builds improve 6.6-7.6%, but resident checks regress
+1.1-9.8%; no general resident-check or memory improvement is claimed.
+Generated outputs agree with the baseline and Rust. Binaries differ because
+of machine-unit emission/link layout; observed runtime changes range from 2.0%
+slower to 3.6% faster, not a runtime-parity qualification.
+
+The initial per-function native emission was rejected after its cold setup
+cost reached 21.89 seconds. Family batching reduces core to 702 debug or 671
+release units. Same-closure object-stage samples remain 1.316 -> 2.109 seconds
+debug and 9.308 -> 10.315 seconds release. One matched complete empty-cache P04
+release control is 40.172 -> 42.094 seconds (4.8% slower); cold compilation is
+not improved by this batch. Whole-module O2 still runs on root cache misses.
+The native fixture links only 2 of 10,318 debug native functions, or none of
+5,123 release native functions after inlining. A native body edit reuses
+701/702 debug and 670/671 release units rather than regenerating the archive.
+
+Focused type/IR-codec and native backend cases pass Release and ASan/UBSan.
+Actual resident CLI cases cover byte-preserving environment transport,
+invalidation, finite CPU budgets, concurrent startup, cancellation and restart;
+native cache cases cover reuse, corruption, equivalent empty-cache byte equality
+and separate `--no-cache` runtime equivalence. The full native fixture runs in
+Release; this is scoped safety evidence, not whole-compiler qualification.
+Evidence: `~/w/anal/perf-integrated-significant-20261122-final/` and
+`~/w/anal/perf-opportunity-20261122/`, including final regression reports and
+`codegen-family-cold/`. Frozen compiler SHA-256:
+`1ed6ae906d89ff37884e470d013b7e87313f619e249c368fb2c89abe1a90d094`.
+Final driver-only formatting preserves identical `.text`, `.rodata` and `.data`;
+the formatted compiler SHA-256 is
+`1e45d0985c89531cd06463e4de9d7fdc286e2629487e80a08fc74c4b1b582e33`.
+Whole-I14 source freeze remains blocked. Next action: target repeated root O2
+and cold native-library production without conflating resident edit gains with
+fresh-process or Rust-parity acceptance.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

@@ -25,11 +25,16 @@ int main(int argc, char **argv) {
   try {
     if (argc == 2 && std::string_view(argv[1]) == "serve")
       return mettle::driver::compilationServer(std::cin, std::cout);
+    if (argc == 3 && std::string_view(argv[1]) == "serve" &&
+        std::string_view(argv[2]) == "--stop")
+      return mettle::driver::stopResidentCompilation(mettle::driver::Options{});
     auto options = mettle::driver::options(argc, argv);
     if (!options) {
       std::cerr << "mettle: invalid arguments; use --help\n";
       return 2;
     }
+    if (auto status = mettle::driver::residentCompilation(*options, argc, argv))
+      return *status;
     return mettle::driver::run(*options);
   } catch (const std::exception &error) {
     std::cerr << "mettle: error[internal]: " << error.what() << '\n';

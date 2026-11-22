@@ -39,6 +39,7 @@ void TypeStore::setConstantParameterType(Type type, Type valueType) {
   if (!isConstant(type) || parameter(type).kind != TypeParameterKind::Constant)
     throw std::invalid_argument(
         "constant type update requires a const parameter");
+  invalidateRegionErasure(type);
   parameters.at(entries.at(type.index() - builtins).index).valueType =
       valueType;
 }
@@ -208,6 +209,7 @@ void TypeStore::constrainParameter(Type type, bool copyRequested, bool sized) {
   if (!isParameter(type))
     throw std::invalid_argument(
         "capability constraint requires a type parameter");
+  invalidateRegionErasure(type);
   auto &record = parameters.at(entries.at(type.index() - builtins).index);
   record.copyRequested |= copyRequested;
   record.sized |= sized;
@@ -215,6 +217,7 @@ void TypeStore::constrainParameter(Type type, bool copyRequested, bool sized) {
 void TypeStore::constrainThin(Type type) {
   if (!isParameter(type) || parameter(type).kind != TypeParameterKind::Type)
     throw std::invalid_argument("thin constraint requires a type parameter");
+  invalidateRegionErasure(type);
   parameters.at(entries.at(type.index() - builtins).index).thin = true;
 }
 std::optional<std::int64_t> TypeStore::constantValue(Type type) const {
@@ -380,6 +383,7 @@ std::vector<Type> TypeStore::typeParameters(Type type) const {
   return result;
 }
 void TypeStore::setGenericParameters(Type type, std::vector<Type> values) {
+  invalidateRegionErasure(type);
   products.at(entries.at(type.index() - builtins).index).genericParameters =
       std::move(values);
 }
@@ -450,6 +454,7 @@ Type TypeStore::instantiateProduct(Type origin, std::vector<Type> arguments) {
 void TypeStore::refreshProductInstances(std::span<const Type> origins) {
   if (origins.empty())
     return;
+  invalidateRegionErasure();
   syncLookup();
   std::vector<std::uint32_t> instances;
   for (auto origin : origins)

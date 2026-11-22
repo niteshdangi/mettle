@@ -49,7 +49,7 @@ struct Options {
   // directory selects METTLE_CACHE_DIR, then the user cache directory.
   std::string cacheDir;
   std::uint64_t cacheLimitKib = 0, cacheMaxAgeDays = 30;
-  bool noCache = false, explain = false, dryRun = false;
+  bool noCache = false, explain = false, dryRun = false, standalone = false;
   std::shared_ptr<LibraryQueries> libraryQueries;
   std::shared_ptr<pipeline::FunctionQueries> functionQueries;
   // Link libraries requested by build scripts.

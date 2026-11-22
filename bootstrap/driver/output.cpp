@@ -14,11 +14,13 @@
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include <algorithm>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
+#include <unordered_map>
 
 namespace mettle::driver {
 namespace {
@@ -106,6 +108,131 @@ std::string artifactSuffix(const std::string &format,
          : format == "ir"     ? ".ir"
                               : "";
 }
+
+llvm::Error emitUnitArchive(llvm::Module &module, const Options &options,
+                            llvm::StringRef output,
+                            const std::filesystem::path &directory,
+                            const std::string &identity, packages::Store *store,
+                            std::vector<packages::Store::Artifact> &artifacts) {
+  packages::Sha256 namespaceHash;
+  for (const auto &field : {std::string("mettle-object-units-2"), identity,
+                            module.getSourceFileName()}) {
+    namespaceHash.update(field);
+    namespaceHash.update(std::string_view("\0", 1));
+  }
+  const auto symbolNamespace = namespaceHash.finish();
+  packages::Sha256 bucketHash;
+  for (const auto &field :
+       {symbolNamespace, compilerIdentity(), options.target, options.profile,
+        std::to_string(
+            options.checks.value_or(options.profile != "release"))}) {
+    bucketHash.update(field);
+    bucketHash.update(std::string_view("\0", 1));
+  }
+  const auto bucketKey = "unit-" + bucketHash.finish();
+  const auto previousPath = directory / (bucketKey + ".a");
+  std::unique_ptr<llvm::MemoryBuffer> previousBuffer;
+  std::unique_ptr<llvm::object::Archive> previousArchive;
+  std::unordered_map<std::string, llvm::NewArchiveMember> previous;
+  if (store && store->materialize(bucketKey, previousPath) ==
+                   packages::Store::Lookup::Hit) {
+    auto buffer = llvm::MemoryBuffer::getFile(previousPath.string());
+    if (!buffer)
+      return llvm::createStringError(buffer.getError(),
+                                     "cannot read object unit cache");
+    previousBuffer = std::move(*buffer);
+    auto archive =
+        llvm::object::Archive::create(previousBuffer->getMemBufferRef());
+    if (!archive)
+      llvm::consumeError(archive.takeError());
+    else {
+      previousArchive = std::move(*archive);
+      llvm::Error error = llvm::Error::success();
+      for (const auto &child : previousArchive->children(error)) {
+        auto member = llvm::NewArchiveMember::getOldMember(child, true);
+        if (!member) {
+          llvm::consumeError(member.takeError());
+          previous.clear();
+          break;
+        }
+        previous.emplace(member->MemberName.str(), std::move(*member));
+      }
+      if (error) {
+        llvm::consumeError(std::move(error));
+        previous.clear();
+      }
+    }
+  }
+  std::vector<llvm::NewArchiveMember> members;
+  std::deque<std::string> memberNames;
+  std::size_t reused = 0, generated = 0;
+  if (auto error = mettle::backend::emitObjectUnits(
+          module, options.target, symbolNamespace, options.profile == "release",
+          [&](llvm::Module &unit,
+              mettle::backend::ObjectUnitEmitter emit) -> llvm::Error {
+            std::string text;
+            llvm::raw_string_ostream stream(text);
+            unit.print(stream, nullptr);
+            packages::Sha256 hash;
+            hash.update(bucketKey);
+            hash.update(text);
+            const auto name =
+                (&unit == &module ? "retained-" : "") + hash.finish() + ".o";
+            if (auto found = previous.find(name); found != previous.end()) {
+              members.push_back(std::move(found->second));
+              ++reused;
+            } else {
+              const auto path = (directory / name).string();
+              if (auto error = emit(path))
+                return error;
+              auto member = llvm::NewArchiveMember::getFile(path, true);
+              if (!member)
+                return member.takeError();
+              memberNames.push_back(name);
+              member->MemberName = memberNames.back();
+              members.push_back(std::move(*member));
+              ++generated;
+            }
+            return llvm::Error::success();
+          }))
+    return error;
+  if (auto error = llvm::writeArchive(
+          output, members, llvm::SymtabWritingMode::NormalSymtab,
+          llvm::object::Archive::getDefaultKindForTriple(
+              llvm::Triple(options.target)),
+          true, false))
+    return error;
+  if (store)
+    artifacts.push_back({bucketKey, output.str(), false});
+  if (options.explain)
+    std::cerr << "mettle: machine unit cache " << identity << " reused "
+              << reused << " generated " << generated << '\n';
+  return llvm::Error::success();
+}
+
+llvm::Expected<bool> retainedArchive(llvm::StringRef path) {
+  auto buffer = llvm::MemoryBuffer::getFile(path);
+  if (!buffer)
+    return llvm::createStringError(buffer.getError(),
+                                   "cannot read native unit archive");
+  auto archive = llvm::object::Archive::create((*buffer)->getMemBufferRef());
+  if (!archive)
+    return archive.takeError();
+  llvm::Error error = llvm::Error::success();
+  bool retained = false;
+  for (const auto &child : (*archive)->children(error)) {
+    auto name = child.getName();
+    if (!name) {
+      llvm::consumeError(std::move(error));
+      return name.takeError();
+    }
+    retained = name->starts_with("retained-");
+    break;
+  }
+  if (error)
+    return std::move(error);
+  return retained;
+}
 } // namespace
 
 std::vector<PackageObject> libraryObjects(
@@ -148,7 +275,7 @@ std::vector<PackageObject> libraryObjects(
         key == packageKeys.end() || key->second.empty())
       return {};
     packages::Sha256 hash;
-    for (const auto &field : {std::string("mettle-library-object-1"),
+    for (const auto &field : {std::string("mettle-library-object-3"),
                               compilerIdentity(), identity, key->second}) {
       hash.update(field);
       hash.update(std::string_view("\0", 1));
@@ -387,6 +514,12 @@ static int emitOne(const Options &options, const Source &source,
       std::vector<std::string> packagePaths;
       std::vector<packages::Store::Artifact> packageArtifacts;
       std::vector<const PackageObject *> packagesToStore;
+      const bool rootUnits = options.emit == "executable" &&
+                             options.emits.size() <= 1 && !options.debugInfo &&
+                             options.sanitizers.empty() &&
+                             program.program().globalAssembly.empty();
+      if (rootUnits)
+        objectPath = (directory / "main.a").string();
       for (std::size_t i = 0; i < packageObjects.size(); ++i) {
         const auto &package = packageObjects[i];
         const bool native = package.identity.starts_with("native:");
@@ -394,8 +527,9 @@ static int emitOne(const Options &options, const Source &source,
             native ? "library object cache " : "package object cache ";
         const auto cacheIdentity =
             native ? package.identity.substr(7) : package.identity;
-        auto packagePath =
-            (directory / ("package-" + std::to_string(i) + ".o")).string();
+        auto packagePath = (directory / ("package-" + std::to_string(i) +
+                                         (native ? ".a" : ".o")))
+                               .string();
         bool reused = false;
         if (store) {
           auto found = store->materialize(package.key, packagePath);
@@ -438,9 +572,15 @@ static int emitOne(const Options &options, const Source &source,
                       << package.identity << '\n';
             return 1;
           }
-          if (auto error =
-                  mettle::backend::emitObject(*dependency, options.target,
-                                              packagePath, native && release)) {
+          auto emitDependency = [&]() {
+            if (native)
+              return emitUnitArchive(*dependency, options, packagePath,
+                                     directory, package.identity, store,
+                                     packageArtifacts);
+            return mettle::backend::emitObject(*dependency, options.target,
+                                               packagePath, false);
+          };
+          if (auto error = emitDependency()) {
             std::cerr << "mettle: error[backend]: "
                       << llvm::toString(std::move(error)) << '\n';
             return 1;
@@ -468,12 +608,19 @@ static int emitOne(const Options &options, const Source &source,
         if (options.explain)
           std::cerr << "mettle: backend object " << options.target << '\n';
         auto generated = sharedBackend ? llvm::CloneModule(*module) : nullptr;
-        if (auto error = mettle::backend::emitObject(
-                generated ? *generated : *module, options.target,
-                sharedBackend ? backend.object.path.str()
-                              : llvm::StringRef(objectPath),
-                release, options.sanitizers.contains("address"),
-                options.sanitizers.contains("thread"))) {
+        auto emitRoot = [&]() {
+          auto &lowered = generated ? *generated : *module;
+          if (rootUnits)
+            return emitUnitArchive(lowered, options, objectPath, directory,
+                                   "root", store, packageArtifacts);
+          return mettle::backend::emitObject(
+              lowered, options.target,
+              sharedBackend ? backend.object.path.str()
+                            : llvm::StringRef(objectPath),
+              release, options.sanitizers.contains("address"),
+              options.sanitizers.contains("thread"));
+        };
+        if (auto error = emitRoot()) {
           std::cerr << "mettle: error[backend]: "
                     << llvm::toString(std::move(error)) << '\n';
           return 1;
@@ -485,7 +632,7 @@ static int emitOne(const Options &options, const Source &source,
                   << backend.diagnostics;
         return 1;
       }
-      if (sharedBackend) {
+      if (sharedBackend && !rootUnits) {
         std::error_code error;
         std::filesystem::copy_file(
             backend.object.path.str().str(), objectPath,
@@ -552,10 +699,40 @@ static int emitOne(const Options &options, const Source &source,
           arguments.push_back(
               "-Wl,-install_name,@rpath/" +
               std::filesystem::path(options.output).filename().string());
-        arguments.insert(arguments.end(), packagePaths.begin(),
-                         packagePaths.end());
-        arguments.push_back(objectPath);
+        if (target.isOSBinFormatELF() && (rootUnits || !packagePaths.empty()))
+          arguments.push_back("-Wl,--start-group");
+        auto addInput = [&](const std::string &path, bool archiveInput) {
+          bool whole = false;
+          if (archiveInput) {
+            auto retained = retainedArchive(path);
+            if (!retained) {
+              std::cerr << "mettle: error[link]: "
+                        << llvm::toString(retained.takeError()) << '\n';
+              return false;
+            }
+            whole = *retained;
+          }
+          if (whole && target.isOSDarwin())
+            arguments.insert(arguments.end(),
+                             {"-Xlinker", "-force_load", "-Xlinker", path});
+          else {
+            if (whole && target.isOSBinFormatELF())
+              arguments.push_back("-Wl,--whole-archive");
+            arguments.push_back(path);
+            if (whole && target.isOSBinFormatELF())
+              arguments.push_back("-Wl,--no-whole-archive");
+          }
+          return true;
+        };
+        if (!addInput(objectPath, rootUnits))
+          return 1;
+        for (std::size_t index = 0; index < packagePaths.size(); ++index)
+          if (!addInput(packagePaths[index],
+                        packageObjects[index].identity.starts_with("native:")))
+            return 1;
         arguments.push_back(runtimePath(options));
+        if (target.isOSBinFormatELF() && (rootUnits || !packagePaths.empty()))
+          arguments.push_back("-Wl,--end-group");
         arguments.push_back("-o");
         arguments.push_back(linked);
         if (!options.sysroot.empty())

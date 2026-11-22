@@ -428,6 +428,11 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
       cleanupFunction(lowering.callback(name + ".unwind", true)),
       frameType(llvm::StructType::create(lowering.context, name + ".frame")),
       name(name), plan(plan) {
+  if (wrapper)
+    if (auto *family = wrapper->getMetadata("mettle.codegen.family")) {
+      bodyFunction->setMetadata("mettle.codegen.family", family);
+      cleanupFunction->setMetadata("mettle.codegen.family", family);
+    }
   // Cleanup can outlive the body stack, so only nonescaping, unowned locals
   // move.
   std::vector<bool> bodyOnly(source.locals.size(), false);
@@ -952,6 +957,8 @@ llvm::Function *CleanupFrame::dropCallback(unsigned node) {
   auto saved = lowering.builder.saveIP();
   auto *savedFrame = frame;
   auto *callback = lowering.callback(name + ".drop", true);
+  if (auto *family = bodyFunction->getMetadata("mettle.codegen.family"))
+    callback->setMetadata("mettle.codegen.family", family);
   drops[node] = callback;
   frame = callback->getArg(0);
   lowering.builder.SetInsertPoint(

@@ -45,6 +45,7 @@ Type TypeStore::erasedBound(Type type, RegionId bound) {
   return erasedType(std::move(descriptor));
 }
 void TypeStore::setErasedMethods(Type type, std::vector<CallableType> methods) {
+  invalidateRegionErasure(type);
   std::vector<Type> pointers;
   for (const auto &method : methods)
     pointers.push_back(method.result == Type::Unknown ? Type::Unknown
@@ -56,12 +57,14 @@ void TypeStore::setErasedMethods(Type type, std::vector<CallableType> methods) {
 }
 void TypeStore::setErasedDispatch(Type type, std::vector<Type> owners,
                                   std::vector<std::size_t> slots) {
+  invalidateRegionErasure(type);
   auto &descriptor =
       erasedTypes.at(entries.at(type.index() - builtinTypeCount).index);
   descriptor.methodOwners = std::move(owners);
   descriptor.methodSlots = std::move(slots);
 }
 void TypeStore::setErasedParents(Type type, std::vector<Type> parents) {
+  invalidateRegionErasure(type);
   erasedTypes.at(entries.at(type.index() - builtinTypeCount).index)
       .parentInterfaces = std::move(parents);
 }
@@ -88,6 +91,7 @@ bool TypeStore::isOpaque(Type type) const {
          });
 }
 void TypeStore::setOpaqueBounds(Type type, std::vector<Type> bounds) {
+  invalidateRegionErasure(type);
   products.at(entries.at(type.index() - builtinTypeCount).index).opaqueBounds =
       std::move(bounds);
 }

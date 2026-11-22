@@ -206,12 +206,14 @@ void TypeStore::shareInterning() {
   regionStore.shareInterning();
 }
 void TypeStore::defineProduct(Type type, std::vector<TypeField> fields) {
+  invalidateRegionErasure(type);
   products.at(entries.at(type.index() - builtins).index).fields =
       std::move(fields);
 }
 void TypeStore::setProductPackage(Type type, std::uint32_t package) {
   if (!isProduct(type))
     throw std::invalid_argument("package ownership requires a product type");
+  invalidateRegionErasure(type);
   syncLookup();
   std::set<Type> visited;
   std::vector<Type> pending{type};
@@ -232,6 +234,7 @@ void TypeStore::setProductPackage(Type type, std::uint32_t package) {
   }
 }
 void TypeStore::setProductLayout(Type type, ProductLayout layout) {
+  invalidateRegionErasure(type);
   products.at(entries.at(type.index() - builtinTypeCount).index).layout =
       std::move(layout);
 }
@@ -615,16 +618,19 @@ Type TypeStore::regionalShell(Type origin, std::vector<RegionId> regions,
   return result;
 }
 void TypeStore::setRegionPattern(Type type, Type pattern) {
+  invalidateRegionErasure(type);
   products.at(entries.at(type.index() - builtins).index).regionPattern =
       pattern;
 }
 void TypeStore::setDestructor(Type type, int function) {
+  invalidateRegionErasure(type);
   auto &record = products.at(entries.at(type.index() - builtins).index);
   record.hasDestructor = true;
   record.destructor = function;
 }
 void TypeStore::setConditionalCopy(Type type,
                                    std::vector<std::size_t> parameters) {
+  invalidateRegionErasure(type);
   auto &record = products.at(entries.at(type.index() - builtins).index);
   record.conditionalCopy = true;
   record.copyConditions = std::move(parameters);
@@ -1065,6 +1071,7 @@ bool TypeStore::isUnpin(Type type) const {
   return true;
 }
 void TypeStore::constrainUnpin(Type type) {
+  invalidateRegionErasure(type);
   parameters.at(entries.at(type.index() - builtins).index).unpin = true;
 }
 bool TypeStore::isThin(Type type) const {
