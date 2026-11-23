@@ -216,6 +216,9 @@ private:
   void prepareFunction(Function &function);
   void inferFunctionResult(Function &function);
   std::vector<std::size_t> functionDependencies(const Function &function);
+  std::size_t indexedDependencyFunctions = 0;
+  std::map<std::string, std::vector<std::size_t>, std::less<>>
+      dependencyMethods;
   std::unordered_map<const Function *, int> asyncDefaultBodyVariables;
   std::unordered_map<const Node *, int> nodeVariables;
   // Expression results whose evaluation already reported an error.

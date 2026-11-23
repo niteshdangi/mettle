@@ -1467,6 +1467,38 @@ acceptance evidence. Final frozen compiler SHA-256:
 Whole-I14 freeze remains blocked; repeated root optimization and native semantic
 preparation are still open performance obligations.
 
+Native checker follow-up (2026-11-23) removes per-receiver-call scans of every
+local function, per-normalization searches of the complete implementation
+inventory, and artificial callable records used only to normalize a value.
+The suffix index preserves candidate order and extends for appended functions;
+the finalized declaration index preserves the first matching implementation.
+Direct value normalization retains enclosing assumptions without treating a
+callable value's own quantified requirements as enclosing facts.
+
+Three randomized matched empty-compiler-cache standalone P04 release pairs
+against `c98c4a82` measure **28.292 s to 24.056 s, 15.0% faster**. These are
+current matched medians, not absolute timings comparable with the preceding
+run's 23.213 s. All outputs agree. Cache bytes are essentially unchanged
+(80,042,192 to 80,040,122); this gain removes repeated checking work, not storage.
+Five warm pairs measure P03/P04/P05 checks 0.2%/5.8%/1.1% faster; builds are
+3.2%/1.8% slower and 1.2% faster respectively. Resident checks/builds and runtime
+remain mixed. No universal warm-build, runtime or Rust-parity claim is made.
+
+Focused optimized source cases pass 16 run/profile and six fail/profile units,
+covering inferred method results, recursive operators, associated callable
+bounds, implementation regions and rejected lifetime escapes. ASan/UBSan passes
+four run/profile and two fail/profile units with unchanged source-runner
+assertions and the existing minimal native archive. Full-core sanitizer source
+production was stopped as unnecessarily broad; it is not acceptance evidence.
+No source fixtures or diagnostic expectations were weakened.
+
+Evidence: `~/w/anal/perf-native-checker-20261123/final/{cold-results.json,results.json}`,
+with focused reports in the parent's `source-regressions` and
+`sanitizer-minimal-regressions`. Final frozen compiler SHA-256:
+`3feeb83b9e221b78d8cd6b5e544b6600049a3dda61c79d4931ea02885ff18055`.
+Whole-I14 freeze stays blocked. Remaining work includes full producer checking,
+root optimization and consolidated performance/lifetime qualification.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

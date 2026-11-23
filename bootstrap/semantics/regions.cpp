@@ -567,7 +567,7 @@ public:
       std::map<std::size_t, RegionSeed> seeds,
       const ImportedDeclarations *imports,
       std::function<Type(
-          Type, std::span<const TypeBinding>, std::size_t, Span,
+          Type, bool, std::span<const TypeBinding>, std::size_t, Span,
           const RegionEnvironment &, const std::function<Type(Type, Span)> &,
           const std::function<Type(Type, const TypeSyntax &, Span)> &)>
           normalizeContract,
@@ -639,7 +639,7 @@ private:
     return std::nullopt;
   }
   std::function<Type(
-      Type, std::span<const TypeBinding>, std::size_t, Span,
+      Type, bool, std::span<const TypeBinding>, std::size_t, Span,
       const RegionEnvironment &, const std::function<Type(Type, Span)> &,
       const std::function<Type(Type, const TypeSyntax &, Span)> &)>
       normalizeContract;
@@ -787,7 +787,8 @@ private:
   Type signatureType(std::size_t index);
   Type normalize(Type type, std::span<const TypeBinding> bindings,
                  std::size_t function, Span span,
-                 const RegionEnvironment &environment);
+                 const RegionEnvironment &environment,
+                 bool callableSignature = true);
   Type normalizeValue(Type type, Span span);
   Type callableBound(Type type, RegionContext &context, Span span);
   void withinBounds(const std::vector<GenericParameter> &parameters,
@@ -4319,18 +4320,17 @@ void RegionPass::callableArguments(
   }
 }
 Type RegionPass::normalizeValue(Type type, Span span) {
-  CallableType probe;
-  probe.result = type;
-  return types
-      .callable(normalize(types.callableType(std::move(probe)), {},
-                          currentFunction, span, current->context.environment))
-      .result;
+  if (type.index() < builtinTypeCount)
+    return type;
+  return normalize(type, {}, currentFunction, span,
+                   current->context.environment, false);
 }
 Type RegionPass::normalize(Type type, std::span<const TypeBinding> bindings,
                            std::size_t function, Span span,
-                           const RegionEnvironment &environment) {
+                           const RegionEnvironment &environment,
+                           bool callableSignature) {
   return normalizeContract(
-      type, bindings, function, span, environment,
+      type, callableSignature, bindings, function, span, environment,
       [&](Type parameter, Span location) {
         if (auto found = callableContracts.find(parameter);
             found != callableContracts.end())
@@ -5169,15 +5169,24 @@ void Checker::checkRegions() {
   for (const auto &product : module.products.localHeaders())
     products.emplace_back(
         typeNames.at(definitionName(product.span, product.name)), &product);
+  const auto &database = std::as_const(*checked.interfaceData);
+  std::vector<std::size_t> implementationRules(module.implementations.size(),
+                                               database.implementations.size());
+  for (std::size_t rule = 0; rule < database.implementations.size(); ++rule) {
+    auto declaration = database.implementationDeclaration(rule);
+    if (declaration < implementationRules.size() &&
+        implementationRules[declaration] == database.implementations.size())
+      implementationRules[declaration] = rule;
+  }
   RegionPass(
       module, checked.functions, checked.nodes, checked.patterns,
       checked.iterations, checked.closureBodies, *checked.types, diagnostics,
       *checked.interfaceData, std::move(products), regionContracts,
       semanticRegionAnnotations, genericNames, std::move(seeds),
       checked.importedDeclarations.get(),
-      [&](Type signature, std::span<const TypeBinding> bindings,
-          std::size_t implementation, Span span,
-          const RegionEnvironment &environment,
+      [&](Type signature, bool callableSignature,
+          std::span<const TypeBinding> bindings, std::size_t implementation,
+          Span span, const RegionEnvironment &environment,
           const std::function<Type(Type, Span)> &callableContract,
           const std::function<Type(Type, const TypeSyntax &, Span)>
               &decorateBound) {
@@ -5202,10 +5211,7 @@ void Checker::checkRegions() {
           const auto index = static_cast<std::size_t>(current->implementation);
           const auto &syntax = module.implementations[index];
           const auto &database = std::as_const(*checked.interfaceData);
-          std::size_t rule = 0;
-          while (rule < database.implementations.size() &&
-                 database.implementationDeclaration(rule) != index)
-            ++rule;
+          auto rule = implementationRules.at(index);
           if (rule == database.implementations.size()) {
             error("internal", span, "missing implementation region context");
             current = saved;
@@ -5253,12 +5259,15 @@ void Checker::checkRegions() {
         }
         for (auto &assumption : interfaceAssumptions(nullptr, decorateBound))
           assumptions.push_back(assumption);
-        auto descriptor = checked.types->callable(
-            checked.types->substitute(signature, substitutions));
+        signature = checked.types->substitute(signature, substitutions);
+        std::optional<CallableType> descriptor;
+        if (callableSignature)
+          descriptor = checked.types->callable(signature);
         auto regions = environment;
-        regions.assumptions.insert(regions.assumptions.end(),
-                                   descriptor.regionRequirements.begin(),
-                                   descriptor.regionRequirements.end());
+        if (descriptor)
+          regions.assumptions.insert(regions.assumptions.end(),
+                                     descriptor->regionRequirements.begin(),
+                                     descriptor->regionRequirements.end());
         interfaces::Solver solver(*checked.types, *checked.interfaceData,
                                   diagnostics, std::move(assumptions),
                                   std::move(regions));
@@ -5283,14 +5292,20 @@ void Checker::checkRegions() {
           return contracts.coerce(actual, expected, environment) ==
                  RegionAnswer::Proven;
         });
-        for (auto &parameter : descriptor.parameters)
-          parameter.type = solver.normalize(parameter.type, {}, span);
-        descriptor.result = solver.normalize(descriptor.result, {}, span);
-        descriptor.error = solver.normalize(descriptor.error, {}, span);
-        descriptor.abiResult = solver.normalize(descriptor.abiResult, {}, span);
+        Type normalized;
+        if (descriptor) {
+          for (auto &parameter : descriptor->parameters)
+            parameter.type = solver.normalize(parameter.type, {}, span);
+          descriptor->result = solver.normalize(descriptor->result, {}, span);
+          descriptor->error = solver.normalize(descriptor->error, {}, span);
+          descriptor->abiResult =
+              solver.normalize(descriptor->abiResult, {}, span);
+          normalized = checked.types->callableType(std::move(*descriptor));
+        } else
+          normalized = solver.normalize(signature, {}, span);
         current = saved;
         genericEnvironment = savedEnvironment;
-        return checked.types->callableType(std::move(descriptor));
+        return normalized;
       },
       [&](Type actual, Type target, std::size_t function, Span span,
           const RegionEnvironment &environment) {

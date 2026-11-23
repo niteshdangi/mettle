@@ -62,6 +62,16 @@ void Checker::prepareFunction(Function &f) {
 
 std::vector<std::size_t>
 Checker::functionDependencies(const Function &function) {
+  indexedDependencyFunctions =
+      std::max(indexedDependencyFunctions, module.functions.nativeSize());
+  for (; indexedDependencyFunctions < module.functions.size();
+       ++indexedDependencyFunctions) {
+    const auto &name = module.functions.header(indexedDependencyFunctions).name;
+    for (auto delimiter = name.find('.'); delimiter != std::string::npos;
+         delimiter = name.find('.', delimiter + 1))
+      dependencyMethods[name.substr(delimiter + 1)].push_back(
+          indexedDependencyFunctions);
+  }
   std::vector<std::size_t> result;
   auto calls = [&](auto &&self, const Node &n) -> void {
     const auto &owner = function.owner;
@@ -95,11 +105,9 @@ Checker::functionDependencies(const Function &function) {
             result.push_back(candidate.function);
       }
     } else if (n.kind == Kind::Call && n.children[0]->kind == Kind::Field) {
-      for (std::size_t i = module.functions.nativeSize();
-           i < module.functions.size(); ++i)
-        if (module.functions.header(i).name.ends_with("." +
-                                                      n.children[0]->text))
-          result.push_back(i);
+      if (auto found = dependencyMethods.find(n.children[0]->text);
+          found != dependencyMethods.end())
+        result.insert(result.end(), found->second.begin(), found->second.end());
       if (checked.importedDeclarations && checked.importedDeclarations->catalog)
         for (auto function : checked.importedDeclarations->catalog->methods(
                  n.children[0]->text))

@@ -1108,6 +1108,16 @@ only an elaborated adaptation target replaces it.
 calls and returns, retaining semantic signatures separately from region-erased
 runtime types. Concrete CFG origin/loan checks remain mandatory: an abstract
 outlives proof does not authorize returning or storing a local owner's address.
+Source dependency discovery indexes local function-name suffixes once, extending
+the index for appended functions. Receiver calls retain the same conservative
+candidate order; imported methods still use the archive catalog. Region checking
+indexes the finalized implementation catalog by source declaration, preserving
+the first matching rule without materializing unused imported rule bodies.
+Value normalization operates on its type directly rather than interning an
+artificial callable containing that value. Builtin identities need no contextual
+substitution. Actual callable-signature normalization still incorporates its
+quantified requirements; value-only normalization does not assume the value's
+callable requirements as facts in its enclosing environment.
 Interface bound descriptors retain region arguments and quantified identities;
 selection instantiates implementation regions in the query universe, rather
 than treating a `static` implementation as a universal one. Associated families
