@@ -688,7 +688,8 @@ Checker::interfaceMethod(Type self, std::string_view name, Node &call) {
 void Checker::checkAssociatedContracts() {
   const auto &database = std::as_const(*checked.interfaceData);
   for (std::size_t i = 0; i < database.implementations.size(); ++i) {
-    if (imported(database.implementationSpan(i)))
+    if (database.importedImplementation(i) ||
+        imported(database.implementationSpan(i)))
       continue;
     const auto &implementation = database.implementations[i];
     if (!checked.types->isErased(implementation.interfaceType))
@@ -793,7 +794,8 @@ void Checker::checkInterfaceContracts() {
   auto *saved = genericEnvironment;
   const auto &database = std::as_const(*checked.interfaceData);
   for (std::size_t i = 0; i < database.implementations.size(); ++i) {
-    if (imported(database.implementationSpan(i)))
+    if (database.importedImplementation(i) ||
+        imported(database.implementationSpan(i)))
       continue;
     const auto &implementation = database.implementations[i];
     if (!checked.types->isErased(implementation.interfaceType))

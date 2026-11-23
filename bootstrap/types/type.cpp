@@ -375,7 +375,11 @@ Type TypeStore::structural(AggregateKind kind, std::vector<Type> components,
     return arrayType(components[0], constant(Type::I32, count));
   syncLookup();
   if (auto existing = findIndexed(
-          candidates(&LookupData::aggregates, components), [&](std::size_t i) {
+          candidates(
+              &LookupData::aggregates, components,
+              ImportedTypeQuery{ImportedTypeQuery::Kind::Aggregate,
+                                {.aggregateKind = kind, .key = components}}),
+          [&](std::size_t i) {
             if (entries[i].kind != EntryKind::Product)
               return false;
             const auto &record = std::as_const(products)[entries[i].index];

@@ -406,7 +406,10 @@ struct ImportedSymbolRemap {
   std::span<const std::uint32_t> functions, closures, interfaces, packages;
 };
 struct ImportedTypeIndex {
-  std::span<const Type> key{}, coroutineInterior{};
+  AggregateKind aggregateKind = AggregateKind::Product;
+  std::span<const Type> key{}, coroutineInterior{}, genericArguments{};
+  std::span<const TypeBinding> associated{};
+  std::span<const RegionId> regionArguments{};
   std::span<const RegionId> callableRegionParameters{},
       callableParameterRegions{};
   std::span<const RegionRequirement> callableRegionRequirements{};
@@ -432,7 +435,9 @@ struct ImportedTypeQuery {
     Operand,
     Callable,
     Constant,
-    NamedProduct
+    NamedProduct,
+    GenericExact,
+    ErasedExact
   };
   Kind kind;
   ImportedTypeIndex key;
@@ -867,15 +872,17 @@ private:
   template <class Key>
   auto
   candidates(const std::map<Key, std::vector<std::uint32_t>> LookupData::*table,
-             const Key &key) const {
+             const Key &key,
+             std::optional<ImportedTypeQuery> query = {}) const {
     auto owned = [&](const LookupData &data, const Key &value) {
       const auto *values = found(data.*table, value);
       return values ? std::span<const std::uint32_t>(*values)
                     : std::span<const std::uint32_t>{};
     };
     auto imported = [&]() -> std::span<const std::uint32_t> {
-      if (lookup.resolve)
-        return lookup.resolve(importedQuery(table, key));
+      if (lookup.resolve) {
+        return lookup.resolve(query ? *query : importedQuery(table, key));
+      }
       if (!lookup.imported)
         return {};
       if constexpr (std::is_same_v<Key, ErasedKey>)

@@ -5105,8 +5105,9 @@ void Checker::checkRegions() {
     };
     const auto &current = *checked.interfaceData;
     for (std::size_t i = 0; i < finalized.implementations.size(); ++i)
-      if (finalized.implementationDeclaration(i) !=
-          current.implementationDeclaration(i))
+      if (current.implementations.isMaterialized(i) &&
+          finalized.implementationDeclaration(i) !=
+              current.implementationDeclaration(i))
         finalized.implementations[i].declaration =
             current.implementationDeclaration(i);
     append(finalized.definitions, current.definitions,
@@ -5173,6 +5174,8 @@ void Checker::checkRegions() {
   std::vector<std::size_t> implementationRules(module.implementations.size(),
                                                database.implementations.size());
   for (std::size_t rule = 0; rule < database.implementations.size(); ++rule) {
+    if (database.importedImplementation(rule))
+      continue;
     auto declaration = database.implementationDeclaration(rule);
     if (declaration < implementationRules.size() &&
         implementationRules[declaration] == database.implementations.size())

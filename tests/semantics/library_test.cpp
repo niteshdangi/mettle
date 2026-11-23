@@ -582,9 +582,8 @@ fn main(): i32 {
     if (!imported) {
       auto indexedBytes = std::make_shared<const std::vector<std::uint8_t>>(
           declarations.header);
-      auto indexedHeader =
-          decodeLibraryHeader(*indexedBytes, decode, indexedBytes,
-                              metadata::ValidationMode::OnDemand);
+      auto indexedHeader = decodeLibraryHeader(
+          *indexedBytes, decode, indexedBytes, metadata::ValidationMode::OnUse);
       expect(
           indexedHeader &&
               indexedHeader.module->functions.admittedSize() == 0 &&
@@ -621,8 +620,8 @@ fn main(): i32 {
                               indexedLibrary.compiledSourcePackages);
       auto indexedContracts = importLibraryDeclarations(
           *contractsBytes, types, *retainedReferences, &*indexedModule,
-          contractsBytes, retainedReferences,
-          metadata::ValidationMode::OnDemand, {}, {}, indexedHeader.index);
+          contractsBytes, retainedReferences, metadata::ValidationMode::OnUse,
+          {}, {}, indexedHeader.index);
       expect(bool(indexedContracts),
              "indexed contracts admit complete implementation catalogs");
       if (!indexedContracts) {
@@ -644,6 +643,17 @@ fn main(): i32 {
                          .initializer->scalar.magnitude[0] == 10,
              "indexed lookup retains transitive defaults, private helpers and "
              "trait dispatch");
+      auto dormant = expectedImplementations[1].find("core::Dormant");
+      expect(indexedChecked && dormant != expectedImplementations[1].end() &&
+                 !dormant->second.empty() &&
+                 std::all_of(dormant->second.begin(), dormant->second.end(),
+                             [&](std::size_t index) {
+                               return !indexedChecked->interfaceDatabase()
+                                           .implementations.isMaterialized(
+                                               index);
+                             }),
+             "checking local contracts and regions leaves unused imported "
+             "implementation bodies deferred");
       const auto admitted = indexedHeader.module->functions.admittedSize();
       expect(admitted == 5 &&
                  indexedHeader.module->implementations.admittedSize() == 0,
@@ -727,6 +737,19 @@ fn main(): i32 {
                                         metadata::ValidationMode::OnDemand),
                    "mounting rejects unknown and mismatched unused declaration "
                    "lookup IDs");
+            auto queried = decodeLibraryHeader(*storage, decode, storage,
+                                               metadata::ValidationMode::OnUse);
+            expect(bool(queried),
+                   "unused declaration payloads remain unqueried");
+            bool rejected = false;
+            try {
+              if (queried)
+                (void)queried.index->function("core::archivedUnused511");
+            } catch (const metadata::InvalidMetadata &) {
+              rejected = true;
+            }
+            expect(rejected,
+                   "queried declaration IDs validate before publication");
           }
         }
       }
@@ -1160,6 +1183,38 @@ fn main(): i32 {
         !invalid && invalid.error.find("unknown logical declaration symbol") !=
                         std::string::npos,
         "admission rejects malformed references in unused interface details");
+    auto storage =
+        std::make_shared<const std::vector<std::uint8_t>>(invalidUnused);
+    auto references =
+        std::make_shared<const metadata::DecodeReferences>(decode);
+    auto deferred = importLibraryDeclarations(*storage, types, *references,
+                                              nullptr, storage, references,
+                                              metadata::ValidationMode::OnUse);
+    expect(bool(deferred), "unused implementation bodies remain unqueried");
+    auto dormant = std::find_if(
+        expectedImplementations[1].begin(), expectedImplementations[1].end(),
+        [](const auto &entry) { return entry.first.ends_with("Dormant"); });
+    expect(dormant != expectedImplementations[1].end() &&
+               dormant->second.size() == 1,
+           "fixture has one dormant implementation");
+    if (deferred && dormant != expectedImplementations[1].end())
+      for (unsigned retry = 0; retry != 2; ++retry) {
+        bool rejected = false;
+        try {
+          auto index = dormant->second.front();
+          (void)(*deferred.declarations->database
+                      .importedImplementations)[index];
+          expect(
+              !deferred.declarations->database.implementations.isMaterialized(
+                  index),
+              "indexing an implementation does not decode its body");
+          (void)deferred.declarations->database.implementations[index];
+        } catch (const metadata::InvalidMetadata &) {
+          rejected = true;
+        }
+        expect(rejected,
+               "selected implementation bodies validate before publication");
+      }
   }
   auto wrongSelection = declarations.contracts;
   auto candidate = std::search(wrongSelection.begin(), wrongSelection.end(),
@@ -1258,7 +1313,7 @@ fn main(): i32 {
          "header mounting rejects trailing bytes");
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
-      1 + std::string_view("mettle.checked-contracts.21").size();
+      1 + std::string_view("mettle.checked-contracts.22").size();
   oversized[inventoryOffset] = 0xff;
   oversized.insert(oversized.begin() + inventoryOffset + 1, 8, 0xff);
   oversized.insert(oversized.begin() + inventoryOffset + 9, 0x01);

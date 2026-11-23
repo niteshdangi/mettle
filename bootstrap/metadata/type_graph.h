@@ -9,7 +9,7 @@
 #include <vector>
 
 namespace mettle::metadata {
-enum class ValidationMode { Eager, OnDemand };
+enum class ValidationMode { Eager, OnDemand, OnUse };
 class InvalidMetadata final : public std::runtime_error {
 public:
   using std::runtime_error::runtime_error;

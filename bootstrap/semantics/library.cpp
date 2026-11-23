@@ -373,6 +373,7 @@ public:
     return revisions;
   }
   bool good() const { return error.empty(); }
+  bool validateUnused = true;
   template <class T> bool same(const T &left, const T &right) {
     Archive first(*encode, *types, hygiene);
     Archive second(*encode, *types, hygiene);
@@ -669,14 +670,16 @@ public:
         }
         auto header = frames.readBlock();
         frames.readBlock();
-        Archive scan(header, *decode, types, sourceRevisions());
-        scan.headerSources = headerSources;
-        scan.scanningProjection = true;
-        T discarded;
-        scan.projectHeader(discarded);
-        scan.finish();
-        if (!scan.good())
-          fail(std::move(scan.error));
+        if (validateUnused) {
+          Archive scan(header, *decode, types, sourceRevisions());
+          scan.headerSources = headerSources;
+          scan.scanningProjection = true;
+          T discarded;
+          scan.projectHeader(discarded);
+          scan.finish();
+          if (!scan.good())
+            fail(std::move(scan.error));
+        }
       }
       frames.finish();
       if (!frames.good())
@@ -730,7 +733,7 @@ public:
   void indexedDeclarations(Table &items, Read read) {
     std::uint64_t count = items.size();
     value(count);
-    std::size_t category = 0;
+    std::size_t category = 3;
     if constexpr (std::is_same_v<Declaration, ImportedTypeDeclaration>) {
       category = nextTypeTable++;
       if (declarationIndex && count != declarationIndex->typeCount(category))
@@ -746,10 +749,16 @@ public:
         auto offset = std::uint64_t(records.output.size());
         for (unsigned byte = 0; byte < sizeof(offset); ++byte)
           offsets.push_back(std::uint8_t(offset >> (byte * 8)));
+        Archive record(*encode, *types, hygiene);
         if constexpr (requires { *item; })
-          records(*item);
+          record(*item);
         else
-          records(item);
+          record(item);
+        if (!record.good()) {
+          fail(std::move(record.error));
+          return;
+        }
+        records.writeBlock(record.output);
       }
       if (!records.good())
         fail(std::move(records.error));
@@ -772,17 +781,25 @@ public:
       return static_cast<std::size_t>(result);
     };
     Archive scan(records, *decode, types);
-    scan.deferEnvironment = deferEnvironment;
-    if (prepareIndexedReader)
-      prepareIndexedReader(scan, records);
-    auto revisions = scan.sourceRevisions();
     for (std::size_t i = 0; i < count && good() && scan.good(); ++i) {
       if (recordOffset(i) != scan.position()) {
         scan.fail("invalid checked type declaration offset");
         break;
       }
+      auto payload = scan.readBlock();
+      if (!validateUnused || !scan.good())
+        continue;
+      Archive reader(payload, *decode, types);
+      reader.deferEnvironment = deferEnvironment;
+      if (prepareIndexedReader)
+        prepareIndexedReader(reader, payload);
       Declaration item;
-      scan(item);
+      reader(item);
+      reader.finish();
+      if (!reader.good()) {
+        scan.fail(std::move(reader.error));
+        break;
+      }
       if (declarationIndex) {
         if constexpr (std::is_same_v<Declaration, ImportedTypeDeclaration>) {
           if (declarationIndex->typeOrdinal(category, item.span) != i)
@@ -790,7 +807,7 @@ public:
         } else {
           auto owner = declarationIndex->constantOwner(i);
           if (declarationIndex->namedConstant(item.name) != i || !owner ||
-              owner->first >= declarationIndex->typeCount(3) ||
+              owner->first >= declarationIndex->typeCount(category) ||
               owner->second >= declarationIndex->associatedCount(owner->first))
             scan.fail(
                 "checked constant does not match its declaration directory");
@@ -804,12 +821,36 @@ public:
     }
     if (read) {
       auto loader = std::make_shared<const typename Table::Loader>(
-          [records, recordOffset, revisions, read,
+          [records, recordOffset, read, catalog = declarationIndex, category,
+           references = std::make_shared<const metadata::DecodeReferences>(),
            count = static_cast<std::size_t>(count)](std::size_t index) {
             auto begin = recordOffset(index);
             auto end =
                 index + 1 == count ? records.size() : recordOffset(index + 1);
-            return read(records.subspan(begin, end - begin), revisions);
+            Archive frame(records.subspan(begin, end - begin), *references,
+                          nullptr);
+            auto payload = frame.readBlock();
+            frame.finish();
+            if (!frame.good())
+              throw metadata::InvalidMetadata(
+                  "invalid checked type declaration frame: " + frame.error);
+            auto item = read(payload, {});
+            bool valid = true;
+            if (catalog) {
+              if constexpr (std::is_same_v<Declaration,
+                                           ImportedTypeDeclaration>)
+                valid = catalog->typeOrdinal(category, item->span) == index;
+              else {
+                auto owner = catalog->constantOwner(index);
+                valid = catalog->namedConstant(item.name) == index && owner &&
+                        owner->first < catalog->typeCount(category) &&
+                        owner->second < catalog->associatedCount(owner->first);
+              }
+            }
+            if (!valid)
+              throw metadata::InvalidMetadata(
+                  "checked declaration does not match its directory");
+            return item;
           });
       items.deferPrefix(static_cast<std::size_t>(count), std::move(loader));
     } else
@@ -1867,6 +1908,24 @@ void wire(Archive &a, interfaces::Implementation &v) {
     }
   }
 }
+void implementationRecord(Archive &archive,
+                          const interfaces::Implementation &item) {
+  if (archive.reading()) {
+    Archive reader(archive.readBlock(), archive.decoding(), archive.types);
+    reader.declarationIndex = archive.declarationIndex;
+    reader.implementationIndices = archive.implementationIndices;
+    reader(item);
+    reader.finish();
+    if (!reader.good())
+      archive.fail(std::move(reader.error));
+  } else {
+    Archive writer(archive.encoding(), *archive.types, archive.hygieneState());
+    writer(item);
+    if (!writer.good())
+      archive.fail(std::move(writer.error));
+    archive.writeBlock(writer.output);
+  }
+}
 void wire(Archive &a, interfaces::Database &v) {
   std::uint64_t count = v.definitions.size();
   a(count);
@@ -1891,8 +1950,22 @@ void wire(Archive &a, interfaces::Database &v) {
       a.fail("duplicate checked interface identity");
     v.definitions[index] = std::move(item);
   }
-  a(v.implementations, v.projections, v.unpinImplementations,
-    v.structuralDeclarations, v.argumentsReady, v.callableContracts);
+  count = v.implementations.size();
+  a(count);
+  if (a.reading()) {
+    if (count > a.remaining()) {
+      a.fail("implementation inventory exceeds its payload");
+      return;
+    }
+    v.implementations.resize(static_cast<std::size_t>(count));
+  }
+  for (std::size_t i = 0; i < count && a.good(); ++i)
+    if (a.reading())
+      implementationRecord(a, v.implementations[i]);
+    else
+      implementationRecord(a, std::as_const(v).implementations[i]);
+  a(v.projections, v.unpinImplementations, v.structuralDeclarations,
+    v.argumentsReady, v.callableContracts);
 }
 template <class T>
 void phaseRecords(Archive &archive,
@@ -1946,10 +2019,17 @@ void phaseRecords(Archive &archive,
     }
     if (archive.reading()) {
       T item;
-      archive(item);
+      if constexpr (std::is_same_v<T, interfaces::Implementation>)
+        implementationRecord(archive, item);
+      else
+        archive(item);
       replacements.emplace_back(index, std::move(item));
-    } else
-      archive(std::as_const(finalized)[index]);
+    } else {
+      if constexpr (std::is_same_v<T, interfaces::Implementation>)
+        implementationRecord(archive, std::as_const(finalized)[index]);
+      else
+        archive(std::as_const(finalized)[index]);
+    }
   }
   if (archive.reading() && archive.good()) {
     std::sort(replacements.begin(), replacements.end(),
@@ -2079,8 +2159,14 @@ void databases(Archive &archive, interfaces::Database &checking,
   }
 }
 class DatabaseAdmission {
+  using DefinitionHeaders = std::vector<interfaces::Database::DefinitionHeader>;
+  using ImplementationHeaders =
+      TypeRecords<interfaces::Database::ImplementationHeader, true>;
   struct Block {
     std::size_t offset, size;
+    std::shared_ptr<const DefinitionHeaders> definitions{};
+    std::shared_ptr<const ImplementationHeaders> selection{}, finalSelection{};
+    std::size_t index = 0;
   };
   template <class T> struct Records {
     std::shared_ptr<std::vector<Block>> blocks =
@@ -2093,7 +2179,11 @@ class DatabaseAdmission {
     std::size_t count = 0, candidates = 0;
     std::span<const std::uint8_t> offsets, headers;
     std::shared_ptr<std::vector<std::span<const std::uint8_t>>> groups;
+    std::shared_ptr<std::vector<std::uint32_t>> owners;
     std::shared_ptr<const std::vector<std::string>> revisions;
+    std::shared_ptr<
+        const TypeRecords<interfaces::Database::ImplementationHeader, true>>
+        previousHeaders;
   };
 
 public:
@@ -2107,7 +2197,11 @@ public:
       : archive(archive), bytes(bytes), storage(std::move(storage)),
         references(std::move(references)), types(std::move(types)),
         implementationIndices(std::move(implementationIndices)),
-        functions(functions) {}
+        functions(functions),
+        retainedFunctions(
+            archive.validateUnused
+                ? nullptr
+                : std::make_shared<const ImportedFunctionTable>(functions)) {}
 
   void read(interfaces::Database &checking, interfaces::Database &finalized) {
     selection(checkingSelection, checking);
@@ -2118,8 +2212,10 @@ public:
       finalized.importedImplementations = checking.importedImplementations;
       finalized.implementationsByDeclaration =
           checking.implementationsByDeclaration;
-    } else
+    } else {
+      finalSelection.previousHeaders = checking.importedImplementations;
       selection(finalSelection, finalized);
+    }
     if (!archive.good())
       return;
     auto finalHeaders = finalized.importedImplementations;
@@ -2164,14 +2260,17 @@ public:
     checking.implementations.resize(count);
     std::size_t selected = 0;
     for (std::size_t i = 0; i < count && archive.good(); ++i)
-      record(checking.implementations, i, implementationRecords, [&] {
-        interfaces::Database::ImplementationHeader header;
-        implementation(header, checking);
-        validateSelection(checkingSelection, i, header, selected);
-      });
+      record(
+          checking.implementations, i, implementationRecords,
+          [&] {
+            interfaces::Database::ImplementationHeader header;
+            implementation(header, checking);
+            validateSelection(checkingSelection, i, header, selected);
+          },
+          &checking);
     if (!archive.good())
       return;
-    if (selected != checkingSelection.candidates) {
+    if (archive.validateUnused && selected != checkingSelection.candidates) {
       archive.fail("incomplete checked implementation selection");
       return;
     }
@@ -2219,31 +2318,33 @@ public:
     finalized.importedDefinitions = finalDefinitions;
     if (!archive.good())
       return;
-    std::vector<bool> changedImplementations(checking.implementations.size());
-    changes(checking.implementations, finalized.implementations,
-            implementationRecords, false, [&](std::size_t index) {
-              interfaces::Database::ImplementationHeader after;
-              implementation(after, finalized);
-              if (index >= checking.implementations.size()) {
-                archive.fail(
-                    "checked interface phases have conflicting inventories");
-                return;
-              }
-              auto before = selectionHeader(checkingSelection, index);
-              if (!sameSpan(before.span, after.span)) {
-                archive.fail(
-                    "checked interface phases have conflicting inventories");
-                return;
-              }
-              std::size_t unused = 0;
-              validateSelection(finalSelection, index, after, unused);
-              changedImplementations[index] = true;
-            });
+    changedImplementations.resize(checking.implementations.size());
+    changes(
+        checking.implementations, finalized.implementations,
+        implementationRecords, false,
+        [&](std::size_t index) {
+          interfaces::Database::ImplementationHeader after;
+          implementation(after, finalized);
+          if (index >= checking.implementations.size()) {
+            archive.fail(
+                "checked interface phases have conflicting inventories");
+            return;
+          }
+          auto before = selectionHeader(checkingSelection, index);
+          if (!sameSpan(before.span, after.span)) {
+            archive.fail(
+                "checked interface phases have conflicting inventories");
+            return;
+          }
+          std::size_t unused = 0;
+          validateSelection(finalSelection, index, after, unused);
+        },
+        &finalized);
     if (finalized.implementations.size() != checking.implementations.size())
       archive.fail("checked interface phases have conflicting inventories");
     if (!archive.good())
       return;
-    if (!sharedSelection) {
+    if (!sharedSelection && archive.validateUnused) {
       selected = 0;
       for (std::size_t i = 0;
            i < checking.implementations.size() && archive.good(); ++i) {
@@ -2272,6 +2373,11 @@ public:
     archive(finalized.argumentsReady);
     phaseMap(archive, checking.callableContracts, finalized.callableContracts);
     validateCallableContracts(finalized);
+    if (!archive.validateUnused)
+      for (std::size_t i = 0; i < checking.implementations.size(); ++i)
+        if (!changedImplementations[i])
+          (*implementationRecords.blocks)[i].finalSelection =
+              finalized.importedImplementations;
     finalized.indexedProjections = finalized.projections.size();
     finalized.projectionsByParameter.freeze();
   }
@@ -2284,7 +2390,9 @@ private:
   std::shared_ptr<TypeStore> types;
   std::shared_ptr<const ImplementationIndices> implementationIndices;
   const ImportedFunctionTable &functions;
+  std::shared_ptr<const ImportedFunctionTable> retainedFunctions;
   Selection checkingSelection, finalSelection;
+  std::vector<bool> changedImplementations;
   Records<interfaces::Definition> definitionRecords;
   Records<interfaces::Implementation> implementationRecords;
   Records<interfaces::Projection> projectionRecords;
@@ -2332,6 +2440,8 @@ private:
     }
     selection.groups =
         std::make_shared<std::vector<std::span<const std::uint8_t>>>();
+    selection.owners = std::make_shared<std::vector<std::uint32_t>>(
+        selection.count, UINT32_MAX);
     auto count = archive.collectionSize();
     std::set<std::uint32_t> seen;
     for (std::size_t i = 0; i < count && archive.good(); ++i) {
@@ -2354,6 +2464,11 @@ private:
           archive.fail("invalid checked implementation candidate");
           return;
         }
+        if ((*selection.owners)[index] != UINT32_MAX) {
+          archive.fail("duplicate checked implementation candidate");
+          return;
+        }
+        (*selection.owners)[index] = owner;
         previous = index;
         ++selection.candidates;
       }
@@ -2367,7 +2482,8 @@ private:
         selection.count,
         std::make_shared<const decltype(headers)::element_type::Loader>(
             [retained, storage = storage, references = references,
-             types = types, catalog, indices](std::size_t index) {
+             types = types, catalog, indices,
+             queryValidation = !archive.validateUnused](std::size_t index) {
               auto begin =
                   fixedWord(retained.offsets, index * sizeof(std::uint64_t),
                             sizeof(std::uint64_t));
@@ -2396,6 +2512,21 @@ private:
                   throw metadata::InvalidMetadata(
                       "checked implementation is absent from its header");
                 header.declaration = found->second;
+              }
+              if (queryValidation) {
+                auto owner =
+                    types->isErased(header.interfaceType)
+                        ? types->erasedDeclaration(header.interfaceType)
+                        : UINT32_MAX;
+                if ((*retained.owners)[index] != owner)
+                  throw metadata::InvalidMetadata(
+                      "checked implementation candidate does not match its "
+                      "record");
+                if (retained.previousHeaders &&
+                    !sameSpan((*retained.previousHeaders)[index].span,
+                              header.span))
+                  throw metadata::InvalidMetadata(
+                      "checked interface phases have conflicting inventories");
               }
               return header;
             }));
@@ -2518,11 +2649,37 @@ private:
           [storage = storage, bytes = bytes, references = references,
            types = types, indices = implementationIndices,
            catalog = archive.declarationIndex,
-           revisions = archive.sourceRevisions(),
-           blocks = records.blocks](std::size_t index) {
+           revisions = archive.sourceRevisions(), blocks = records.blocks,
+           functions = retainedFunctions](std::size_t index) {
             const auto &block = blocks->at(index);
-            Archive reader(bytes.subspan(block.offset, block.size), *references,
-                           types.get(), revisions);
+            auto payload = bytes.subspan(block.offset, block.size);
+            if constexpr (std::is_same_v<T, interfaces::Implementation>)
+              if (block.definitions) {
+                Archive validator(payload, *references, types.get());
+                validator.implementationIndices = indices.get();
+                validator.declarationIndex = catalog;
+                interfaces::Database database;
+                database.importedDefinitions = block.definitions;
+                DatabaseAdmission admission(validator, payload, storage,
+                                            references, types, indices,
+                                            *functions);
+                interfaces::Database::ImplementationHeader header;
+                admission.implementation(header, database);
+                validator.finish();
+                if (!validator.good())
+                  throw metadata::InvalidMetadata(
+                      "invalid checked implementation: " + validator.error);
+                for (const auto &selection :
+                     {block.selection, block.finalSelection})
+                  if (selection && (*selection)[block.index] != header)
+                    throw metadata::InvalidMetadata(
+                        "checked implementation selection does not match its "
+                        "record");
+              }
+            Archive reader(payload, *references, types.get(),
+                           std::is_same_v<T, interfaces::Implementation>
+                               ? nullptr
+                               : revisions);
             reader.implementationIndices = indices.get();
             reader.declarationIndex = catalog;
             T value;
@@ -2536,14 +2693,46 @@ private:
   }
   template <class T, class Scan>
   void record(interfaces::DatabaseRecords<T> &target, std::size_t index,
-              Records<T> &records, Scan scan) {
+              Records<T> &records, Scan scan,
+              const interfaces::Database *database = nullptr) {
     auto begin = archive.position();
-    scan();
+    std::size_t size = 0;
+    std::shared_ptr<const DefinitionHeaders> definitions;
+    if constexpr (std::is_same_v<T, interfaces::Implementation>) {
+      auto payload = archive.readBlock();
+      if (!archive.good())
+        return;
+      begin = static_cast<std::size_t>(payload.data() - bytes.data());
+      size = payload.size();
+      if (archive.validateUnused) {
+        Archive reader(payload, archive.decoding(), types.get());
+        reader.declarationIndex = archive.declarationIndex;
+        reader.implementationIndices = archive.implementationIndices;
+        std::swap(archive, reader);
+        scan();
+        archive.finish();
+        std::swap(archive, reader);
+        if (!reader.good())
+          archive.fail(std::move(reader.error));
+      } else {
+        if (!database || !database->importedDefinitions) {
+          archive.fail("checked implementation phase is unavailable");
+          return;
+        }
+        definitions = database->importedDefinitions;
+      }
+    } else {
+      scan();
+      size = archive.position() - begin;
+    }
     if (!archive.good())
       return;
     loader(records);
     auto ordinal = records.blocks->size();
-    records.blocks->push_back({begin, archive.position() - begin});
+    records.blocks->push_back(
+        {begin, size, std::move(definitions),
+         database ? database->importedImplementations : nullptr, nullptr,
+         index});
     target.defer(index, ordinal, records.load);
   }
   template <class K, class V>
@@ -2589,10 +2778,16 @@ private:
   template <class T, class Scan>
   void changes(const interfaces::DatabaseRecords<T> &checking,
                interfaces::DatabaseRecords<T> &finalized, Records<T> &records,
-               bool interfaces, Scan scan) {
+               bool interfaces, Scan scan,
+               const interfaces::Database *database = nullptr) {
     std::uint64_t size = checking.size();
     if (!interfaces)
       archive(size);
+    if constexpr (std::is_same_v<T, interfaces::Implementation>)
+      if (size != checking.size()) {
+        archive.fail("checked interface phases have conflicting inventories");
+        return;
+      }
     if (size > UINT32_MAX || (size > checking.size() &&
                               size - checking.size() > archive.remaining())) {
       archive.fail("checked phase inventory exceeds its representation");
@@ -2615,7 +2810,9 @@ private:
         archive.fail("invalid checked phase record identity");
         return;
       }
-      record(finalized, index, records, [&] { scan(index); });
+      if constexpr (std::is_same_v<T, interfaces::Implementation>)
+        changedImplementations[index] = true;
+      record(finalized, index, records, [&] { scan(index); }, database);
     }
     if (size > checking.size())
       for (auto i = checking.size(); i < size; ++i)
@@ -3300,6 +3497,10 @@ public:
                           std::shared_ptr<HeaderSources> sources)
       : owner(std::move(owner)), sources(std::move(sources)) {}
   void read(Archive &archive, const Module &module) {
+    queryValidation = !archive.validateUnused;
+    headerCounts = {module.functions.size(),  module.statics.size(),
+                    module.products.size(),   module.aliases.size(),
+                    module.interfaces.size(), module.implementations.size()};
     offsets = archive.readBlock();
     records = archive.readBlock();
     for (auto &rows : symbolRows) {
@@ -3334,6 +3535,10 @@ public:
           !key.starts_with("B:") && !key.starts_with("J:") &&
           !key.starts_with("r:"))
         archive.fail("duplicate declaration lookup key");
+      if (queryValidation) {
+        previous = key;
+        continue;
+      }
       Archive record(payload, references, nullptr);
       record.headerSources = sources;
       if (key.starts_with("b:")) {
@@ -3434,6 +3639,14 @@ public:
           return;
         }
       }
+    if (queryValidation) {
+      if (symbolCount(metadata::SymbolKind::Function) != headerCounts[0] ||
+          symbolCount(metadata::SymbolKind::Static) != headerCounts[1] ||
+          symbolCount(metadata::SymbolKind::Interface) != headerCounts[4] ||
+          !one<bool>("links"))
+        archive.fail("declaration symbol counts do not match their headers");
+      return;
+    }
     if (symbolCount(metadata::SymbolKind::Function) !=
             module.functions.size() ||
         symbolCount(metadata::SymbolKind::Static) != module.statics.size()) {
@@ -3777,6 +3990,8 @@ private:
     std::string_view definition;
   };
   std::shared_ptr<const void> owner;
+  bool queryValidation = false;
+  std::array<std::size_t, 6> headerCounts{};
   std::shared_ptr<HeaderSources> sources;
   metadata::DecodeReferences references;
   std::span<const std::uint8_t> offsets, records;
@@ -3810,11 +4025,20 @@ private:
     SymbolView result;
     reader(result.kind, result.index, result.span);
     result.definition = reader.textView();
+    reader.finish();
+    if (!reader.good())
+      throw metadata::InvalidMetadata("invalid declaration lookup: " +
+                                      reader.error);
     return result;
   }
   std::string_view text(std::size_t index) const {
     Archive reader(payloadAt(index), references, nullptr);
-    return reader.textView();
+    auto result = reader.textView();
+    reader.finish();
+    if (!reader.good())
+      throw metadata::InvalidMetadata("invalid declaration lookup: " +
+                                      reader.error);
+    return result;
   }
   std::size_t lowerBound(std::string_view key) const {
     std::size_t begin = 0, end = size();
@@ -3827,7 +4051,7 @@ private:
     }
     return begin;
   }
-  template <class T> T value(std::size_t index) const {
+  template <class T> T rawValue(std::size_t index) const {
     Archive reader(payloadAt(index), references, nullptr);
     reader.headerSources = sources;
     T result{};
@@ -3836,6 +4060,126 @@ private:
     if (!reader.good())
       throw metadata::InvalidMetadata("invalid declaration lookup: " +
                                       reader.error);
+    return result;
+  }
+  template <class T> std::optional<T> rawOne(std::string_view key) const {
+    auto position = lowerBound(key);
+    return position < size() && keyAt(position) == key
+               ? std::optional(rawValue<T>(position))
+               : std::nullopt;
+  }
+  template <class T> T value(std::size_t index) const {
+    auto result = rawValue<T>(index);
+    if (!queryValidation)
+      return result;
+    auto key = keyAt(index);
+    auto ordinal = [](std::string_view key) -> std::optional<std::uint64_t> {
+      if (key.size() != sizeof(std::uint64_t))
+        return {};
+      std::uint64_t result = 0;
+      for (auto byte : key)
+        result = (result << 8) | static_cast<unsigned char>(byte);
+      return result;
+    };
+    bool valid = false;
+    if constexpr (std::is_same_v<T, NativeBinding>) {
+      auto end = key.find('\0', 2);
+      valid = key.starts_with("b:") && end != std::string_view::npos &&
+              key.size() - end >= 3 &&
+              key[end + 1] == static_cast<char>(result.space) &&
+              key[end + 2] == '\0' && key.substr(end + 3) == result.name;
+    } else if constexpr (std::is_same_v<T, NativeItem>) {
+      auto revision = sources->mountedRevisions.find(result.span.source);
+      auto coordinates = sources->coordinates(result.span);
+      valid = revision != sources->mountedRevisions.end() && coordinates &&
+              key == "i:" + revision->second + '\0' +
+                         ordinalKey(coordinates->first) +
+                         ordinalKey(UINT64_MAX - coordinates->second);
+    } else if constexpr (std::is_same_v<T, DeclarationSymbolIdentity>) {
+      valid = key == symbolKey('S', result.kind) + ordinalKey(result.index) &&
+              symbolRow(result.kind, result.index) == index &&
+              rawOne<std::uint32_t>(symbolKey('s', result.kind) +
+                                    result.definition) == result.index;
+    } else if constexpr (std::is_same_v<T, std::string>) {
+      valid = key.starts_with("a:") || key.starts_with("B:");
+      if (key.starts_with("F:")) {
+        auto id = ordinal(key.substr(2));
+        valid = id && *id < headerCounts[0] &&
+                rawOne<std::uint32_t>("f:" + result) == *id;
+      }
+    } else if constexpr (std::is_same_v<T, bool>)
+      valid = key == "links" ||
+              (result && (key.starts_with("J:") || key.starts_with("r:") ||
+                          key.starts_with("o:") ||
+                          (key.starts_with("k:") && ordinal(key.substr(2)) &&
+                           *ordinal(key.substr(2)) < headerCounts[0])));
+    else if constexpr (std::is_same_v<T, std::uint32_t>) {
+      if (key.starts_with("s:") && key.size() >= 3) {
+        auto kind = static_cast<metadata::SymbolKind>(key[2]);
+        auto row = symbolRow(kind, result);
+        if (row != UINT64_MAX) {
+          auto identity = symbolView(row);
+          valid = identity.kind == kind && identity.index == result &&
+                  identity.definition == key.substr(3);
+        }
+      } else if (key.starts_with("f:"))
+        valid = result < headerCounts[0] &&
+                rawOne<std::string>("F:" + ordinalKey(result)) == key.substr(2);
+      else if (key.starts_with("m:") || key.starts_with("X:") ||
+               key.starts_with("z:"))
+        valid = result < headerCounts[0];
+      else if (key.starts_with("v:") || key.starts_with("x:"))
+        valid = result < headerCounts[1];
+      else if (key.starts_with("q:"))
+        valid = result < constantCount();
+    } else if constexpr (std::is_same_v<T, std::uint64_t>) {
+      if (key.starts_with("C:"))
+        valid =
+            key.size() == 3 &&
+            static_cast<unsigned char>(key[2]) < symbolRows.size() &&
+            result == symbolCount(static_cast<metadata::SymbolKind>(key[2]));
+      else if (key.starts_with("d:")) {
+        valid = key.size() == 18 && result < defaultCount();
+        if (valid) {
+          auto pair = rawOne<std::pair<std::uint32_t, std::uint32_t>>(
+              "D:" + ordinalKey(result));
+          valid = pair && key == "d:" + ordinalKey(pair->first) +
+                                     ordinalKey(pair->second);
+        }
+      } else if (key.starts_with("t:")) {
+        auto kind = ordinal(key.substr(2, 8));
+        valid =
+            key.size() >= 27 && kind && *kind < 5 && result < typeCount(*kind);
+      } else if (key.starts_with("T:")) {
+        auto kind = ordinal(key.substr(2));
+        valid = kind && *kind < 5;
+      } else if (key.starts_with("A:")) {
+        auto id = ordinal(key.substr(2));
+        valid = id && *id < headerCounts[5];
+      } else
+        valid =
+            key == "defaults" || key == "constructors" || key == "constants";
+    } else if constexpr (std::is_same_v<
+                             T, std::pair<std::uint32_t, std::uint32_t>> ||
+                         std::is_same_v<T,
+                                        std::pair<std::size_t, std::size_t>>) {
+      if (key.starts_with("n:"))
+        valid =
+            result.first < 3 && result.second < headerCounts[2 + result.first];
+      else if (key.starts_with("D:")) {
+        auto id = ordinal(key.substr(2));
+        valid = id && *id < defaultCount() && result.first < headerCounts[0] &&
+                rawOne<std::uint64_t>("d:" + ordinalKey(result.first) +
+                                      ordinalKey(result.second)) == *id;
+      } else if (key.starts_with("Q:")) {
+        auto id = ordinal(key.substr(2));
+        valid = id && *id < constantCount() && result.first < headerCounts[5] &&
+                result.second < associatedCount(result.first);
+      }
+    }
+    if (!valid)
+      throw metadata::InvalidMetadata("invalid declaration lookup reference: " +
+                                      std::string(key.substr(0, 2)));
     return result;
   }
   template <class T> std::optional<T> one(std::string_view key) const {
@@ -4333,7 +4677,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   decltype(header.output){}.swap(header.output);
   header.headerSources.reset();
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.21");
+  contracts.tag("mettle.checked-contracts.22");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size() +
                         (module.importedDeclarations
@@ -4346,15 +4690,16 @@ exportLibraryDeclarations(const CheckedModule &module,
     auto offset = std::uint64_t(functionRecords.output.size());
     for (unsigned byte = 0; byte < sizeof(offset); ++byte)
       functionOffsets.push_back(std::uint8_t(offset >> (byte * 8)));
+    Archive row(references, *module.types, contracts.hygieneState());
     auto symbol = index;
-    functionRecords.symbol(metadata::SymbolKind::Function, symbol);
+    row.symbol(metadata::SymbolKind::Function, symbol);
     if (item.defaults.size() >
         std::as_const(item).contract().facts.locals.size()) {
       contracts.fail("default contract exceeds the parameter inventory");
       return;
     }
     auto summary = functionHeader(item);
-    functionRecords(summary);
+    row(summary);
     Archive record(references, *module.types, contracts.hygieneState());
     function(record, item);
     for (const auto &local : item.contract().facts.locals)
@@ -4362,10 +4707,13 @@ exportLibraryDeclarations(const CheckedModule &module,
         auto index = local.staticIndex;
         record.symbol(metadata::SymbolKind::Static, index);
       }
-    if (!record.good())
-      contracts.fail(std::move(record.error));
-    else
+    if (!record.good() || !row.good())
+      contracts.fail(row.good() ? std::move(record.error)
+                                : std::move(row.error));
+    else {
+      functionRecords.writeBlock(row.output);
       functionRecords.writeBlock(record.output);
+    }
   };
   for (std::size_t i = 0; i < module.functions.size(); ++i) {
     if (module.imported(i)) {
@@ -4528,6 +4876,7 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
   decltype(sources->revisions){}.swap(sources->revisions);
   auto frozen = std::make_shared<const metadata::DecodeReferences>();
   Archive archive(payload, *frozen, nullptr);
+  archive.validateUnused = validation != metadata::ValidationMode::OnUse;
   archive.headerSources = sources;
   archive.readSyntax = [storage, frozen, sources,
                         payload](std::size_t begin, std::size_t size,
@@ -4541,7 +4890,7 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
                                       reader.error);
   };
   Module module;
-  if (validation == metadata::ValidationMode::OnDemand) {
+  if (validation != metadata::ValidationMode::Eager) {
     archive(module.functions, module.statics, module.products, module.aliases,
             module.interfaces, module.implementations);
     archive.discard(module.modules);
@@ -4562,7 +4911,7 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
   else {
     result.index = index;
     module.nativeDeclarations.push_back(index);
-    if (validation == metadata::ValidationMode::OnDemand) {
+    if (validation != metadata::ValidationMode::Eager) {
       module.imports.clear();
       module.macros.clear();
       module.modules.clear();
@@ -4834,7 +5183,7 @@ declarationPayloadLayout(std::span<const std::uint8_t> bytes) {
     return std::optional<std::uint32_t>{0};
   };
   Archive archive(bytes, references, nullptr);
-  archive.tag("mettle.checked-contracts.21");
+  archive.tag("mettle.checked-contracts.22");
   std::uint64_t count = 0;
   archive(count);
   if (count > bytes.size())
@@ -4853,10 +5202,7 @@ declarationPayloadLayout(std::span<const std::uint8_t> bytes) {
       rows.fail("invalid checked function offset");
       break;
     }
-    std::uint32_t index = 0;
-    rows.symbol(metadata::SymbolKind::Function, index);
-    FunctionHeader summary;
-    rows.discard(summary);
+    rows.readBlock();
     auto payload = rows.readBlock();
     if (rows.good())
       result.payloads.push_back(
@@ -4891,7 +5237,7 @@ LibraryDeclarationImport importLibraryDeclarations(
     result.error = "retained declaration references do not own the resolver";
     return result;
   }
-  if (validation == metadata::ValidationMode::OnDemand && !retainedReferences) {
+  if (validation != metadata::ValidationMode::Eager && !retainedReferences) {
     result.error = "demand-loaded declarations require an owned resolver";
     return result;
   }
@@ -4973,6 +5319,7 @@ LibraryDeclarationImport importLibraryDeclarations(
       std::shared_ptr<const std::uint8_t>(std::move(backing), bytes.data());
   const auto &admission = retained ? references : record;
   Archive archive(bytes, admission, types.get());
+  archive.validateUnused = validation != metadata::ValidationMode::OnUse;
   std::map<std::tuple<SourceId, std::uint32_t, std::uint32_t>, std::size_t>
       implementationIndices;
   if (module && !catalog)
@@ -5001,7 +5348,7 @@ LibraryDeclarationImport importLibraryDeclarations(
     target.facts = std::move(decoded->facts);
     target.constants = std::move(decoded->constants);
   };
-  archive.tag("mettle.checked-contracts.21");
+  archive.tag("mettle.checked-contracts.22");
   auto value = std::make_shared<ImportedDeclarations>();
   value->catalog = std::move(catalog);
   archive.declarationIndex = value->catalog;
@@ -5030,7 +5377,7 @@ LibraryDeclarationImport importLibraryDeclarations(
     };
   };
   value->types = types;
-  if (validation == metadata::ValidationMode::OnDemand)
+  if (validation != metadata::ValidationMode::Eager)
     archive.deferEnvironment = [storage, frozen,
                                 types](ImportedTypeDeclaration &declaration,
                                        std::span<const std::uint8_t> payload) {
@@ -5101,7 +5448,6 @@ LibraryDeclarationImport importLibraryDeclarations(
     return static_cast<std::size_t>(result);
   };
   Archive rows(functionBytes, admission, types.get());
-  auto functionRevisions = rows.sourceRevisions();
   ImportedFunctionRecords discarded;
   std::size_t indexedDefaults = 0;
   for (std::uint64_t i = 0; i < count && archive.good(); ++i) {
@@ -5109,15 +5455,22 @@ LibraryDeclarationImport importLibraryDeclarations(
       archive.fail("invalid checked function offset");
       break;
     }
+    auto header = rows.readBlock();
+    auto payload = rows.readBlock();
+    if (validation == metadata::ValidationMode::OnUse)
+      continue;
+    Archive summaryReader(header, admission, types.get());
     std::uint32_t index = 0;
-    rows.symbol(metadata::SymbolKind::Function, index);
+    summaryReader.symbol(metadata::SymbolKind::Function, index);
     FunctionHeader summary;
-    FunctionIndexScanner scanner{rows, discarded, 0, 0, false};
+    FunctionIndexScanner scanner{summaryReader, discarded, 0, 0, false};
     scanner.catalog = value->catalog.get();
     scanner.function = index;
     scanner.indexedDefaults = &indexedDefaults;
     functionHeaderFields(scanner, summary);
-    auto payload = rows.readBlock();
+    summaryReader.finish();
+    if (!summaryReader.good())
+      archive.fail(std::move(summaryReader.error));
     if (scanner.defaults != scanner.parameters)
       archive.fail("invalid checked function signature inventory");
     if (value->catalog && index != i)
@@ -5152,30 +5505,48 @@ LibraryDeclarationImport importLibraryDeclarations(
       archive.fail(std::move(rows.error));
   }
   rows.finish();
-  if (value->catalog && indexedDefaults != value->catalog->defaultCount())
+  if (validation != metadata::ValidationMode::OnUse && value->catalog &&
+      indexedDefaults != value->catalog->defaultCount())
     archive.fail("incomplete default-helper declaration directory");
   if (!rows.good())
     archive.fail(std::move(rows.error));
   std::vector<std::string> retainedFunctionNames;
   for (auto name : functionNames)
     retainedFunctionNames.emplace_back(name);
-  auto loadFunction =
-      [storage, functionBytes, functionOffset, functionRevisions, frozen, types,
-       methods, deferExpressions, verifyPayload, catalog = value->catalog,
-       names = std::move(retainedFunctionNames)](
-          std::uint32_t ordinal) -> ImportedFunctionReference {
-    Archive row(functionBytes.subspan(functionOffset(ordinal)), *frozen,
-                types.get(), functionRevisions);
+  auto loadFunction = [storage, functionBytes, functionOffset, frozen, types,
+                       methods, deferExpressions, verifyPayload,
+                       catalog = value->catalog,
+                       names = std::move(retainedFunctionNames)](
+                          std::uint32_t ordinal) -> ImportedFunctionReference {
+    Archive frame(functionBytes.subspan(functionOffset(ordinal)), *frozen,
+                  types.get());
+    auto summaryBytes = frame.readBlock();
+    auto payload = frame.readBlock();
+    Archive row(summaryBytes, *frozen, types.get());
+    auto functionRevisions = row.sourceRevisions();
     std::uint32_t index = 0;
     row.symbol(metadata::SymbolKind::Function, index);
     auto headerBegin = row.position();
     auto records = std::make_shared<ImportedFunctionRecords>();
     FunctionHeader summary;
     FunctionIndexScanner scanner{row, *records};
+    std::size_t indexedDefaults = 0;
+    scanner.catalog = catalog.get();
+    scanner.function = index;
+    scanner.indexedDefaults = &indexedDefaults;
     functionHeaderFields(scanner, summary);
-    auto header = functionBytes.subspan(functionOffset(ordinal) + headerBegin,
-                                        row.position() - headerBegin);
-    auto payload = row.readBlock();
+    auto header =
+        summaryBytes.subspan(headerBegin, row.position() - headerBegin);
+    row.finish();
+    if (!frame.good())
+      row.fail(std::move(frame.error));
+    if (scanner.defaults != scanner.parameters)
+      row.fail("invalid checked function signature inventory");
+    if (catalog) {
+      auto identity = catalog->symbol(metadata::SymbolKind::Function, index);
+      if (index != ordinal || !identity || identity->span != summary.span)
+        row.fail("checked function has inconsistent declaration provenance");
+    }
     std::string name;
     if (catalog) {
       auto canonical = catalog->functionName(index);
@@ -5235,8 +5606,10 @@ LibraryDeclarationImport importLibraryDeclarations(
   else
     for (std::uint32_t ordinal = 0; ordinal < count && archive.good();
          ++ordinal) {
-      Archive row(functionBytes.subspan(functionOffset(ordinal)), admission,
-                  types.get(), functionRevisions);
+      Archive frame(functionBytes.subspan(functionOffset(ordinal)), admission,
+                    types.get());
+      auto header = frame.readBlock();
+      Archive row(header, admission, types.get());
       std::uint32_t index = 0;
       row.symbol(metadata::SymbolKind::Function, index);
       if (!value->functions.emplace(index, loadFunction(ordinal)).second)
@@ -5283,7 +5656,7 @@ LibraryDeclarationImport importLibraryDeclarations(
     auto constructorFunction = value->catalog
                                    ? ImportedFunctionReference{}
                                    : value->functions.at(header.function);
-    if (validation == metadata::ValidationMode::OnDemand) {
+    if (validation != metadata::ValidationMode::Eager) {
       constructors->applicability.push_uninitialized();
       auto loader = std::make_shared<const interfaces::DatabaseRecords<
           interfaces::Implementation>::Loader>([storage, frozen, types, payload,

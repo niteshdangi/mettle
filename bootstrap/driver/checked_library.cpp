@@ -725,7 +725,7 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
                      ? copyLibraryHeader(*retained)
                      : decodeLibraryHeader(archive.header, references,
                                            archive.header.owner(),
-                                           metadata::ValidationMode::OnDemand);
+                                           metadata::ValidationMode::OnUse);
   if (!decoded) {
     error = decoded.error;
     return false;
@@ -835,6 +835,9 @@ CheckedLibrary::import(const Module &module,
   std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t>
       defaultDestinations;
   auto nativeDefaults = catalog->defaultCount();
+  if (module.functions.size() > limits::functions ||
+      nativeDefaults > limits::functions - module.functions.size())
+    return fail("compiled default helpers exceed the compiler function limit");
   std::size_t defaultCount = nativeDefaults;
   for (std::size_t i = module.functions.nativeSize();
        i < module.functions.size(); ++i)
@@ -950,7 +953,7 @@ CheckedLibrary::import(const Module &module,
   auto typeSymbols = std::make_shared<metadata::TypeGraphSymbols>();
   typeSymbols->resolve = references.symbol;
   auto graph = metadata::importTypeGraph(*types, archive.types, *typeSymbols,
-                                         metadata::ValidationMode::OnDemand,
+                                         metadata::ValidationMode::OnUse,
                                          typeSymbols, archive.types.owner());
   if (!graph)
     return fail(graph.error);
@@ -971,7 +974,7 @@ CheckedLibrary::import(const Module &module,
       });
   auto declarations = importLibraryDeclarations(
       storage->declarations, types, *retainedReferences, &module, storage,
-      retainedReferences, metadata::ValidationMode::OnDemand, {},
+      retainedReferences, metadata::ValidationMode::OnUse, {},
       storage->verifyDeclarationPayload, catalog);
   if (!declarations)
     return fail(declarations.error);

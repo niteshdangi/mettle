@@ -1895,8 +1895,30 @@ tiny-build samples with 0/1,000/5,000 unrelated entries measure
 32.90/41.29/71.84 -> 34.53/36.44/36.89 ms: large-store scaling improves, with
 1.63 ms overhead at zero unrelated entries. Evidence:
 `~/mettle-i-integrated-08ee/cache-accounting-evidence/`.
-Native admission and pre-optimization reuse remain open; I14 qualification and
-runtime parity are not claimed.
+Native admission now defers unqueried declaration/projection payloads and
+implementation bodies while preserving strict validation and archive integrity.
+Contract checking and region finalization no longer decode unchanged imports.
+Indexed type graph v6 separates aggregate kinds and provides exact generic and
+erased-interface queries; the prior coarse buckets admitted 15,146 unrelated
+products for an empty-tuple query. Selected bodies still validate against both
+phase headers when shared. Focused declaration/type/archive CTests, the four
+native-selection/identity/discovery/constant-only package cases, and decoder/type
+store ASan/UBSan pass.
+Seven interleaved standalone release samples measure unused Vec/map checks at
+136.40/134.83 -> 88.50/84.56 ms, with empty checks at 4.47 -> 4.30 ms.
+P03/P04/P05 checks measure 157.77/160.55/194.52 -> 127.44/130.94/137.63 ms;
+one-literal rebuilds measure 284.72/290.40/511.96 -> 262.52/262.42/488.09 ms.
+Rust checks measure 16.28/17.95/17.27 ms and rebuilds 231.63/239.60/305.41 ms.
+Outputs agree; the P04 before/after executables are byte-identical, so noisy
+runtime medians are not a generated-code change. Evidence:
+`~/w/anal/perf-onuse-native-final-20261124/results.json` and
+`~/w/anal/perf-onuse-native-v2-20261124/unused-imports.json`.
+Pre-optimization reuse remains unresolved: the isolated dependency-complete
+prototype preserves runtime and reuses 39/41 objects, but has not beaten the
+existing post-optimization cache. The changed hot owner still requires 185 ms
+of optimization versus 248 ms for the whole module. Do not integrate that
+prototype as an accepted speedup; the next backend action requires a distinct
+measured opportunity. I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

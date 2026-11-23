@@ -222,46 +222,51 @@ int main() {
     TypeStore eager;
     expect(!importTypeGraph(eager, encoded.bytes, {}),
            "eager import accepted an invalid unused type");
-    auto retained = std::make_shared<const TypeGraphSymbols>();
-    TypeStore consumer;
-    auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
-                                    ValidationMode::OnDemand, retained);
-    expect(bool(imported), imported.error);
-    expect(consumer.nominalOrigin(imported.roots[1]) == imported.roots[1] &&
-               consumer.nominalOrigin(imported.roots[4]) == Type::Unknown,
-           "nominal candidate classification demanded an unused body or "
-           "classified an array as nominal");
-    encoded.bytes.clear();
-    retained.reset();
-    auto copy = consumer;
-    std::array<std::thread, 3> demands{
-        std::thread([&] { (void)consumer.product(imported.roots[0]); }),
-        std::thread([&] { (void)consumer.product(imported.roots[2]); }),
-        std::thread([&] { (void)copy.product(imported.roots[0]); })};
-    for (auto &demand : demands)
-      demand.join();
-    expect(consumer.isCopy(imported.roots[0]) &&
-               consumer.product(imported.roots[0]).fields.size() == 1,
-           "demanded type dependencies lost validation or retained bytes");
-    expect(consumer.product(imported.roots[2]).fields[0].type ==
-               imported.roots[0],
-           "demand validation must reuse a proved dependency closure");
-    expect(consumer.product(imported.roots[3]).fields.size() == 32 &&
-               consumer.product(imported.roots[4]).arrayCount != Type::Unknown,
-           "reused array proofs must preserve nested expansion counts");
-    for (unsigned attempt = 0; attempt < 2; ++attempt) {
-      bool rejected = false;
-      try {
-        (void)consumer.product(imported.roots[1]);
-      } catch (const InvalidMetadata &) {
-        rejected = true;
+    for (auto validation : {ValidationMode::OnDemand, ValidationMode::OnUse}) {
+      auto bytes = encoded.bytes;
+      auto retained = std::make_shared<const TypeGraphSymbols>();
+      TypeStore consumer;
+      auto imported =
+          importTypeGraph(consumer, bytes, *retained, validation, retained);
+      expect(bool(imported), imported.error);
+      expect(consumer.nominalOrigin(imported.roots[1]) == imported.roots[1] &&
+                 consumer.nominalOrigin(imported.roots[4]) == Type::Unknown,
+             "nominal candidate classification demanded an unused body or "
+             "classified an array as nominal");
+      bytes.clear();
+      retained.reset();
+      auto copy = consumer;
+      std::array<std::thread, 3> demands{
+          std::thread([&] { (void)consumer.product(imported.roots[0]); }),
+          std::thread([&] { (void)consumer.product(imported.roots[2]); }),
+          std::thread([&] { (void)copy.product(imported.roots[0]); })};
+      for (auto &demand : demands)
+        demand.join();
+      expect(consumer.isCopy(imported.roots[0]) &&
+                 consumer.product(imported.roots[0]).fields.size() == 1,
+             "demanded type dependencies lost validation or retained bytes");
+      expect(consumer.product(imported.roots[2]).fields[0].type ==
+                 imported.roots[0],
+             "demand validation must reuse a proved dependency closure");
+      expect(consumer.product(imported.roots[3]).fields.size() == 32 &&
+                 consumer.product(imported.roots[4]).arrayCount !=
+                     Type::Unknown,
+             "reused array proofs must preserve nested expansion counts");
+      for (unsigned attempt = 0; attempt < 2; ++attempt) {
+        bool rejected = false;
+        try {
+          (void)consumer.product(imported.roots[1]);
+        } catch (const InvalidMetadata &) {
+          rejected = true;
+        }
+        expect(rejected,
+               "invalid demanded type was published before validation");
       }
-      expect(rejected, "invalid demanded type was published before validation");
+      auto changed = consumer;
+      changed.defineProduct(imported.roots[0], {{"changed", Type::Bool}});
+      expect(consumer.product(imported.roots[0]).fields[0].name == "payload",
+             "demand-loaded type mutation changed its retained snapshot");
     }
-    auto changed = consumer;
-    changed.defineProduct(imported.roots[0], {{"changed", Type::Bool}});
-    expect(consumer.product(imported.roots[0]).fields[0].name == "payload",
-           "demand-loaded type mutation changed its retained snapshot");
   }
   {
     TypeStore producer;
@@ -306,52 +311,65 @@ int main() {
     auto encoded =
         exportTypeGraph(producer, roots, symbols, ValidationMode::OnDemand);
     expect(bool(encoded), encoded.error);
-    auto retained = std::make_shared<const TypeGraphSymbols>(symbolMaps(100));
-    TypeStore consumer;
-    auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
-                                    ValidationMode::OnDemand, retained);
-    expect(bool(imported), imported.error);
-    auto copy = consumer;
-    encoded.bytes.clear();
-    retained.reset();
-    for (std::size_t i = 0; i < categories.size(); ++i) {
-      const auto [kind, valueType] = categories[i];
-      bool parameter =
-          kind == TypeParameterKind::Type ||
-          (kind == TypeParameterKind::Projection && valueType == Type::Unknown);
-      expect(copy.isParameter(imported.roots[i]) == parameter &&
-                 copy.isConstant(imported.roots[i]) == !parameter &&
-                 copy.isConstParameter(imported.roots[i]) ==
-                     (kind == TypeParameterKind::Constant) &&
-                 copy.isProjection(imported.roots[i]) ==
-                     (kind == TypeParameterKind::Projection),
-             "admitted scalar categories must not demand invalid parameter "
-             "descriptors");
+    for (auto validation : {ValidationMode::OnDemand, ValidationMode::OnUse}) {
+      auto bytes = encoded.bytes;
+      std::size_t resolutions = 0;
+      auto callbacks = symbolMaps(100);
+      callbacks.resolve = [resolve = callbacks.resolve, &resolutions](
+                              SymbolKind kind, std::string_view name) {
+        ++resolutions;
+        return resolve(kind, name);
+      };
+      auto retained =
+          std::make_shared<const TypeGraphSymbols>(std::move(callbacks));
+      TypeStore consumer;
+      auto imported =
+          importTypeGraph(consumer, bytes, *retained, validation, retained);
+      expect(bool(imported), imported.error);
+      expect(validation != ValidationMode::OnUse || resolutions == 0,
+             "unqueried projections must not resolve logical symbols");
+      auto copy = consumer;
+      bytes.clear();
+      retained.reset();
+      for (std::size_t i = 0; i < categories.size(); ++i) {
+        const auto [kind, valueType] = categories[i];
+        bool parameter = kind == TypeParameterKind::Type ||
+                         (kind == TypeParameterKind::Projection &&
+                          valueType == Type::Unknown);
+        expect(copy.isParameter(imported.roots[i]) == parameter &&
+                   copy.isConstant(imported.roots[i]) == !parameter &&
+                   copy.isConstParameter(imported.roots[i]) ==
+                       (kind == TypeParameterKind::Constant) &&
+                   copy.isProjection(imported.roots[i]) ==
+                       (kind == TypeParameterKind::Projection),
+               "admitted scalar categories must not demand invalid parameter "
+               "descriptors");
+        bool rejected = false;
+        try {
+          (void)copy.parameter(imported.roots[i]);
+        } catch (const InvalidMetadata &) {
+          rejected = true;
+        }
+        expect(rejected,
+               "scalar parameter facts must not publish unchecked descriptors");
+      }
+      expect(copy.erasedDeclaration(imported.roots.back()) == 107 &&
+                 consumer.erasedDeclaration(imported.roots.back()) == 107,
+             "admitted erased declarations retain symbol remapping across "
+             "copies without descriptor demand");
+      for (std::size_t i = 0; i < 128; ++i)
+        expect(copy.erasedDeclaration(imported.roots[categories.size() + i]) ==
+                   declarations[i % declarations.size()] + 100,
+               "parallel projections retain globally remapped scalar symbols");
       bool rejected = false;
       try {
-        (void)copy.parameter(imported.roots[i]);
+        (void)copy.erased(imported.roots.back());
       } catch (const InvalidMetadata &) {
         rejected = true;
       }
       expect(rejected,
-             "scalar parameter facts must not publish unchecked descriptors");
+             "scalar erased facts must not publish unchecked descriptors");
     }
-    expect(copy.erasedDeclaration(imported.roots.back()) == 107 &&
-               consumer.erasedDeclaration(imported.roots.back()) == 107,
-           "admitted erased declarations retain symbol remapping across "
-           "copies without descriptor demand");
-    for (std::size_t i = 0; i < 128; ++i)
-      expect(copy.erasedDeclaration(imported.roots[categories.size() + i]) ==
-                 declarations[i % declarations.size()] + 100,
-             "parallel projections retain globally remapped scalar symbols");
-    bool rejected = false;
-    try {
-      (void)copy.erased(imported.roots.back());
-    } catch (const InvalidMetadata &) {
-      rejected = true;
-    }
-    expect(rejected,
-           "scalar erased facts must not publish unchecked descriptors");
   }
   {
     TypeStore producer;
@@ -626,6 +644,55 @@ int main() {
                             ValidationMode::OnDemand, retained) &&
                consumer.storedTypeCount() == 0,
            "unused structural projections reject dangling type references");
+    auto queried = importTypeGraph(consumer, malformed, *retained,
+                                   ValidationMode::OnUse, retained);
+    expect(queried && consumer.pointerType(Type::I32, ParameterMode::Read) ==
+                          queried.roots[0],
+           "unqueried projections do not prevent admitting unrelated types");
+    for (unsigned attempt = 0; attempt < 2; ++attempt) {
+      bool rejected = false;
+      try {
+        if (queried)
+          (void)consumer.pointer(queried.roots[1]);
+      } catch (const InvalidMetadata &) {
+        rejected = true;
+      }
+      expect(rejected, "invalid queried projections are never published");
+    }
+  }
+  {
+    TypeStore producer;
+    auto ordering = producer.structural(AggregateKind::Ordering, {});
+    auto tuple = producer.structural(AggregateKind::Tuple, {});
+    auto pinned = producer.structural(AggregateKind::PhantomPinned, {});
+    auto retained = std::make_shared<const TypeGraphSymbols>();
+    auto encoded =
+        exportTypeGraph(producer, std::array{ordering, tuple, pinned},
+                        *retained, ValidationMode::OnDemand);
+    expect(bool(encoded), encoded.error);
+    auto indexOffset = 36 + u32(encoded.bytes, 16) + 4 * u32(encoded.bytes, 24);
+    auto projection = indexOffset + 4 + u32(encoded.bytes, indexOffset) + 1;
+    auto full = projection + 4 + u32(encoded.bytes, projection);
+    put32(encoded.bytes, full + 4, UINT32_MAX);
+    TypeStore consumer;
+    auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
+                                    ValidationMode::OnUse, retained);
+    expect(bool(imported), imported.error);
+    expect(imported &&
+               consumer.structural(AggregateKind::Tuple, {}) ==
+                   imported.roots[1] &&
+               consumer.structural(AggregateKind::PhantomPinned, {}) ==
+                   imported.roots[2],
+           "aggregate lookup separates kinds sharing component keys without "
+           "decoding irrelevant bodies");
+    bool rejected = false;
+    try {
+      if (imported)
+        (void)consumer.structural(AggregateKind::Ordering, {});
+    } catch (const InvalidMetadata &) {
+      rejected = true;
+    }
+    expect(rejected, "selected aggregate bodies still validate before use");
   }
   {
     TypeStore producer;
@@ -1270,7 +1337,8 @@ int main() {
     expect(bool(indexed), indexed.error);
     indexedBytes = std::move(indexed.bytes);
   }
-  for (auto mode : {ValidationMode::Eager, ValidationMode::OnDemand}) {
+  for (auto mode : {ValidationMode::Eager, ValidationMode::OnDemand,
+                    ValidationMode::OnUse}) {
     TypeStore fresh;
     auto temporary = mode == ValidationMode::Eager ? bytes : indexedBytes;
     auto symbols = std::make_shared<const TypeGraphSymbols>(symbolMaps(100));

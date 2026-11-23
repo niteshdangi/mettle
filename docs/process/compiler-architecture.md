@@ -468,7 +468,7 @@ remaps, never a diagnostics instance or caller stack.
 Archive sections share immutable storage. Replacing an entry releases its
 backing when no active import still owns it.
 
-The approved, not yet implemented query-driven native admission contract verifies
+Query-driven native admission (`ValidationMode::OnUse`) verifies
 complete archive integrity and structural
 index bounds before lookup. Declared canonical identities and index memberships
 are authoritative; each queried projection must match them before its facts are
@@ -478,23 +478,34 @@ Eager admission retains complete semantic validation. Canonical aliases, lookup
 completeness and regional cycles remain checked at the relevant publication
 boundary; a lazy path cannot publish an unchecked proof or executable IR.
 
-The existing indexed-v5 path validates the complete type/declaration index
-inventory and IR query directory. Native constructor patterns admit their owner
+The indexed-v6 native path validates directory framing, ordering, ordinal bounds
+and the IR query directory before lookup. Declaration payloads validate their
+queried keys, inverse identities and destination bounds before returning facts.
+Type projections validate lookup membership and their reachable structural and
+origin graphs before returning candidates or scalar facts. Failed queries do
+not acquire a successful validation proof. The strict `OnDemand` path retains
+complete index/projection validation and canonical merging for general metadata
+consumers. Native constructor patterns admit their owner
 on a type-table miss before inspecting its product or variant contract.
 Empty type stores directly adopt validated graph
 records only when structural identities need no canonical remapping; duplicate
 keys, existing consumer types and logical lookups retain canonical merging.
-Indexed projection admission uses independent readers and arenas for contiguous
+Strict indexed projection admission uses independent readers and arenas for contiguous
 worker ranges. Workers only inspect immutable archive/index data and write
 disjoint record facts. Symbol callbacks run after joining, in archive order;
 complete lookup membership, canonical identities and regional cycles must pass
 before the candidate graph is published. Worker failures retain transaction
 atomicity, and exceptional exits join started workers before releasing backing.
-Indexed type graph v5 validates lookup keys directly against producer bytes
+Indexed type graphs validate lookup keys directly against producer bytes
 instead of serializing each query again. Canonical integer hashing and encoding
 consume complete integer words rather than repeating byte-wise buffer/hash
 updates. Exact key comparisons, malformed unused-key rejection and canonical
-alias merging remain mandatory; no new type wire format is needed.
+alias merging remain mandatory on that strict path. Indexed v6 adds aggregate
+kind to structural keys and exact generic-argument and erased-interface keys.
+The latter include associated bindings and region identities/requirements;
+coarse origin/interface indexes remain available for inventory queries.
+This prevents a unit tuple or one instantiation from decoding thousands of
+unrelated candidates. Older indexed snapshots are invalidated, not reinterpreted.
 Canonical keys retain fixed-word symbol fixups applied after complete structural
 admission and symbol resolution; symbol-bearing records are not parsed again.
 Resolved aliases still undergo exact canonical-key comparison and merging.
@@ -676,7 +687,7 @@ Sparse deferred prefixes allocate pages on demand, share immutable read caches
 and detach before mutation. Published pages support concurrent const reads
 without a steady-state cache mutex or shared-pointer copy.
 
-The producer builds interning candidate indexes. Admission validates their
+The producer builds interning candidate indexes. Strict admission validates their
 framing, ordering, candidate membership and correspondence to scratch
 projections, alongside all structural references, nominal identities, roots
 and regional cycles. Fingerprint collisions receive exact canonical-key
@@ -896,7 +907,20 @@ implementation payloads. Private locals, parameter storage/scope details,
 values, lexical scopes and array-loop metadata are deferred with the CFG;
 signature, safety and linkage information remain eager. The codec owns the
 shared frame index used by envelope integrity and semantic decoding; checked
-declarations likewise expose their existing function-block extents. The driver
+declarations likewise expose their function-block extents. Checked contracts
+v22 independently frame function summaries, type declarations, associated
+constants and interface implementation records with their own source-revision
+dictionaries. A function summary is
+followed by its committed checked-function payload. Offset and
+frame validation does not decode unrelated summaries. A selected summary
+validates its signature inventory, source identity and default-helper joins
+before publication. Native implementation admission scans frames without
+classifying unused type parameters. Selection headers validate candidate
+ownership and cross-phase source identity without decoding implementation
+bodies. A selected body validates against the appropriate phase's interface
+inventory, and its target, interface, source span, inherent names and fallback
+status must reproduce every phase's selection header that shares that body.
+Contract checking and region finalization skip unchanged imported bodies. The driver
 does not parse either schema. Import preflights every record extent and
 definition identity, decodes callable interfaces and statics, and rejects
 trailing data while leaving implementation payloads encoded. Native

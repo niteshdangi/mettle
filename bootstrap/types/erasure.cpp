@@ -35,8 +35,17 @@ Type TypeStore::erasedType(ErasedType descriptor) {
       descriptor.associated.begin(), descriptor.associated.end(),
       [](const auto &a, const auto &b) { return a.parameter < b.parameter; });
   syncLookup();
+  ImportedTypeQuery query{ImportedTypeQuery::Kind::ErasedExact, {}};
+  query.key.key = descriptor.arguments;
+  query.key.associated = descriptor.associated;
+  query.key.regionArguments = descriptor.regionArguments;
+  query.key.region = descriptor.bound;
+  query.key.regionUniverse = descriptor.regionUniverse;
+  query.key.callableRegionParameters = descriptor.regionParameters;
+  query.key.callableRegionRequirements = descriptor.regionRequirements;
+  query.key.declaration = descriptor.declaration;
   if (auto existing = findIndexed(
-          candidates(&LookupData::erased, erasedKey(descriptor)),
+          candidates(&LookupData::erased, erasedKey(descriptor), query),
           [&](std::size_t i) {
             if (entries[i].kind != EntryKind::Erased)
               return false;

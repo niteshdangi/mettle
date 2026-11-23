@@ -1094,7 +1094,7 @@ def checked_constant_only_library():
     consumer = directory / "consumer.mt"
     consumer.write_text("import core.char as chars\n"
                         "const VALUE: usize = char.ROOT_MARK\n")
-    arguments = ["--emit", "static", "--library-dir", library]
+    arguments = ["--emit", "static", "--library-dir", library, "--standalone"]
     invoke(["check", consumer, *arguments, "--no-cache"])
     cold = invoke(["check", consumer, *arguments, "--explain"])
     assert "checked library interface cache stored core " in cold, cold

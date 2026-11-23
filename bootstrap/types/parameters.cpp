@@ -408,17 +408,18 @@ Type TypeStore::instantiateProduct(Type origin, std::vector<Type> arguments) {
   if (product(origin).genericParameters.size() != arguments.size())
     throw std::invalid_argument("generic type argument count does not match");
   syncLookup();
-  if (auto existing =
-          findIndexed(candidates(&LookupData::genericInstances, origin),
-                      [&](std::size_t i) {
-                        if (entries[i].kind != EntryKind::Product)
-                          return false;
-                        const auto &record =
-                            std::as_const(products)[entries[i].index];
-                        return record.regionOrigin == Type::Unknown &&
-                               record.genericOrigin == origin &&
-                               record.genericArguments == arguments;
-                      }))
+  if (auto existing = findIndexed(
+          candidates(&LookupData::genericInstances, origin,
+                     ImportedTypeQuery{ImportedTypeQuery::Kind::GenericExact,
+                                       {.key = arguments, .payload = origin}}),
+          [&](std::size_t i) {
+            if (entries[i].kind != EntryKind::Product)
+              return false;
+            const auto &record = std::as_const(products)[entries[i].index];
+            return record.regionOrigin == Type::Unknown &&
+                   record.genericOrigin == origin &&
+                   record.genericArguments == arguments;
+          }))
     return *existing;
   // Interning below can reallocate the product table, so keep a copy.
   const auto source = product(origin);
@@ -580,7 +581,11 @@ Type TypeStore::arrayType(Type payload, Type count) {
   syncLookup();
   const std::vector<Type> component{payload};
   if (auto existing = findIndexed(
-          candidates(&LookupData::aggregates, component), [&](std::size_t i) {
+          candidates(&LookupData::aggregates, component,
+                     ImportedTypeQuery{ImportedTypeQuery::Kind::Aggregate,
+                                       {.aggregateKind = AggregateKind::Array,
+                                        .key = component}}),
+          [&](std::size_t i) {
             if (entries[i].kind != EntryKind::Product)
               return false;
             const auto &record = std::as_const(products)[entries[i].index];
