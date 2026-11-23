@@ -220,5 +220,32 @@ fn main(): i32 {
             value += 1
         }
     }
+    for lower in [2, 5, 6, 12, 72, 136] {
+        for upper in [2, 5, 6, 12, 72, 136] {
+            var left = alloc.btree.new<i32, i32>()
+            var right = alloc.btree.new<i32, i32>()
+            var key = 0
+            while key < lower {
+                let _ = left.insert(key + 0, key + 0)
+                key += 1
+            }
+            while key < lower + upper {
+                let _ = right.insert(key + 0, key + 0)
+                key += 1
+            }
+            if (lower + upper) % 2 == 0 {
+                left.append(mut right)
+            } else {
+                right.append(mut left)
+                core.mem.swap(mut left, mut right)
+            }
+            if left.len() != (lower + upper) as usize { return 53 }
+            while key > 0 {
+                key -= 1
+                if left.pop_last() != present((key + 0, key + 0)) { return 54 }
+            }
+            if !left.is_empty() { return 55 }
+        }
+    }
     0
 }

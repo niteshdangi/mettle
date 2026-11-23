@@ -671,6 +671,13 @@ destroyed. Conservative work is O((n+m) log(n+m+1)), with allocation allowed.
 Allocator clones/transferred nodes must remain compatible with their
 original allocations.
 
+For strictly disjoint nonempty ranges and compatible allocators, append joins
+the trees at matching heights using a boundary entry as separator. Only the
+join path and its immediate siblings change; all other subtrees transfer intact.
+The join restores minimum occupancy, parent links and subtree counts before
+releasing detached nodes. Its work is logarithmic in the combined size,
+excluding allocator and payload effects.
+
 With compatible allocators, splitting at/below the minimum transfers the whole
 tree without allocating nodes; splitting above the maximum leaves it untouched.
 General splits compare and allocate a boundary spine before modifying links,

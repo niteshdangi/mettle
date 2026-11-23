@@ -1023,6 +1023,120 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
 }
 
 extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
+    mut unsafe fn join_disjoint(mut other: SortedMap<K, V, A>, other_first: bool): Unit {
+        let total = self.len + other.len
+        let middle = if other_first {
+            let at = last_pos(other.root)
+            other.take_entry(at.0, at.1)
+        } else {
+            let at = first_pos(other.root)
+            other.take_entry(at.0, at.1)
+        }
+        if other.len == 0usize {
+            let _ = self.insert(middle.key, middle.value)
+            return ()
+        }
+        var left = if other_first { other.root } else { self.root }
+        var right = if other_first { self.root } else { other.root }
+        var left_level = left
+        var right_level = right
+        while !(*left_level).leaf && !(*right_level).leaf {
+            left_level = node_child(left_level, 0usize)
+            right_level = node_child(right_level, 0usize)
+        }
+        let a = core.ptr.from_mut(self.a)
+        var parent = null_node<K, V>()
+        var pos = 0usize
+        var root = null_node<K, V>()
+        if (*left_level).leaf && (*right_level).leaf {
+            parent = self.join_node(a, false)
+            set_child(parent, 0usize, left)
+            set_child(parent, 1usize, right)
+            (*parent).len = 1usize
+            root = parent
+        } else {
+            let append_right = !(*left_level).leaf
+            var extra = if append_right { left_level } else { right_level }
+            var levels = 0usize
+            while !(*extra).leaf {
+                extra = node_child(extra, 0usize)
+                levels += 1usize
+            }
+            var tall = if append_right { left } else { right }
+            if (*tall).len == max_entries() {
+                let sibling = self.join_node(a, (*tall).leaf)
+                var sibling_guard = CloneNodeGuard(a, sibling, 0usize, 0usize)
+                let top = self.join_node(a, false)
+                set_child(top, 0usize, tall)
+                split_into(top, 0usize, sibling)
+                sibling_guard.node = null_node<K, V>()
+                tall = top
+                levels += 1usize
+                if append_right == other_first {
+                    other.root = top
+                } else {
+                    self.root = top
+                }
+            }
+            root = tall
+            while levels > 0usize {
+                var at = if append_right { (*tall).len } else { 0usize }
+                var child = node_child(tall, at)
+                if levels == 1usize {
+                    parent = tall
+                    if append_right {
+                        left = child
+                        pos = at
+                    } else {
+                        right = child
+                        let count = (*parent).len
+                        copy_entries(node_entry(parent, 0usize), node_entry(parent, 1usize), count)
+                        copy_links((*parent).children, (*parent).children.add(1usize), count + 1usize)
+                    }
+                    set_child(parent, pos, left)
+                    set_child(parent, pos + 1usize, right)
+                    (*parent).len += 1usize
+                    break
+                }
+                if (*child).len == max_entries() {
+                    let sibling = self.join_node(a, (*child).leaf)
+                    split_into(tall, at, sibling)
+                    if append_right { at += 1usize }
+                    child = node_child(tall, at)
+                }
+                tall = child
+                levels -= 1usize
+            }
+        }
+        core.ptr.write(node_entry(parent, pos), middle)
+        other.root = null_node<K, V>()
+        other.len = 0usize
+        self.root = root
+        self.len = total
+        var detached = null_node<K, V>()
+        if (*left).len < min_entries() || (*right).len < min_entries() {
+            if (*left).len + (*right).len + 1usize <= max_entries() {
+                detached = self.merge_children(parent, pos)
+            } else {
+                if (*left).len < min_entries() {
+                    while (*left).len < min_entries() { borrow_right(parent, pos) }
+                } else {
+                    while (*right).len < min_entries() { borrow_left(parent, pos + 1usize) }
+                }
+            }
+        }
+        recount_path(parent)
+        self.rebalance(parent)
+        if detached != null_node<K, V>() { free_node<K, V, A>(a, detached) }
+    }
+
+    unsafe fn join_node(a: ptr<mut A>, leaf: bool): ptr<mut Node<K, V>> {
+        match capture alloc_node<K, V, A>(a, leaf) {
+            success(node) => node,
+            failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
+        }
+    }
+
     pub mut fn append(mut other: SortedMap<K, V, A>): Unit {
         if other.len == 0usize { return () }
         if self.a.is_compatible(read other.a) {
@@ -1032,6 +1146,24 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                 other.root = null_node<K, V>()
                 other.len = 0usize
                 return ()
+            }
+            let separated = unsafe {
+                let low = first_pos(self.root)
+                let high = last_pos(self.root)
+                let other_low = first_pos(other.root)
+                let other_high = last_pos(other.root)
+                if (*node_entry(high.0, high.1)).key.cmp((*node_entry(other_low.0, other_low.1)).key).is_lt() {
+                    present(false)
+                } else if (*node_entry(other_high.0, other_high.1)).key.cmp((*node_entry(low.0, low.1)).key).is_lt() {
+                    present(true)
+                } else { none }
+            }
+            match separated {
+                present(other_first) => {
+                    unsafe { self.join_disjoint(mut other, other_first) }
+                    return ()
+                },
+                none => {}
             }
             let total = self.len + other.len
             var plan = super.vec.with_capacity<u8>(total)
