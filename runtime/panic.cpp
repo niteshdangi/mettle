@@ -146,7 +146,7 @@ extern "C" void mettle_rt_cleanup(void *context, MettleCleanup cleanup,
 extern "C" void mettle_rt_replace(void *context, MettleCleanup destroyOld,
                                   MettleAction install) {
   try {
-    mettle_rt_cleanup(context, destroyOld, mettle_rt_panicking());
+    mettle_rt_cleanup(context, destroyOld, 0);
   } catch (...) {
     installReplacement(context, install);
     throw;

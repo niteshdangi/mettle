@@ -1950,6 +1950,12 @@ post-optimization LLVM verification instead of verifying once more in the
 driver. In 16 paired P05 warm rebuilds with both native objects cached,
 the median paired saving was 19.15 ms and all paired executables were
 byte-identical. This does not measure a first-application build speedup.
+Replacement cleanup now checks panic state only inside the cleanup runtime.
+For 16,384 one-byte `LineWriter` writes with preallocated buffers, loop
+medians were 1.849 / 1.603 ms (0.246 ms paired saving across 75 trials);
+Rust took 0.066 ms. In a separate 90-pair P05 runtime comparison, the
+median paired change was 0.028 ms slower, with a resampled 95% interval
+spanning zero (−0.123 to +0.167 ms).
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
