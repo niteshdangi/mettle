@@ -390,25 +390,35 @@ int main() {
     descriptor.declaration = 7;
     auto second = producer.erasedType(descriptor);
     auto maps = symbolMaps();
-    maps.resolve =
-        [destination](SymbolKind kind,
-                      std::string_view name) -> std::optional<std::uint32_t> {
+    unsigned resolutions = 0;
+    maps.resolve = [destination, &resolutions](
+                       SymbolKind kind,
+                       std::string_view name) -> std::optional<std::uint32_t> {
+      ++resolutions;
       if (kind == SymbolKind::Interface &&
           (name == symbolName(kind, 3) || name == symbolName(kind, 7)))
         return destination;
       return {};
     };
     auto retained = std::make_shared<const TypeGraphSymbols>(maps);
-    auto encoded = exportTypeGraph(producer, std::array{first, second}, maps,
-                                   ValidationMode::OnDemand);
+    std::vector<Type> roots{first, second};
+    for (unsigned i = 0; i < 128; ++i) {
+      descriptor.declaration = i % 2 ? 3 : 7;
+      descriptor.arguments = {producer.constant(Type::Usize, i)};
+      roots.push_back(producer.erasedType(descriptor));
+    }
+    auto encoded =
+        exportTypeGraph(producer, roots, maps, ValidationMode::OnDemand);
     expect(bool(encoded), encoded.error);
     TypeStore consumer;
     auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
                                     ValidationMode::OnDemand, retained);
     expect(bool(imported), imported.error);
     descriptor.declaration = destination;
+    descriptor.arguments.clear();
     expect(imported.roots[0] == imported.roots[1] &&
-               consumer.erasedType(descriptor) == imported.roots[0],
+               consumer.erasedType(descriptor) == imported.roots[0] &&
+               resolutions == 2,
            "resolved symbol aliases share one canonical type identity");
   }
   {
@@ -544,8 +554,11 @@ int main() {
     auto used = producer.pointerType(Type::I32, ParameterMode::Read);
     auto unused = producer.pointerType(Type::Bool, ParameterMode::Read);
     auto retained = std::make_shared<const TypeGraphSymbols>();
-    auto encoded = exportTypeGraph(producer, std::array{used, unused},
-                                   *retained, ValidationMode::OnDemand);
+    std::vector<Type> roots{used, unused};
+    for (unsigned i = 0; i < 128; ++i)
+      roots.push_back(producer.constant(Type::Usize, i));
+    auto encoded =
+        exportTypeGraph(producer, roots, *retained, ValidationMode::OnDemand);
     expect(bool(encoded), encoded.error);
     auto indexOffset = 36 + u32(encoded.bytes, 16) + 4 * u32(encoded.bytes, 24);
     auto table = indexOffset + 4;

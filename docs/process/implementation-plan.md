@@ -1708,6 +1708,33 @@ starve an interrupted PLT instruction; its repeated identical samples are not
 reliable phase weights. Non-sampling semantic-edit phase traces are in
 `contexts/phases-miss.log`; debugger subprocess timing is not benchmark data.
 
+The next admission batch targets the measured 34-38 ms compact type-graph
+import. Independent projection validation can use worker-local readers and
+arenas, retaining archive-order symbol resolution, complete lookup matching,
+canonical alias checks and all-or-nothing publication. `metadata/type_graph.cpp` now validates projections with worker-local arenas
+and ordered symbol resolution. Fixed-width symbolic-key relocations avoid
+parsing symbol-bearing projections again after resolution; full canonical
+comparison still handles fingerprint collisions and aliases.
+Expanded existing graph cases cover cross-worker aliases, once-only resolver
+callbacks and unused-key/projection transaction failures. Optimized, ASan/UBSan
+and TSan graph CTests pass; library declaration/archive CTests and both-profile
+native demand/inline-identity package cases pass. ThinLTO and scalar-decoder
+trials established no useful application-build gain and are not selected.
+
+Seven randomized paired P04 application samples against `be774415` measure
+standalone builds 380.7 -> 306.5 ms, 19.5% faster, versus Rust at 237.9 ms:
+still 1.29 times slower. Checks measure 208.8 -> 189.2 ms versus Rust's 17.7 ms.
+Explicit resident builds measure 193.8 -> 174.9 ms; they do not establish
+fresh-process parity. Native metadata and both core/alloc object archives hit
+cache; the changed application reuses 30 machine units and generates one.
+Priming is outside timing, outputs agree and generated `.text` bytes agree.
+Evidence: `~/w/anal/perf-application-parity-20261123/projections-final/`;
+compiler SHA-256
+`26202cef46fe8ba4cc23e36771cf3621b30986a42f5cea9e79e13353a6dd67aa`.
+This batch is focused-verified, not I14 qualification. Fresh-process parity
+remains open; next inspect optimized object-unit partitioning, then remaining
+archive/declaration admission. No optimization or validation contract changed.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

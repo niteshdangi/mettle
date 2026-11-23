@@ -2,12 +2,14 @@
 #include "support/limits.h"
 #include <algorithm>
 #include <bit>
+#include <exception>
 #include <limits>
 #include <map>
 #include <memory_resource>
 #include <mutex>
 #include <set>
 #include <stdexcept>
+#include <thread>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
@@ -233,6 +235,12 @@ struct Graph {
   }
 };
 struct Writer : Fields<Writer> {
+  struct SymbolFixup {
+    std::size_t offset;
+    SymbolKind kind;
+    std::uint32_t index;
+    unsigned width;
+  };
   Graph *graph = nullptr;
   const TypeGraphSymbols *symbols = nullptr;
   std::vector<std::uint8_t> bytes;
@@ -240,6 +248,7 @@ struct Writer : Fields<Writer> {
   std::uint64_t *fingerprint = nullptr;
   std::vector<Type> *typeReferences = nullptr;
   const std::function<Type(Type)> *typeMapper = nullptr;
+  std::vector<SymbolFixup> *symbolFixups = nullptr;
   bool omitCallableNames = false;
   Writer() = default;
   Writer(Graph &graph, const TypeGraphSymbols &symbols)
@@ -359,6 +368,8 @@ struct Writer : Fields<Writer> {
   }
   void symbol(SymbolKind kind, std::uint32_t index) {
     if (!graph) {
+      if (symbolFixups)
+        symbolFixups->push_back({bytes.size(), kind, index, 4});
       u32(index);
       return;
     }
@@ -2394,6 +2405,9 @@ void writeCanonicalKey(Writer &key, const Definition &definition) {
           key.omitCallableNames = false;
         } else if constexpr (std::is_same_v<T, ErasedType> ||
                              std::is_same_v<T, CompactErased>) {
+          if (key.symbolFixups)
+            key.symbolFixups->push_back(
+                {key.bytes.size(), SymbolKind::Interface, r.declaration, 8});
           key(r.declaration, r.arguments);
           std::vector<TypeBinding> associated(r.associated.begin(),
                                               r.associated.end());
@@ -3756,15 +3770,19 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     std::unordered_set<std::string_view> identities;
     bool uniqueKeys = true;
     std::size_t memberships = 0;
-    LookupReferences admissionReferences;
     FlatTypeEdges edges;
-    std::vector<bool> regional;
-    std::vector<Type> canonicalReferences;
+    std::vector<std::uint8_t> regional, hasIdentity;
     std::vector<std::uint64_t> admittedFingerprints;
-    std::vector<std::uint32_t> symbolicIdentities;
+    struct SymbolicKey {
+      std::uint32_t ordinal;
+      std::vector<std::uint8_t> bytes;
+      std::vector<Writer::SymbolFixup> symbols;
+    };
+    std::vector<SymbolicKey> symbolicKeys;
     if (demand) {
       edges.offsets.reserve(ids.size() + 1);
       regional.resize(ids.size());
+      hasIdentity.resize(ids.size());
       admittedFingerprints.resize(ids.size());
       for (std::size_t i = 0; i < deferred->regions.size(); ++i)
         deferred->regionOrdinals.emplace(deferred->regions[i].index(),
@@ -3798,15 +3816,6 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
             return found->second;
           },
           [](std::uint32_t) -> std::optional<std::string_view> { return {}; }};
-      admissionReferences = deferred->references;
-      admissionReferences.interface =
-          [&](std::uint32_t declaration) -> std::optional<std::string_view> {
-        const auto &names = reader.pendingSymbols[static_cast<std::size_t>(
-            SymbolKind::Interface)];
-        if (declaration >= names.size())
-          return {};
-        return names[declaration];
-      };
     }
     for (std::uint32_t i = 0; i < header.types; ++i) {
       const auto identityBegin = reader.offset;
@@ -3820,7 +3829,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       if (header.indexed) {
         std::span<const std::uint8_t> payload;
         if (demand) {
-          auto projection = framedDefinition(reader, definition);
+          auto projection = reader.block();
           slice.projectionOffset =
               static_cast<std::size_t>(projection.data() - bytes.data());
           slice.projectionLength = projection.size();
@@ -3838,7 +3847,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       }
       slice.nominal = nominal(definition);
       deferred->records.push_back(slice);
-      if (slice.nominal != identity.has_value())
+      if (!demand && slice.nominal != identity.has_value())
         reject("missing or unexpected logical definition identity");
       if (identity) {
         validIdentity(*identity,
@@ -3851,52 +3860,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
         result.definitions.push_back({std::move(*identity), ids[i]});
       }
       if (demand) {
-        auto view = std::visit(
-            [](auto &record) -> CompactDefinitionView { return &record; },
-            definition);
-        auto index = compactIndex(view, *reader.arena);
-        auto product = definitionRecord<ImportedProduct>(view);
-        auto groups =
-            std::span(admission.groups)
-                .subspan(admission.offsets[i],
-                         admission.offsets[i + 1] - admission.offsets[i]);
-        lookupQueries(
-            deferred->kinds[i], index,
-            product ? product->descriptor.name : std::string_view{},
-            [&](const ImportedTypeQuery &query) {
-              if (!std::any_of(groups.begin(), groups.end(),
-                               [&](std::uint32_t group) {
-                                 auto key = deferred->lookup.group(group).key;
-                                 if (key.front() !=
-                                     static_cast<std::uint8_t>(query.kind))
-                                   return false;
-                                 LookupKeyMatch match{key};
-                                 return writeLookupKey(match, query,
-                                                       admissionReferences) &&
-                                        match.exact();
-                               }))
-                reject("type lookup index does not match projection");
-              ++memberships;
-            });
-        if (!slice.nominal) {
-          auto callable = definitionRecord<CallableType>(view);
-          const bool symbolic =
-              deferred->kinds[i] == ImportedTypeKind::Erased ||
-              (callable && callable->function >= 0);
-          if (symbolic)
-            symbolicIdentities.push_back(i);
-          regional[i] = index.regionOrigin != Type::Unknown;
-          canonicalReferences.clear();
-          auto &fingerprint = admittedFingerprints[i];
-          fingerprint = 14695981039346656037ull;
-          canonicalKey(view, &canonicalReferences, nullptr,
-                       symbolic ? nullptr : &fingerprint);
-          for (auto reference : canonicalReferences)
-            if (reference.index() >= builtinTypeCount)
-              edges.targets.push_back(graphIndex(ids, reference));
-        }
-        edges.offsets.push_back(edges.targets.size());
-        reader.arena->reset();
+        hasIdentity[i] = identity.has_value();
       } else
         definitions.push_back(std::visit(
             [&](auto &record) -> CompactDefinitionView {
@@ -3915,6 +3879,155 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     }
     if (reader.remaining())
       reject("trailing bytes in type graph");
+    if (demand) {
+      struct Projections {
+        std::array<std::vector<std::string_view>, Reader::symbolKinds> symbols;
+        FlatTypeEdges edges;
+        std::vector<SymbolicKey> symbolic;
+        std::size_t memberships = 0;
+        std::exception_ptr exception;
+      };
+      const auto count = ids.size();
+      const std::size_t workers =
+          count < 64 ? 1
+                     : std::max<std::size_t>(
+                           1, std::min<std::size_t>(
+                                  {8, std::thread::hardware_concurrency(),
+                                   count / 64 + 1}));
+      std::vector<Projections> projections(workers);
+      std::vector<std::string> failures(count);
+      auto validate = [&](std::size_t worker) {
+        try {
+          auto &result = projections[worker];
+          CompactReader decoder({}, symbols, header);
+          decoder.types = deferred->types;
+          decoder.regions = deferred->regions;
+          decoder.universes = deferred->universes;
+          auto references = deferred->references;
+          references.interface = [&](std::uint32_t declaration)
+              -> std::optional<std::string_view> {
+            const auto &names = decoder.pendingSymbols[static_cast<std::size_t>(
+                SymbolKind::Interface)];
+            if (declaration >= names.size())
+              return {};
+            return names[declaration];
+          };
+          std::vector<Type> canonicalReferences;
+          const auto begin = count * worker / workers;
+          const auto end = count * (worker + 1) / workers;
+          result.edges.offsets.reserve(end - begin + 1);
+          for (auto i = begin; i < end; ++i) {
+            try {
+              auto &slice = deferred->records[i];
+              decoder.bytes =
+                  bytes.subspan(slice.projectionOffset, slice.projectionLength);
+              decoder.offset = 0;
+              auto definition = compactDefinitionFor(deferred->kinds[i]);
+              std::visit([&](auto &value) { decoder(value); }, definition);
+              if (decoder.remaining())
+                reject("trailing bytes in an indexed type record");
+              slice.nominal = nominal(definition);
+              if (slice.nominal != bool(hasIdentity[i]))
+                reject("missing or unexpected logical definition identity");
+              auto view = std::visit(
+                  [](auto &record) -> CompactDefinitionView { return &record; },
+                  definition);
+              auto index = compactIndex(view, *decoder.arena);
+              auto product = definitionRecord<ImportedProduct>(view);
+              auto groups =
+                  std::span(admission.groups)
+                      .subspan(admission.offsets[i],
+                               admission.offsets[i + 1] - admission.offsets[i]);
+              lookupQueries(
+                  deferred->kinds[i], index,
+                  product ? product->descriptor.name : std::string_view{},
+                  [&](const ImportedTypeQuery &query) {
+                    if (!std::any_of(
+                            groups.begin(), groups.end(),
+                            [&](std::uint32_t group) {
+                              auto key = deferred->lookup.group(group).key;
+                              if (key.front() !=
+                                  static_cast<std::uint8_t>(query.kind))
+                                return false;
+                              LookupKeyMatch match{key};
+                              return writeLookupKey(match, query, references) &&
+                                     match.exact();
+                            }))
+                      reject("type lookup index does not match projection");
+                    ++result.memberships;
+                  });
+              if (!slice.nominal) {
+                auto callable = definitionRecord<CallableType>(view);
+                const bool symbolic =
+                    deferred->kinds[i] == ImportedTypeKind::Erased ||
+                    (callable && callable->function >= 0);
+                regional[i] = index.regionOrigin != Type::Unknown;
+                canonicalReferences.clear();
+                auto &fingerprint = admittedFingerprints[i];
+                fingerprint = 14695981039346656037ull;
+                SymbolicKey symbolicKey{static_cast<std::uint32_t>(i), {}, {}};
+                Writer key;
+                key.discardBytes = !symbolic;
+                key.typeReferences = &canonicalReferences;
+                key.fingerprint = symbolic ? nullptr : &fingerprint;
+                key.symbolFixups = symbolic ? &symbolicKey.symbols : nullptr;
+                writeCanonicalKey(key, view);
+                if (symbolic) {
+                  symbolicKey.bytes = std::move(key.bytes);
+                  result.symbolic.push_back(std::move(symbolicKey));
+                }
+                for (auto reference : canonicalReferences)
+                  if (reference.index() >= builtinTypeCount)
+                    result.edges.targets.push_back(graphIndex(ids, reference));
+              }
+              result.edges.offsets.push_back(result.edges.targets.size());
+              decoder.arena->reset();
+            } catch (const InvalidGraph &error) {
+              failures[i] = error.message;
+              break;
+            }
+          }
+          result.symbols = std::move(decoder.pendingSymbols);
+        } catch (...) {
+          projections[worker].exception = std::current_exception();
+        }
+      };
+      std::vector<std::jthread> threads;
+      for (std::size_t worker = 1; worker < workers; ++worker)
+        threads.emplace_back(validate, worker);
+      validate(0);
+      for (auto &thread : threads)
+        thread.join();
+      for (const auto &projection : projections)
+        if (projection.exception)
+          std::rethrow_exception(projection.exception);
+      for (const auto &failure : failures)
+        if (!failure.empty())
+          reject(failure);
+      for (auto &projection : projections) {
+        std::array<std::size_t, Reader::symbolKinds> symbolBases;
+        for (std::size_t kind = 0; kind < Reader::symbolKinds; ++kind) {
+          symbolBases[kind] = reader.pendingSymbols[kind].size();
+          reader.pendingSymbols[kind].insert(reader.pendingSymbols[kind].end(),
+                                             projection.symbols[kind].begin(),
+                                             projection.symbols[kind].end());
+        }
+        const auto offset = edges.targets.size();
+        for (std::size_t i = 1; i < projection.edges.offsets.size(); ++i)
+          edges.offsets.push_back(offset + projection.edges.offsets[i]);
+        edges.targets.insert(edges.targets.end(),
+                             projection.edges.targets.begin(),
+                             projection.edges.targets.end());
+        for (auto &key : projection.symbolic) {
+          for (auto &symbol : key.symbols)
+            symbol.index = static_cast<std::uint32_t>(
+                symbolBases[static_cast<std::size_t>(symbol.kind)] +
+                symbol.index);
+          symbolicKeys.push_back(std::move(key));
+        }
+        memberships += projection.memberships;
+      }
+    }
     if (demand && memberships != deferred->lookup.membershipCount)
       reject("incomplete or extraneous type lookup index");
     deferred->symbols = reader.resolveSymbols();
@@ -3948,14 +4061,18 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
         remapCompactSymbols(remapped, decoder.resolveSymbols());
         return definition;
       };
-      for (auto i : symbolicIdentities) {
-        CompactReader decoder({}, callbacks, header, reader.arena);
-        auto definition = projection(i, decoder);
-        Writer key;
-        key.discardBytes = true;
-        key.fingerprint = &admittedFingerprints[i];
-        writeCanonicalKey(key, definition);
-        reader.arena->reset();
+      for (auto &key : symbolicKeys) {
+        for (const auto &symbol : key.symbols) {
+          const std::uint64_t value =
+              deferred->symbols[static_cast<std::size_t>(symbol.kind)].at(
+                  symbol.index);
+          for (unsigned byte = 0; byte < symbol.width; ++byte)
+            key.bytes[symbol.offset + byte] =
+                static_cast<std::uint8_t>(value >> (byte * 8));
+        }
+        auto &fingerprint = admittedFingerprints[key.ordinal];
+        for (auto byte : key.bytes)
+          fingerprint = (fingerprint ^ byte) * 1099511628211ull;
       }
       auto fullKey = [&](std::size_t i) {
         CompactReader decoder({}, callbacks, header);

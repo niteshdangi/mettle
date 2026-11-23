@@ -472,6 +472,12 @@ Initial semantic admission validates the complete type/declaration index
 inventory and IR query directory. Empty type stores directly adopt validated graph
 records only when structural identities need no canonical remapping; duplicate
 keys, existing consumer types and logical lookups retain canonical merging.
+Indexed projection admission uses independent readers and arenas for contiguous
+worker ranges. Workers only inspect immutable archive/index data and write
+disjoint record facts. Symbol callbacks run after joining, in archive order;
+complete lookup membership, canonical identities and regional cycles must pass
+before the candidate graph is published. Worker failures retain transaction
+atomicity, and exceptional exits join started workers before releasing backing.
 Indexed type graph v5 validates lookup keys directly against producer bytes
 instead of serializing each query again. Canonical integer hashing and encoding
 consume complete integer words rather than repeating byte-wise buffer/hash
