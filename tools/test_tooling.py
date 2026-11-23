@@ -211,6 +211,30 @@ class LibraryRunnerTests(unittest.TestCase):
 
 
 class SchedulingTests(unittest.TestCase):
+    def test_source_discovery_does_not_parse_filtered_or_unowned_files(self):
+        with tempfile.TemporaryDirectory(dir=OUTPUT) as temporary:
+            root = Path(temporary)
+            run = root / "run"
+            run.mkdir()
+            (run / "wanted.mt").write_text("fn main(): i32 { 0 }\n")
+            (run / "ignored.mt").write_text("// unknown: invalid\n")
+            self.assertEqual(
+                [case.name for case in source_runner.load_cases("run", root, pattern="^wanted$")],
+                ["wanted"])
+            (run / "ignored.mt").unlink()
+            for index in range(7):
+                ignored = next(f"ignored-{number}" for number in range(100)
+                               if not scheduling.select(
+                                   source_runner.PROFILES, lambda profile: f"ignored-{number}:{profile}",
+                                   index, 7))
+                path = run / f"{ignored}.mt"
+                path.write_text("// unknown: invalid\n")
+                cases = source_runner.load_cases("run", root, shard_index=index, shard_count=7)
+                expected = bool(scheduling.select(
+                    source_runner.PROFILES, lambda profile: f"wanted:{profile}", index, 7))
+                self.assertEqual([case.name for case in cases], ["wanted"] if expected else [])
+                path.unlink()
+
     def test_source_imported_diagnostics_keep_exact_error_contract(self):
         root = OUTPUT / "source-imported-diagnostics"
         root.mkdir(parents=True, exist_ok=True)

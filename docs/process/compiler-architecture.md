@@ -468,7 +468,17 @@ remaps, never a diagnostics instance or caller stack.
 Archive sections share immutable storage. Replacing an entry releases its
 backing when no active import still owns it.
 
-Initial semantic admission validates the complete type/declaration index
+The approved, not yet implemented query-driven native admission contract verifies
+complete archive integrity and structural
+index bounds before lookup. Declared canonical identities and index memberships
+are authoritative; each queried projection must match them before its facts are
+published, and demanded descriptors and their dependencies must pass semantic
+validation before use. Unused malformed record contents need not fail an import.
+Eager admission retains complete semantic validation. Canonical aliases, lookup
+completeness and regional cycles remain checked at the relevant publication
+boundary; a lazy path cannot publish an unchecked proof or executable IR.
+
+The existing indexed-v5 path validates the complete type/declaration index
 inventory and IR query directory. Empty type stores directly adopt validated graph
 records only when structural identities need no canonical remapping; duplicate
 keys, existing consumer types and logical lookups retain canonical merging.

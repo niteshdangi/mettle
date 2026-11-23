@@ -103,7 +103,8 @@ def parse_exit(value, name):
 
 def parse_case(path, kind):
     name = path.stem
-    options, header_lines = directives.parse(path.read_text())
+    text = path.read_text()
+    options, header_lines = directives.parse(text)
     unknown = set(options) - KEYS[kind]
     if unknown:
         raise ValueError(f"{name}: unknown {kind} directive(s) {sorted(unknown)}")
@@ -111,7 +112,7 @@ def parse_case(path, kind):
         options, "profiles", "debug release" if kind == "run" else "debug", name).split()))
     if not profiles or not set(profiles) <= set(PROFILES):
         raise ValueError(f"{name}: profiles must be a non-empty subset of {PROFILES}")
-    if ("truncated" in options) == path.read_bytes().endswith(b"\n"):
+    if ("truncated" in options) == text.endswith("\n"):
         raise ValueError(f"{name}: a `truncated` directive and a missing final newline "
                          "must go together")
     case = Case(name, path, kind, profiles, shlex.split(single(options, "flags", "", name)),
@@ -155,10 +156,18 @@ def parse_case(path, kind):
     return case
 
 
-def load_cases(kind, root=ROOT, arch=None):
-    """Parses tests/source/<kind>/*.mt, keeping the cases that apply to `arch` (default: host)."""
+def load_cases(kind, root=ROOT, arch=None, pattern=None, shard_index=0, shard_count=1):
+    """Filters paths before parsing cases for the requested architecture and possible shard profiles."""
     arch = arch or host_arch()
-    cases = [parse_case(path, kind) for path in sorted((Path(root) / kind).glob("*.mt"))]
+    paths = sorted((Path(root) / kind).glob("*.mt"))
+    if pattern:
+        selected = re.compile(pattern)
+        paths = [path for path in paths if selected.search(path.stem)]
+    if shard_count != 1 or shard_index:
+        paths = sorted({path for path, _ in scheduling.select(
+            [(path, profile) for path in paths for profile in PROFILES],
+            lambda item: f"{item[0].stem}:{item[1]}", shard_index, shard_count)})
+    cases = [parse_case(path, kind) for path in paths]
     return [case for case in cases if case.arch in (None, arch)]
 
 
@@ -246,7 +255,7 @@ def run_suite(kind, executable, output, jobs, pattern, shard_index=0, shard_coun
     if shard_count > 1:
         directory /= f"shard-{shard_index}"
     directory.mkdir(parents=True, exist_ok=True)
-    cases = [case for case in load_cases(kind) if not pattern or re.search(pattern, case.name)]
+    cases = load_cases(kind, pattern=pattern, shard_index=shard_index, shard_count=shard_count)
     if not cases:
         raise SystemExit(f"no {kind} cases selected")
     cases = scheduling.select(

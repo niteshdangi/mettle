@@ -1765,9 +1765,42 @@ parity remains open. Outputs agree. Evidence:
 Symbol-ordinal wire encoding and parallel header-directory scan experiments
 established no material gain and were discarded.
 Focused graph, declaration, archive and module regressions pass; final graph
-and declaration regressions also pass ASan/UBSan and TSan. Next, remove runtime
-replacement work from empty owned destinations without changing partial-value
-cleanup or replacement-panic installation.
+and declaration regressions also pass ASan/UBSan and TSan. Replacement-glue trials
+did not materially improve these application builds and were discarded.
+
+The owner approved query-driven validation of unused native metadata contents.
+An indexed-v6 trial was implemented, measured and discarded: seven randomized
+triples regressed P03/P04/P05 checks from 153.2/155.9/189.8 ms to
+181.4/185.3/246.0 ms and builds from 281.6/288.9/505.5 ms to
+310.3/316.7/566.2 ms. Evidence:
+`~/w/anal/perf-query-driven-admission-20261124-r3/results.json`.
+The cause of that regression was not isolated; declaration demand remains a
+hypothesis, not a finding. Selected type metadata remains indexed v5.
+Whole-archive integrity, structural bounds and validation before publishing
+queried facts or executable code remain required. Query-driven declaration/type
+admission and fresh-check parity are still open.
+
+P05 preparation performs substantial repeated specialization optimization before
+the existing machine-unit lookup. A trace of its actual root module using pinned
+LLVM `opt` records 167.6 ms of function pipelines, of which `main` and `main.body`
+account for 39.7 ms; numerous map specialization bodies and wrappers each cost
+5-8 ms. Initial GlobalDCE reduces 287 definitions to 251 but does not reduce
+aggregate function pipeline time. Evidence:
+`~/w/anal/perf-p05-preparation-20261124/{root.ll,optimization.json,live-optimization.json}`.
+Dependency-correct pre-optimization reuse is not implemented. A separate
+eight-way ThinLTO tool proof invalidates every cache unit after the seed edit;
+coarse partitions are not a selected fix. The next backend action is to check
+the existing operation-family partition boundary against LLVM's dependency-aware
+cache, preserving native inline bodies and matching program behavior before
+integrating a new cache path. Shared-store incremental accounting also remains
+open.
+
+Source discovery now filters filenames and impossible shard/profile ownership
+before opening fixtures, and parses directives and the final newline from one
+read. Four focused tooling regressions pass. On this WSL checkout, one direct
+comparison for the same selected fixture measures run discovery at
+5258.5 -> 11.8 ms and fail discovery at 4150.3 -> 10.4 ms, with identical selected
+case data. These are discovery measurements, not application compiler gains.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
