@@ -15,7 +15,6 @@ public:
   std::string finish();
 
 private:
-  void block(const unsigned char *bytes);
   std::array<std::uint32_t, 8> state;
   std::array<unsigned char, 64> buffer{};
   std::uint64_t total = 0;

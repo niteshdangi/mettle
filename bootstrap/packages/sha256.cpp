@@ -127,8 +127,6 @@ Sha256::Sha256()
     : state{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
             0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19} {}
 
-void Sha256::block(const unsigned char *bytes) { blocks(state, bytes, 1); }
-
 void Sha256::update(std::string_view data) {
   total += data.size();
   auto *bytes = reinterpret_cast<const unsigned char *>(data.data());
@@ -156,21 +154,24 @@ void Sha256::update(std::string_view data) {
 }
 
 std::string Sha256::finish() {
-  auto bits = total * 8;
-  unsigned char pad = 0x80;
-  update(std::string_view(reinterpret_cast<const char *>(&pad), 1));
-  unsigned char zero = 0;
-  while (buffered != 56)
-    update(std::string_view(reinterpret_cast<const char *>(&zero), 1));
-  std::array<unsigned char, 8> length{};
-  for (std::size_t i = 0; i < 8; ++i)
-    length[i] = static_cast<unsigned char>(bits >> (56 - 8 * i));
-  update(std::string_view(reinterpret_cast<const char *>(length.data()), 8));
+  const auto bits = total * 8;
+  constexpr auto lengthOffset = 56;
+  buffer[buffered++] = 0x80;
+  if (buffered > lengthOffset) {
+    std::fill(buffer.data() + buffered, buffer.data() + buffer.size(), 0);
+    blocks(state, buffer.data(), 1);
+    buffered = 0;
+  }
+  std::fill(buffer.data() + buffered, buffer.data() + lengthOffset, 0);
+  for (std::size_t i = 0; i < sizeof(bits); ++i)
+    buffer[lengthOffset + i] = static_cast<unsigned char>(bits >> (56 - 8 * i));
+  blocks(state, buffer.data(), 1);
   static constexpr char hex[] = "0123456789abcdef";
-  std::string digest;
+  std::string digest(64, '\0');
+  std::size_t position = 0;
   for (auto word : state)
     for (int shift = 28; shift >= 0; shift -= 4)
-      digest += hex[(word >> shift) & 0xf];
+      digest[position++] = hex[(word >> shift) & 0xf];
   return digest;
 }
 } // namespace mettle::packages

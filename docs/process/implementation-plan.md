@@ -1974,6 +1974,9 @@ Moving line-flush error handling out of the buffered `LineWriter.write_some`
 path reduced the 16,384-write loop from 1.530 to 1.295 ms (0.238 ms paired
 saving across 90 pairs). The short-write retry case checks that a successful
 prefix is not written twice and the trailing bytes still flush.
+Writing SHA-256 padding by block instead of byte preserved archive digests
+and saved 3.45 / 2.07 / 4.31 ms at the paired median in 25 warm P03/P04/P05
+checks.
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17

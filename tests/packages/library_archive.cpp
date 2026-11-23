@@ -300,8 +300,12 @@ int main() {
              "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
          "SHA-256 across a padding boundary changed");
   for (const auto &[size, expected] :
-       {std::pair{56, "da2ae4d6b36748f2a318f23e7ab1dfdf45acdc9d049bd80e59de82"
+       {std::pair{55, "463eb28e72f82e0a96c0a4cc53690c571281131f672aa229e0d45"
+                      "ae59b598b59"},
+        std::pair{56, "da2ae4d6b36748f2a318f23e7ab1dfdf45acdc9d049bd80e59de82"
                       "a60895f562"},
+        std::pair{63, "29af2686fd53374a36b0846694cc342177e428d1647515f078784"
+                      "d69cdb9e488"},
         std::pair{65, "4bfd2c8b6f1eec7a2afeb48b934ee4b2694182027e6d0fc075074f"
                       "2fabb31781"},
         std::pair{4097, "a16560d668b843fb3be99ace41dbd18471f342bd3255a1d21204"
