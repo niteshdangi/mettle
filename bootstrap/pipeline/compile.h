@@ -100,6 +100,9 @@ compileWithLibraryObjects(const PreparedProgram &program,
 // Every non-generic package-owned body, independent of the program's own code.
 std::optional<ir::VerifiedProgram>
 compileLibrary(const PreparedProgram &program, Diagnostics &diagnostics);
+std::optional<ir::VerifiedProgram>
+compileLibrary(const PreparedProgram &program, Diagnostics &diagnostics,
+               const ir::Program &consumer);
 std::optional<ir::VerifiedProgram> admit(ir::Program program,
                                          Diagnostics &diagnostics);
 std::optional<ir::VerifiedProgram> compile(const Source &source,

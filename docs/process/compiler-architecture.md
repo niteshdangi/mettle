@@ -909,6 +909,25 @@ buckets with current membership, validates object digests and rebuilds malformed
 archives. Family batching avoids a target-machine/codegen setup for every small
 native function; cold unit generation and warm selective linking remain separate
 performance endpoints.
+Native code misses specialize only the consumer's requested nongeneric native
+declarations and their transitive calls, generic instances, drop helpers and
+static initializer support, not every nongeneric declaration in the archive.
+Explicit exported definitions remain roots even when referenced only through
+foreign aliases or assembly symbol names; their dependencies are instantiated
+normally. The exported-definition index supplies this inventory without
+materializing unrelated headers.
+Available-externally bodies remain demanded definitions: offering a body for
+inlining does not prove that LLVM will inline every call. The full checked
+declaration, implementation and static catalogs remain available; unused
+declarations still undergo producer semantic checking before archive publication.
+Native artifact keys include the requested declaration names and external
+symbols as well as the package's complete source/configuration identity.
+An expanded demand selects a distinct fragment; unchanged demand reuses it
+across consumer bodies. Whole-module O2 runs on that complete demanded native
+closure. Function-address identity, static storage and cleanup retain the
+existing cross-object contracts. Complete native static inventories and root
+optimization remain separate opportunities; this boundary does not claim
+fully demand-driven metadata admission.
 Cold source failures retain their original phase, source spans, related notes
 and generated-source provenance when forwarded into consumer diagnostics.
 

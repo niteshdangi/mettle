@@ -89,11 +89,11 @@ enum class Scope {
   Program,
   ProgramWithLibraryObjects,
   OptimizedProgramWithLibraryObjects,
-  Library
+  Library,
+  DemandedLibrary
 };
-std::optional<ir::Program> specialize(const ir::Program &declarations,
-                                      Diagnostics &diagnostics,
-                                      const Hooks &hooks = {},
-                                      Scope scope = Scope::Program,
-                                      Queries *queries = nullptr);
+std::optional<ir::Program>
+specialize(const ir::Program &declarations, Diagnostics &diagnostics,
+           const Hooks &hooks = {}, Scope scope = Scope::Program,
+           Queries *queries = nullptr, std::span<const std::size_t> roots = {});
 } // namespace mettle::instances

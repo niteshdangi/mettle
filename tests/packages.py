@@ -929,15 +929,21 @@ def native_core_inline_identity():
         "    0\n"
         "}\n")
     for profile in ("debug", "release"):
-        arguments = ["--library-dir", library, "--profile", profile]
+        arguments = ["--library-dir", library, "--profile", profile, "--standalone"]
         _, program = explained(first, *arguments)
         assert exit_code(program) == 0
         warm, program = explained(second, *arguments)
-        assert "library object cache hit core " in warm, warm
+        assert "library object cache miss core " in warm, warm
+        assert exit_code(program) == 0
+        original = second.read_text()
+        second.write_text(original + "\nfn changed(): i32 { 1 }\n")
+        reused, program = explained(second, *arguments)
+        assert "library object cache hit core " in reused, reused
         assert exit_code(program) == 0
         if profile == "release":
             _, program = explained(second, *arguments, "--no-cache")
             assert exit_code(program) == 0
+        second.write_text(original)
 
 
 def checked_alloc_std_reuse(profile="debug"):
@@ -1150,6 +1156,67 @@ def native_core_object_reuse():
         assert exit_code(program) == 1
         assert "library object cache miss core " in changed, changed
         edit(core, "value + 2", "value + 1")
+
+
+def native_demand_selection():
+    directory = evidence / "native-demand"
+    library = directory / "library"
+    (library / "core").mkdir(parents=True)
+    module = library / "core" / "module.mt"
+    module.write_text(
+        "fn helper(value: i32): i32 { value * 2 }\n"
+        "@inline(never)\n"
+        "pub fn first(): i32 { helper(19) }\n"
+        "@inline(never)\n"
+        "pub fn second(): i32 { first() + 4 }\n"
+        "pub fn unused(): i32 { 99 }\n")
+    first, second = directory / "first.mt", directory / "second.mt"
+    first.write_text("fn main(): i32 { core.first() - 38 }\n")
+    second.write_text("fn main(): i32 { core.second() - 42 }\n")
+    for profile in ("debug", "release"):
+        arguments = ["--library-dir", library, "--profile", profile,
+                     "--standalone"]
+        cold, program = explained(first, *arguments)
+        assert exit_code(program) == 0
+        count = re.search(r"native code demand ([0-9]+) functions", cold)
+        assert count and int(count[1]) == 2, cold
+        extended, program = explained(second, *arguments)
+        assert exit_code(program) == 0
+        count = re.search(r"native code demand ([0-9]+) functions", extended)
+        assert count and int(count[1]) == 3, extended
+        assert "library object cache miss core " in extended, extended
+        second.write_text(second.read_text() + "\nfn changed(): i32 { 1 }\n")
+        reused, program = explained(second, *arguments)
+        assert exit_code(program) == 0
+        assert "library object cache hit core " in reused, reused
+        accepted = program.read_bytes()
+        edit(module, "{ 99 }", "{ true }")
+        invoke(["build", first, *arguments, "-o", program], 1,
+               "error[type]")
+        assert program.read_bytes() == accepted
+        edit(module, "{ true }", "{ 99 }")
+        second.write_text("fn main(): i32 { core.second() - 42 }\n")
+
+    module.write_text(module.read_text() +
+                      '@export_name("native_demand_export")\n'
+                      'pub unsafe extern "C" fn exported(): i32 { helper(21) }\n')
+    exported_source = ('extern "C" {\n'
+                       '    @link_name("native_demand_export")\n'
+                       '    unsafe fn imported_export(): i32;\n'
+                       '}\n'
+                       'fn main(): i32 { core.first() + unsafe { imported_export() } - 80 }\n')
+    for profile in ("debug", "release"):
+        first.write_text(exported_source)
+        arguments = ["--library-dir", library, "--profile", profile,
+                     "--standalone"]
+        exported, program = explained(first, *arguments)
+        assert exit_code(program) == 0
+        count = re.search(r"native code demand ([0-9]+) functions", exported)
+        assert count and int(count[1]) == 3, exported
+        first.write_text(exported_source + "\nfn changed(): i32 { 1 }\n")
+        reused, program = explained(first, *arguments)
+        assert exit_code(program) == 0
+        assert "library object cache hit core " in reused, reused
 
 
 def linked_archive_changes_invalidate_executable():
@@ -3639,7 +3706,8 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          coexisting_versions, git_source, git_concurrent_output, host_target_separation,
          manifest_diagnostics, data_format, lock_structure,
          package_options_need_package, incremental_reuse, checked_core_reuse,
-         native_core_object_reuse, native_core_inline_identity, checked_alloc_std_reuse,
+         native_core_object_reuse, native_demand_selection,
+         native_core_inline_identity, checked_alloc_std_reuse,
          checked_alloc_std_release_reuse,
          checked_native_macro_reuse,
          checked_library_diagnostics, checked_constant_only_library,

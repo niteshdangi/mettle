@@ -180,10 +180,13 @@ void Queries::invalidate(std::span<const std::uint8_t> changed) {
 class Planner {
 public:
   Planner(const ir::Program &source, Diagnostics &diagnostics,
-          const Hooks &hooks, Scope scope, Queries *queries)
+          const Hooks &hooks, Scope scope, Queries *queries,
+          std::span<const std::size_t> roots)
       : source(source), diagnostics(diagnostics),
         types(std::make_shared<TypeStore>(*source.types)), hooks(hooks),
-        queries(queries), library(scope == Scope::Library),
+        queries(queries),
+        library(scope == Scope::Library || scope == Scope::DemandedLibrary),
+        demandedLibrary(scope == Scope::DemandedLibrary), roots(roots),
         externalLibraryBodies(scope == Scope::ProgramWithLibraryObjects ||
                               scope ==
                                   Scope::OptimizedProgramWithLibraryObjects),
@@ -198,9 +201,13 @@ public:
   }
   std::optional<ir::Program> run() {
     try {
+      if (demandedLibrary)
+        for (auto root : roots)
+          instance(root, {}, {});
       for (std::size_t i = 0; i < source.functions.size(); ++i) {
         if (auto index = source.deferredFunctionIndex(i)) {
-          if (index->generic || index->declarationOnly ||
+          if ((demandedLibrary && !index->exportedDefinition) ||
+              index->generic || index->declarationOnly ||
               (library ? !packageOwned(source.functionPackages, i)
                        : source.requireEntry && index->name != "main" &&
                              !index->exportedDefinition &&
@@ -208,6 +215,8 @@ public:
                              source.libraryBodies[i]))
             continue;
         }
+        if (demandedLibrary && !source.functions[i].exportedDefinition)
+          continue;
         // An executable keeps its own functions and instantiates the library
         // bodies its entry, its exports and its statics reach.
         if (source.functions[i].genericParameters.empty() &&
@@ -583,6 +592,8 @@ private:
     return result;
   }
   const bool library;
+  const bool demandedLibrary;
+  const std::span<const std::size_t> roots;
   const bool externalLibraryBodies;
   const bool optimizeLibraryBodies;
   ir::Program result;
@@ -1391,9 +1402,10 @@ private:
 std::optional<ir::Program> specialize(const ir::Program &declarations,
                                       Diagnostics &diagnostics,
                                       const Hooks &hooks, Scope scope,
-                                      Queries *queries) {
+                                      Queries *queries,
+                                      std::span<const std::size_t> roots) {
   if (!diagnostics.empty())
     return std::nullopt;
-  return Planner(declarations, diagnostics, hooks, scope, queries).run();
+  return Planner(declarations, diagnostics, hooks, scope, queries, roots).run();
 }
 } // namespace mettle::instances

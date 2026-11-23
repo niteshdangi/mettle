@@ -17,9 +17,6 @@ struct PackageObject {
   // Set for a reusable library object: the library program to lower on a miss.
   std::function<const ir::VerifiedProgram *()> library{};
 };
-// One object per checked-library package for a single hosted executable
-// without debug info, sanitizers, harness or global assembly. Each holds every
-// non-generic body of its package, so its key is that package's archive key.
 std::vector<PackageObject> libraryObjects(
     const Options &options, const BuildInputs &inputs,
     const ir::Program &program,

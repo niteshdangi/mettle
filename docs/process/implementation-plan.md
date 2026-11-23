@@ -1405,6 +1405,68 @@ Whole-I14 source freeze remains blocked. Next action: target repeated root O2
 and cold native-library production without conflating resident edit gains with
 fresh-process or Rust-parity acceptance.
 
+Demand-driven native production (2026-11-23) removes whole-library concrete
+specialization from ordinary native object misses. The consumer's nongeneric
+native declarations seed specialization; recursive calls, generic instances,
+destructors and static initializer support retain the existing planner and
+executable-admission checks. Explicit exported definitions remain roots for
+foreign aliases and assembly references, using the archive's existing export
+index rather than materializing all headers. Available-externally bodies are
+included even when
+they were offered for consumer inlining. Complete producer semantic checking,
+implementation catalogs and static inventories remain intact. Native fragment
+keys include the requested names/symbols and full package source/configuration
+identity, so an expanded demand cannot reuse an incomplete fragment.
+
+Three randomized matched P04 release pairs with independent empty compiler
+caches, identical consumer input and explicit standalone execution compare
+against `dfb84397`:
+
+| Endpoint | Before | After | Reduction |
+| --- | --- | --- | --- |
+| Complete cold build, median | 41.930 s | 23.213 s | 44.6% |
+| Generated native machine units | 1,671 | 85 | 94.9% |
+| Native archive bytes | 6,380,458 | 176,768 | 97.2% |
+| Total retained cache bytes | 86,244,756 | 80,042,210 | 7.2% |
+
+The matched P04 native closure specializes 40 functions rather than every
+nongeneric library declaration. This gain does not depend on a resident compiler
+or a previously populated native cache. Native source semantic preparation and
+the complete static inventory remain substantial cold-build work.
+
+Five matched warm-cache pairs measure standalone builds 2.4% faster for P03,
+5.2% for P04 and 1.7% slower for P05. Checks are mixed: P03 is 2.7% slower,
+P04 is 2.4% faster and P05 approximately unchanged. No general warm-build or
+check speedup is claimed. Explicit-resident builds are flat for P03 and improve
+1.5%/3.6% for P04/P05; resident checks and peak memory remain mixed. Outputs
+agree with the baseline and Rust. Runtime samples are 1.0%/5.6%/0.2% slower
+for P03/P04/P05; this is not a runtime speedup or runtime-parity qualification.
+Root optimization, emitted-code performance and fresh admission remain open
+I14 obligations, separate from the measured cold native-production gain.
+
+Focused regressions cover transitive private calls, demand expansion and reuse,
+unused-source errors and preservation of prior output, function-pointer identity,
+static mutation, generic return pointers and drops, cache corruption, and ordinary
+specialization/module admission. The small demanded-closure and resident cases
+pass ASan/UBSan; the full native pointer/drop case passes Release. The first
+candidate incorrectly omitted an available-externally allocation handler; that
+link failure is fixed by retaining every consumer-native declaration, not merely
+body-less external declarations. A foreign-alias linkage regression is fixed by
+retaining explicit exported definitions and their dependencies; the native key
+policy version invalidates fragments generated before this retention rule.
+The final Vec build and all matched workloads link successfully.
+
+Final evidence: `~/w/anal/perf-demanded-native-20261123-final/export-retention/`,
+including `results.json`, `cold-results.json` and `native-artifacts.json`.
+Focused export-retention regressions are in the parent directory's
+`export-release-regressions` and `export-sanitizer-regressions`; earlier closure,
+cache integrity and module checks remain there. The parent directory's
+`9e9aa645...` candidate predates the export-retention fix and is not final
+acceptance evidence. Final frozen compiler SHA-256:
+`808415a3bea1ac5428537b84993eed577bbd103dba650a371d4c1e799f6462c0`.
+Whole-I14 freeze remains blocked; repeated root optimization and native semantic
+preparation are still open performance obligations.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

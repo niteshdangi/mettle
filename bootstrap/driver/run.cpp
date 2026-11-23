@@ -1325,6 +1325,7 @@ int build(const Options &requested,
                                options.functionQueries.get())
            : std::nullopt;
   std::optional<std::optional<ir::VerifiedProgram>> libraryProgram;
+  const ir::Program *nativeConsumer = nullptr;
   std::vector<PackageObject> nativeObjects;
   const bool checking = options.command == "check" || options.command == "lint";
   const bool nativeDeclarations =
@@ -1332,17 +1333,22 @@ int build(const Options &requested,
   if (prepared && checkedCore && checkedCore->active() && store && !checking) {
     auto packageSources = checkedCore->packageSources();
     auto packageKeys = checkedCore->packageKeys();
-    nativeObjects =
-        libraryObjects(options, inputs, prepared->program(), packageSources,
-                       packageKeys, [&]() -> const ir::VerifiedProgram * {
-                         if (!libraryProgram) {
-                           Diagnostics libraryDiagnostics;
-                           libraryProgram.emplace(pipeline::compileLibrary(
-                               *prepared, libraryDiagnostics));
-                           libraryDiagnostics.print(source, std::cerr);
-                         }
-                         return *libraryProgram ? &**libraryProgram : nullptr;
-                       });
+    nativeObjects = libraryObjects(
+        options, inputs, prepared->program(), packageSources, packageKeys,
+        [&]() -> const ir::VerifiedProgram * {
+          if (!libraryProgram) {
+            Diagnostics libraryDiagnostics;
+            if (!nativeConsumer) {
+              libraryDiagnostics.error("internal", {},
+                                       "native object demand is unavailable");
+              libraryProgram.emplace(std::nullopt);
+            } else
+              libraryProgram.emplace(pipeline::compileLibrary(
+                  *prepared, libraryDiagnostics, *nativeConsumer));
+            libraryDiagnostics.print(source, std::cerr);
+          }
+          return *libraryProgram ? &**libraryProgram : nullptr;
+        });
   }
   auto program = prepared ? nativeDeclarations || !nativeObjects.empty()
                                 ? pipeline::compileWithLibraryObjects(
@@ -1365,6 +1371,7 @@ int build(const Options &requested,
                : 1;
   if (options.command == "check")
     return 0;
+  nativeConsumer = &program->program();
   std::vector<PackageObject> packageObjects;
   const auto &irProgram = program->program();
   // Coroutine frames are built by whichever object first uses them, so their

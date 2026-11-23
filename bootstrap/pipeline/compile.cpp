@@ -12,6 +12,7 @@
 #include "syntax/parser.h"
 #include "types/project.h"
 #include <map>
+#include <set>
 #include <tuple>
 
 mettle::ir::VerifiedProgram::VerifiedProgram(
@@ -598,7 +599,7 @@ public:
 
   static std::optional<ir::VerifiedProgram>
   specialize(const PreparedProgram &prepared, Diagnostics &diagnostics,
-             instances::Scope scope) {
+             instances::Scope scope, const ir::Program *consumer = nullptr) {
     if (!diagnostics.empty())
       return std::nullopt;
     auto &program = prepared.declarations;
@@ -752,12 +753,36 @@ public:
       call.interfaceType = call.erasedDispatch ? interface : Type::Unknown;
       return true;
     };
+    std::vector<std::size_t> roots;
+    if (consumer) {
+      std::set<std::string> required;
+      for (std::size_t i = 0; i < consumer->functions.size(); ++i)
+        if (i < consumer->functionPackages.size() &&
+            consumer->functionPackages[i].starts_with("native:"))
+          required.insert(consumer->functions[i].name);
+      for (std::size_t i = 0; i < program.functions.size() && !required.empty();
+           ++i) {
+        auto index = program.deferredFunctionIndex(i);
+        const auto &name = index ? index->name : program.functions[i].name;
+        if (required.erase(name)) {
+          if (index ? !index->declarationOnly
+                    : !program.functions[i].declarationOnly)
+            roots.push_back(i);
+        }
+      }
+      if (!required.empty()) {
+        diagnostics.error("metadata", {},
+                          "native object refers to an unknown declaration");
+        return std::nullopt;
+      }
+    }
     std::optional<instances::Queries> instanceQueries;
-    if (prepared.instances && scope != instances::Scope::Library)
+    if (prepared.instances && scope != instances::Scope::Library &&
+        scope != instances::Scope::DemandedLibrary)
       instanceQueries = *prepared.instances;
-    auto concrete =
-        instances::specialize(program, diagnostics, hooks, scope,
-                              instanceQueries ? &*instanceQueries : nullptr);
+    auto concrete = instances::specialize(
+        program, diagnostics, hooks, scope,
+        instanceQueries ? &*instanceQueries : nullptr, roots);
     if (!concrete)
       return std::nullopt;
     auto concreteTypes = std::make_shared<TypeStore>(*concrete->types);
@@ -811,6 +836,12 @@ compileWithLibraryObjects(const PreparedProgram &program,
 std::optional<ir::VerifiedProgram>
 compileLibrary(const PreparedProgram &program, Diagnostics &diagnostics) {
   return Compiler::specialize(program, diagnostics, instances::Scope::Library);
+}
+std::optional<ir::VerifiedProgram>
+compileLibrary(const PreparedProgram &program, Diagnostics &diagnostics,
+               const ir::Program &consumer) {
+  return Compiler::specialize(program, diagnostics,
+                              instances::Scope::DemandedLibrary, &consumer);
 }
 std::optional<ir::VerifiedProgram> admit(ir::Program program,
                                          Diagnostics &diagnostics) {

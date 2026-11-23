@@ -19,6 +19,7 @@
 #include <fstream>
 #include <iostream>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <unordered_map>
 
@@ -513,7 +514,8 @@ static int emitOne(const Options &options, const Source &source,
       }
       std::vector<std::string> packagePaths;
       std::vector<packages::Store::Artifact> packageArtifacts;
-      std::vector<const PackageObject *> packagesToStore;
+      std::vector<std::pair<const PackageObject *, std::string>>
+          packagesToStore;
       const bool rootUnits = options.emit == "executable" &&
                              options.emits.size() <= 1 && !options.debugInfo &&
                              options.sanitizers.empty() &&
@@ -523,6 +525,27 @@ static int emitOne(const Options &options, const Source &source,
       for (std::size_t i = 0; i < packageObjects.size(); ++i) {
         const auto &package = packageObjects[i];
         const bool native = package.identity.starts_with("native:");
+        std::string packageKey = package.key;
+        if (native) {
+          std::set<std::pair<std::string, std::string>> demand;
+          const auto &consumer = program.program();
+          for (std::size_t function = 0; function < consumer.functions.size();
+               ++function)
+            if (function < consumer.functionPackages.size() &&
+                consumer.functionPackages[function].starts_with("native:"))
+              demand.emplace(consumer.functions[function].name,
+                             consumer.functions[function].externalName);
+          packages::Sha256 key;
+          key.update("mettle-demanded-native-object-2");
+          key.update(package.key);
+          for (const auto &[name, symbol] : demand) {
+            key.update(std::string_view("\0", 1));
+            key.update(name);
+            key.update(std::string_view("\0", 1));
+            key.update(symbol);
+          }
+          packageKey = "pkg-" + key.finish();
+        }
         const auto cacheLabel =
             native ? "library object cache " : "package object cache ";
         const auto cacheIdentity =
@@ -532,18 +555,18 @@ static int emitOne(const Options &options, const Source &source,
                                .string();
         bool reused = false;
         if (store) {
-          auto found = store->materialize(package.key, packagePath);
+          auto found = store->materialize(packageKey, packagePath);
           if (found == packages::Store::Lookup::Hit) {
             reused = true;
             if (options.explain)
               std::cerr << "mettle: " << cacheLabel << "hit " << cacheIdentity
-                        << " " << package.key.substr(4, 12) << '\n';
+                        << " " << packageKey.substr(4, 12) << '\n';
           } else if (options.explain) {
             std::cerr << "mettle: " << cacheLabel
                       << (found == packages::Store::Lookup::Corrupt
                               ? "entry corrupt, rebuilding "
                               : "miss ")
-                      << cacheIdentity << " " << package.key.substr(4, 12)
+                      << cacheIdentity << " " << packageKey.substr(4, 12)
                       << '\n';
           }
         } else if (options.explain) {
@@ -558,6 +581,9 @@ static int emitOne(const Options &options, const Source &source,
                       << cacheIdentity << '\n';
             return 1;
           }
+          if (native && options.explain)
+            std::cerr << "mettle: native code demand "
+                      << source->program().functions.size() << " functions\n";
           auto dependency = mettle::backend::lower(
               *source, context, checked, options.target, options.freestanding,
               nullptr, false, false,
@@ -593,8 +619,8 @@ static int emitOne(const Options &options, const Source &source,
             return 1;
           }
           if (store) {
-            packageArtifacts.push_back({package.key, packagePath, false});
-            packagesToStore.push_back(&package);
+            packageArtifacts.push_back({packageKey, packagePath, false});
+            packagesToStore.emplace_back(&package, packageKey);
           }
         }
         packagePaths.push_back(std::move(packagePath));
@@ -813,7 +839,7 @@ static int emitOne(const Options &options, const Source &source,
       if (store && !packageArtifacts.empty()) {
         bool stored = store->putMany(packageArtifacts);
         if (options.explain)
-          for (const auto *package : packagesToStore)
+          for (const auto &[package, key] : packagesToStore)
             std::cerr << "mettle: "
                       << (package->identity.starts_with("native:")
                               ? "library object cache "
@@ -822,7 +848,7 @@ static int emitOne(const Options &options, const Source &source,
                       << (package->identity.starts_with("native:")
                               ? package->identity.substr(7)
                               : package->identity)
-                      << " " << package->key.substr(4, 12) << '\n';
+                      << " " << key.substr(4, 12) << '\n';
       }
     }
   }
