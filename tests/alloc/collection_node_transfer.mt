@@ -145,6 +145,9 @@ fn main(): i32 {
             left.append(mut right)
             let expected = if mode == 3 { 1500usize } else if mode == 4 { 1000usize } else { 2000usize }
             if left.len() != expected || !right.is_empty() || counts[0usize] != allocations { return 16 }
+            var upper = left.split_off((expected / 2usize) as i32)
+            if left.len() != expected / 2usize || upper.len() != expected - expected / 2usize { return 27 }
+            left.append(mut upper)
             i = 0
             while i < expected as i32 {
                 let donor = if mode == 0 { i >= 1000 } else if mode == 1 { i < 1000 } else if mode == 2 { i % 2 == 1 } else if mode == 3 { i >= 500 } else { true }

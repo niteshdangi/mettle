@@ -3,7 +3,78 @@ import std.sync.mpsc
 import alloc.arc
 import core.iter.Iterator
 
+fn select_rendezvous(): i32 {
+    let left = mpsc.sync_channel<i32>(0usize)
+    let right = mpsc.sync_channel<i32>(0usize)
+    let left_keep = left.0.duplicate()
+    let right_keep = right.0.duplicate()
+    let left_tx = left.0
+    let right_tx = right.0
+    let left_worker = thread.spawn(take fn(): i32 {
+        var index = 0
+        while index < 256 {
+            match take capture left_tx.send(1) {
+                success(_) => {},
+                failure(_) => { return 1 }
+            }
+            index += 1
+        }
+        0
+    })
+    let right_worker = thread.spawn(take fn(): i32 {
+        var index = 0
+        while index < 256 {
+            match take capture right_tx.send(1) {
+                success(_) => {},
+                failure(_) => { return 2 }
+            }
+            index += 1
+        }
+        0
+    })
+    var selected = mpsc.select(read left.1)
+    let _right = selected.add(read right.1)
+    var left_count = 0
+    var right_count = 0
+    while left_count + right_count < 512 {
+        let index = match take capture selected.select() {
+            success(index) => index,
+            failure(_) => { return 3 }
+        }
+        if index == 0usize {
+            match take capture left.1.try_recv() {
+                success(value) => {
+                    if value != 1 { return 4 }
+                    left_count += 1
+                },
+                failure(_) => { return 5 }
+            }
+        } else {
+            match take capture right.1.try_recv() {
+                success(value) => {
+                    if value != 1 { return 6 }
+                    right_count += 1
+                },
+                failure(_) => { return 7 }
+            }
+        }
+    }
+    match take capture left_worker.join() {
+        success(code) => { if code != 0 { return 8 } },
+        failure(_) => { return 9 }
+    }
+    match take capture right_worker.join() {
+        success(code) => { if code != 0 { return 10 } },
+        failure(_) => { return 11 }
+    }
+    discard(take left_keep)
+    discard(take right_keep)
+    0
+}
+
 fn main(): i32 {
+    let rendezvous_result = select_rendezvous()
+    if rendezvous_result != 0 { return 40 + rendezvous_result }
     let unbounded = mpsc.channel<i32>()
     let unbounded_tx = unbounded.0
     let unbounded_rx = unbounded.1

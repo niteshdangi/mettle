@@ -39,6 +39,7 @@ type Node<K, V> {
     children: ptr<mut ptr<mut Node<K, V>>>
     parent: ptr<mut Node<K, V>>
     len: usize
+    subtree_len: usize
     leaf: bool
 }
 
@@ -273,7 +274,7 @@ unsafe fn alloc_node<K, V, A: Allocator>(a: ptr<mut A>, leaf: bool): ptr<mut Nod
         ))
     }
     let header = try alloc_array<Node<K, V>, A>(a, 1usize)
-    core.ptr.write(header, Node(entries, links, null_node<K, V>(), 0usize, leaf))
+    core.ptr.write(header, Node(entries, links, null_node<K, V>(), 0usize, 0usize, leaf))
     core.mem.forget(take links_free)
     core.mem.forget(take entries_free)
     header
@@ -302,17 +303,25 @@ unsafe fn free_node<K, V, A: Allocator>(a: ptr<mut A>, n: ptr<mut Node<K, V>>): 
     )
 }
 
-unsafe fn tree_len<K, V>(node: ptr<mut Node<K, V>>): usize {
+unsafe fn recount_node<K, V>(node: ptr<mut Node<K, V>>): Unit {
     let len = (*node).len
     var total = len
     if !(*node).leaf {
         var index = 0usize
         while index <= len {
-            total += tree_len(node_child(node, index))
+            total += (*node_child(node, index)).subtree_len
             index += 1usize
         }
     }
-    total
+    (*node).subtree_len = total
+}
+
+unsafe fn recount_path<K, V>(start: ptr<mut Node<K, V>>): Unit {
+    var node = start
+    while node != null_node<K, V>() {
+        recount_node(node)
+        node = (*node).parent
+    }
 }
 
 unsafe fn tree_node_counts<K, V>(node: ptr<mut Node<K, V>>): (usize, usize) {
@@ -363,6 +372,7 @@ type BulkNodes<K, V, A: Allocator> {
 extend<K, V, A: Allocator> BulkNodes<K, V, A> {
     mut unsafe fn add(node: ptr<mut Node<K, V>>): Unit {
         (*node).len = 0usize
+        (*node).subtree_len = 0usize
         if (*node).leaf {
             (*node).parent = self.leaves
             self.leaves = node
@@ -397,6 +407,7 @@ extend<K, V, A: Allocator> BulkNodes<K, V, A> {
             copy_entries(entries.as_mut_ptr().add(start), node_entry(node, 0usize), len)
             entries.set_len(start)
             (*node).len = len
+            (*node).subtree_len = len
             return node
         }
         let children = len / (bulk_capacity(height - 1usize) + 1usize) + 1usize
@@ -413,6 +424,7 @@ extend<K, V, A: Allocator> BulkNodes<K, V, A> {
             }
         }
         (*node).len = children - 1usize
+        (*node).subtree_len = len
         node
     }
 
@@ -537,6 +549,9 @@ unsafe fn split_into<K, V>(p: ptr<mut Node<K, V>>, i: usize, right: ptr<mut Node
     copy_entries(node_entry(left, mid), node_entry(p, i), 1usize)
     set_child(p, i + 1usize, right)
     (*p).len = len + 1usize
+    recount_node(left)
+    recount_node(right)
+    recount_node(p)
 }
 
 // Rebalancing steps; the child at `ci` of `p` has one entry fewer than allowed.
@@ -554,6 +569,8 @@ unsafe fn borrow_left<K, V>(p: ptr<mut Node<K, V>>, ci: usize): Unit {
     }
     (*left).len = llen - 1usize
     (*n).len = nlen + 1usize
+    recount_node(left)
+    recount_node(n)
 }
 unsafe fn borrow_right<K, V>(p: ptr<mut Node<K, V>>, ci: usize): Unit {
     let n = node_child(p, ci)
@@ -569,6 +586,8 @@ unsafe fn borrow_right<K, V>(p: ptr<mut Node<K, V>>, ci: usize): Unit {
     }
     (*right).len = rlen - 1usize
     (*n).len = nlen + 1usize
+    recount_node(right)
+    recount_node(n)
 }
 
 // Structural operations that free nodes go through the map's allocator.
@@ -599,6 +618,7 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
             }
         }
         (*l).len = llen + 1usize + rlen
+        (*l).subtree_len += (*r).subtree_len + 1usize
         let plen = (*p).len
         copy_entries(node_entry(p, i + 1usize), node_entry(p, i), plen - i - 1usize)
         copy_links((*p).children.add(i + 2usize), (*p).children.add(i + 1usize), plen - i - 1usize)
@@ -693,6 +713,11 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
             (*leaf).len = last
         }
         self.len -= 1usize
+        var ancestor = leaf
+        while ancestor != null_node<K, V>() {
+            (*ancestor).subtree_len -= 1usize
+            ancestor = (*ancestor).parent
+        }
         self.rebalance(leaf)
         out
     }
@@ -885,8 +910,10 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                     right = node_child(right, 0usize)
                     level += 1usize
                 }
-                upper.len = tree_len(upper.root)
-                self.len -= upper.len
+                recount_path(left)
+                recount_path(right)
+                upper.len = (*upper.root).subtree_len
+                self.len = (*self.root).subtree_len
                 self.repair_split_border(true, mut detached.nodes)
                 upper.repair_split_border(false, mut detached.nodes)
             }
@@ -940,6 +967,11 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                     core.ptr.write(node_entry(node, pos), Bucket(key, value))
                     (*node).len = len + 1usize
                     self.len += 1usize
+                    var ancestor = node
+                    while ancestor != null_node<K, V>() {
+                        (*ancestor).subtree_len += 1usize
+                        ancestor = (*ancestor).parent
+                    }
                     return (none, node, pos)
                 }
                 var next = node_child(node, pos)
@@ -2292,6 +2324,7 @@ unsafe fn clone_tree<K: Clone, V: Clone, A: Allocator>(a: ptr<mut A>, n: ptr<mut
         }
     }
     (*twin).len = len
+    (*twin).subtree_len = (*n).subtree_len
     guard.node = null_node<K, V>()
     twin
 }

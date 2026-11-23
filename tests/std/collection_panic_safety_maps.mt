@@ -201,6 +201,10 @@ fn main(): i32 {
                                        panic_cmp.retain())) { return 25 }
         value += 1
     }
+    var checked_upper = tree.split_off(make_key(6, panic_hash.retain(), panic_eq.retain(),
+                                               panic_cmp.retain()))
+    if tree.len() != 6usize || checked_upper.len() != 5usize { return 45 }
+    tree.append(mut checked_upper)
     var allocation_failure = 1
     while allocation_failure <= 8 {
         var calls = 0
@@ -230,6 +234,8 @@ fn main(): i32 {
                 if *splitting.get(value).or_panic() != value { return 28 }
                 value += 1
             }
+            let checked = splitting.split_off(64)
+            if splitting.len() != 64usize || checked.len() != 64usize { return 46 }
         }
         if live != 0 { return 29 }
         allocation_failure += 1
@@ -260,6 +266,12 @@ fn main(): i32 {
                                    panic_cmp.retain())).or_panic() != value * 2 + 1 { return 32 }
             value += 1
         }
+        let left_upper = left.split_off(make_key(64, panic_hash.retain(), panic_eq.retain(),
+                                                 panic_cmp.retain()))
+        let right_upper = right.split_off(make_key(64, panic_hash.retain(), panic_eq.retain(),
+                                                   panic_cmp.retain()))
+        if left.len() != 32usize || left_upper.len() != 32usize ||
+            right.len() != 32usize || right_upper.len() != 32usize { return 47 }
     }
     allocation_failure = 1
     while allocation_failure <= 3 {
@@ -326,7 +338,10 @@ fn main(): i32 {
                 if *left.get(value).or_panic() != -value - 1 { return 43 }
                 value += 1
             }
+            var checked = left.split_off(32)
+            if left.len() != 32usize || checked.len() != 32usize { return 48 }
             left.clear()
+            checked.clear()
         }
         if live != 0 { return 44 }
     }
@@ -352,6 +367,8 @@ fn main(): i32 {
             if !left.contains_key(value) { return 39 }
             value += 1
         }
+        let checked = left.split_off(3)
+        if left.len() != 2usize || checked.len() != 2usize { return 49 }
     }
     if append_drops.get().load(core.sync.atomic.Ordering.SeqCst) != 6usize { return 40 }
 

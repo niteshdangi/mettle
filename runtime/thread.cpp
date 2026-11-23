@@ -990,11 +990,16 @@ std::uint64_t mettle_rt_select_epoch() {
 void mettle_rt_select_wait(std::uint64_t epoch) {
   if (pthread_mutex_lock(&selectMutex) != 0)
     return;
+  pthread_cleanup_push(
+      [](void *mutex) {
+        pthread_mutex_unlock(static_cast<pthread_mutex_t *>(mutex));
+      },
+      &selectMutex);
   while (selectGeneration == epoch) {
     if (pthread_cond_wait(&selectCondition, &selectMutex) != 0)
       break;
   }
-  pthread_mutex_unlock(&selectMutex);
+  pthread_cleanup_pop(1);
 }
 void mettle_rt_select_notify() {
   if (pthread_mutex_lock(&selectMutex) != 0)

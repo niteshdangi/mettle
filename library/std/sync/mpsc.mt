@@ -43,8 +43,15 @@ type ChannelShared<T> {
     bound: usize
     rendezvous: bool
     waiting_receivers: core.sync.atomic.AtomicUsize
+    selecting_receivers: core.sync.atomic.AtomicUsize
     senders: core.sync.atomic.AtomicUsize
     open: core.sync.atomic.AtomicBool
+}
+
+fn notify_select<T>(read chan: ChannelShared<T>): Unit {
+    if chan.selecting_receivers.load(core.sync.atomic.Ordering.Relaxed) != 0usize {
+        unsafe { mettle_rt_select_notify() }
+    }
 }
 
 pub copy type SendError<T> { pub value: T }
@@ -173,6 +180,7 @@ extend RecvError implements core.error.Error {}
 extend TryRecvError implements core.error.Error {}
 extend RecvTimeoutError implements core.error.Error {}
 extend<T> SendError<T> implements core.error.Error {}
+extend<T> TrySendError<T> implements core.error.Error {}
 
 // Sender for an unbounded FIFO channel.
 pub type Sender<T> {
@@ -183,7 +191,7 @@ pub type Sender<T> {
             let locked = capture self.chan.get().queue.lock()
             let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
             self.chan.get().ready.notify_all()
-            unsafe { mettle_rt_select_notify() }
+            notify_select(self.chan.get())
         }
     }
 }
@@ -213,7 +221,7 @@ pub type Receiver<T> {
             }
             self.chan.get().ready.notify_all()
             self.chan.get().space.notify_all()
-            unsafe { mettle_rt_select_notify() }
+            notify_select(self.chan.get())
         }
     }
 }
@@ -228,7 +236,7 @@ pub type SyncSender<T> {
             let locked = capture self.chan.get().queue.lock()
             let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
             self.chan.get().ready.notify_all()
-            unsafe { mettle_rt_select_notify() }
+            notify_select(self.chan.get())
         }
     }
 }
@@ -240,6 +248,7 @@ fn new_shared<T>(bound: usize, rendezvous: bool): Shared<ChannelShared<T>> {
         condition.new(),
         bound,
         rendezvous,
+        core.sync.atomic.AtomicUsize.new(0usize),
         core.sync.atomic.AtomicUsize.new(0usize),
         core.sync.atomic.AtomicUsize.new(1usize),
         core.sync.atomic.AtomicBool.new(true)
@@ -269,7 +278,7 @@ extend<T> Sender<T> {
         }
         guard.get_mut().push_back(Envelope(value, none))
         self.chan.get().ready.notify_one()
-        unsafe { mettle_rt_select_notify() }
+        notify_select(self.chan.get())
     }
 
     pub fn try_send(take value: T): Unit throws TrySendError<T> {
@@ -280,7 +289,7 @@ extend<T> Sender<T> {
         }
         guard.get_mut().push_back(Envelope(value, none))
         self.chan.get().ready.notify_one()
-        unsafe { mettle_rt_select_notify() }
+        notify_select(self.chan.get())
     }
 
     pub fn duplicate(): Sender<T> {
@@ -315,7 +324,7 @@ extend<T> SyncSender<T> {
         }
         guard.get_mut().push_back(Envelope(value, queued_receipt))
         self.chan.get().ready.notify_one()
-        unsafe { mettle_rt_select_notify() }
+        notify_select(self.chan.get())
         if rendezvous {
             // Only receipt publication acknowledges this sender's own message.
             while !accepted(read receipt) &&
@@ -351,7 +360,7 @@ extend<T> SyncSender<T> {
         }
         guard.get_mut().push_back(Envelope(value, none))
         self.chan.get().ready.notify_one()
-        unsafe { mettle_rt_select_notify() }
+        notify_select(self.chan.get())
     }
 
     // Blocks for at most `timeout_nanos`, returning the value if not accepted.
@@ -390,7 +399,7 @@ extend<T> SyncSender<T> {
         }
         guard.get_mut().push_back(Envelope(value, queued_receipt))
         self.chan.get().ready.notify_one()
-        unsafe { mettle_rt_select_notify() }
+        notify_select(self.chan.get())
         if rendezvous {
             while !accepted(read receipt) &&
                   self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
@@ -590,6 +599,7 @@ fn channel_ready<T>(read chan: ChannelShared<T>): bool {
 fn register_select_waiter<T>(read chan: ChannelShared<T>): Unit {
     let locked = capture chan.queue.lock()
     let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+    let _selecting = chan.selecting_receivers.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
     let _previous = chan.waiting_receivers.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
     chan.space.notify_one()
 }
@@ -597,6 +607,7 @@ fn register_select_waiter<T>(read chan: ChannelShared<T>): Unit {
 fn unregister_select_waiter<T>(read chan: ChannelShared<T>): Unit {
     let locked = capture chan.queue.lock()
     let _guard = match take locked { success(g) => g, failure(e) => e.into_inner() }
+    let _selecting = chan.selecting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)
     let _previous = chan.waiting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)
     chan.space.notify_one()
 }

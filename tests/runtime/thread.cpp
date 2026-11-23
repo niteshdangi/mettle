@@ -35,6 +35,67 @@ void require(bool condition, const char *message) {
   }
 }
 
+void selectCases() {
+  const auto initial = mettle_rt_select_epoch();
+  std::array<std::thread, 8> notifiers;
+  for (auto &notifier : notifiers)
+    notifier = std::thread([] {
+      for (int i = 0; i < 1000; ++i)
+        mettle_rt_select_notify();
+    });
+  for (auto &notifier : notifiers)
+    notifier.join();
+  require(mettle_rt_select_epoch() == initial + 8000,
+          "concurrent selector notifications lost a generation");
+  mettle_rt_select_wait(initial);
+
+  std::array<std::atomic<int>, 8> ready{}, done{};
+  std::array<std::thread, 8> waiters;
+  for (std::size_t i = 0; i < waiters.size(); ++i)
+    waiters[i] = std::thread([&, i] {
+      for (int round = 1; round <= 256; ++round) {
+        const auto epoch = mettle_rt_select_epoch();
+        ready[i].store(round, std::memory_order_release);
+        mettle_rt_select_wait(epoch);
+        done[i].store(round, std::memory_order_release);
+      }
+    });
+  for (int round = 1; round <= 256; ++round) {
+    for (auto &state : ready)
+      while (state.load(std::memory_order_acquire) < round)
+        std::this_thread::yield();
+    mettle_rt_select_notify();
+    for (auto &state : done)
+      while (state.load(std::memory_order_acquire) < round)
+        std::this_thread::yield();
+  }
+  for (auto &waiter : waiters)
+    waiter.join();
+
+  std::atomic<bool> cancelling{false};
+  pthread_t cancelled{};
+  require(pthread_create(
+              &cancelled, nullptr,
+              [](void *raw) -> void * {
+                const auto epoch = mettle_rt_select_epoch();
+                static_cast<std::atomic<bool> *>(raw)->store(
+                    true, std::memory_order_release);
+                mettle_rt_select_wait(epoch);
+                return nullptr;
+              },
+              &cancelling) == 0,
+          "selector cancellation thread creation failed");
+  while (!cancelling.load(std::memory_order_acquire))
+    std::this_thread::yield();
+  require(pthread_cancel(cancelled) == 0, "selector cancellation failed");
+  void *result = nullptr;
+  require(pthread_join(cancelled, &result) == 0 && result == PTHREAD_CANCELED,
+          "selector wait did not honor cancellation");
+  const auto epoch = mettle_rt_select_epoch();
+  mettle_rt_select_notify();
+  mettle_rt_select_wait(epoch);
+}
+
 #ifdef __linux__
 struct TimerWake {
   void *reactor = nullptr;
@@ -1369,6 +1430,10 @@ int __wrap_pthread_cond_timedwait(pthread_cond_t *condition,
 #endif
 
 int main(int argc, char **argv) {
+  if (argc == 2 && std::strcmp(argv[1], "--select") == 0) {
+    selectCases();
+    return 0;
+  }
   if (argc == 2 && std::strcmp(argv[1], "--rwlock-downgrade") == 0) {
 #ifdef __linux__
     rwlockInitializationCases();
@@ -1418,6 +1483,7 @@ int main(int argc, char **argv) {
   (void)argc;
   (void)argv;
 #endif
+  selectCases();
   reentrantMutexCases();
   rwlockDowngradeCases();
   filesystemTimeCases();

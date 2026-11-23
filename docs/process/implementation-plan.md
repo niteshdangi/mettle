@@ -1868,7 +1868,27 @@ drop-counting stress and emitted ASan/leak checks pass. Nine interleaved
 half/full overlap at 9.75/7.99 -> 5.20/4.47 ms. Rust controls measure
 1.94/1.92/2.44/2.91/3.77 ms; parity remains open. Evidence:
 `~/w/anal/perf-library-scaling-20261123/map-append/`.
-Split length counting and the compiler/cache/channel work above remain open.
+Map nodes now maintain subtree cardinalities through insertion, removal,
+rebalancing, cloning and bulk append. Compatible splits recover exact lengths
+along the boundary paths without traversing transferred subtrees. Mutation and
+re-split regressions, checked-arithmetic stress and three emitted ASan/leak
+fixtures pass. Nine interleaved 100,000-entry samples measure quarter/middle/
+three-quarter splits at 223.89/134.27/64.67 -> 22.48/21.70/21.41 us, versus
+Rust's 42.41/36.37/7.84 us. These include the public clock-wrapper overhead;
+smaller inputs still lag Rust. Evidence:
+`~/w/anal/perf-library-scaling-20261123/map-split-counts/`.
+
+Channels now notify the global selector generation only while that channel has
+registered selectors, with registration and eligibility serialized by the queue
+mutex. Cancellation also releases the runtime selector mutex. Six integrated
+source/profile cases and runtime generation/broadcast/cancellation cases pass,
+alongside the focused ASan/UBSan and TSan executions. Two quiet paired rounds
+measure independent channels at 4.1% less elapsed time and independent selectors
+at 9.4% less; selected fan-in is 1.3% slower, so this is not an across-the-board
+throughput improvement. Evidence:
+`~/mettle-i-integrated-08ee/channel-notifier-evidence/comparison-results.json`.
+Native admission, pre-optimization reuse and shared-cache integration remain
+open; I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

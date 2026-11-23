@@ -675,8 +675,18 @@ With compatible allocators, splitting at/below the minimum transfers the whole
 tree without allocating nodes; splitting above the maximum leaves it untouched.
 General splits compare and allocate a boundary spine before modifying links,
 transfer intact subtrees, then repair boundary occupancy and parent links.
-They allocate O(log(n+1)) nodes and count retained subtree entries for the exact
-length, rather than removing/reinserting entries. The structural repair reserves
+They allocate O(log(n+1)) nodes and recover both exact lengths from cached
+subtree-entry counts along the two boundary paths, without walking transferred
+subtrees or removing/reinserting entries. Total compatible split work and
+auxiliary storage are O(log(n+1)), excluding allocator/payload effects.
+Each node reachable from a map root has a private count equal to its entries
+plus its immediate children's counts; the root count equals the map length. Insertion
+and removal adjust the affected ancestor path only after the entry transfer
+succeeds. Node splitting, borrowing and merging preserve counts before any
+subsequent comparator or allocator callback. Structural splits refresh the
+boundary paths bottom-up before border repair; clones and bulk append publish
+the exact count with each completed node.
+The structural repair reserves
 four detached-node slots per original level: each side can merge and contract
 its root at most once per level. Consequently repair cannot allocate or invoke
 allocator callbacks before both trees are valid. Detached node/block guards

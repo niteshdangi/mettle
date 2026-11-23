@@ -970,6 +970,20 @@ Readiness is advisory when another permitted actor can receive; the next receive
 still determines ownership transfer. No general cancellation/fairness guarantee
 is inferred for blocking channel calls.
 
+Selector registration, deregistration and the notification eligibility check
+are serialized by each channel's queue mutex. The separate selecting-receiver
+count uses Relaxed atomics only for shared-view interior mutability; it is never
+sampled outside that mutex. Ordinary blocking receivers do not register as
+selectors, so unrelated channel traffic does not write the global generation.
+A selector snapshots the global generation before scanning, registers on every
+channel, then scans again before waiting. A publication preceding registration
+is therefore observed by the second scan; one following registration advances
+the generation and broadcasts. Generation comparison and condition waiting
+remain serialized by the runtime mutex, including notification before sleep.
+Deregistration follows wake or a successful second scan. Pthread cancellation
+of the runtime condition wait releases its reacquired generation mutex; it does
+not add a public cancellation guarantee for library calls or their registrations.
+
 ## 9. Networking and optional async hosting
 
 ### 9.1. Addresses and resolution

@@ -31,6 +31,9 @@ fn main(): i32 {
         if map.len() != 250usize || suffix.len() != 250usize || drops != 500 { return 41 }
         map.append(mut suffix)
         if map.len() != 500usize || !suffix.is_empty() || drops != 500 { return 42 }
+        var appended_upper = map.split_off(500)
+        if map.len() != 250usize || appended_upper.len() != 250usize { return 45 }
+        map.append(mut appended_upper)
         if map.contains_key(11) || !map.contains_key(10) { return 4 }
         match map.first_key() { present(k) => { if *k != 0 { return 5 } }, none => { return 5 } }
         match map.last_key() { present(k) => { if *k != 998 { return 5 } }, none => { return 5 } }
@@ -92,6 +95,9 @@ fn main(): i32 {
     }
     let dup = small.clone()
     if dup != small || dup.len() != 40usize { return 17 }
+    var cloned = dup.clone()
+    let cloned_upper = cloned.split_off(20)
+    if cloned.len() != 20usize || cloned_upper.len() != 20usize { return 46 }
     match take small.get_mut(7) { present(v) => { *v = -1 }, none => { return 18 } }
     if dup == small { return 19 }
     {
@@ -159,8 +165,29 @@ fn main(): i32 {
             let _ = whole.insert(key + 0, key)
             value += 1
         }
+        let _ = whole.insert(128, 128)
         var upper = whole.split_off(split + 0)
         if whole.len() != split as usize || upper.len() != (257 - split) as usize { return 37 }
+        let _ = whole.insert(-1, -1)
+        let _ = upper.insert(257, 257)
+        if whole.pop_first() != present((-1, -1)) ||
+            upper.pop_last() != present((257, 257)) { return 47 }
+        if split != 0 {
+            if whole.remove(split - 1) != present(split - 1) { return 48 }
+            let _ = whole.insert(split - 1, split - 1)
+        }
+        if split != 257 {
+            if upper.remove(split + 0) != present(split + 0) { return 49 }
+            let _ = upper.insert(split + 0, split + 0)
+        }
+        let lower_middle = split / 2
+        let upper_middle = split + (257 - split) / 2
+        var lower_tail = whole.split_off(lower_middle + 0)
+        var upper_tail = upper.split_off(upper_middle + 0)
+        if whole.len() != lower_middle as usize || lower_tail.len() != (split - lower_middle) as usize ||
+            upper.len() != (upper_middle - split) as usize || upper_tail.len() != (257 - upper_middle) as usize { return 50 }
+        whole.append(mut lower_tail)
+        upper.append(mut upper_tail)
         value = 0
         while value < split {
             if whole.pop_first() != present((value + 0, value + 0)) { return 38 }
@@ -184,6 +211,9 @@ fn main(): i32 {
         }
         if reverse { right.append(mut left); core.mem.swap(mut left, mut right) } else { left.append(mut right) }
         if left.len() != 4097usize || !right.is_empty() { return 43 }
+        var suffix = left.split_off(2048)
+        if left.len() != 2049usize || suffix.len() != 2048usize { return 51 }
+        left.append(mut suffix)
         value = -1
         while value < 4096 {
             if left.remove(value) != present(value + 0) { return 44 }
