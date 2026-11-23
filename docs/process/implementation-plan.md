@@ -1917,8 +1917,15 @@ Pre-optimization reuse remains unresolved: the isolated dependency-complete
 prototype preserves runtime and reuses 39/41 objects, but has not beaten the
 existing post-optimization cache. The changed hot owner still requires 185 ms
 of optimization versus 248 ms for the whole module. Do not integrate that
-prototype as an accepted speedup; the next backend action requires a distinct
-measured opportunity. I14 qualification and runtime parity are not claimed.
+prototype as an accepted speedup; the owner rejected the redesign.
+A separate cleanup-body early-inlining candidate reduced adjacent paired P05
+rebuild medians from 465.81 to 395.63 ms, but 31 fixed-core runtime pairs showed
+a 1.86% median paired slowdown (the candidate won only 6 pairs). The owner
+rejected that trade-off and requested wrap-up. No backend candidate is retained;
+LLVM preparation remains unresolved. Evidence:
+`~/w/anal/perf-cleanup-helper-final-20261124/paired-results.json` and
+`~/w/anal/perf-cleanup-helper-final-20261124/runtime-fixed-core.json`.
+I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
