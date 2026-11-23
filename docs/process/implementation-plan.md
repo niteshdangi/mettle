@@ -1754,6 +1754,21 @@ is the roughly 140 ms unused-import cost: direct indexed library admission
 without walking unrelated declarations and type records. P04 load hoisting has
 no demonstrated runtime benefit and is not selected.
 
+Admission now retains validated scalar facts and validates header-directory
+bijections through ordinal joins. Complete unused-key and projection validation
+remain mandatory. Seven randomized triples using the selected repository
+libraries measure P03/P04/P05 fresh checks at 152.7/154.4/190.6 ms, versus
+160.9/164.2/204.4 ms before this batch and Rust's 15.4/18.1/15.5 ms.
+Builds measure 273.6/281.6/501.1 ms versus 294.4/288.5/507.1 ms before;
+parity remains open. Outputs agree. Evidence:
+`~/w/anal/perf-current-library-admission-20261124/results.json`.
+Symbol-ordinal wire encoding and parallel header-directory scan experiments
+established no material gain and were discarded.
+Focused graph, declaration, archive and module regressions pass; final graph
+and declaration regressions also pass ASan/UBSan and TSan. Next, remove runtime
+replacement work from empty owned destinations without changing partial-value
+cleanup or replacement-panic installation.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

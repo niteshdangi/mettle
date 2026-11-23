@@ -718,13 +718,16 @@ fn main(): i32 {
         expect(invalidDirectory.end() - payload >= 2,
                "unused lookup retains its stable declaration ID");
         if (invalidDirectory.end() - payload >= 2) {
-          payload[0] = 0xff;
-          payload[1] = 0x7f;
-          auto storage = std::make_shared<const std::vector<std::uint8_t>>(
-              std::move(invalidDirectory));
-          expect(!decodeLibraryHeader(*storage, decode, storage,
-                                      metadata::ValidationMode::OnDemand),
-                 "mounting rejects malformed unused declaration lookup IDs");
+          for (auto id : {0u, 16383u}) {
+            payload[0] = static_cast<std::uint8_t>((id & 0x7f) | 0x80);
+            payload[1] = static_cast<std::uint8_t>(id >> 7);
+            auto storage = std::make_shared<const std::vector<std::uint8_t>>(
+                invalidDirectory);
+            expect(!decodeLibraryHeader(*storage, decode, storage,
+                                        metadata::ValidationMode::OnDemand),
+                   "mounting rejects unknown and mismatched unused declaration "
+                   "lookup IDs");
+          }
         }
       }
     }

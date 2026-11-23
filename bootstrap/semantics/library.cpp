@@ -3448,9 +3448,12 @@ public:
         result = (result << 8) | static_cast<unsigned char>(byte);
       return std::optional{result};
     };
-    std::map<metadata::SymbolKind, std::size_t> symbolCounts;
-    std::size_t names = 0, defaults = 0, inverseDefaults = 0, constructors = 0,
-                typeCounts = 0;
+    std::array<std::size_t, std::tuple_size_v<decltype(symbolRows)>>
+        symbolCounts{}, inverseSymbols{};
+    std::vector<std::size_t> functionNameRows(module.functions.size(),
+                                              SIZE_MAX);
+    std::size_t names = 0, inverseNames = 0, defaults = 0, inverseDefaults = 0,
+                constructors = 0, typeCounts = 0;
     const std::array declarationCounts{module.products.size(),
                                        module.aliases.size(),
                                        module.interfaces.size()};
@@ -3461,9 +3464,8 @@ public:
         auto identity = symbolView(i);
         valid =
             key == symbolKey('S', identity.kind) + ordinalKey(identity.index) &&
-            symbolRow(identity.kind, identity.index) == i &&
-            symbol(identity.kind, identity.definition) == identity.index;
-        ++symbolCounts[identity.kind];
+            symbolRow(identity.kind, identity.index) == i;
+        ++symbolCounts[static_cast<std::size_t>(identity.kind)];
       } else if (key.starts_with("s:")) {
         valid = key.size() >= 3;
         if (valid) {
@@ -3472,6 +3474,8 @@ public:
           auto row = symbolRow(kind, id);
           valid =
               row != UINT64_MAX && symbolView(row).definition == key.substr(3);
+          if (valid)
+            ++inverseSymbols[static_cast<std::size_t>(kind)];
         }
       } else if (key.starts_with("C:")) {
         valid = key.size() == 3 &&
@@ -3480,18 +3484,18 @@ public:
                     symbolCount(static_cast<metadata::SymbolKind>(key[2]));
       } else if (key.starts_with("F:")) {
         auto id = ordinal(key, 2);
-        auto name = text(i);
-        valid = id && *id < module.functions.size() && function(name) == *id;
+        valid = id && *id < functionNameRows.size();
+        if (valid)
+          functionNameRows[*id] = i;
         ++names;
       } else if (key.starts_with("f:") || key.starts_with("m:") ||
                  key.starts_with("X:") || key.starts_with("z:")) {
         auto id = value<std::uint32_t>(i);
         valid = id < module.functions.size();
         if (valid && key.starts_with("f:")) {
-          auto position = lowerBound("F:" + ordinalKey(id));
-          valid = position < size() &&
-                  keyAt(position) == "F:" + ordinalKey(id) &&
-                  text(position) == key.substr(2);
+          auto position = functionNameRows[id];
+          valid = position != SIZE_MAX && text(position) == key.substr(2);
+          ++inverseNames;
         }
       } else if (key.starts_with("v:") || key.starts_with("x:"))
         valid = value<std::uint32_t>(i) < module.statics.size();
@@ -3547,13 +3551,15 @@ public:
       auto identity = static_cast<metadata::SymbolKind>(kind);
       auto count = symbolCount(identity);
       if (one<std::uint64_t>(symbolKey('C', identity)).value_or(0) != count ||
+          symbolCounts[kind] != inverseSymbols[kind] ||
           (count && symbolRow(identity, count - 1) == UINT64_MAX))
         archive.fail("incomplete declaration symbol directory");
     }
-    if (names != module.functions.size() ||
-        symbolCounts[metadata::SymbolKind::Function] !=
-            module.functions.size() ||
-        symbolCounts[metadata::SymbolKind::Static] != module.statics.size() ||
+    if (names != module.functions.size() || names != inverseNames ||
+        symbolCounts[static_cast<std::size_t>(
+            metadata::SymbolKind::Function)] != module.functions.size() ||
+        symbolCounts[static_cast<std::size_t>(metadata::SymbolKind::Static)] !=
+            module.statics.size() ||
         defaults != defaultCount() || inverseDefaults != defaultCount() ||
         constructors != constructorCount() || typeCounts != 5 ||
         !one<bool>("links"))

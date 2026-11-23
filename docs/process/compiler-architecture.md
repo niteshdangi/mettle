@@ -486,6 +486,12 @@ alias merging remain mandatory; no new type wire format is needed.
 Canonical keys retain fixed-word symbol fixups applied after complete structural
 admission and symbol resolution; symbol-bearing records are not parsed again.
 Resolved aliases still undergo exact canonical-key comparison and merging.
+Scalar type facts are retained from those validated projections in a separate
+ordinal table. Worker-local interface references are globally remapped before
+publication; scalar queries neither decode records again nor publish unchecked
+descriptors. Header-directory validation joins forward and reverse identities
+through declaration ordinals and matching cardinalities after checking unique
+keys, rather than performing a name search for each direction.
 Demand imports retain neither eager replay offsets nor the initial resolved-symbol
 inventory. Canonical encoding reuses one scratch buffer per admission.
 Deferred validation retains regions and target ABI,

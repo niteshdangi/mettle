@@ -282,6 +282,16 @@ int main() {
       producer.defineImportedType(type, std::move(parameter));
       roots.push_back(type);
     }
+    constexpr std::array declarations{3u, 7u, 11u, 17u};
+    for (unsigned i = 0; i < 128; ++i) {
+      ErasedType descriptor;
+      descriptor.declaration = declarations[i % declarations.size()];
+      descriptor.arguments = {
+          producer.declareParameter("Scalar" + std::to_string(i), false)};
+      auto type = producer.declareImportedType(ImportedTypeKind::Erased);
+      producer.defineImportedType(type, std::move(descriptor));
+      roots.push_back(type);
+    }
     ErasedType erased;
     erased.declaration = 7;
     erased.methodOwners = {Type::Unknown};
@@ -330,6 +340,10 @@ int main() {
                consumer.erasedDeclaration(imported.roots.back()) == 107,
            "admitted erased declarations retain symbol remapping across "
            "copies without descriptor demand");
+    for (std::size_t i = 0; i < 128; ++i)
+      expect(copy.erasedDeclaration(imported.roots[categories.size() + i]) ==
+                 declarations[i % declarations.size()] + 100,
+             "parallel projections retain globally remapped scalar symbols");
     bool rejected = false;
     try {
       (void)copy.erased(imported.roots.back());

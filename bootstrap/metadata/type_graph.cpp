@@ -3315,6 +3315,7 @@ struct DeferredTypeGraph {
   std::vector<RegionUniverse> universes;
   Reader::ResolvedSymbols symbols;
   std::vector<Record> records;
+  std::vector<ImportedTypeScalars> scalars;
   std::shared_ptr<const CompactArena> arena;
   std::vector<CompactDefinitionView> definitions;
   mutable std::unordered_map<std::size_t, CompactDefinitionView>
@@ -3357,61 +3358,6 @@ struct DeferredTypeGraph {
     return result;
   }
   std::span<const std::uint32_t> resolve(const ImportedTypeQuery &query) const;
-  ImportedTypeScalars scalarFacts(std::size_t index) const {
-    ImportedTypeScalars result;
-    const auto kind = kinds.at(index);
-    if (kind == ImportedTypeKind::Product) {
-      const auto &slice = records.at(index);
-      TypeGraphSymbols noCallbacks;
-      CompactReader reader(
-          bytes.subspan(slice.projectionOffset, slice.projectionLength),
-          noCallbacks, header);
-      reader.types = types;
-      reader.regions = regions;
-      reader.universes = universes;
-      CompactProduct record;
-      reader(record);
-      if (reader.remaining())
-        reject("trailing bytes in type identity projection");
-      result.aggregateKind = record.descriptor.kind;
-      result.genericOrigin = record.descriptor.genericOrigin;
-      result.regionOrigin = record.descriptor.regionOrigin;
-      return result;
-    }
-    if (kind != ImportedTypeKind::Parameter &&
-        kind != ImportedTypeKind::Erased && kind != ImportedTypeKind::View)
-      return result;
-    const auto &slice = records.at(index);
-    TypeGraphSymbols noCallbacks;
-    Reader reader(bytes.subspan(slice.projectionOffset, slice.projectionLength),
-                  noCallbacks, header);
-    reader.types = types;
-    if (kind == ImportedTypeKind::View) {
-      ParameterMode mode;
-      reader(result.payload, mode);
-      reader.block();
-      reader.regions = regions;
-      reader(result.region);
-      return result;
-    }
-    reader.block();
-    if (kind == ImportedTypeKind::Parameter) {
-      reader.flag();
-      reader.flag();
-      reader.flag();
-      reader(result.parameterKind, result.valueType);
-    } else {
-      auto logical = reader.block();
-      std::string_view name(reinterpret_cast<const char *>(logical.data()),
-                            logical.size());
-      std::lock_guard lock(validationMutex);
-      result.declaration =
-          symbolValues[static_cast<std::size_t>(SymbolKind::Interface)].at(
-              name);
-    }
-    return result;
-  }
-
   ImportedTypeDefinition materialize(std::size_t index) const {
     validate(index);
     std::lock_guard lock(validationMutex);
@@ -3888,6 +3834,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
         std::exception_ptr exception;
       };
       const auto count = ids.size();
+      deferred->scalars.resize(count);
       const std::size_t workers =
           count < 64 ? 1
                      : std::max<std::size_t>(
@@ -3934,6 +3881,16 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
                   definition);
               auto index = compactIndex(view, *decoder.arena);
               auto product = definitionRecord<ImportedProduct>(view);
+              auto &scalars = deferred->scalars[i];
+              scalars.parameterKind = index.parameterKind;
+              scalars.valueType = index.valueType;
+              scalars.declaration = index.declaration;
+              scalars.payload = index.payload;
+              scalars.region = index.region;
+              scalars.genericOrigin = index.genericOrigin;
+              scalars.regionOrigin = index.regionOrigin;
+              if (product)
+                scalars.aggregateKind = product->descriptor.kind;
               auto groups =
                   std::span(admission.groups)
                       .subspan(admission.offsets[i],
@@ -4019,6 +3976,9 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
                              projection.edges.targets.begin(),
                              projection.edges.targets.end());
         for (auto &key : projection.symbolic) {
+          if (deferred->kinds[key.ordinal] == ImportedTypeKind::Erased)
+            deferred->scalars[key.ordinal].declaration +=
+                symbolBases[static_cast<std::size_t>(SymbolKind::Interface)];
           for (auto &symbol : key.symbols)
             symbol.index = static_cast<std::uint32_t>(
                 symbolBases[static_cast<std::size_t>(symbol.kind)] +
@@ -4062,6 +4022,12 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
         return definition;
       };
       for (auto &key : symbolicKeys) {
+        if (deferred->kinds[key.ordinal] == ImportedTypeKind::Erased) {
+          auto &declaration = deferred->scalars[key.ordinal].declaration;
+          declaration =
+              deferred->symbols[static_cast<std::size_t>(SymbolKind::Interface)]
+                  .at(declaration);
+        }
         for (const auto &symbol : key.symbols) {
           const std::uint64_t value =
               deferred->symbols[static_cast<std::size_t>(symbol.kind)].at(
@@ -4157,7 +4123,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       resolve = [deferred](const ImportedTypeQuery &query) {
         return deferred->resolve(query);
       };
-      scalars = [deferred](std::size_t i) { return deferred->scalarFacts(i); };
+      scalars = [deferred](std::size_t i) { return deferred->scalars.at(i); };
     }
     candidate.deferImportedDefinitions(ids, deferred->index, std::move(loader),
                                        std::move(borrowed), deferred,
