@@ -1225,15 +1225,20 @@ def native_method_discovery():
     core.mkdir(parents=True)
     (core / "module.mt").write_text("pub module option\n")
     option = core / "option.mt"
-    option.write_text("extend i32 { pub fn from_library(): i32 { self } }\n")
+    option.write_text("extend i32 {\n"
+                      "    fn run(): i32 { self }\n"
+                      "    pub fn from_library(): i32 { self }\n"
+                      "}\n")
     source = directory / "main.mt"
     source.write_text("type Step { pub value: i32 }\n"
                       "extend Step { pub fn apply(): i32 { self.value } }\n"
-                      "fn main(): i32 { Step(42).apply() - 42 }\n")
+                      "module local_math { pub fn run(x: i32): i32 { x } }\n"
+                      "fn main(): i32 { local_math.run(Step(42).apply()) - 42 }\n")
     arguments = ["--library-dir", core.parent, "--standalone",
                  "--profile", "release"]
     cold, program = explained(source, *arguments)
     assert exit_code(program) == 0
+    assert "checked library interface cache " not in cold, cold
     edit(source, "Step(42)", "Step(43)")
     warm, program = explained(source, *arguments)
     assert exit_code(program) == 1
@@ -1256,6 +1261,11 @@ def native_method_discovery():
     assert "builtin method index cache hit " in reused, reused
     assert "checked library interface cache hit core " in reused, reused
     invoke(["check", source, *arguments, "--no-cache"])
+    source.write_text("module local_math { pub fn run(x: i32): i32 { x } }\n"
+                      "fn main(): i32 { local_math.run(42) - 42 }\n")
+    private_collision, program = explained(source, *arguments)
+    assert exit_code(program) == 0
+    assert "checked library interface cache " not in private_collision, private_collision
 
 
 def bundled_native_linker():

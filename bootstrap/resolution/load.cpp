@@ -1,6 +1,7 @@
 #include "resolution/load.h"
 #include "expansion/harness.h"
 #include "expansion/macros.h"
+#include "resolution/builtin_methods.h"
 #include "support/limits.h"
 #include "syntax/parser.h"
 #include <algorithm>
@@ -611,8 +612,7 @@ private:
       auto module = function.item.scope.empty() ? std::string{}
                                                 : function.item.scope.back();
       auto name = function.name.substr(function.name.rfind('.') + 1);
-      if (function.implementation >= 0 && function.interfaceOwner.empty() &&
-          (module == "option" || module == "outcome" || module == "slice"))
+      if (isImplicitBuiltinMethod(module, function))
         methods.emplace(std::move(name), std::move(module));
       else if (function.interfaceOwner == "Iterator")
         iteratorMethods.insert(std::move(name));
@@ -1731,7 +1731,7 @@ BuiltinMethodIndex discoverBuiltinMethods(const std::string &directory,
       if (module == std::string_view("iter")
               ? function.implementation < 0 &&
                     function.interfaceOwner == "Iterator"
-              : function.implementation >= 0 && function.interfaceOwner.empty())
+              : isImplicitBuiltinMethod(module, function))
         result[module].push_back(
             function.name.substr(function.name.rfind('.') + 1));
   }

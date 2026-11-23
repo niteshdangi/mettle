@@ -257,10 +257,12 @@ start from separate copies of that cache. Every pair compares both application
 executables with the clean build outputs and checks the semantic edit. Unchanged
 output makes the semantic-edit timing inconclusive. Source hashes and the build
 and runtime orders are recorded for each workload.
-The builtin method-name index first discovers names
-from source, and later processes reuse an integrity-checked entry keyed to the
-core library inputs and compiler configuration. Source-only consumers retain
-those input dependencies even when no checked library is mounted.
+The builtin method-name index first discovers names from source, and later
+processes reuse an integrity-checked entry keyed to the core library inputs
+and compiler configuration. Only unrestricted public inherent receiver
+methods from the builtin extension modules and Iterator interface methods
+participate. Source-only consumers retain those input dependencies even when
+no checked library is mounted.
 P05 uses fixed-key SipHash-1-3 builders and get-then-insert on both sides.
 
 Rust profile: `opt-level=3`, `debug=false`, `lto=false`, `codegen-units=16`,

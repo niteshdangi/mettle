@@ -544,7 +544,7 @@ CheckedLibrary::builtinMethodIndex() {
   }
   methodIndexUsed = true;
   packages::Sha256 identity;
-  identity.update("mettle.builtin-methods.1:");
+  identity.update("mettle.builtin-methods.2:");
   identity.update(archiveKey);
   auto key = identity.finish();
   auto lease = store.acquireLease(key);

@@ -1,4 +1,5 @@
 #include "semantics/library.h"
+#include "resolution/builtin_methods.h"
 #include "support/limits.h"
 #include "types/layout.h"
 #include "types/project.h"
@@ -4645,8 +4646,7 @@ exportLibraryDeclarations(const CheckedModule &module,
       directory.add("m:" + name, std::uint32_t(i));
       auto module = function.item.scope.empty() ? std::string{}
                                                 : function.item.scope.back();
-      if (function.implementation >= 0 && function.interfaceOwner.empty() &&
-          (module == "option" || module == "outcome" || module == "slice"))
+      if (resolution::isImplicitBuiltinMethod(module, function))
         directory.add("B:" + name, module);
       else if (function.interfaceOwner == "Iterator")
         directory.add("J:" + name, true);
