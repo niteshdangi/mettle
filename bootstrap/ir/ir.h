@@ -242,7 +242,8 @@ struct FunctionIndex {
   Type result = Type::Unknown;
   std::size_t parameters = 0;
   bool generic = false, declarationOnly = false, exportedDefinition = false,
-       indirectContract = false, naked = false;
+       indirectContract = false, naked = false, hasAbi = false,
+       hasExternalName = false, hasVariadicCursor = false;
   std::set<std::string> targetFeatures;
   bool valid = false;
 };

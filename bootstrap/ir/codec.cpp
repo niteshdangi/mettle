@@ -166,7 +166,8 @@ template <class A, class T> void record(A &a, T &r) {
       r.reciprocal, r.approximateFunctions);
   } else if constexpr (std::is_same_v<R, FunctionIndex>) {
     a(r.name, r.result, r.parameters, r.generic, r.declarationOnly,
-      r.exportedDefinition, r.indirectContract, r.naked, r.targetFeatures);
+      r.exportedDefinition, r.indirectContract, r.naked, r.hasAbi,
+      r.hasExternalName, r.hasVariadicCursor, r.targetFeatures);
     if (r.parameters > limits::locals)
       reject("invalid IR function shape");
     if constexpr (A::reading)
@@ -662,7 +663,9 @@ bool sameFunctionIndex(const FunctionIndex &left, const FunctionIndex &right) {
          left.declarationOnly == right.declarationOnly &&
          left.exportedDefinition == right.exportedDefinition &&
          left.indirectContract == right.indirectContract &&
-         left.naked == right.naked &&
+         left.naked == right.naked && left.hasAbi == right.hasAbi &&
+         left.hasExternalName == right.hasExternalName &&
+         left.hasVariadicCursor == right.hasVariadicCursor &&
          left.targetFeatures == right.targetFeatures;
 }
 void checkParameter(std::size_t parameter, std::size_t parameters) {
@@ -685,6 +688,21 @@ struct HeaderIndexReader {
     if constexpr (std::is_same_v<T, std::string>) {
       if (member == &Function::name) {
         reader.value(index.name);
+        return;
+      }
+      if (member == &Function::abi) {
+        index.hasAbi = !reader.text().empty();
+        return;
+      }
+      if (member == &Function::externalName) {
+        index.hasExternalName = !reader.text().empty();
+        return;
+      }
+    } else if constexpr (std::is_same_v<T, int>) {
+      if (member == &Function::variadicCursor) {
+        int cursor;
+        reader.value(cursor);
+        index.hasVariadicCursor = cursor >= 0;
         return;
       }
     } else if constexpr (std::is_same_v<T, Type>) {
@@ -775,9 +793,13 @@ void decodeRecords(
       failures[i] = error.message;
     }
   };
-  const std::size_t workers = std::max<std::size_t>(
-      1, std::min<std::size_t>(
-             {8, std::thread::hardware_concurrency(), count / 64 + 1}));
+  const std::size_t workers =
+      count < 64
+          ? 1
+          : std::max<std::size_t>(
+                1,
+                std::min<std::size_t>(
+                    {8, std::thread::hardware_concurrency(), count / 64 + 1}));
   std::vector<std::thread> threads;
   for (std::size_t w = 1; w < workers; ++w)
     threads.emplace_back([&, w] {
@@ -835,7 +857,7 @@ FunctionSegments functionSegments(std::span<const std::uint8_t> bytes) {
 
 void programVersion(Reader &reader) {
   if (reader.unsignedInteger(4) != 0x5249544d ||
-      reader.unsignedInteger(4) != 14)
+      reader.unsignedInteger(4) != 15)
     reject("unsupported IR archive format or version");
 }
 
@@ -905,9 +927,13 @@ void decodeFunctionHeaders(
       failures[i] = error.message;
     }
   };
-  const std::size_t workers = std::max<std::size_t>(
-      1, std::min<std::size_t>(
-             {8, std::thread::hardware_concurrency(), count / 64 + 1}));
+  const std::size_t workers =
+      count < 64
+          ? 1
+          : std::max<std::size_t>(
+                1,
+                std::min<std::size_t>(
+                    {8, std::thread::hardware_concurrency(), count / 64 + 1}));
   std::vector<std::thread> threads;
   for (std::size_t w = 1; w < workers; ++w)
     threads.emplace_back([&, w] {
@@ -1162,7 +1188,7 @@ EncodeResult encodeProgram(const Program &program,
   try {
     Writer writer(references);
     writer.unsignedInteger(0x5249544d, 4);
-    writer.unsignedInteger(14, 4);
+    writer.unsignedInteger(15, 4);
     if ((!program.functionPackages.empty() &&
          program.functionPackages.size() != program.functions.size()) ||
         (!program.staticPackages.empty() &&

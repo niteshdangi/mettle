@@ -555,13 +555,15 @@ groups and declaration spans. Checking and finalized phases share unchanged
 deferred records; consumer mutations detach locally. Selection and coherence use
 the compact indexes before demanding candidate details, without hiding imported
 implementations or weakening cross-boundary overlap checks.
-IR v14 persists a compact callable query record separately from each full
+IR v15 persists a compact callable query record separately from each full
 callable header and private implementation payload. Authenticated native
 admission reads the query records without scanning unused callable headers.
 Retained headers reserve a sparse immutable prefix rather than allocating a
 deferred slot per function. Raw/unsealed admission still validates full headers
 against the producer index; demanded native headers must reproduce that index
 and preserve cross-record symbol-binding consistency.
+The query also retains ABI, external-name and variadic-cursor presence, so native
+object eligibility does not materialize otherwise unused callable headers.
 Private locals, lexical scopes and array-loop metadata remain in the
 authenticated deferred implementation payload.
 Demand authenticates and decodes that payload before CFG validation; nested

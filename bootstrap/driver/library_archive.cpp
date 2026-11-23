@@ -15,8 +15,13 @@ std::string blockDigest(std::size_t size, HashBlock hashBlock) {
   constexpr std::size_t block = std::size_t{1} << 20;
   const std::size_t blocks = (size + block - 1) / block;
   std::vector<std::string> parts(blocks);
-  const std::size_t workers = std::min<std::size_t>(
-      blocks, std::max(1u, std::min(8u, std::thread::hardware_concurrency())));
+  const std::size_t workers =
+      blocks <= 1
+          ? blocks
+          : std::min<std::size_t>(
+                blocks,
+                std::max(1u,
+                         std::min(8u, std::thread::hardware_concurrency())));
   auto run = [&](std::size_t first) {
     for (std::size_t i = first; i < blocks; i += workers) {
       packages::Sha256 hash;

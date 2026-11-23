@@ -529,13 +529,21 @@ void crossRecordSymbolAliases() {
       demand.lazyFunctions->load(0, demand.program.functions[0], decode);
   require(bool(demandedBody) && demandedBody.function->locals.size() == 2,
           "retained header/body metadata outlived neither input nor resolver");
-  {
+  for (const int field : {-1, 5, 6, 7}) {
     auto inconsistent = encoded.bytes;
     const std::string name = "caller";
     auto indexName = std::search(inconsistent.begin(), inconsistent.end(),
                                  name.begin(), name.end());
     require(indexName != inconsistent.end(), "missing callable index name");
-    *indexName = 'x';
+    if (field < 0) {
+      *indexName = 'x';
+    } else {
+      auto flags = indexName + name.size();
+      for (int i = 0; i < 2; ++i)
+        while (*flags++ & 0x80) {
+        }
+      flags[field] ^= 1;
+    }
     auto rejected = decodeProgram(inconsistent, decode);
     require(!rejected &&
                 rejected.error ==
@@ -921,7 +929,8 @@ void rawFieldCoverage() {
   require(index && index->name == f.name && index->result == f.result &&
               index->parameters == f.parameters && index->generic &&
               index->declarationOnly && index->exportedDefinition &&
-              index->indirectContract && index->naked &&
+              index->indirectContract && index->naked && index->hasAbi &&
+              index->hasExternalName && index->hasVariadicCursor &&
               index->targetFeatures == f.targetFeatures,
           "indexed admission lost function dispatch or target facts");
   const auto &indexedHeader = indexed.program.functions[0];

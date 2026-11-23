@@ -10,6 +10,9 @@ FunctionIndex indexFunction(const Function &function) {
           function.exportedDefinition,
           function.indirectContract,
           function.nakedAssembly.has_value(),
+          !function.abi.empty(),
+          !function.externalName.empty(),
+          function.variadicCursor >= 0,
           function.targetFeatures,
           true};
 }

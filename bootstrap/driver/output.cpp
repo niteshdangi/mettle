@@ -263,8 +263,16 @@ std::vector<PackageObject> libraryObjects(
     return {};
   for (std::size_t i = 0; i < program.functionPackages.size(); ++i)
     if (!program.functionPackages[i].empty()) {
+      if (!program.libraryBodies[i])
+        return {};
+      if (const auto *index = program.deferredFunctionIndex(i)) {
+        if (index->hasVariadicCursor ||
+            (index->hasAbi && !index->hasExternalName))
+          return {};
+        continue;
+      }
       const auto &function = program.functions[i];
-      if (!program.libraryBodies[i] || function.variadicCursor >= 0 ||
+      if (function.variadicCursor >= 0 ||
           (!function.abi.empty() && function.externalName.empty()))
         return {};
     }

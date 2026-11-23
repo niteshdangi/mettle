@@ -1652,6 +1652,41 @@ blocked. Next action: reduce checked-library import/admission work in fresh
 application processes, then repeated root O2; producer region-context
 reconstruction, interface proofs and consolidated qualification remain open.
 
+The next application-parity batch starts at `be774415`. Frontend sampling
+finds CPU-count discovery in nine of 61 samples, including seven while
+materializing individual lazy IR function headers. Both IR record decoders
+and archive payload hashing query host parallelism even when their existing
+work-size policy selects at most one worker. Remove that setup in
+`bootstrap/ir/codec.cpp` and `bootstrap/driver/library_archive.cpp`, retaining
+the same worker counts, archive digests and complete metadata validation.
+The scheduling change passes IR-codec and library-archive regressions; its
+three-pair engineering trial measures standalone builds 436.4 -> 388.0 ms,
+still 1.57 times Rust. Evidence:
+`~/w/anal/perf-application-parity-20261123/workers/`.
+The same trace exposes a coupled cause: native object eligibility reads every
+complete imported function header just to inspect ABI/name/cursor facts.
+IR v15 now carries those three presence facts, with coordinated producer,
+header scanner, equality validation and `driver/output.cpp` consumption.
+Full demanded headers still reproduce the index. Optimized and ASan/UBSan
+IR-codec/archive CTests pass, including rejection of independently conflicting
+ABI/name/cursor facts without publishing the header. The package
+`native_demand_selection` case passes both profiles.
+
+The combined three-pair engineering trial measures fresh application builds
+403.8 -> 342.5 ms, 15.2% faster, versus Rust at 242.5 ms: still 1.41 times
+slower. Libraries are primed outside the samples. Explicit resident builds
+measure 201.2 -> 180.6 ms; these are not fresh-process parity. Fresh checks
+remain 206.1 ms versus Rust's 23.6 ms. Evidence:
+`~/w/anal/perf-application-parity-20261123/index/`; frozen compiler SHA-256
+`054f8541395a5faac2b04ddd2a5fe81d4d25ab4a8048d46ffd8a13c7e3d38585`.
+This batch is focused-verified, not I14 qualification. Next action: eliminate
+repeated syntax-context records from archive admission while retaining every
+mapping, binder identity and validation. The measured P04 archive repeats
+160,494 contexts (5,639,872 bytes) representing only 996 distinct per-generation
+values (34,977 bytes). Archive framing, scanner, demand reader and existing
+provenance regressions own this next measured I14 change; type/declaration
+admission and repeated root O2 remain subsequent profiling targets.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
