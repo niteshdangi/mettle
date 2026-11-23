@@ -27,6 +27,10 @@ fn main(): i32 {
             i += 2
         }
         if map.len() != 500usize || drops != 500 { return 3 }
+        var suffix = map.split_off(500)
+        if map.len() != 250usize || suffix.len() != 250usize || drops != 500 { return 41 }
+        map.append(mut suffix)
+        if map.len() != 500usize || !suffix.is_empty() || drops != 500 { return 42 }
         if map.contains_key(11) || !map.contains_key(10) { return 4 }
         match map.first_key() { present(k) => { if *k != 0 { return 5 } }, none => { return 5 } }
         match map.last_key() { present(k) => { if *k != 998 { return 5 } }, none => { return 5 } }
@@ -146,5 +150,28 @@ fn main(): i32 {
         none => { return 35 }
     }
     if extremes_set.len() != 1usize || !extremes_set.contains(2) { return 36 }
+    var split = 0
+    while split <= 257 {
+        var whole = alloc.btree.new<i32, i32>()
+        var value = 0
+        while value < 257 {
+            let key = (value * 37) % 257
+            let _ = whole.insert(key + 0, key)
+            value += 1
+        }
+        var upper = whole.split_off(split + 0)
+        if whole.len() != split as usize || upper.len() != (257 - split) as usize { return 37 }
+        value = 0
+        while value < split {
+            if whole.pop_first() != present((value + 0, value + 0)) { return 38 }
+            value += 1
+        }
+        while value < 257 {
+            if upper.pop_first() != present((value + 0, value + 0)) { return 39 }
+            value += 1
+        }
+        if !whole.is_empty() || !upper.is_empty() { return 40 }
+        split += 1
+    }
     0
 }

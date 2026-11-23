@@ -1836,10 +1836,30 @@ dependency measures 168.08 -> 70.10 ms over seven paired samples, with identical
 published diagnostics. Evidence:
 `~/w/anal/perf-library-scaling-20261123/{library-results.json,timer-results.json,lsp/results.json}`.
 These are focused engineering measurements, not I14 qualification.
-Allocator-compatible list/tree node transfers, channel-notifier end-to-end
-measurement, and the compiler/cache work above remain open. The next collection
-action requires resolving allocator compatibility without assuming arbitrary
-clones can deallocate each other's nodes or silently changing allocator identity.
+Channel-notifier end-to-end measurement and the compiler/cache work above remain
+open.
+
+The owner approved a default-false `Allocator.is_compatible` query; Global
+returns true and incompatible custom allocators retain rebuilding. Compatible
+linked-list splits now relink nodes, and compatible B-tree splits transfer whole
+trees or intact subtrees along a preallocated boundary spine. Repair restores
+occupancy/parent links before guarded release of detached nodes. Exact map length
+still requires counting subtree entries. An empty compatible map also adopts an
+appended tree directly; nonempty append still reinserts incoming entries.
+Both-profile allocator-domain/ownership, every-boundary split/removal, set split,
+and comparator/allocation-unwind cases pass. Emitted-program ASan also passes
+node transfer, drop-counting split/append, and all eight boundary-spine allocation
+failure points.
+
+Nine randomized 100,000-entry operation samples, excluding construction and
+destruction but including public clock-wrapper overhead, measure list split at
+zero 970.12 -> 2.27 us, map split at minimum 10,262.35 -> 3.44 us, map middle split
+5,057.98 -> 138.24 us, and empty-map append 9,900.66 -> 1.29 us.
+Rust controls measure 0.076/1.758/45.265/0.197 us respectively. These improvements
+do not establish parity, particularly near clock-overhead scale. Evidence:
+`~/w/anal/perf-library-scaling-20261123/transfer-results.json`.
+Remaining collection performance work includes nonempty append and map length
+counting; the compiler/cache and channel work above is unchanged.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

@@ -280,10 +280,56 @@ unsafe fn alloc_node<K, V, A: Allocator>(a: ptr<mut A>, leaf: bool): ptr<mut Nod
 }
 // Releases the blocks of `n` only; its entries and children are not touched.
 unsafe fn free_node<K, V, A: Allocator>(a: ptr<mut A>, n: ptr<mut Node<K, V>>): Unit {
-    let leaf = (*n).leaf
-    free_array<Bucket<K, V>, A>(a, (*n).entries, max_entries())
-    if !leaf { free_array<ptr<mut Node<K, V>>, A>(a, (*n).children, max_entries() + 1usize) }
-    free_array<Node<K, V>, A>(a, n, 1usize)
+    let header = core.ptr.`read`(n.cast_const())
+    let header_free = free_block(n.cast<u8>(), layout_of<Node<K, V>>(), a)
+    let links_free = if header.leaf { none } else {
+        present(free_block(
+            header.children.cast<u8>(),
+            layout_unchecked(
+                core.mem.size_of<ptr<mut Node<K, V>>>() * (max_entries() + 1usize),
+                core.mem.align_of<ptr<mut Node<K, V>>>()
+            ),
+            a
+        ))
+    }
+    let entries_free = free_block(
+        header.entries.cast<u8>(),
+        layout_unchecked(
+            core.mem.size_of<Bucket<K, V>>() * max_entries(),
+            core.mem.align_of<Bucket<K, V>>()
+        ),
+        a
+    )
+}
+
+unsafe fn tree_len<K, V>(node: ptr<mut Node<K, V>>): usize {
+    let len = (*node).len
+    var total = len
+    if !(*node).leaf {
+        var index = 0usize
+        while index <= len {
+            total += tree_len(node_child(node, index))
+            index += 1usize
+        }
+    }
+    total
+}
+
+type DetachedNodes<K, V, A: Allocator> {
+    a: ptr<mut A>
+    nodes: super.vec.List<ptr<mut Node<K, V>>>
+    drop { self.run() }
+}
+
+extend<K, V, A: Allocator> DetachedNodes<K, V, A> {
+    mut fn run(): Unit {
+        while true {
+            match self.nodes.pop() {
+                present(node) => unsafe { free_node<K, V, A>(self.a, node) },
+                none => { break }
+            }
+        }
+    }
 }
 // Releases the subtree at `n` in key order, dropping its entries when
 // `drop_entries` (a consuming iterator drops the unconsumed ones itself).
@@ -409,9 +455,7 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
         unsafe { drop_tree<K, V, A>(core.ptr.from_mut(self.a), root, len) }
     }
 
-    // Merges the children `i` and `i + 1` of `p` and the entry between them
-    // into child `i`, freeing child `i + 1`.
-    mut unsafe fn merge_children(p: ptr<mut Node<K, V>>, i: usize): Unit {
+    mut unsafe fn merge_children(p: ptr<mut Node<K, V>>, i: usize): ptr<mut Node<K, V>> {
         let l = node_child(p, i)
         let r = node_child(p, i + 1usize)
         let llen = (*l).len
@@ -430,7 +474,7 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
         copy_entries(node_entry(p, i + 1usize), node_entry(p, i), plen - i - 1usize)
         copy_links((*p).children.add(i + 2usize), (*p).children.add(i + 1usize), plen - i - 1usize)
         (*p).len = plen - 1usize
-        free_node<K, V, A>(core.ptr.from_mut(self.a), r)
+        r
     }
 
     // Restores the occupancy invariants after `start` lost an entry, walking
@@ -466,8 +510,41 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
                     return ()
                 }
             }
-            if ci > 0usize { self.merge_children(parent, ci - 1usize) } else { self.merge_children(parent, ci) }
+            let detached = if ci > 0usize {
+                self.merge_children(parent, ci - 1usize)
+            } else { self.merge_children(parent, ci) }
+            free_node<K, V, A>(core.ptr.from_mut(self.a), detached)
             n = parent
+        }
+    }
+
+    mut unsafe fn repair_split_border(
+        right: bool, mut detached: super.vec.List<ptr<mut Node<K, V>>>
+    ): Unit {
+        var node = self.root
+        while !(*node).leaf {
+            let at = if right { (*node).len } else { 0usize }
+            if (*node_child(node, at)).len <= min_entries() && (*node).len != 0usize {
+                let sibling = if right { at - 1usize } else { at + 1usize }
+                if (*node_child(node, at)).len + (*node_child(node, sibling)).len + 1usize <= max_entries() {
+                    detached.push(self.merge_children(node, if right { at - 1usize } else { at }))
+                } else {
+                    while (*node_child(node, at)).len <= min_entries() {
+                        if right { borrow_left(node, at) } else { borrow_right(node, at) }
+                    }
+                }
+            }
+            let child = node_child(node, if right { (*node).len } else { 0usize })
+            if node == self.root && (*node).len == 0usize {
+                self.root = child
+                (*child).parent = null_node<K, V>()
+                detached.push(node)
+            }
+            node = child
+        }
+        if node == self.root && (*node).len == 0usize {
+            self.root = null_node<K, V>()
+            detached.push(node)
         }
     }
 
@@ -622,6 +699,71 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
     }
     pub mut fn split_off(read key: K): SortedMap<K, V, A> where A: Clone {
         var upper = new_in<K, V, A>(self.a.clone())
+        if self.len == 0usize { return upper }
+        if upper.a.is_compatible(read self.a) {
+            if !self.first_key().or_panic().cmp(key).is_lt() {
+                upper.root = self.root
+                upper.len = self.len
+                self.root = null_node<K, V>()
+                self.len = 0usize
+                return upper
+            }
+            if self.last_key().or_panic().cmp(key).is_lt() { return upper }
+            var positions = super.vec.new<usize>()
+            var node = self.root
+            unsafe {
+                while true {
+                    let found = search_node(node, key)
+                    let leaf = (*node).leaf
+                    if !leaf { node = node_child(node, found.0) }
+                    positions.push(found.0)
+                    if leaf { break }
+                }
+            }
+            var detached = DetachedNodes(
+                core.ptr.from_mut(self.a),
+                super.vec.with_capacity<ptr<mut Node<K, V>>>(positions.len() * 4usize)
+            )
+            var level = 0usize
+            while level < positions.len() {
+                let fresh = match capture unsafe {
+                    alloc_node<K, V, A>(core.ptr.from_mut(upper.a), level == 0usize)
+                } {
+                    success(fresh) => fresh,
+                    failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
+                }
+                if level != 0usize { unsafe { set_child(fresh, 0usize, upper.root) } }
+                upper.root = fresh
+                level += 1usize
+            }
+            unsafe {
+                var left = self.root
+                var right = upper.root
+                level = 0usize
+                while true {
+                    let at = positions[level]
+                    let count = (*left).len - at
+                    copy_entries(node_entry(left, at), node_entry(right, 0usize), count)
+                    (*left).len = at
+                    (*right).len = count
+                    if (*left).leaf { break }
+                    var index = 1usize
+                    while index <= count {
+                        set_child(right, index, node_child(left, at + index))
+                        index += 1usize
+                    }
+                    left = node_child(left, at)
+                    right = node_child(right, 0usize)
+                    level += 1usize
+                }
+                upper.len = tree_len(upper.root)
+                self.len -= upper.len
+                self.repair_split_border(true, mut detached.nodes)
+                upper.repair_split_border(false, mut detached.nodes)
+            }
+            detached.run()
+            return upper
+        }
         while true {
             match self.last_key() {
                 present(last) => { if K.(Ord).cmp(last, key).is_lt() { break } },
@@ -721,6 +863,13 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
 
 extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
     pub mut fn append(mut other: SortedMap<K, V, A>): Unit {
+        if self.len == 0usize && self.a.is_compatible(read other.a) {
+            self.root = other.root
+            self.len = other.len
+            other.root = null_node<K, V>()
+            other.len = 0usize
+            return ()
+        }
         while true {
             match take other.pop_first() {
                 present(entry) => { let _ = self.insert(entry.0, entry.1) },

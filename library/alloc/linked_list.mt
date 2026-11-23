@@ -199,11 +199,38 @@ extend<T: PartialEq, A: Allocator> LinkedList<T, A> {
 }
 
 extend<T, A: Allocator + Clone> LinkedList<T, A> {
-    // Rebuild nodes with the cloned allocator instead of transferring blocks
-    // whose compatibility with that clone is not part of Allocator's contract.
     pub mut fn split_off(at: usize): LinkedList<T, A> {
         if at > self.len { super.alloc.panic_precondition() }
         var other = new_in<T, A>(self.a.clone())
+        if at == self.len { return other }
+        if other.a.is_compatible(read self.a) {
+            let null = core.ptr.null_mut<Node<T>>()
+            var boundary = self.head
+            if at <= self.len - at {
+                var index = 0usize
+                while index < at {
+                    boundary = unsafe { (*boundary).next }
+                    index += 1usize
+                }
+            } else {
+                boundary = self.tail
+                var index = self.len - 1usize
+                while index > at {
+                    boundary = unsafe { (*boundary).prev }
+                    index -= 1usize
+                }
+            }
+            other.head = boundary
+            other.tail = self.tail
+            other.len = self.len - at
+            self.tail = unsafe { (*boundary).prev }
+            if self.tail == null { self.head = null } else {
+                unsafe { (*self.tail).next = null }
+            }
+            unsafe { (*boundary).prev = null }
+            self.len = at
+            return other
+        }
         while self.len > at {
             other.push_front(self.pop_back().or_panic())
         }

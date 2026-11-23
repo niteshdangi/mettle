@@ -94,7 +94,13 @@ It is declared `pub unsafe interface Allocator` and implemented with
 `unsafe extend`. Its safe `allocate` call relies on the provider to establish
 the returned extent's liveness, exclusivity, size and alignment.
 `deallocate`, `grow` and `shrink` are `mut unsafe fn` methods.
-Allocator clones used for the same allocation must remain compatible.
+Cloning alone does not prove allocator compatibility. `is_compatible(read other)`
+defaults to false; true guarantees symmetric compatibility for deallocation and
+resizing, including allocations transferred between the instances. That guarantee
+must survive subsequent allocator operations and the donor instance's destruction:
+transferred storage remains valid until released through its receiving owner.
+`Global` returns true. Existing custom implementations can retain the default
+and their rebuilding collection paths.
 Before `grow`/`shrink` returns a replacement, typed failure or unwind must
 preserve the original live allocation and its initialized contents.
 This does not forbid `deallocate` from releasing storage and then panicking.
@@ -102,6 +108,7 @@ Unlike `GlobalAlloc`, generic `Allocator` has no no-unwind requirement.
 
 | Member | Contract |
 | --- | --- |
+| `is_compatible(read other)` | Conservatively report whether the instances can exchange allocation ownership under the guarantees above |
 | `allocate(layout)` | Return exclusive raw storage satisfying size/alignment or AllocError; initial bytes need not be initialized |
 | `deallocate(p,layout)` | Return the live allocation to a compatible allocator with its original layout |
 | `grow(p,old,new_size)` | Require new_size >= old.size; on success replace allocation, preserve all old bytes/initialization and original alignment |
@@ -470,7 +477,10 @@ updates are O(1) excluding allocation/destruction.
 leaving other empty. Compatible allocator identity must survive node
 transfer; it cannot free donor nodes through an unrelated allocator value.
 `split_off(i)` panics for i > len and transfers nodes at/after i to a new
-list in O(len) time without cloning T. `clear` destroys every node/item.
+list without cloning T. Compatible allocators permit direct relinking in
+O(min(i,len-i)) time with no node allocation, including O(1) end splits.
+Incompatible cloned allocators retain the node-rebuilding path.
+`clear` destroys every node/item.
 `contains` and index-like extension queries scan O(len); no O(1) random
 access promise follows from an optional native convenience get.
 Iter/IterMut/IntoIter are exact-size, bidirectional and fused.
@@ -660,6 +670,20 @@ and donor V replaces receiver V. Equivalent but distinct donor keys are
 destroyed. Conservative work is O((n+m) log(n+m+1)), with allocation allowed.
 Allocator clones/transferred nodes must remain compatible with their
 original allocations.
+
+With compatible allocators, splitting at/below the minimum transfers the whole
+tree without allocating nodes; splitting above the maximum leaves it untouched.
+General splits compare and allocate a boundary spine before modifying links,
+transfer intact subtrees, then repair boundary occupancy and parent links.
+They allocate O(log(n+1)) nodes and count retained subtree entries for the exact
+length, rather than removing/reinserting entries. The structural repair reserves
+four detached-node slots per original level: each side can merge and contract
+its root at most once per level. Consequently repair cannot allocate or invoke
+allocator callbacks before both trees are valid. Detached node/block guards
+preserve cleanup across allocator unwinding. An empty compatible receiver
+also adopts an appended tree in O(1) work without node allocation.
+Incompatible allocators retain rebuilding; nonempty receivers still insert
+incoming entries.
 
 Entry handles and exclusive iterators retain the map's exclusive loan;
 consuming iterators own the remaining entries, nodes and allocator. They are

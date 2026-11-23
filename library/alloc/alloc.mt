@@ -39,9 +39,8 @@ fn resized_layout(old: Layout, new_size: usize): Layout throws AllocError {
     }
 }
 
-// Safety: providers return live, exclusive storage matching its layout; clones
-// remain compatible; resize failure or unwind preserves the original initialized block.
 pub unsafe interface Allocator {
+    fn is_compatible(read other: Self): bool { false }
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError;
     // Safety: the block is live, exclusively owned and matches this allocator/layout.
     mut unsafe fn deallocate(p: ptr<mut u8>, layout: Layout): Unit;
@@ -58,6 +57,8 @@ extend Global implements core.clone.Clone { fn clone(): Global { Global() } }
 extend Global implements core.default.Default { static fn default(): Global { Global() } }
 
 unsafe extend Global implements Allocator {
+    fn is_compatible(read _other: Global): bool { true }
+
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
         if layout.size() == 0usize { return layout.dangling_ptr().as_ptr() }
         let p = unsafe { mettle_rt_alloc(layout.size(), layout.align()) }

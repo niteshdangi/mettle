@@ -3,6 +3,7 @@ import alloc.arc
 import alloc.arc.Shared
 import alloc.btree
 import alloc.hash_map
+import alloc.alloc.{Allocator, Global, Layout, AllocError}
 import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import core.hash.{Hash, Hasher}
 import std.panic.CatchResult
@@ -28,8 +29,12 @@ extend Key implements PartialOrd {
 }
 extend Key implements Ord {
     fn cmp(read other: Key): Ordering {
-        if self.panic_cmp.get().load(core.sync.atomic.Ordering.SeqCst) != 0usize {
+        let remaining = self.panic_cmp.get().load(core.sync.atomic.Ordering.SeqCst)
+        if remaining == 1usize {
             panic("key comparison")
+        }
+        if remaining > 1usize {
+            let _ = self.panic_cmp.get().fetch_sub(1usize, core.sync.atomic.Ordering.SeqCst)
         }
         self.value.cmp(other.value)
     }
@@ -55,6 +60,41 @@ type DropBomb {
     drop {
         let _old = self.drops.get().fetch_add(1usize, core.sync.atomic.Ordering.SeqCst)
         if self.panic_on_drop { panic("tree value drop") }
+    }
+}
+
+copy type SplitAllocator {
+    calls: ptr<mut i32>
+    fail_at: ptr<mut i32>
+    live: ptr<mut i32>
+}
+extend SplitAllocator implements core.clone.Clone {
+    fn clone(): SplitAllocator { SplitAllocator(self.calls, self.fail_at, self.live) }
+}
+unsafe extend SplitAllocator implements Allocator {
+    fn is_compatible(read other: SplitAllocator): bool { self.live == other.live }
+    mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
+        unsafe {
+            *self.calls += 1
+            if *self.calls == *self.fail_at { panic("split allocation") }
+        }
+        var global = Global()
+        let pointer = try global.allocate(layout)
+        unsafe { *self.live += 1 }
+        pointer
+    }
+    mut unsafe fn deallocate(pointer: ptr<mut u8>, layout: Layout): Unit {
+        unsafe { *self.live -= 1 }
+        var global = Global()
+        unsafe { global.deallocate(pointer, layout) }
+    }
+    mut unsafe fn grow(pointer: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
+        var global = Global()
+        unsafe { try global.grow(pointer, old, size) }
+    }
+    mut unsafe fn shrink(pointer: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
+        var global = Global()
+        unsafe { try global.shrink(pointer, old, size) }
     }
 }
 
@@ -137,6 +177,55 @@ fn main(): i32 {
         if !tree.contains_key(make_key(value, panic_hash.retain(), panic_eq.retain(),
                                        panic_cmp.retain())) { return 11 }
         value += 1
+    }
+    let _set = panic_cmp.get().store(5usize, core.sync.atomic.Ordering.SeqCst)
+    match take std.panic.catch_panic(fn(): Unit {
+        let upper = tree.split_off(make_key(6, panic_hash.retain(), panic_eq.retain(),
+                                           panic_cmp.retain()))
+    }) {
+        CatchResult.Panicked(_) => {},
+        _ => { return 23 }
+    }
+    let _set = panic_cmp.get().store(0usize, core.sync.atomic.Ordering.SeqCst)
+    if tree.len() != 11usize { return 24 }
+    value = 0
+    while value < 11 {
+        if !tree.contains_key(make_key(value, panic_hash.retain(), panic_eq.retain(),
+                                       panic_cmp.retain())) { return 25 }
+        value += 1
+    }
+    var allocation_failure = 1
+    while allocation_failure <= 8 {
+        var calls = 0
+        var fail_at = 0
+        var live = 0
+        {
+            var splitting = btree.new_in<i32, i32, SplitAllocator>(
+                SplitAllocator(core.ptr.from_mut(calls), core.ptr.from_mut(fail_at), core.ptr.from_mut(live))
+            )
+            value = 0
+            while value < 128 {
+                let _ = splitting.insert(value + 0, value + 0)
+                value += 1
+            }
+            let original_live = live
+            fail_at = calls + allocation_failure
+            match take std.panic.catch_panic(fn(): Unit {
+                let upper = splitting.split_off(64)
+            }) {
+                CatchResult.Panicked(_) => {},
+                _ => { return 26 }
+            }
+            fail_at = 0
+            if splitting.len() != 128usize || live != original_live { return 27 }
+            value = 0
+            while value < 128 {
+                if *splitting.get(value).or_panic() != value { return 28 }
+                value += 1
+            }
+        }
+        if live != 0 { return 29 }
+        allocation_failure += 1
     }
 
     let drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
