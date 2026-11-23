@@ -29,6 +29,10 @@ struct ImportedStorage {
 constexpr std::string_view nativePackage = "native:standard-library";
 constexpr std::array<std::string_view, 3> nativeRoots{"core", "alloc", "std"};
 
+#ifdef METTLE_PREPARED_BUILTIN_METHOD_INDEX
+#include "mettle_builtin_method_index.inc"
+#endif
+
 std::string macroRevision(const Source &source, const std::string &directory) {
   std::error_code error;
   auto root = std::filesystem::absolute(directory, error).lexically_normal();
@@ -543,6 +547,27 @@ CheckedLibrary::builtinMethodIndex() {
     return std::nullopt;
   }
   methodIndexUsed = true;
+#ifdef METTLE_PREPARED_BUILTIN_METHOD_INDEX
+  auto directory = std::filesystem::path(options.libraryDirectory) / "core";
+  if (std::all_of(std::begin(builtinMethodDigests),
+                  std::end(builtinMethodDigests), [&](const auto &entry) {
+                    std::error_code fileError;
+                    auto path = std::filesystem::weakly_canonical(
+                        directory / entry.first, fileError);
+                    auto found =
+                        sourceInputs->digests.find(path.generic_string());
+                    return !fileError && found != sourceInputs->digests.end() &&
+                           found->second == entry.second;
+                  })) {
+    auto index = decodeMethodIndex(builtinMethodNames);
+    if (!index)
+      receiverDiagnostics->error("internal", {},
+                                 "invalid prepared builtin method index");
+    else if (options.explain)
+      std::cerr << "mettle: prepared builtin method index hit\n";
+    return index;
+  }
+#endif
   packages::Sha256 identity;
   identity.update("mettle.builtin-methods.2:");
   identity.update(archiveKey);

@@ -172,6 +172,20 @@ target_link_libraries(mettle_backend_llvm PUBLIC mettle_ir mettle_cleanup mettle
 target_link_libraries(mettle_packages PUBLIC mettle_source mettle_diagnostics mettle_support)
 target_compile_definitions(mettle_packages PRIVATE METTLE_VERSION="${PROJECT_VERSION}")
 target_link_libraries(mettle PUBLIC mettle_source mettle_diagnostics mettle_syntax mettle_expansion mettle_documentation mettle_resolution mettle_packages mettle_ir mettle_types mettle_semantics mettle_lint mettle_pipeline mettle_lsp mettle_backend_llvm mettle_support)
+if(NOT CMAKE_CROSSCOMPILING)
+  add_executable(mettle-builtin-method-index tools/builtin_method_index.cpp)
+  target_link_libraries(mettle-builtin-method-index PRIVATE mettle_resolution mettle_packages)
+  target_compile_options(mettle-builtin-method-index PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  set(method_index "${CMAKE_CURRENT_BINARY_DIR}/mettle_builtin_method_index.inc")
+  add_custom_command(OUTPUT "${method_index}"
+    COMMAND mettle-builtin-method-index "${PROJECT_SOURCE_DIR}/library" "${method_index}"
+    DEPENDS mettle-builtin-method-index library/core/option.mt library/core/outcome.mt
+            library/core/slice.mt library/core/iter.mt
+    VERBATIM)
+  target_sources(mettle PRIVATE "${method_index}")
+  target_include_directories(mettle PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+  target_compile_definitions(mettle PRIVATE METTLE_PREPARED_BUILTIN_METHOD_INDEX)
+endif()
 target_include_directories(mettle_backend_llvm SYSTEM PUBLIC ${LLVM_INCLUDE_DIRS})
 target_link_libraries(mettle_backend_llvm PUBLIC ${METTLE_LLVM_LIBRARIES})
 # The pinned Linux LLVM release is built without RTTI; its integration

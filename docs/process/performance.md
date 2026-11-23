@@ -257,9 +257,11 @@ start from separate copies of that cache. Every pair compares both application
 executables with the clean build outputs and checks the semantic edit. Unchanged
 output makes the semantic-edit timing inconclusive. Source hashes and the build
 and runtime orders are recorded for each workload.
-The builtin method-name index first discovers names from source, and later
-processes reuse an integrity-checked entry keyed to the core library inputs
-and compiler configuration. Only unrestricted public inherent receiver
+Native compiler builds generate a builtin method-name index from the bundled
+core modules, usable on the first application check when all indexed source
+digests match. Custom or changed inputs use source discovery and an
+integrity-checked cache keyed to the core library inputs and compiler
+configuration. Only unrestricted public inherent receiver
 methods from the builtin extension modules and Iterator interface methods
 participate. Calls whose receiver resolves to a module without a lexical
 value shadow bypass builtin discovery. Source-only consumers retain index
