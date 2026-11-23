@@ -2,13 +2,41 @@
 #include <algorithm>
 
 namespace mettle {
+TypeStore::ErasedKey TypeStore::erasedKey(const ErasedType &descriptor) {
+  std::uint64_t hash = 14695981039346656037ull;
+  auto add = [&](std::uint64_t value) {
+    hash = (hash ^ value) * 1099511628211ull;
+  };
+  add(descriptor.regionUniverse);
+  add(descriptor.bound.index());
+  add(descriptor.arguments.size());
+  for (auto argument : descriptor.arguments)
+    add(argument.index());
+  add(descriptor.associated.size());
+  for (const auto &binding : descriptor.associated) {
+    add(binding.parameter.index());
+    add(binding.argument.index());
+  }
+  add(descriptor.regionArguments.size());
+  for (auto region : descriptor.regionArguments)
+    add(region.index());
+  add(descriptor.regionParameters.size());
+  for (auto region : descriptor.regionParameters)
+    add(region.index());
+  add(descriptor.regionRequirements.size());
+  for (const auto &requirement : descriptor.regionRequirements) {
+    add(requirement.longer.index());
+    add(requirement.shorter.index());
+  }
+  return {descriptor.declaration, hash | 1};
+}
 Type TypeStore::erasedType(ErasedType descriptor) {
   std::sort(
       descriptor.associated.begin(), descriptor.associated.end(),
       [](const auto &a, const auto &b) { return a.parameter < b.parameter; });
   syncLookup();
   if (auto existing = findIndexed(
-          candidates(&LookupData::erased, descriptor.declaration),
+          candidates(&LookupData::erased, erasedKey(descriptor)),
           [&](std::size_t i) {
             if (entries[i].kind != EntryKind::Erased)
               return false;

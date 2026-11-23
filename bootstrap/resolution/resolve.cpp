@@ -216,6 +216,8 @@ std::size_t Resolution::nativeDefinition(const NativeBinding &binding) const {
 
 void Resolution::nativeBindings(ModuleId module, std::string_view name,
                                 Namespace space) const {
+  if (nativeDeclarations.empty())
+    return;
   if (!nativeLookups.emplace(module, space, std::string(name)).second)
     return;
   auto canonical = moduleInfos[module].canonical;

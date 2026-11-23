@@ -176,7 +176,7 @@ void TypeStore::syncLookup() {
           std::as_const(slices)[entry.index].element, i);
       break;
     case EntryKind::Erased:
-      lookup.local.erased[std::as_const(erasedTypes)[entry.index].declaration]
+      lookup.local.erased[erasedKey(std::as_const(erasedTypes)[entry.index])]
           .push_back(i);
       break;
     case EntryKind::Parameter: {

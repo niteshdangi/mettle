@@ -1581,6 +1581,38 @@ Measured compiler SHA-256:
 Whole-I14 freeze stays blocked; full producer checking, root optimization,
 warm-build cost and consolidated qualification remain open obligations.
 
+Interface interning follow-up (2026-11-23), baseline `7ec7451a`: producer
+profiling found repeated linear scans across every instantiation/region variant
+of an interface (15 of 59 checker samples). Owned-type interning now indexes the
+complete immutable identity fingerprint and still compares every identity
+field, so hash collisions cannot merge types. Imported lookup remains lazy and
+declaration-indexed; shared prefixes, symbol aliases and definition replacement
+retain their original identity/invalidation contracts. Source-only resolution
+also stops recording native lookup misses when no native declarations exist.
+
+Three randomized matched empty-compiler-cache P04 release pairs measure
+**12.306 s to 10.971 s, 10.8% faster**, including complete native source checking.
+Program outputs, 78,744-byte executable sizes and emitted `.text` bytes agree.
+Retained cache bytes are essentially unchanged. Five warm P04 pairs measure
+fresh checks 4.2% faster and fresh builds 6.8% slower; resident checks are 4.7%
+slower and resident builds 3.3% faster. The individual fresh-build pairs are
+mixed, not evidence of a universal speedup or a qualified regression. Runtime
+is 2.4% slower in this sample despite identical cold-program machine code.
+Fresh checks/builds remain 10.8/2.2 times direct Rust 1.99.1 respectively.
+
+Optimized and ASan/UBSan CTest type-graph, library-declaration and in-memory
+module cases pass, including the added owned-interface replacement/snapshot
+regression. Existing source assertions pass 12 run/profile and three fail/profile
+units under each compiler; sanitized source cases use the existing minimal
+native fixture. No source fixture, diagnostic or safety assertion was weakened.
+Evidence: `~/w/anal/perf-major-20261123/final/{cold-results.json,results.json,
+source-regressions,sanitizer-minimal-regressions}`; compiler SHA-256:
+`ea5545b7812225b9cc72a1d32ba93f6297f5ca340cc9555d0fc3c019122f5ff4`.
+This batch is implemented and focused-verified, not I14 qualification.
+Whole-I14 freeze remains open. Next action: profile the remaining producer
+region-context reconstruction and interface proofs; root optimization, warm-build
+cost and consolidated qualification remain open.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

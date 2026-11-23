@@ -55,6 +55,32 @@ void put32(std::vector<std::uint8_t> &bytes, std::size_t offset,
 int main() {
   {
     TypeStore types;
+    ErasedType descriptor;
+    descriptor.name = "any Indexed";
+    descriptor.declaration = 3;
+    descriptor.arguments = {Type::I32};
+    auto first = types.erasedType(descriptor);
+    types.shareInterning();
+    auto snapshot = types;
+    descriptor.arguments = {Type::Bool};
+    auto second = types.erasedType(descriptor);
+    expect(second != first && types.erasedType(descriptor) == second,
+           "interface arguments retain distinct interned identities");
+    descriptor.arguments = {Type::I32};
+    expect(types.erasedType(descriptor) == first &&
+               snapshot.erasedType(descriptor) == first,
+           "owned interface lookup preserves a shared interning prefix");
+    descriptor.arguments = {Type::U8};
+    types.defineImportedType(first, descriptor);
+    expect(types.erasedType(descriptor) == first,
+           "replacing interface arguments invalidates its owned lookup key");
+    descriptor.arguments = {Type::I32};
+    expect(snapshot.erasedType(descriptor) == first &&
+               types.erasedType(descriptor) != first,
+           "interface replacement leaves snapshot identity unchanged");
+  }
+  {
+    TypeStore types;
     auto scope = types.regions().binder();
     auto region = types.regions().bound(scope, "a");
     auto view = types.viewType(Type::I32, ParameterMode::Read, region);

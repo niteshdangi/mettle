@@ -442,7 +442,7 @@ void TypeStore::deferImportedDefinitions(
       if (imported)
         imported->erased.add(key.declaration, ordinal);
       else
-        lookup.local.erased[key.declaration].push_back(ordinal);
+        lookup.local.erased[{key.declaration, 0}].push_back(ordinal);
       break;
     case EntryKind::Opaque:
       throw std::logic_error("opaque entry in an imported type graph");
@@ -655,7 +655,7 @@ void TypeStore::defineImportedType(Type type,
                 callableKey(callables[entry.index]) != callableKey(record);
           else
             changedKey =
-                erasedTypes[entry.index].declaration != record.declaration;
+                erasedKey(erasedTypes[entry.index]) != erasedKey(record);
         },
         definition);
   std::visit(

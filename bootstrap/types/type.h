@@ -743,6 +743,7 @@ private:
   using CallableKey =
       std::tuple<RegionUniverse, std::vector<RegionId>, std::vector<RegionId>,
                  std::vector<RegionRequirement>, std::vector<Type>>;
+  using ErasedKey = std::pair<std::uint32_t, std::uint64_t>;
   struct LookupData {
     std::map<Type, std::vector<std::uint32_t>> genericInstances;
     std::map<Type, std::vector<std::uint32_t>> regionInstances;
@@ -750,7 +751,7 @@ private:
     std::map<std::tuple<Type, int, RegionId>, std::uint32_t> views;
     std::map<std::pair<Type, int>, std::uint32_t> pointers;
     std::map<Type, std::uint32_t> slices;
-    std::map<std::uint32_t, std::vector<std::uint32_t>> erased;
+    std::map<ErasedKey, std::vector<std::uint32_t>> erased;
     std::map<std::vector<Type>, std::vector<std::uint32_t>> operands;
     std::map<CallableKey, std::vector<std::uint32_t>> callables;
     std::map<std::pair<Type, std::array<std::uint64_t, 2>>,
@@ -824,9 +825,10 @@ private:
   } lookup;
   void syncLookup();
   static CallableKey callableKey(const CallableType &descriptor);
-  template <class Match>
+  static ErasedKey erasedKey(const ErasedType &descriptor);
+  template <std::size_t N, class Match>
   std::optional<Type>
-  findIndexed(const std::array<std::span<const std::uint32_t>, 3> &candidates,
+  findIndexed(const std::array<std::span<const std::uint32_t>, N> &candidates,
               Match &&match) const {
     std::optional<Type> result;
     for (const auto part : candidates)
@@ -847,7 +849,7 @@ private:
                                               : lookup.imported->operands;
     else if constexpr (std::is_same_v<Key, CallableKey>)
       return lookup.imported->callables;
-    else if constexpr (std::is_same_v<Key, std::uint32_t>)
+    else if constexpr (std::is_same_v<Key, ErasedKey>)
       return lookup.imported->erased;
     else
       return lookup.imported->constants;
@@ -863,20 +865,40 @@ private:
       return lookup.imported->views;
   }
   template <class Key>
-  std::array<std::span<const std::uint32_t>, 3>
+  auto
   candidates(const std::map<Key, std::vector<std::uint32_t>> LookupData::*table,
              const Key &key) const {
-    auto owned = [&](const LookupData &data) {
-      const auto *values = found(data.*table, key);
+    auto owned = [&](const LookupData &data, const Key &value) {
+      const auto *values = found(data.*table, value);
       return values ? std::span<const std::uint32_t>(*values)
                     : std::span<const std::uint32_t>{};
     };
-    return {lookup.resolve    ? lookup.resolve(importedQuery(table, key))
-            : lookup.imported ? importedTable(table).find(key)
-                              : std::span<const std::uint32_t>{},
-            lookup.base ? owned(*lookup.base)
-                        : std::span<const std::uint32_t>{},
-            owned(lookup.local)};
+    auto imported = [&]() -> std::span<const std::uint32_t> {
+      if (lookup.resolve)
+        return lookup.resolve(importedQuery(table, key));
+      if (!lookup.imported)
+        return {};
+      if constexpr (std::is_same_v<Key, ErasedKey>)
+        return importedTable(table).find(key.first);
+      else
+        return importedTable(table).find(key);
+    }();
+    if constexpr (std::is_same_v<Key, ErasedKey>) {
+      const ErasedKey deferred{key.first, 0};
+      return std::array<std::span<const std::uint32_t>, 5>{
+          imported,
+          lookup.base ? owned(*lookup.base, key)
+                      : std::span<const std::uint32_t>{},
+          owned(lookup.local, key),
+          lookup.base ? owned(*lookup.base, deferred)
+                      : std::span<const std::uint32_t>{},
+          owned(lookup.local, deferred)};
+    } else
+      return std::array<std::span<const std::uint32_t>, 3>{
+          imported,
+          lookup.base ? owned(*lookup.base, key)
+                      : std::span<const std::uint32_t>{},
+          owned(lookup.local, key)};
   }
   template <class Key>
   std::optional<std::uint32_t>
@@ -921,9 +943,9 @@ private:
       index.callableParameterRegions = std::get<2>(key);
       index.callableRegionRequirements = std::get<3>(key);
       index.key = std::get<4>(key);
-    } else if constexpr (std::is_same_v<Key, std::uint32_t>) {
+    } else if constexpr (std::is_same_v<Key, ErasedKey>) {
       result.kind = Kind::Erased;
-      index.declaration = key;
+      index.declaration = key.first;
     } else if constexpr (std::is_same_v<Key, std::pair<Type, int>>) {
       result.kind = Kind::Pointer;
       index.payload = key.first;
