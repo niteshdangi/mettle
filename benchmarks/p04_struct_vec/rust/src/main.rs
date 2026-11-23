@@ -44,7 +44,7 @@ fn step(particles: &mut Vec<Particle>) {
     }
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let mut particles = spawn(1000000);
     let mut round = 0;
     while round < 200 {
@@ -58,5 +58,5 @@ fn main() {
         total += (p.x + p.y) as i64;
         index += 1usize;
     }
-    std::process::exit((total % 128i64) as i32);
+    std::process::ExitCode::from((total % 128i64) as u8)
 }

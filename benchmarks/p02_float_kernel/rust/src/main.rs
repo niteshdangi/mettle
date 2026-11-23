@@ -13,8 +13,8 @@ fn integrate(steps: i32) -> f64 {
     sum * width
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let pi = integrate(50000000 + seed());
     let scaled = (pi * 1000000.0f64) as i64;
-    std::process::exit((scaled % 128i64) as i32);
+    std::process::ExitCode::from(((scaled + seed() as i64) % 128i64) as u8)
 }

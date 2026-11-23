@@ -12,6 +12,6 @@ fn reduce(limit: i32) -> i32 {
     state & 127
 }
 
-fn main() {
-    std::process::exit(reduce(268435456));
+fn main() -> std::process::ExitCode {
+    std::process::ExitCode::from(reduce(268435456) as u8)
 }

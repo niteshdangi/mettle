@@ -20,7 +20,7 @@ fn generate(size: usize) -> Vec<u8> {
     bytes
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let bytes = generate(33554432usize);
     let mut words = 0u64;
     let mut lines = 0u64;
@@ -42,5 +42,5 @@ fn main() {
         inside = !space;
         index += 1usize;
     }
-    std::process::exit(((words * 31u64 + lines * 7u64 + vowels) % 127u64) as i32);
+    std::process::ExitCode::from(((words * 31u64 + lines * 7u64 + vowels + seed()) % 127u64) as u8)
 }

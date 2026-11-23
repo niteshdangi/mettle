@@ -16,5 +16,5 @@ fn integrate(steps: i32): f64 {
 fn main(): i32 {
     let pi = integrate(50000000 + seed())
     let scaled = (pi * 1000000.0f64) as i64
-    (scaled % 128i64) as i32
+    ((scaled + seed() as i64) % 128i64) as i32
 }

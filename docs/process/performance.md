@@ -249,9 +249,15 @@ languages for the clean and the semantically edited build.
 Check-only measurements use a separate fresh cache/target directory on both
 sides, with release profile and overflow checks off. Mettle runs standalone so
 child-process wall time and RSS include the compiler and no resident endpoint
-survives a sample. Fresh Mettle caches include native-library production;
-application-only comparisons must prime those libraries outside timing.
-This includes the builtin method-name index: its first miss discovers names
+survives a sample. Fresh Mettle caches include native-library production.
+`application_check` and `application_build` compare fresh standalone Mettle
+processes with direct rustc metadata and executable emission. An independent, minimal Mettle program
+imports the workload’s standard-library modules before timing. Check and build
+start from separate copies of that cache. Every pair compares both application
+executables with the clean build outputs and checks the semantic edit. Unchanged
+output makes the semantic-edit timing inconclusive. Source hashes and the build
+and runtime orders are recorded for each workload.
+The builtin method-name index first discovers names
 from source, and later processes reuse an integrity-checked entry keyed to the
 core library inputs and compiler configuration. Source-only consumers retain
 those input dependencies even when no checked library is mounted.
@@ -265,9 +271,9 @@ and check-only; compiler peak RSS; binary size; and allocated bytes
 (`st_blocks`) after the clean build and the edit sequence. Mettle's retained
 bytes are its cache store plus package-local `target/mettle` plus the output
 executable; Cargo's are the whole `target/`. Time endpoints use section 4
-(paired log ratios, Student-t, alpha = 0.05/K for K = workloads x six time
-endpoints); runtime passes on a win or a precise tie, compile-time metrics need
-a win; byte metrics compare medians and require stability within one percent.
+(paired log ratios, Student-t, alpha = 0.05/K for K = workloads x eight time
+endpoints). Runtime and compile-time metrics require a win. Byte metrics compare
+medians and require stability within one percent.
 Without a qualified runner, 30 pairs and the frozen Rust toolchain the report is
 an engineering signal only. The section 5.2 instruction counters are not
 collected by this harness.

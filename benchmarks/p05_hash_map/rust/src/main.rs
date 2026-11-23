@@ -3,7 +3,7 @@ use std::hash::{BuildHasherDefault, DefaultHasher};
 
 fn seed() -> i64 { 12345i64 } // bench-edit-point
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let mut counts: HashMap<i32, i32, BuildHasherDefault<DefaultHasher>> = HashMap::default();
     let mut state = seed();
     let mut index = 0;
@@ -22,5 +22,5 @@ fn main() {
         }
         key += 1;
     }
-    std::process::exit(((checksum + counts.len() as i64) % 128i64) as i32);
+    std::process::ExitCode::from(((checksum + counts.len() as i64) % 128i64) as u8)
 }

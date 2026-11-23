@@ -34,5 +34,5 @@ fn main(): i32 {
         inside = !space
         index += 1usize
     }
-    ((words * 31u64 + lines * 7u64 + vowels) % 127u64) as i32
+    ((words * 31u64 + lines * 7u64 + vowels + seed()) % 127u64) as i32
 }

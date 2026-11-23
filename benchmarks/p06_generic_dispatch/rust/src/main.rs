@@ -22,9 +22,9 @@ fn drive<S: Step>(step: &S, rounds: i32, start: i32) -> i32 {
     value
 }
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let a = drive(&Affine { scale: 7, offset: 13 }, 30000000, seed());
     let b = drive(&Xor { mask: 0x5a5a5 }, 30000000, a);
     let c = drive(&Fold { modulus: 977 }, 30000000, b);
-    std::process::exit(c % 128);
+    std::process::ExitCode::from((c % 128) as u8)
 }

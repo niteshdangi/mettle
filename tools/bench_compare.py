@@ -28,14 +28,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCHMARKS = ROOT / "benchmarks"
-FROZEN_RUSTC = "1.99.1"
+RUST_BASELINE = json.loads((ROOT / "docs/baseline/sources.json").read_text())
 MARKER = "bench-edit-point"
 RESOLUTION = math.log(1.005)
 MOD = 1000003
 TIME_METRICS = ["runtime", "clean_build", "noop_build", "comment_edit_build",
-                "semantic_edit_build", "check"]
+                "semantic_edit_build", "check", "application_build", "application_check"]
 BYTE_METRICS = ["retained_bytes_clean", "retained_bytes_after_edits"]
-GATE_KIND = {"runtime": "runtime"}
 
 
 def sha256(path):
@@ -165,7 +164,7 @@ def t_quantile(probability, df):
     return (low + high) / 2.0
 
 
-def decide(mettle, rust, endpoints, kind):
+def decide(mettle, rust, endpoints):
     """Section 4 rule on paired block metrics; ratio above one is worse."""
     pairs = list(zip(mettle, rust))
     if len(pairs) < 2 or any(m <= 0 or r <= 0 for m, r in pairs):
@@ -175,19 +174,18 @@ def decide(mettle, rust, endpoints, kind):
     mean, spread = statistics.fmean(logs), statistics.stdev(logs)
     alpha = 0.05 / endpoints
     half = t_quantile(1.0 - alpha / 2.0, len(logs) - 1) * spread / math.sqrt(len(logs))
-    lower, upper = math.exp(mean - half), math.exp(mean + half)
+    lower = math.exp(mean - half)
+    upper = math.exp(mean + half) if mean + half < math.log(sys.float_info.max) else None
     if half > RESOLUTION:
         verdict = "inconclusive"
     elif lower > 1.0:
         verdict = "slowdown"
-    elif upper < 1.0:
+    elif upper is not None and upper < 1.0:
         verdict = "win"
     else:
         verdict = "tie"
     if verdict == "inconclusive":
         gate = "inconclusive"
-    elif kind == "runtime":
-        gate = "pass" if verdict in ("win", "tie") else "fail"
     else:
         gate = "pass" if verdict == "win" else "fail"
     return {"verdict": verdict, "gate": gate, "ratio": math.exp(mean), "lower": lower,
@@ -293,7 +291,7 @@ def generate_scale(destination, modules, functions, generic):
     main_m = [f"module m{i};\n" for i in range(modules)]
     main_r = [f"mod m{i};\n" for i in range(modules)]
     main_m.append("\nfn main(): i32 {\n    var acc = 1\n")
-    main_r.append("\nfn main() {\n    let mut acc = 1;\n")
+    main_r.append("\nfn main() -> std::process::ExitCode {\n    let mut acc = 1;\n")
     for i in range(modules):
         make = module_generic if generic else module_plain
         text_m, text_r = make(i, functions)
@@ -302,7 +300,7 @@ def generate_scale(destination, modules, functions, generic):
         main_m.append(f"    acc = (acc + m{i}.run(acc)) % {MOD}\n")
         main_r.append(f"    acc = (acc + m{i}::run(acc)) % {MOD};\n")
     main_m.append("    acc % 128\n}\n")
-    main_r.append("    std::process::exit(acc % 128);\n}\n")
+    main_r.append("    std::process::ExitCode::from((acc % 128) as u8)\n}\n")
     write(mettle_tree / "src" / "main.mt", "".join(main_m))
     write(rust_tree / "src" / "main.rs", "".join(main_r))
     return mettle_tree, rust_tree
@@ -311,8 +309,8 @@ def generate_scale(destination, modules, functions, generic):
 def single_workload(name, work):
     source = BENCHMARKS / name
     mettle_tree, rust_tree = work / "mettle", work / "rust"
-    shutil.copytree(source, mettle_tree, ignore=shutil.ignore_patterns("rust"))
-    shutil.copytree(source / "rust", rust_tree)
+    shutil.copytree(source, mettle_tree, ignore=shutil.ignore_patterns("rust", "target"))
+    shutil.copytree(source / "rust", rust_tree, ignore=shutil.ignore_patterns("target"))
     return mettle_tree, rust_tree, mettle_tree / "main.mt"
 
 
@@ -408,19 +406,56 @@ class Side:
         total = allocated_bytes(self.target)
         return {"target": total, "total": total}
 
-    def sample(self, first):
+    def application(self):
+        directory = self.directory / "application"
+        directory.mkdir()
+        binary = directory / "program"
+        env = None
+        if self.language == "rust":
+            env = clean_environment(self.cargo_home, self.target)
+            command = ["rustc", self.tree / "src/main.rs", "--edition=2024",
+                       "-Copt-level=3", "-Ccodegen-units=16", "-Cpanic=abort",
+                       "-Coverflow-checks=off"]
+            check = [*command, "--emit=metadata", "-o", directory / "program.rmeta"]
+            build = [*command, "-o", binary]
+        else:
+            tree = directory / "source"
+            shutil.copytree(self.tree, tree)
+            entry = tree / self.entry.relative_to(self.tree)
+            imports = sorted({line for source in tree.rglob("*.mt")
+                              for line in source.read_text().splitlines()
+                              if line.startswith(("import alloc.", "import core.", "import std."))})
+            prime = directory / "prime.mt"
+            write(prime, "\n".join([*imports, "fn main(): i32 { 0 }", ""]))
+            cache = directory / "cache"
+            options = ["--profile", "release", "--overflow-checks", "off", "--standalone",
+                       "--cache-dir"]
+            self.runner.must([self.compiler, "build", prime, "-o", directory / "prime",
+                              *options, cache])
+            check_cache = directory / "check-cache"
+            shutil.copytree(cache, check_cache)
+            check_entry = entry
+            if entry.is_dir():
+                check_entry = directory / "check-source"
+                shutil.copytree(tree, check_entry)
+            check = [self.compiler, "check", check_entry, *options, check_cache]
+            build = [self.compiler, "build", entry, "-o", binary, *options, cache]
+        check_time = self.runner.must(check, env=env)["seconds"]
+        build_time = self.runner.must(build, env=env)["seconds"]
+        result = self.runner.program(binary)
+        return check_time, build_time, (result["returncode"], result["stdout"])
+
+    def sample(self):
         """Clean, no-op, comment edit, semantic edit and check on this side."""
         row = {}
+        row["application_check"], row["application_build"], app_output = self.application()
         clean = self.build()
         row["clean_build"] = clean["seconds"]
         row["compiler_peak_rss_bytes"] = clean["peak_rss_bytes"]
         row["binary_bytes"] = self.executable.stat().st_size
         row["retained_clean"] = self.retained()
-        kept = None
-        if first:
-            kept = self.directory.parent.parent / "programs" / self.language
-            kept.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(self.executable, kept)
+        kept = self.directory / "clean-program"
+        shutil.copy2(self.executable, kept)
         row["noop_build"] = self.build()["seconds"]
         time.sleep(0.05)
         comment_edit(self.tree)
@@ -429,27 +464,24 @@ class Side:
         semantic_edit(self.tree)
         row["semantic_edit_build"] = self.build()["seconds"]
         row["retained_after_edits"] = self.retained()
-        if first:
-            edited = self.runner.program(self.executable)
-            row["edited_output"] = [edited["returncode"], edited["stdout"].decode("latin-1")]
+        edited = self.runner.program(self.executable)
+        row["edited_output"] = [edited["returncode"], edited["stdout"].decode("latin-1")]
         row["check"] = self.check()["seconds"]
-        return row, kept
+        return row, kept, app_output
 
 
 def median(values):
     return statistics.median(values)
 
 
-def measure_runtime(runner, programs, warmup, blocks, runs, rng):
+def measure_runtime(runner, programs, warmup, orders, runs):
     for program in programs.values():
         for _ in range(warmup):
             runner.program(program)
     samples = {"mettle": [], "rust": []}
     rss = {"mettle": [], "rust": []}
     outputs = {}
-    for _ in range(blocks):
-        order = ["mettle", "rust"]
-        rng.shuffle(order)
+    for order in orders:
         for side in order:
             times = []
             for _ in range(runs):
@@ -470,23 +502,38 @@ def run_workload(label, prepare, args, runner, compiler, endpoints, rng, base):
     cargo_home = base / "cargo-home"
     cargo_home.mkdir(parents=True, exist_ok=True)
     rows = {"mettle": [], "rust": []}
-    programs = {}
+    runtime = {side: [] for side in rows}
+    peak_rss = {side: [] for side in rows}
+    outputs = {}
+    orders = [("mettle", "rust"), ("rust", "mettle")]
+    build_orders = orders * (args.pairs // 2) + rng.sample(orders, args.pairs % 2)
+    runtime_orders = build_orders.copy()
+    rng.shuffle(build_orders)
+    rng.shuffle(runtime_orders)
+    entry["build_orders"] = build_orders
+    entry["runtime_orders"] = runtime_orders
     try:
-        for repetition in range(args.pairs):
-            first = repetition == 0
+        template_m, template_r, template_entry = prepare(work / "input")
+        entry["source_sha256"] = {
+            side: {path.relative_to(tree).as_posix(): sha256(path)
+                   for path in sorted(tree.rglob("*")) if path.is_file()}
+            for side, tree in (("mettle", template_m), ("rust", template_r))}
+        for repetition, order in enumerate(build_orders):
+            programs = {}
+            app_outputs = {}
             sides = {}
             sources = work / f"src{repetition}"
-            mettle_tree, rust_tree, mettle_entry = prepare(sources)
+            mettle_tree = shutil.copytree(template_m, sources / "mettle")
+            rust_tree = shutil.copytree(template_r, sources / "rust")
+            mettle_entry = mettle_tree / template_entry.relative_to(template_m)
             for language in ("mettle", "rust"):
                 directory = work / f"rep{repetition}" / language
                 tree = mettle_tree if language == "mettle" else rust_tree
                 sides[language] = Side(language, runner, compiler, tree,
                                        mettle_entry, directory, cargo_home)
-            order = ["mettle", "rust"]
-            rng.shuffle(order)
             for language in order:
                 try:
-                    row, kept = sides[language].sample(first)
+                    row, kept, app_outputs[language] = sides[language].sample()
                 except Failure as error:
                     if language == "mettle":
                         entry["status"] = "mettle_build_failed"
@@ -494,23 +541,35 @@ def run_workload(label, prepare, args, runner, compiler, endpoints, rng, base):
                         entry["status"] = "rust_build_failed"
                     entry["error"] = str(error)
                     return entry
-                row["order"] = order
                 rows[language].append(row)
-                if kept:
-                    programs[language] = kept
+                programs[language] = kept
+            times, observed, rss = measure_runtime(runner, programs, args.warmup,
+                                                   [runtime_orders[repetition]], args.runs)
+            for side in rows:
+                runtime[side].extend(times[side])
+                peak_rss[side].append(rss[side])
+                outputs.setdefault(side, observed[side])
+            entry["outputs_match"] = (observed["rust"] == observed["mettle"] and
+                                      observed == outputs == app_outputs)
+            edited = rows["rust"][0]["edited_output"]
+            entry["edited_outputs_match"] = all(rows[side][-1]["edited_output"] == edited
+                                                for side in rows)
+            if not (entry["outputs_match"] and entry["edited_outputs_match"]):
+                entry.update(status="output_mismatch", repetition=repetition + 1,
+                             observed={side: [value[0], value[1].hex()]
+                                       for side, value in observed.items()},
+                             application={side: [value[0], value[1].hex()]
+                                          for side, value in app_outputs.items()},
+                             edited={side: rows[side][-1]["edited_output"] for side in rows})
+                return entry
             if not args.keep_work:
                 shutil.rmtree(work / f"rep{repetition}", ignore_errors=True)
                 shutil.rmtree(work / f"src{repetition}", ignore_errors=True)
-        runtime, outputs, rss = measure_runtime(runner, programs, args.warmup,
-                                                args.pairs, args.runs, rng)
         entry["output"] = {side: {"exit_status": value[0], "stdout_sha256":
                                   hashlib.sha256(value[1]).hexdigest()}
                            for side, value in outputs.items()}
-        edited = {side: rows[side][0]["edited_output"] for side in rows}
-        entry["outputs_match"] = outputs["mettle"] == outputs["rust"]
-        entry["edited_outputs_match"] = edited["mettle"] == edited["rust"]
         entry["checksum"] = outputs["rust"][0]
-        entry["program_peak_rss_bytes"] = rss
+        entry["program_peak_rss_bytes"] = {side: median(values) for side, values in peak_rss.items()}
         entry["binary_bytes"] = {side: rows[side][0]["binary_bytes"] for side in rows}
         entry["compiler_peak_rss_bytes"] = {
             side: median([row["compiler_peak_rss_bytes"] for row in rows[side]])
@@ -527,18 +586,24 @@ def run_workload(label, prepare, args, runner, compiler, endpoints, rng, base):
             "components_first_pair": {side: {"clean": rows[side][0]["retained_clean"],
                                              "after_edits": rows[side][0]["retained_after_edits"]}
                                       for side in rows}}
-        if not (entry["outputs_match"] and entry["edited_outputs_match"]):
-            entry["status"] = "output_mismatch"
-            return entry
         entry["decisions"] = {}
         for metric in TIME_METRICS:
             samples = entry["samples"][metric]
             entry["decisions"][metric] = decide(
-                samples["mettle"], samples["rust"], endpoints,
-                GATE_KIND.get(metric, "compile"))
+                samples["mettle"], samples["rust"], endpoints)
+        entry["edited_output"] = {"exit_status": edited[0], "stdout_sha256":
+                                  hashlib.sha256(edited[1].encode("latin-1")).hexdigest()}
+        clean_output = outputs["rust"]
+        entry["edit_changes_output"] = edited != [clean_output[0], clean_output[1].decode("latin-1")]
+        if not entry["edit_changes_output"]:
+            entry["decisions"]["semantic_edit_build"] = {
+                "verdict": "inconclusive", "gate": "inconclusive",
+                "reason": "edited output cannot distinguish a stale clean executable"}
         for metric in BYTE_METRICS:
             samples = entry["bytes"][metric]
             entry["decisions"][metric] = decide_bytes(samples["mettle"], samples["rust"])
+    except Failure as error:
+        entry.update(status="runtime_failed", error=str(error))
     finally:
         if not args.keep_work:
             shutil.rmtree(work, ignore_errors=True)
@@ -552,7 +617,8 @@ def cell(decision):
         return decision["gate"]
     text = f"{decision['ratio']:.3f}"
     if "lower" in decision:
-        text += f" [{decision['lower']:.3f}, {decision['upper']:.3f}]"
+        upper = "unbounded" if decision["upper"] is None else f"{decision['upper']:.3f}"
+        text += f" [{decision['lower']:.3f}, {upper}]"
     return f"{text} {decision['verdict']} ({decision['gate']})"
 
 
@@ -621,6 +687,8 @@ def main():
     args = parser.parse_args()
     if args.pairs < 2:
         parser.error("--pairs must be at least 2")
+    if args.runs < 1 or args.warmup < 0:
+        parser.error("runs must be positive and warmup nonnegative")
     compiler = args.compiler.resolve()
     base = args.output.resolve()
     base.mkdir(parents=True, exist_ok=True)
@@ -679,7 +747,7 @@ def main():
                 counts[decision["gate"] if decision["gate"] in ("pass", "fail") else "other"] += 1
         evidence["gate_counts"] = counts
         qualified = (args.qualified_runner and args.pairs >= 30 and
-                     frozen_rustc(evidence))
+                     frozen_toolchain(evidence))
         evidence["qualification"] = ("qualified-runner measurement (still subject to the "
                                      "registered plan)" if qualified else
                                      "engineering signal only, not a D17 gate verdict")
@@ -688,13 +756,10 @@ def main():
             "with the exit status.",
             "Each repetition runs the Mettle and Rust build sequences back to back in "
             "randomized order (pair-level interleaving), not per command.",
-            "Mettle caching is whole-program content addressed; its edit rebuilds are cache "
-            "hits or full rebuilds, not partial recompilation.",
             "Mettle retained bytes = cache directory + package-local target/mettle + the "
             "output executable; Cargo retained bytes = the whole target directory.",
-            "Mettle's hash map and Rust's default SipHash HashMap use different hashers; "
-            "checksums are order independent.",
-            "Rust toolchain matches the frozen pin." if frozen_rustc(evidence) else
+            "Clean builds include fresh Mettle library caches and use Rust's installed sysroot.",
+            "Rust toolchain matches the frozen pin." if frozen_toolchain(evidence) else
             "Rust toolchain differs from (or is unknown versus) the frozen 1.99.1 pin; "
             "qualification is forbidden.",
         ]
@@ -702,12 +767,16 @@ def main():
         if evidence["status"] == "measured":
             (base / "results.md").write_text(markdown(evidence))
     print(f"wrote results under {base}")
-    if args.fail_on_gate and (counts["fail"] or counts["other"]):
+    if args.fail_on_gate and (not qualified or counts["fail"] or counts["other"]):
         sys.exit(1)
 
 
-def frozen_rustc(evidence):
-    return f"release: {FROZEN_RUSTC}" in evidence.get("rustc", "")
+def frozen_toolchain(evidence):
+    version = RUST_BASELINE["rust_version"]
+    rustc = evidence.get("rustc", "").splitlines()
+    return (f"release: {version}" in rustc and
+            f"commit-hash: {RUST_BASELINE['source_commit']}" in rustc and
+            evidence.get("cargo", "").split()[:2] == ["cargo", version])
 
 
 if __name__ == "__main__":
