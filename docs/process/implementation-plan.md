@@ -1609,9 +1609,48 @@ Evidence: `~/w/anal/perf-major-20261123/final/{cold-results.json,results.json,
 source-regressions,sanitizer-minimal-regressions}`; compiler SHA-256:
 `ea5545b7812225b9cc72a1d32ba93f6297f5ca340cc9555d0fc3c019122f5ff4`.
 This batch is implemented and focused-verified, not I14 qualification.
-Whole-I14 freeze remains open. Next action: profile the remaining producer
-region-context reconstruction and interface proofs; root optimization, warm-build
-cost and consolidated qualification remain open.
+Application-build follow-up (2026-11-23), baseline `f2d43d47`: both languages'
+native libraries are prepared before timing; library production is excluded.
+Isolated P04 linking spends 89.6 ms preparing Clang's link command versus
+5.9 ms with the same bundled LLD selected by absolute path. Changing LLD
+thread counts does not remove the repeated target-prefixed linker searches
+over this WSL host's mixed Linux/Windows `PATH`. `bootstrap/driver/output.cpp`
+now selects the pinned driver's executable sibling LLD explicitly, preserving
+the flavor flag, custom `--cc` search behavior and the missing-sibling search path.
+
+Five randomized matched P04 semantic-edit pairs measure:
+
+| Application build mode | Baseline, ms | Candidate, ms | Improvement |
+| --- | --- | --- | --- |
+| Fresh standalone process | 469.6 | 404.3 | 13.9% |
+| Ordinary CLI, automatic resident session | 279.0 | 189.4 | 32.1% |
+| Explicit resident request | 280.3 | 184.9 | 34.0% |
+
+Same-run direct Rust builds take 250.9 ms: standalone Mettle remains 1.61 times
+slower. Resident timings are not fresh-process parity. Fresh checks are
+unchanged at approximately 196 ms and remain 11.2 times Rust metadata checks.
+The same-input executable control has identical loadable sections and machine
+code; only two compiler-specific cached-unit names differ in `.strtab`.
+Output and 78,720-byte sizes agree. No generated-program runtime improvement,
+general short-`PATH` host speedup or release qualification is claimed.
+
+The new `tests/packages.py` case rejects an ambient target-prefixed linker
+shadowing the pinned default while proving a custom driver still follows that
+search and failed links preserve the previous executable. It fails on the
+baseline and passes after the fix; native static/shared/multiple-output and
+linked-archive invalidation cases also pass, as does focused CTest shard 13
+(bundled linking and debug information). Pinned formatting passes. This
+driver-only change adds no memory/unsafe mechanism; no sanitizer or broad
+qualification matrix was rerun.
+
+Evidence: `~/w/anal/perf-application-20261123/` contains the isolated
+`clang-setup.json`, `link-threads.json`, baseline/new link regressions and
+`final/{results.json,normal-cli.json,same-name/}`. Frozen compiler SHA-256:
+`f96ba0c6f3921e67974e9799b53c844ccb7d23ac13d3a1f77e9d73e225f56d49`.
+This batch is implemented and focused-verified; whole-I14 source freeze remains
+blocked. Next action: reduce checked-library import/admission work in fresh
+application processes, then repeated root O2; producer region-context
+reconstruction, interface proofs and consolidated qualification remain open.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

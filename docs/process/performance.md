@@ -116,6 +116,13 @@ binary/debug-info size, retained build-cache bytes and bootstrap stages.
 Compiler time and produced-program runtime are separate metrics; self-hosting or
 backend ownership implies no speedup.
 
+Linux native links through the pinned default Clang select its sibling `ld.lld`
+by absolute path when available, retaining `-fuse-ld=lld` for linker flavor.
+This avoids repeated target-prefixed linker searches across the host `PATH`.
+Custom `--cc` drivers and installations without a sibling LLD retain Clang's
+existing linker search. Optimization, runtime libraries and link policy do not
+change; benefits depend on the host search-path cost.
+
 ### 5.1. Compile-time and build-storage gate
 
 Version each build workload like section 2: Mettle and Rust/Cargo sources with

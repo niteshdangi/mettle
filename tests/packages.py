@@ -1219,6 +1219,45 @@ def native_demand_selection():
         assert "library object cache hit core " in reused, reused
 
 
+def bundled_native_linker():
+    if not sys.platform.startswith("linux"):
+        return
+    cxx = os.environ.get("CXX") or shutil.which("clang++")
+    assert cxx, "the pinned Clang C++ linker must be on PATH or CXX"
+    triple = processes.run([cxx, "-dumpmachine"], check=True, text=True,
+                           capture_output=True).stdout.strip()
+    directory = evidence / "bundled-linker"
+    library = directory / "library" / "core"
+    library.mkdir(parents=True)
+    (library / "module.mt").write_text("pub fn value(): i32 { 21 }\n")
+    source = directory / "main.mt"
+    source.write_text("fn main(): i32 { core.value() - 21 }\n")
+    shadow = directory / (triple + "-ld.lld")
+    shadow.write_text("#!/bin/sh\n"
+                      "echo unexpected-ambient-linker >&2\n"
+                      "exit 86\n")
+    shadow.chmod(0o700)
+    custom = directory / "custom-cc"
+    custom.write_text("#!/usr/bin/env python3\nimport os, sys\n"
+                      f"os.execvp({cxx!r}, [{cxx!r}, *sys.argv[1:]])\n")
+    custom.chmod(0o700)
+    previous = os.environ.get("PATH")
+    os.environ["PATH"] = os.pathsep.join(filter(None, (str(directory), previous)))
+    try:
+        flags = ["--library-dir", library.parent, "--standalone"]
+        build_and_run(source, *flags)
+        output = evidence / "out.bin"
+        original = output.read_bytes()
+        invoke(["build", source, "-o", output, *flags, "--cc", custom], 1,
+               ["unexpected-ambient-linker", "error[link]"])
+        assert output.read_bytes() == original
+    finally:
+        if previous is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = previous
+
+
 def linked_archive_changes_invalidate_executable():
     if os.name == "nt":
         return
@@ -3711,7 +3750,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          checked_alloc_std_release_reuse,
          checked_native_macro_reuse,
          checked_library_diagnostics, checked_constant_only_library,
-         linked_archive_changes_invalidate_executable,
+         bundled_native_linker, linked_archive_changes_invalidate_executable,
          object_cache_integrity,
          sanitizer_cache_key, edit_invalidation, comment_newline_invalidates_cache,
          cache_dedup_and_bound, cache_follows_live_project_builds,

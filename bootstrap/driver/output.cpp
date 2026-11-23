@@ -769,6 +769,12 @@ static int emitOne(const Options &options, const Source &source,
           arguments.push_back("-l" + library);
         if (llvm::Triple(options.target).isOSLinux()) {
           arguments.push_back("-fuse-ld=lld");
+          if (options.cc == METTLE_CXX_PATH) {
+            auto directory =
+                std::filesystem::path(linker).parent_path().string();
+            if (auto lld = llvm::sys::findProgramByName("ld.lld", {directory}))
+              arguments.push_back("--ld-path=" + *lld);
+          }
           arguments.push_back("-pthread");
         }
         if (options.emit == "executable") {
