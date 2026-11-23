@@ -613,6 +613,8 @@ def run_workload(label, prepare, args, runner, compiler, endpoints, rng, base):
 # -------------------------------------------------------------------- report
 
 def cell(decision):
+    if decision["gate"] == "inconclusive":
+        return "inconclusive"
     if "ratio" not in decision:
         return decision["gate"]
     text = f"{decision['ratio']:.3f}"
@@ -689,6 +691,18 @@ def main():
         parser.error("--pairs must be at least 2")
     if args.runs < 1 or args.warmup < 0:
         parser.error("runs must be positive and warmup nonnegative")
+    import fcntl
+    lock_path = Path.home() / ".cache" / "mettle-bench-compare.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            parser.error("another comparison is measuring on this user account")
+        measure(args, parser)
+
+
+def measure(args, parser):
     compiler = args.compiler.resolve()
     base = args.output.resolve()
     base.mkdir(parents=True, exist_ok=True)
