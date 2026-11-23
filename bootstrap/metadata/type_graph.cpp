@@ -3701,13 +3701,16 @@ DeferredTypeGraph::project(std::size_t index,
                         if (!key)
                           reject("unmapped demanded type lookup key");
                         auto ordinals = lookup.find(*key);
-                        bool present = false;
-                        for (std::size_t i = 0; i < ordinals.size(); i += 4)
-                          if (wireU32(ordinals, i) == index) {
-                            present = true;
-                            break;
-                          }
-                        if (!present)
+                        std::size_t first = 0, last = ordinals.size() / 4;
+                        while (first != last) {
+                          const auto middle = first + (last - first) / 2;
+                          if (wireU32(ordinals, middle * 4) < index)
+                            first = middle + 1;
+                          else
+                            last = middle;
+                        }
+                        if (first == ordinals.size() / 4 ||
+                            wireU32(ordinals, first * 4) != index)
                           reject("type lookup index does not match projection");
                         keys.push_back(std::move(*key));
                       });
@@ -3747,6 +3750,16 @@ DeferredTypeGraph::project(std::size_t index,
         projectedKeys.emplace(index, std::move(keys));
       }
     };
+    if (!projectionProofs.at(index)) {
+      read(index);
+      const auto &edges = projectionEdges.at(index);
+      if (std::all_of(edges.begin(), edges.end(), [&](const auto &kind) {
+            return std::all_of(kind.begin(), kind.end(), [&](auto target) {
+              return projectionProofs.at(target);
+            });
+          }))
+        projectionProofs[index] = true;
+    }
     if (!projectionProofs.at(index)) {
       std::vector<std::size_t> pending{index};
       std::unordered_map<std::size_t, std::size_t> positions{{index, 0}};
