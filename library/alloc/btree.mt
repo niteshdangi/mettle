@@ -315,6 +315,135 @@ unsafe fn tree_len<K, V>(node: ptr<mut Node<K, V>>): usize {
     total
 }
 
+unsafe fn tree_node_counts<K, V>(node: ptr<mut Node<K, V>>): (usize, usize) {
+    if (*node).leaf { return (1usize, 0usize) }
+    var leaves = 0usize
+    var branches = 1usize
+    var index = 0usize
+    while index <= (*node).len {
+        let counts = tree_node_counts(node_child(node, index))
+        leaves += counts.0
+        branches += counts.1
+        index += 1usize
+    }
+    (leaves, branches)
+}
+
+fn bulk_capacity(height: usize): usize {
+    var capacity = max_entries()
+    var level = 0usize
+    while level < height {
+        capacity = capacity.saturating_mul(max_entries() + 1usize).saturating_add(max_entries())
+        level += 1usize
+    }
+    capacity
+}
+
+fn bulk_node_counts(len: usize, height: usize): (usize, usize) {
+    if height == 0usize { return (1usize, 0usize) }
+    let children = len / (bulk_capacity(height - 1usize) + 1usize) + 1usize
+    let entries = len - children + 1usize
+    let base = entries / children
+    let extra = entries % children
+    let low = bulk_node_counts(base, height - 1usize)
+    if extra == 0usize { return (low.0 * children, low.1 * children + 1usize) }
+    let high = bulk_node_counts(base + 1usize, height - 1usize)
+    (low.0 * (children - extra) + high.0 * extra,
+     low.1 * (children - extra) + high.1 * extra + 1usize)
+}
+
+type BulkNodes<K, V, A: Allocator> {
+    a: ptr<mut A>
+    leaves: ptr<mut Node<K, V>>
+    branches: ptr<mut Node<K, V>>
+    pending: ptr<mut Node<K, V>>
+    drop { self.run() }
+}
+
+extend<K, V, A: Allocator> BulkNodes<K, V, A> {
+    mut unsafe fn add(node: ptr<mut Node<K, V>>): Unit {
+        (*node).len = 0usize
+        if (*node).leaf {
+            (*node).parent = self.leaves
+            self.leaves = node
+        } else {
+            (*node).parent = self.branches
+            self.branches = node
+        }
+    }
+
+    mut unsafe fn collect(node: ptr<mut Node<K, V>>): Unit {
+        if !(*node).leaf {
+            var index = 0usize
+            while index <= (*node).len {
+                self.collect(node_child(node, index))
+                index += 1usize
+            }
+        }
+        self.add(node)
+    }
+
+    mut unsafe fn take_node(leaf: bool): ptr<mut Node<K, V>> {
+        let node = if leaf { self.leaves } else { self.branches }
+        if leaf { self.leaves = (*node).parent } else { self.branches = (*node).parent }
+        (*node).parent = null_node<K, V>()
+        node
+    }
+
+    mut unsafe fn build(len: usize, height: usize, mut entries: super.vec.List<Bucket<K, V>>): ptr<mut Node<K, V>> {
+        let node = self.take_node(height == 0usize)
+        if height == 0usize {
+            let start = entries.len() - len
+            copy_entries(entries.as_mut_ptr().add(start), node_entry(node, 0usize), len)
+            entries.set_len(start)
+            (*node).len = len
+            return node
+        }
+        let children = len / (bulk_capacity(height - 1usize) + 1usize) + 1usize
+        let remaining = len - children + 1usize
+        let base = remaining / children
+        let extra = remaining % children
+        var index = children
+        while index != 0usize {
+            index -= 1usize
+            let child = self.build(base + (if index < extra { 1usize } else { 0usize }), height - 1usize, mut entries)
+            set_child(node, index, child)
+            if index != 0usize {
+                core.ptr.write(node_entry(node, index - 1usize), entries.pop().or_panic())
+            }
+        }
+        (*node).len = children - 1usize
+        node
+    }
+
+    mut fn run(): Unit {
+        unsafe {
+            while true {
+                if self.pending == null_node<K, V>() {
+                    if self.leaves != null_node<K, V>() {
+                        self.pending = self.take_node(true)
+                    } else if self.branches != null_node<K, V>() {
+                        self.pending = self.take_node(false)
+                    } else { break }
+                }
+                let node = self.pending
+                let entries = (*node).entries
+                (*node).entries = core.ptr.null_mut<Bucket<K, V>>()
+                if entries != core.ptr.null_mut<Bucket<K, V>>() {
+                    free_array<Bucket<K, V>, A>(self.a, entries, max_entries())
+                }
+                let children = (*node).children
+                (*node).children = core.ptr.null_mut<ptr<mut Node<K, V>>>()
+                if children != core.ptr.null_mut<ptr<mut Node<K, V>>>() {
+                    free_array<ptr<mut Node<K, V>>, A>(self.a, children, max_entries() + 1usize)
+                }
+                self.pending = null_node<K, V>()
+                free_array<Node<K, V>, A>(self.a, node, 1usize)
+            }
+        }
+    }
+}
+
 type DetachedNodes<K, V, A: Allocator> {
     a: ptr<mut A>
     nodes: super.vec.List<ptr<mut Node<K, V>>>
@@ -863,11 +992,105 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
 
 extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
     pub mut fn append(mut other: SortedMap<K, V, A>): Unit {
-        if self.len == 0usize && self.a.is_compatible(read other.a) {
-            self.root = other.root
-            self.len = other.len
-            other.root = null_node<K, V>()
-            other.len = 0usize
+        if other.len == 0usize { return () }
+        if self.a.is_compatible(read other.a) {
+            if self.len == 0usize {
+                self.root = other.root
+                self.len = other.len
+                other.root = null_node<K, V>()
+                other.len = 0usize
+                return ()
+            }
+            let total = self.len + other.len
+            var plan = super.vec.with_capacity<u8>(total)
+            var left = unsafe { first_pos(self.root) }
+            var right = unsafe { first_pos(other.root) }
+            var duplicates = 0usize
+            unsafe {
+                while left.0 != null_node<K, V>() && right.0 != null_node<K, V>() {
+                    let order = (*node_entry(left.0, left.1)).key.cmp((*node_entry(right.0, right.1)).key)
+                    if order.is_eq() {
+                        plan.push(2u8)
+                        duplicates += 1usize
+                        left = successor(left.0, left.1)
+                        right = successor(right.0, right.1)
+                    } else if order.is_lt() {
+                        plan.push(0u8)
+                        left = successor(left.0, left.1)
+                    } else {
+                        plan.push(1u8)
+                        right = successor(right.0, right.1)
+                    }
+                }
+                while left.0 != null_node<K, V>() {
+                    plan.push(0u8)
+                    left = successor(left.0, left.1)
+                }
+                while right.0 != null_node<K, V>() {
+                    plan.push(1u8)
+                    right = successor(right.0, right.1)
+                }
+            }
+            let len = total - duplicates
+            var entries = super.vec.with_capacity<Bucket<K, V>>(len)
+            var discarded = super.vec.with_capacity<Bucket<K, V>>(duplicates)
+            var height = 0usize
+            while bulk_capacity(height) < len { height += 1usize }
+            let needed = bulk_node_counts(len, height)
+            let available_left = unsafe { tree_node_counts(self.root) }
+            let available_right = unsafe { tree_node_counts(other.root) }
+            var pool = BulkNodes(core.ptr.from_mut(self.a), null_node<K, V>(), null_node<K, V>(), null_node<K, V>())
+            var kind = 0usize
+            while kind < 2usize {
+                var available = if kind == 0usize {
+                    available_left.0 + available_right.0
+                } else { available_left.1 + available_right.1 }
+                let required = if kind == 0usize { needed.0 } else { needed.1 }
+                while available < required {
+                    let node = match capture unsafe { alloc_node<K, V, A>(pool.a, kind == 0usize) } {
+                        success(node) => node,
+                        failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
+                    }
+                    unsafe { pool.add(node) }
+                    available += 1usize
+                }
+                kind += 1usize
+            }
+            unsafe {
+                left = first_pos(self.root)
+                right = first_pos(other.root)
+                for step in read plan {
+                    if *step == 0u8 {
+                        let at = left
+                        left = successor(left.0, left.1)
+                        entries.push(core.ptr.`read`(node_entry(at.0, at.1)))
+                    } else if *step == 1u8 {
+                        let at = right
+                        right = successor(right.0, right.1)
+                        entries.push(core.ptr.`read`(node_entry(at.0, at.1)))
+                    } else {
+                        let l = left
+                        let r = right
+                        left = successor(left.0, left.1)
+                        right = successor(right.0, right.1)
+                        let stored = core.ptr.`read`(node_entry(l.0, l.1))
+                        let donor = core.ptr.`read`(node_entry(r.0, r.1))
+                        entries.push(Bucket(stored.key, donor.value))
+                        discarded.push(Bucket(donor.key, stored.value))
+                    }
+                }
+                let left_root = self.root
+                let right_root = other.root
+                self.root = null_node<K, V>()
+                self.len = 0usize
+                other.root = null_node<K, V>()
+                other.len = 0usize
+                pool.collect(left_root)
+                pool.collect(right_root)
+                self.root = pool.build(len, height, mut entries)
+                self.len = len
+            }
+            pool.run()
             return ()
         }
         while true {

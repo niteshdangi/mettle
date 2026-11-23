@@ -67,9 +67,10 @@ copy type SplitAllocator {
     calls: ptr<mut i32>
     fail_at: ptr<mut i32>
     live: ptr<mut i32>
+    free_fail_at: ptr<mut i32>
 }
 extend SplitAllocator implements core.clone.Clone {
-    fn clone(): SplitAllocator { SplitAllocator(self.calls, self.fail_at, self.live) }
+    fn clone(): SplitAllocator { SplitAllocator(self.calls, self.fail_at, self.live, self.free_fail_at) }
 }
 unsafe extend SplitAllocator implements Allocator {
     fn is_compatible(read other: SplitAllocator): bool { self.live == other.live }
@@ -87,6 +88,12 @@ unsafe extend SplitAllocator implements Allocator {
         unsafe { *self.live -= 1 }
         var global = Global()
         unsafe { global.deallocate(pointer, layout) }
+        unsafe {
+            if self.free_fail_at != core.ptr.null_mut<i32>() && *self.free_fail_at > 0 {
+                *self.free_fail_at -= 1
+                if *self.free_fail_at == 0 { panic("tree deallocation") }
+            }
+        }
     }
     mut unsafe fn grow(pointer: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
         var global = Global()
@@ -201,7 +208,7 @@ fn main(): i32 {
         var live = 0
         {
             var splitting = btree.new_in<i32, i32, SplitAllocator>(
-                SplitAllocator(core.ptr.from_mut(calls), core.ptr.from_mut(fail_at), core.ptr.from_mut(live))
+                SplitAllocator(core.ptr.from_mut(calls), core.ptr.from_mut(fail_at), core.ptr.from_mut(live), core.ptr.null_mut<i32>())
             )
             value = 0
             while value < 128 {
@@ -227,6 +234,126 @@ fn main(): i32 {
         if live != 0 { return 29 }
         allocation_failure += 1
     }
+    for comparison_failure in [1usize, 64usize, 127usize] {
+        var left = btree.new<Key, i32>()
+        var right = btree.new<Key, i32>()
+        value = 0
+        while value < 64 {
+            let _ = left.insert(make_key(value * 2, panic_hash.retain(), panic_eq.retain(),
+                                         panic_cmp.retain()), value * 2)
+            let _ = right.insert(make_key(value * 2 + 1, panic_hash.retain(), panic_eq.retain(),
+                                          panic_cmp.retain()), value * 2 + 1)
+            value += 1
+        }
+        let _ = panic_cmp.get().store(comparison_failure, core.sync.atomic.Ordering.SeqCst)
+        match take std.panic.catch_panic(fn(): Unit { left.append(mut right) }) {
+            CatchResult.Panicked(_) => {},
+            _ => { return 30 }
+        }
+        let _ = panic_cmp.get().store(0usize, core.sync.atomic.Ordering.SeqCst)
+        if left.len() != 64usize || right.len() != 64usize { return 31 }
+        value = 0
+        while value < 64 {
+            if *left.get(make_key(value * 2, panic_hash.retain(), panic_eq.retain(),
+                                  panic_cmp.retain())).or_panic() != value * 2 ||
+                *right.get(make_key(value * 2 + 1, panic_hash.retain(), panic_eq.retain(),
+                                   panic_cmp.retain())).or_panic() != value * 2 + 1 { return 32 }
+            value += 1
+        }
+    }
+    allocation_failure = 1
+    while allocation_failure <= 3 {
+        var calls = 0
+        var fail_at = 0
+        var live = 0
+        {
+            var left = btree.new_in<i32, i32, SplitAllocator>(
+                SplitAllocator(core.ptr.from_mut(calls), core.ptr.from_mut(fail_at), core.ptr.from_mut(live), core.ptr.null_mut<i32>())
+            )
+            var right = btree.new_in<i32, i32, SplitAllocator>(
+                SplitAllocator(core.ptr.from_mut(calls), core.ptr.from_mut(fail_at), core.ptr.from_mut(live), core.ptr.null_mut<i32>())
+            )
+            value = 0
+            while value < 6 {
+                let _ = left.insert(value * 2, value * 2)
+                let _ = right.insert(value * 2 + 1, value * 2 + 1)
+                value += 1
+            }
+            let original_live = live
+            fail_at = calls + allocation_failure
+            match take std.panic.catch_panic(fn(): Unit { left.append(mut right) }) {
+                CatchResult.Panicked(_) => {},
+                _ => { return 33 }
+            }
+            fail_at = 0
+            if left.len() != 6usize || right.len() != 6usize || live != original_live { return 34 }
+            value = 0
+            while value < 6 {
+                if left.pop_first() != present((value * 2, value * 2)) ||
+                    right.pop_first() != present((value * 2 + 1, value * 2 + 1)) { return 35 }
+                value += 1
+            }
+        }
+        if live != 0 { return 36 }
+        allocation_failure += 1
+    }
+    for deallocation_failure in [1, 3, 7, 31] {
+        var calls = 0
+        var fail_at = 0
+        var live = 0
+        var free_fail_at = 0
+        {
+            var left = btree.new_in<i32, i32, SplitAllocator>(
+                SplitAllocator(core.ptr.from_mut(calls), core.ptr.from_mut(fail_at), core.ptr.from_mut(live), core.ptr.from_mut(free_fail_at))
+            )
+            var right = btree.new_in<i32, i32, SplitAllocator>(
+                SplitAllocator(core.ptr.from_mut(calls), core.ptr.from_mut(fail_at), core.ptr.from_mut(live), core.ptr.from_mut(free_fail_at))
+            )
+            value = 0
+            while value < 64 {
+                let _ = left.insert(value + 0, value + 0)
+                let _ = right.insert(value + 0, -value - 1)
+                value += 1
+            }
+            free_fail_at = deallocation_failure
+            match take std.panic.catch_panic(fn(): Unit { left.append(mut right) }) {
+                CatchResult.Panicked(_) => {},
+                _ => { return 41 }
+            }
+            if left.len() != 64usize || !right.is_empty() || free_fail_at != 0 { return 42 }
+            value = 0
+            while value < 64 {
+                if *left.get(value).or_panic() != -value - 1 { return 43 }
+                value += 1
+            }
+            left.clear()
+        }
+        if live != 0 { return 44 }
+    }
+    let append_drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
+    {
+        var left = btree.new<i32, DropBomb>()
+        var right = btree.new<i32, DropBomb>()
+        let _ = left.insert(1, DropBomb(append_drops.retain(), true))
+        let _ = left.insert(2, DropBomb(append_drops.retain(), false))
+        let _ = left.insert(3, DropBomb(append_drops.retain(), false))
+        let _ = right.insert(1, DropBomb(append_drops.retain(), false))
+        let _ = right.insert(2, DropBomb(append_drops.retain(), false))
+        let _ = right.insert(4, DropBomb(append_drops.retain(), false))
+        match take std.panic.catch_panic(fn(): Unit { left.append(mut right) }) {
+            CatchResult.Panicked(_) => {},
+            _ => { return 37 }
+        }
+        if left.len() != 4usize || !right.is_empty() ||
+            append_drops.get().load(core.sync.atomic.Ordering.SeqCst) != 2usize ||
+            left.get(1).or_panic().panic_on_drop { return 38 }
+        value = 1
+        while value <= 4 {
+            if !left.contains_key(value) { return 39 }
+            value += 1
+        }
+    }
+    if append_drops.get().load(core.sync.atomic.Ordering.SeqCst) != 6usize { return 40 }
 
     let drops = arc.new(core.sync.atomic.AtomicUsize.new(0usize))
     var dropping = btree.new<i32, DropBomb>()

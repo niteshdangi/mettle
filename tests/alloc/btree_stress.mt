@@ -173,5 +173,22 @@ fn main(): i32 {
         if !whole.is_empty() || !upper.is_empty() { return 40 }
         split += 1
     }
+    for reverse in [false, true] {
+        var left = alloc.btree.new<i32, i32>()
+        var right = alloc.btree.new<i32, i32>()
+        let _ = left.insert(-1, -1)
+        var value = 0
+        while value < 4096 {
+            let _ = right.insert(value + 0, value + 0)
+            value += 1
+        }
+        if reverse { right.append(mut left); core.mem.swap(mut left, mut right) } else { left.append(mut right) }
+        if left.len() != 4097usize || !right.is_empty() { return 43 }
+        value = -1
+        while value < 4096 {
+            if left.remove(value) != present(value + 0) { return 44 }
+            value += 1
+        }
+    }
     0
 }

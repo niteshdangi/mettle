@@ -1858,8 +1858,17 @@ zero 970.12 -> 2.27 us, map split at minimum 10,262.35 -> 3.44 us, map middle sp
 Rust controls measure 0.076/1.758/45.265/0.197 us respectively. These improvements
 do not establish parity, particularly near clock-overhead scale. Evidence:
 `~/w/anal/perf-library-scaling-20261123/transfer-results.json`.
-Remaining collection performance work includes nonempty append and map length
-counting; the compiler/cache and channel work above is unchanged.
+Compatible nonempty map append now merges ordered entries and rebuilds a balanced
+tree in linear work while recycling nodes. Comparison and allocation finish
+before entries move; duplicate destruction and staged surplus-node release run
+after publication. Comparator, allocation and deallocation panic regressions,
+drop-counting stress and emitted ASan/leak checks pass. Nine interleaved
+100,000-key-per-map samples measure forward/reverse disjoint append at
+11.28/12.09 -> 5.21/5.58 ms, interleaved append at 8.32 -> 4.86 ms, and
+half/full overlap at 9.75/7.99 -> 5.20/4.47 ms. Rust controls measure
+1.94/1.92/2.44/2.91/3.77 ms; parity remains open. Evidence:
+`~/w/anal/perf-library-scaling-20261123/map-append/`.
+Split length counting and the compiler/cache/channel work above remain open.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

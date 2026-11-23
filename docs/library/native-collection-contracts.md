@@ -682,8 +682,23 @@ its root at most once per level. Consequently repair cannot allocate or invoke
 allocator callbacks before both trees are valid. Detached node/block guards
 preserve cleanup across allocator unwinding. An empty compatible receiver
 also adopts an appended tree in O(1) work without node allocation.
-Incompatible allocators retain rebuilding; nonempty receivers still insert
-incoming entries.
+Nonempty compatible maps merge in O(n+m) comparisons/work and auxiliary
+storage. The merge records its comparison decisions and reserves all scratch
+storage and missing node blocks before moving entries. Thus comparator panic
+or allocation failure leaves both maps unchanged. It then moves the ordered
+entries into a balanced, densely occupied tree, recycling both maps' leaf and
+internal nodes without per-entry removal, lookup or allocation. Equality keeps
+the receiver key and donor value; discarded donor keys and replaced receiver
+values are destroyed only after the receiver is valid and the donor is empty.
+Each payload moves from a source slot into initialized scratch storage, then
+into its destination or deferred destruction list, with exactly one owner.
+Only emptied nodes enter the separate leaf/internal free chains carried by
+their parent links; subtree capacity determines the balanced output shape.
+Surplus nodes are released through the compatible receiver allocator. The pool
+owns the node currently being released as well as both free chains, clearing
+each block's ownership before its allocator callback. Explicit guarded cleanup
+after publication resumes the remaining blocks/chains if deallocation panics.
+Incompatible allocators retain per-entry removal and insertion rebuilding.
 
 Entry handles and exclusive iterators retain the map's exclusive loan;
 consuming iterators own the remaining entries, nodes and allocator. They are
@@ -727,7 +742,9 @@ Range selection and its invalid-bound panics match SortedMap.
 `split_off(read Q)` transfers elements >= Q; append empties the donor while
 preserving one valid representative per key class. It does not promise which
 equivalent representative is retained beyond any explicitly specified
-insertion/replacement operation. Hash-specific entry/get-or-insert methods
+insertion/replacement operation. SortedSet append still moves representatives
+by individual removal/insertion in O(m log(n+m+1)) work; it does not use
+SortedMap's compatible bulk merge. Hash-specific entry/get-or-insert methods
 not listed here need separate member contracts; nightly sorted-set entry
 facilities are not stabilized by this document.
 
