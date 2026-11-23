@@ -247,6 +247,10 @@ returns a view on failure. Consumed source bytes are not restored.
 | `Bytes<R>` | Own/reborrow source and yield per-byte outcomes; no mandatory buffer allocation. Errors are values, not termination disguised as EOF. |
 | `empty`, `repeat(byte)`, `sink` | Empty always reads EOF, repeat fills requested bytes without EOF, sink accepts all offered bytes. No OS resource or heap allocation is required. |
 
+`LineWriter` searches newly appended bytes, not the previously searched
+unfinished-line prefix. Newline discovery is linear in accepted input between
+failures; a failed write can require rescanning retained bytes when retried.
+
 `by_ref` adapters borrow rather than consume the backing stream. Owning an
 adapter does not upgrade a borrow into ownership. Accessor views and iterator
 items retain their actual source regions.
@@ -1181,6 +1185,11 @@ change, and retry after notification. A notification alone is not completed I/O.
 Timer completion means the selected deadline was observed, not a scheduling
 guarantee. No per-await heap allocation is required by concrete futures, but
 task creation, reactor registration and erased storage can allocate explicitly.
+The Linux reactor indexes timer deadlines in order and snapshots all due tokens
+per wait. Each token is claimed under the registration lock before its callback
+runs outside that lock; cancellation can consume a still-unclaimed token,
+including cancellation from an earlier callback. Registration, cancellation and
+delivery maintain both indices, and unsuccessful registration takes no waker.
 
 `async_tcp_listen` owns a nonblocking listener. `async_tcp_connect`/
 `AsyncTcpStream.connect` return futures that produce an owned stream or error.

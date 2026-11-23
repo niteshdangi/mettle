@@ -1814,6 +1814,33 @@ patterns. Pattern checking now admits a missing canonical owner before lookup;
 already-admitted owners retain the direct table path. The existing
 `cleanup-local-lifetime-unwind` execution passes in debug and release.
 
+The library/runtime scaling fixes now cover ordered stable-sort detection,
+alternating merge-index buffers, incremental LineWriter newline discovery,
+constant-time borrowed-slice skips, constant-space Two-Way literal search,
+batch-local imported diagnostic line indices, and deadline-indexed Linux timer
+delivery. Partial-write/panic recovery, predicate order, UTF-8 byte positions,
+sort stability and timer cancellation ownership retain focused regressions.
+Both-profile library/source cases and the imported-diagnostic edit regression
+pass. Linux reactor/thread cases pass; the timer cancellation/reentrant-delivery
+case also executes successfully under ASan/UBSan and TSan.
+
+Against `c8dee80b` library inputs, nine interleaved release samples measure
+already-sorted 1,048,576-element programs at 103.81 -> 6.03 ms; 16,384 one-byte
+LineWriter writes at 60.25 -> 4.09 ms; and forward/reverse adversarial 65,536-byte
+substring searches at 60.31 -> 1.46 ms. These include process startup and input
+construction. Rust controls measure 2.54/0.89/0.96 ms respectively, so runtime
+parity remains open. Expired-timer delivery, excluding registration, measures
+1,024/2,048/4,096 timers at 1.327/5.984/21.521 -> 0.065/0.139/0.283 ms.
+An actual LSP open-to-diagnostics request for 128 errors in one 1,054,372-byte
+dependency measures 168.08 -> 70.10 ms over seven paired samples, with identical
+published diagnostics. Evidence:
+`~/w/anal/perf-library-scaling-20261123/{library-results.json,timer-results.json,lsp/results.json}`.
+These are focused engineering measurements, not I14 qualification.
+Allocator-compatible list/tree node transfers, channel-notifier end-to-end
+measurement, and the compiler/cache work above remain open. The next collection
+action requires resolving allocator compatibility without assuming arbitrary
+clones can deallocate each other's nodes or silently changing allocator identity.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

@@ -2802,6 +2802,33 @@ class LanguageClient:
             "uri": uri, "languageId": "mettle", "version": 1, "text": text}})
 
 
+def language_server_imported_diagnostics():
+    directory = evidence / "language-server-imported-diagnostics"
+    directory.mkdir()
+    dependency = directory / "dependency.mt"
+    source = directory / "main.mt"
+    source.write_text("module dependency;\nfn main(): i32 { dependency.first() + dependency.second() }\n")
+    uri = source.as_uri()
+    with LanguageClient() as client:
+        for version, padding in enumerate(("", "\n\n\n"), 1):
+            dependency.write_text(padding +
+                                  "pub fn first(): i32 {\n    missing_first\n}\n"
+                                  "pub fn second(): i32 {\n    missing_second\n}\n")
+            if version == 1:
+                client.open(uri, source.read_text())
+            else:
+                client.notify("textDocument/didChange", {
+                    "textDocument": {"uri": uri, "version": version},
+                    "contentChanges": [{"text": source.read_text() + "\n"}]})
+            published = client.wait(
+                lambda m: m.get("method") == "textDocument/publishDiagnostics"
+                and m["params"]["uri"] == uri)["params"]["diagnostics"]
+            for name, line in (("missing_first", 2), ("missing_second", 5)):
+                expected = f"{dependency}:{line + padding.count(chr(10))}:5:"
+                assert any(expected in item["message"] and name in item["message"]
+                           for item in published), published
+
+
 def language_server():
     broken = "file:///workspace/broken.mt"
     clean = "file:///workspace/clean.mt"
@@ -3812,7 +3839,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          doc_resolves_dependency_links_and_warns, doc_standalone_warning_sources,
          doctests_run_isolated_examples,
          lint_reports_semantic_findings, debug_info, debugger_workflow,
-         language_server,
+         language_server, language_server_imported_diagnostics,
          test_json_timeout_and_modules]
 
 def main(argv=None):

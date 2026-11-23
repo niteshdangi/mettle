@@ -70,5 +70,14 @@ fn main(): i32 {
     empty.sort_by_key(fn(read value: Pair): i32 { value.key })
     if empty[0usize].serial != 10 || empty[1usize].serial != 9 ||
         empty[2usize].serial != 11 { return 8 }
+    var ordered = [Pair(1, 0), Pair(1, 1), Pair(2, 2), Pair(3, 3)]
+    calls = 0
+    let slice = mut ordered[0usize..4usize]
+    slice.sort_by(fn(read a: Pair, read b: Pair): Ordering {
+        unsafe { *call_count += 1 }
+        a.key.cmp(read b.key)
+    })
+    if calls != 3 || ordered[0usize].serial != 0 ||
+        ordered[1usize].serial != 1 { return 10 }
     0
 }

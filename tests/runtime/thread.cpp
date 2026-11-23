@@ -35,6 +35,61 @@ void require(bool condition, const char *message) {
   }
 }
 
+#ifdef __linux__
+struct TimerWake {
+  void *reactor = nullptr;
+  std::uint64_t cancel = 0;
+  std::atomic<int> wakes{0}, releases{0};
+};
+
+void releaseTimer(void *data) { ++static_cast<TimerWake *>(data)->releases; }
+
+void wakeTimer(void *data) {
+  auto &timer = *static_cast<TimerWake *>(data);
+  ++timer.wakes;
+  if (timer.cancel)
+    mettle_rt_reactor_cancel(timer.reactor, timer.cancel);
+}
+
+void reactorTimerCases() {
+  void *reactor = mettle_rt_reactor_new();
+  require(reactor != nullptr, "reactor allocation failed");
+  std::array<TimerWake, 4096> timers;
+  std::array<std::uint64_t, 4096> tokens;
+  for (std::size_t i = 0; i < timers.size(); ++i) {
+    timers[i].reactor = reactor;
+    tokens[i] = mettle_rt_reactor_timer(reactor, 0, 0, &timers[i], wakeTimer,
+                                        releaseTimer);
+    require(tokens[i] != 0, "expired timer registration failed");
+  }
+  timers[0].cancel = tokens[1];
+  TimerWake future;
+  const auto futureToken = mettle_rt_reactor_timer(
+      reactor, std::numeric_limits<std::uint64_t>::max(), 0, &future, wakeTimer,
+      releaseTimer);
+  require(futureToken != 0, "future timer registration failed");
+  std::thread canceller([&] {
+    for (std::size_t i = 1; i < timers.size(); i += 2)
+      mettle_rt_reactor_cancel(reactor, tokens[i]);
+  });
+  require(mettle_rt_reactor_wait(reactor) == 1,
+          "expired batch was not delivered");
+  canceller.join();
+  for (std::size_t i = 0; i < timers.size(); ++i) {
+    require(
+        timers[i].wakes + timers[i].releases == 1,
+        "timer cancellation and delivery did not consume exactly one waker");
+    if (i % 2 == 0)
+      require(timers[i].wakes == 1, "expired timer was left for another wait");
+  }
+  require(future.wakes == 0 && future.releases == 0,
+          "future timer was consumed with the expired batch");
+  mettle_rt_reactor_close(reactor);
+  require(future.wakes == 0 && future.releases == 1,
+          "closing did not release the future timer");
+}
+#endif
+
 void reentrantMutexCases(bool checkOwnershipErrors = true) {
   void *mutex = mettle_rt_reentrant_mutex_new();
   require(mutex != nullptr, "recursive mutex allocation failed");
@@ -1322,6 +1377,10 @@ int main(int argc, char **argv) {
     return 0;
   }
 #ifdef __linux__
+  if (argc == 2 && std::strcmp(argv[1], "--reactor-timers") == 0) {
+    reactorTimerCases();
+    return 0;
+  }
   if (argc == 3 && std::strcmp(argv[1], "--fd-probe") == 0) {
     const int fd = std::atoi(argv[2]);
     return fcntl(fd, F_GETFD) < 0 && errno == EBADF ? 0 : 1;
@@ -1338,6 +1397,7 @@ int main(int argc, char **argv) {
     return 0;
   }
 
+  reactorTimerCases();
   descriptorCases();
   for (int mask = 0; mask < 8; ++mask)
     require(isolatedStdio(mask), "spawn lost a stream or child failure report");

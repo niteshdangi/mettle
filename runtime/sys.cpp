@@ -13,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <new>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -391,6 +392,10 @@ struct ReactorState {
   std::uint64_t nextToken = 1;
   std::unordered_map<std::uint64_t, ReactorRegistration> registrations;
   std::map<std::pair<int, bool>, std::vector<std::uint64_t>> descriptors;
+#ifndef __APPLE__
+  std::set<std::pair<std::chrono::steady_clock::time_point, std::uint64_t>>
+      timers;
+#endif
 };
 
 bool initializeReactor(ReactorState &state) {
@@ -500,6 +505,10 @@ std::uint64_t addReactorRegistration(ReactorState &state,
       std::make_pair(registration.fd, registration.write);
   try {
     state.registrations.emplace(token, registration);
+#ifndef __APPLE__
+    if (registration.timer)
+      state.timers.emplace(registration.deadline, token);
+#endif
     if (!registration.timer) {
       auto [descriptor, inserted] =
           state.descriptors.try_emplace(descriptorKey);
@@ -508,6 +517,10 @@ std::uint64_t addReactorRegistration(ReactorState &state,
     }
   } catch (...) {
     state.registrations.erase(token);
+#ifndef __APPLE__
+    if (registration.timer)
+      state.timers.erase({registration.deadline, token});
+#endif
     auto descriptor = state.descriptors.find(descriptorKey);
     if (descriptor != state.descriptors.end() && descriptor->second.empty())
       state.descriptors.erase(descriptor);
@@ -547,6 +560,10 @@ void eraseReactorRegistration(ReactorState &state, std::uint64_t token,
       return;
     registration = entry->second;
     state.registrations.erase(entry);
+#ifndef __APPLE__
+    if (registration.timer)
+      state.timers.erase({registration.deadline, token});
+#endif
     bool removeDescriptorEvent = false;
     if (!registration.timer) {
       auto descriptor =
@@ -1879,6 +1896,10 @@ extern "C" void mettle_rt_reactor_close(void *rawReactor) {
       registration = entry->second;
       const auto token = entry->first;
       state->registrations.erase(entry);
+#ifndef __APPLE__
+      if (registration.timer)
+        state->timers.erase({registration.deadline, token});
+#endif
       if (!registration.timer) {
         auto descriptor =
             state->descriptors.find({registration.fd, registration.write});
@@ -2037,30 +2058,27 @@ extern "C" std::int32_t mettle_rt_reactor_wait(void *rawReactor) {
         const auto now = std::chrono::steady_clock::now();
         requests.push_back({state.wakeRead, POLLIN, 0});
         tokens.push_back(0);
-        for (const auto &[token, registration] : state.registrations) {
-          if (registration.timer) {
-            if (registration.deadline <= now) {
-              timeout = 0;
-            } else if (timeout != 0) {
-              const auto remaining = registration.deadline - now;
-              auto millis =
-                  std::chrono::duration_cast<std::chrono::milliseconds>(
-                      remaining);
-              if (std::chrono::duration_cast<
-                      std::chrono::steady_clock::duration>(millis) < remaining)
-                millis += std::chrono::milliseconds(1);
-              const int bounded = static_cast<int>(std::min<std::int64_t>(
-                  static_cast<std::int64_t>(millis.count()),
-                  std::numeric_limits<int>::max()));
-              if (timeout < 0 || bounded < timeout)
-                timeout = bounded;
-            }
-            continue;
+        if (!state.timers.empty()) {
+          const auto deadline = state.timers.begin()->first;
+          if (deadline <= now) {
+            timeout = 0;
+          } else {
+            const auto remaining = deadline - now;
+            auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(
+                remaining);
+            if (std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                    millis) < remaining)
+              millis += std::chrono::milliseconds(1);
+            timeout = static_cast<int>(std::min<std::int64_t>(
+                static_cast<std::int64_t>(millis.count()),
+                std::numeric_limits<int>::max()));
           }
+        }
+        for (const auto &[descriptor, registered] : state.descriptors) {
           requests.push_back(
-              {registration.fd,
-               static_cast<short>(registration.write ? POLLOUT : POLLIN), 0});
-          tokens.push_back(token);
+              {descriptor.first,
+               static_cast<short>(descriptor.second ? POLLOUT : POLLIN), 0});
+          tokens.push_back(registered.front());
         }
       }
       const int result =
@@ -2069,56 +2087,65 @@ extern "C" std::int32_t mettle_rt_reactor_wait(void *rawReactor) {
         continue;
       if (result < 0)
         return -1;
-      if (requests[0].revents != 0) {
+      const bool interrupted = requests[0].revents != 0;
+      if (interrupted) {
         std::uint8_t bytes[64];
         while (read(state.wakeRead, bytes, sizeof bytes) > 0) {
         }
-        return 0;
       }
-      std::uint64_t token = 0;
+      std::vector<std::uint64_t> ready;
       if (result > 0) {
         for (std::size_t i = 1; i < requests.size(); ++i)
           if (requests[i].revents != 0) {
-            token = tokens[i];
+            ready.push_back(tokens[i]);
             break;
           }
       }
-      ReactorRegistration registration;
-      bool found = false;
       {
         std::lock_guard lock(state.mutex);
-        if (token == 0) {
-          const auto now = std::chrono::steady_clock::now();
-          for (const auto &[candidate, entry] : state.registrations)
-            if (entry.timer && entry.deadline <= now) {
-              token = candidate;
-              break;
-            }
-        }
-        auto entry = state.registrations.find(token);
-        if (token != 0 && entry != state.registrations.end()) {
-          registration = entry->second;
-          state.registrations.erase(entry);
-          if (!registration.timer) {
-            auto descriptor =
-                state.descriptors.find({registration.fd, registration.write});
-            if (descriptor != state.descriptors.end()) {
-              auto &registered = descriptor->second;
-              registered.erase(
-                  std::remove(registered.begin(), registered.end(), token),
-                  registered.end());
-              if (registered.empty())
-                state.descriptors.erase(descriptor);
-            }
-          }
-          found = true;
+        const auto now = std::chrono::steady_clock::now();
+        for (const auto &[deadline, token] : state.timers) {
+          if (deadline > now)
+            break;
+          ready.push_back(token);
         }
       }
-      if (!found)
-        continue;
-      if (registration.wake)
-        registration.wake(registration.data);
-      return 1;
+      bool woke = false;
+      for (const auto token : ready) {
+        ReactorRegistration registration;
+        bool found = false;
+        {
+          std::lock_guard lock(state.mutex);
+          auto entry = state.registrations.find(token);
+          if (entry != state.registrations.end()) {
+            registration = entry->second;
+            state.registrations.erase(entry);
+            if (registration.timer) {
+              state.timers.erase({registration.deadline, token});
+            } else {
+              auto descriptor =
+                  state.descriptors.find({registration.fd, registration.write});
+              if (descriptor != state.descriptors.end()) {
+                auto &registered = descriptor->second;
+                registered.erase(
+                    std::remove(registered.begin(), registered.end(), token),
+                    registered.end());
+                if (registered.empty())
+                  state.descriptors.erase(descriptor);
+              }
+            }
+            found = true;
+          }
+        }
+        if (found && registration.wake) {
+          registration.wake(registration.data);
+          woke = true;
+        }
+      }
+      if (woke)
+        return 1;
+      if (interrupted)
+        return 0;
     }
   } catch (...) {
     errno = ENOMEM;

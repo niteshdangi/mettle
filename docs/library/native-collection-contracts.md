@@ -412,6 +412,8 @@ borrow bounds, and cost O(output length) plus those payload operations.
 equal keys preserve original element order. Comparators receive read
 elements; key callbacks produce owned Ord keys and may be called repeatedly.
 Worst-case comparisons O(n log(n+1)); temporary element storage O(n).
+Already ordered input takes O(n) comparisons without allocating scratch storage.
+Merge passes alternate the two index buffers rather than copying each pass back.
 `sort_by_cached_key` computes the key at most once per element, sorts using
 those retained keys, preserves equal-key element order, and uses O(n)
 extra keys/indices and O(n log(n+1)) comparisons. Callback/key destructor

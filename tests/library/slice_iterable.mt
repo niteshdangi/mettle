@@ -1,5 +1,5 @@
 import alloc.vec.List
-import core.iter.{Iterator, Iterable, MutableIterable}
+import core.iter.{Iterator, BidirectionalIterator, Iterable, MutableIterable}
 
 fn sum<C: Iterable<Item = i32> + unsized>(read items: C): i32 {
     var total = 0
@@ -26,6 +26,16 @@ fn main(): i32 {
             none => { return 2 }
         }
         if sum(slice) != 6 { return 4 }
+        var skipping = slice.iter()
+        if *skipping.nth(1usize).or_panic() != 2 ||
+            *skipping.nth_back(0usize).or_panic() != 3 ||
+            skipping.next().is_present() { return 6 }
+        var exhausted = slice.iter()
+        if exhausted.nth(usize.MAX).is_present() ||
+            exhausted.next_back().is_present() { return 7 }
+        var exhausted_back = slice.iter()
+        if exhausted_back.nth_back(usize.MAX).is_present() ||
+            exhausted_back.next().is_present() { return 8 }
     }
 
     {

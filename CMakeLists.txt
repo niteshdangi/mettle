@@ -247,6 +247,7 @@ if(BUILD_TESTING)
     target_link_libraries(mettle-thread-tests PRIVATE mettle_runtime Threads::Threads)
     target_compile_options(mettle-thread-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      add_test(NAME runtime.reactor COMMAND mettle-thread-tests --reactor-timers)
       target_link_options(mettle-thread-tests PRIVATE
         "LINKER:--wrap=nanosleep"
         "LINKER:--wrap=clock_gettime"

@@ -1213,6 +1213,14 @@ extend<region r, T> SliceIter<region r, T> implements Iterator {
         let count = self.back - self.front
         (count, present(count))
     }
+    mut fn nth(n: usize): (read T from r)? {
+        if n >= self.back - self.front {
+            self.front = self.back
+            return none
+        }
+        self.front += n
+        self.next()
+    }
     mut fn next(): (read T from r)? {
         if self.front < self.back {
             let i = self.front
@@ -1224,6 +1232,14 @@ extend<region r, T> SliceIter<region r, T> implements Iterator {
     }
 }
 extend<region r, T> SliceIter<region r, T> implements BidirectionalIterator {
+    mut fn nth_back(n: usize): (read T from r)? {
+        if n >= self.back - self.front {
+            self.back = self.front
+            return none
+        }
+        self.back -= n
+        self.next_back()
+    }
     mut fn next_back(): (read T from r)? {
         if self.front < self.back {
             self.back -= 1usize

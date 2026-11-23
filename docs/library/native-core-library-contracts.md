@@ -496,10 +496,11 @@ substring patterns do not acquire it automatically.
 `contains`, `starts_with`, `ends_with`, `strip_prefix/strip_suffix` test the
 named position and return bool or an optional remaining borrowed view.
 `split_once/rsplit_once` return borrowed text before and after the
-first/last match, omitting it. No match returns none. Search uses O(h*p + h)
-worst-case work for h haystack bytes and p pattern bytes; char predicates are
-O(scalar visits), char-set matching O(visits * set length). Implementations
-may improve these bounds without changing callback semantics.
+first/last match, omitting it. No match returns none. Literal substring search
+uses the constant-space Two-Way algorithm in O(h+p) worst-case work for h
+haystack bytes and p pattern bytes, in either direction. Char predicates are
+O(scalar visits), char-set matching O(visits * set length). Predicate callback
+order remains the requested scalar traversal order.
 `strip_circumfix(prefix,suffix)` removes exactly one matching prefix and one
 matching suffix only when both exist and do not overlap, returning optional
 remaining Text. It does not repeatedly trim or accept overlapping matches.
@@ -754,6 +755,10 @@ its default is_empty tests zero. `FusedIterator` promises permanent exhaustion.
 as next without duplicates or crossing ends. `nth_back` discards n from that
 end before returning the next. `rfold/try_rfold/rfind` apply the forward
 algorithm below in reverse traversal.
+
+Borrowed immutable slice iterators implement `nth` and `nth_back` in O(1)
+by advancing their shared remaining interval. Out-of-range skips exhaust it,
+including `usize.MAX`; no element is read or destroyed.
 
 The separately named optional and outcome Iter/IterMut/IntoIter types are
 zero-or-one iterators. Optional Iter/IterMut lend the present T; outcome

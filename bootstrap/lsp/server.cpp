@@ -603,6 +603,7 @@ private:
     }
     const std::string &contents = doc.lines.contents();
     auto list = Json::array();
+    std::map<SourceId, LineIndex> importedLines;
     for (const auto &item : diagnostics.items) {
       const Source *where = nullptr;
       for (const auto &source : sources)
@@ -636,9 +637,9 @@ private:
             begin = previousCharacter(contents, begin);
         }
       } else if (where) {
-        LineIndex other(where->text);
+        auto index = importedLines.try_emplace(where->id, where->text).first;
         auto [line, column] =
-            other.lineColumn(std::min(shown.begin, where->text.size()));
+            index->second.lineColumn(std::min(shown.begin, where->text.size()));
         message = where->path + ":" + std::to_string(line) + ":" +
                   std::to_string(column) + ": " + message;
         end = contents.empty() ? 0 : nextCharacter(contents, 0);

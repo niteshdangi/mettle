@@ -176,12 +176,104 @@ fn match_text_edge(read text: Text, read pattern: Text, reverse: bool): usize? {
     present(pattern.len())
 }
 
+fn search_byte(read bytes: [u8], index: usize, reverse: bool): u8 {
+    bytes[if reverse { bytes.len() - index - 1usize } else { index }]
+}
+
+fn critical_suffix(read bytes: [u8], reverse: bool, less: bool): (usize, usize) {
+    var left = 0usize
+    var right = 0usize
+    var offset = 1usize
+    var period = 1usize
+    while offset < bytes.len() - right {
+        let a = search_byte(bytes, right + offset, reverse)
+        let b = search_byte(bytes, left + offset - 1usize, reverse)
+        if a == b {
+            if offset == period {
+                right += period
+                offset = 1usize
+            } else {
+                offset += 1usize
+            }
+        } else if (a < b) == less {
+            right += offset
+            offset = 1usize
+            period = right - left + 1usize
+        } else {
+            left = right + 1usize
+            right = left
+            offset = 1usize
+            period = 1usize
+        }
+    }
+    (left, period)
+}
+
+fn search_text(read text: Text, read needle: Text, reverse: bool): (usize, usize)? {
+    let n = text.len()
+    let m = needle.len()
+    if m == 0usize {
+        let at = if reverse { n } else { 0usize }
+        return present((at, at))
+    }
+    if m > n { return none }
+    let first = critical_suffix(needle.bytes, reverse, false)
+    let second = critical_suffix(needle.bytes, reverse, true)
+    let factor = if first.0 > second.0 { first } else { second }
+    let split = factor.0
+    var period = factor.1
+    var periodic = period <= m - split
+    var i = 0usize
+    while periodic && i < split {
+        if search_byte(needle.bytes, i, reverse) !=
+            search_byte(needle.bytes, i + period, reverse) {
+            periodic = false
+        }
+        i += 1usize
+    }
+    if !periodic {
+        let tail = m - split + 1usize
+        period = if split > tail { split } else { tail }
+    }
+    var at = 0usize
+    var memory = 0usize
+    while at <= n - m {
+        var right = if split > memory { split } else { memory }
+        while right < m &&
+            search_byte(needle.bytes, right, reverse) ==
+                search_byte(text.bytes, at + right, reverse) {
+            right += 1usize
+        }
+        if right != m {
+            at += right - split + 1usize
+            memory = 0usize
+        } else {
+            var left = split
+            while left > memory &&
+                search_byte(needle.bytes, left - 1usize, reverse) ==
+                    search_byte(text.bytes, at + left - 1usize, reverse) {
+                left -= 1usize
+            }
+            if left <= memory {
+                let start = if reverse { n - m - at } else { at }
+                return present((start, start + m))
+            }
+            at += period
+            memory = if periodic { m - period } else { 0usize }
+        }
+    }
+    none
+}
+
 extend<region r> read Text from r implements Pattern {
     mut fn match_front(read text: Text): usize? {
         match_text_edge(text, self, false)
     }
     mut fn match_back(read text: Text): usize? {
         match_text_edge(text, self, true)
+    }
+    mut fn search(read text: Text, reverse: bool): (usize, usize)? {
+        search_text(text, self, reverse)
     }
 }
 
@@ -1472,45 +1564,17 @@ extend Text {
     }
     // Byte offset of the first occurrence of `pattern`; the empty pattern is at 0.
     pub fn find<P: Pattern>(take pattern: P): usize? {
-        var matcher = pattern
-        var start = 0usize
-        while true {
-            let remaining = match self.get(start, self.len()) {
-                present(part) => part,
-                none => { super.panic.panic("text search boundary invariant failed") }
-            }
-            match matcher.match_front(remaining) {
-                present(_) => { return present(start) },
-                none => {}
-            }
-            if start == self.len() { break }
-            start += scalar_width(self.bytes, start)
+        match find_pattern(read self, pattern, false) {
+            present(found) => present(found.0),
+            none => none
         }
-        none
     }
     // Byte offset of the last occurrence of `pattern`; the empty pattern is at the end.
     pub fn rfind<P: Pattern>(take pattern: P): usize? {
-        var matcher = pattern
-        var end = self.len()
-        while true {
-            let remaining = match self.get(0usize, end) {
-                present(part) => part,
-                none => { super.panic.panic("text search boundary invariant failed") }
-            }
-            match matcher.match_back(remaining) {
-                present(length) => {
-                    if length > end || !self.is_char_boundary(end - length) {
-                        super.panic.panic("invalid text pattern boundary")
-                    }
-                    return present(end - length)
-                },
-                none => {}
-            }
-            if end == 0usize { break }
-            end -= 1usize
-            while !self.is_char_boundary(end) { end -= 1usize }
+        match find_pattern(read self, pattern, true) {
+            present(found) => present(found.0),
+            none => none
         }
-        none
     }
     pub fn contains<P: Pattern>(take pattern: P): bool {
         match self.find(pattern) { present(_) => true, none => false }

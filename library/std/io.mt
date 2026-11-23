@@ -786,6 +786,7 @@ pub type LineWriter<W: Writer + unsized> {
     inner: Heap<W>
     buffer: List<u8>
     pending: usize
+    searched: usize
     panicked: bool
     drop { if !self.panicked { let ignored = capture self.flush() } }
 }
@@ -805,11 +806,11 @@ fn line_writer_inner<W: Writer>(take writer: LineWriter<W>): W {
 
 extend<W: Writer> LineWriter<W> {
     pub static fn new(take inner: W): LineWriter<W> {
-        LineWriter(heap inner, vec.new<u8>(), 0usize, false)
+        LineWriter(heap inner, vec.new<u8>(), 0usize, 0usize, false)
     }
 
     pub static fn with_capacity(capacity: usize, take inner: W): LineWriter<W> {
-        LineWriter(heap inner, vec.with_capacity<u8>(capacity), 0usize, false)
+        LineWriter(heap inner, vec.with_capacity<u8>(capacity), 0usize, 0usize, false)
     }
 
     pub take fn into_inner(): W throws IntoInnerError<LineWriter<W>> {
@@ -823,7 +824,7 @@ extend<W: Writer> LineWriter<W> {
 
 extend<W: Writer + unsized> LineWriter<W> {
     pub static fn from_heap(take inner: Heap<W>): LineWriter<W> {
-        LineWriter(inner, vec.new<u8>(), 0usize, false)
+        LineWriter(inner, vec.new<u8>(), 0usize, 0usize, false)
     }
 
     pub fn get_ref(): read W from self { self.inner.get() }
@@ -858,6 +859,9 @@ extend<W: Writer + unsized> LineWriter<W> {
 
     mut fn discard_written(): Unit {
         if self.pending == 0usize { return }
+        self.searched = if self.searched > self.pending {
+            self.searched - self.pending
+        } else { 0usize }
         if self.pending == self.buffer.len() {
             self.buffer.clear()
         } else {
@@ -875,7 +879,7 @@ extend<W: Writer + unsized> LineWriter<W> implements Writer {
         let line_end = {
             let bytes = self.buffer.as_slice()
             var end = 0usize
-            var index = 0usize
+            var index = self.searched
             while index < bytes.len() {
                 if bytes[index] == 10u8 { end = index + 1usize }
                 index += 1usize
@@ -886,6 +890,7 @@ extend<W: Writer + unsized> LineWriter<W> implements Writer {
             match take capture self.write_until(line_end) {
                 success(_) => self.discard_written(),
                 failure(error) => {
+                    self.searched = 0usize
                     if self.pending > before {
                         let accepted = self.pending - before
                         self.buffer.truncate(self.pending)
@@ -897,6 +902,7 @@ extend<W: Writer + unsized> LineWriter<W> implements Writer {
                 }
             }
         }
+        self.searched = self.buffer.len()
         input.len()
     }
 

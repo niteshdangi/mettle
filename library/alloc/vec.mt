@@ -868,9 +868,15 @@ pub fn stable_sort_by<T, F: mut fn(read T, read T): Ordering>(mut items: [T], ta
     let n = items.len()
     if n < 2usize { return () }
     var comparator = take compare
+    var i = 1usize
+    while i < n {
+        if comparator(read items[i], read items[i - 1usize]).is_lt() { break }
+        i += 1usize
+    }
+    if i == n { return () }
     var order = with_capacity<usize>(n)
     var scratch = with_capacity<usize>(n)
-    var i = 0usize
+    i = 0usize
     while i < n {
         order.push(i + 0usize)
         scratch.push(0usize)
@@ -909,8 +915,7 @@ pub fn stable_sort_by<T, F: mut fn(read T, read T): Ordering>(mut items: [T], ta
             }
             start = end
         }
-        i = 0usize
-        while i < n { order[i] = scratch[i]; i += 1usize }
+        core.mem.swap(mut order, mut scratch)
         if width >= n - width { break }
         width += width
     }
