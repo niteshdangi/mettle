@@ -53,7 +53,7 @@ def check(executable, source, output, profile="debug"):
     error = shared.parse_error(options["expect-error"][0]) if "expect-error" in options else None
     program = output / source.stem
     build = processes.run([executable, "build", str(source), "-o", str(program),
-                           "--profile", profile],
+                           "--profile", profile, "--standalone"],
                            text=True, capture_output=True)
     if error:
         if build.returncode != 1 or not shared.matches_error(source, error, build.stderr):

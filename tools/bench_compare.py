@@ -373,7 +373,8 @@ class Side:
     def build_command(self):
         if self.language == "mettle":
             return [self.compiler, "build", self.entry, "-o", self.executable, "--profile",
-                    "release", "--overflow-checks", "off", "--cache-dir", self.cache]
+                    "release", "--overflow-checks", "off", "--cache-dir", self.cache,
+                    "--standalone"]
         return ["cargo", "build", "--release", "--offline", "--quiet", "--manifest-path",
                 self.tree / "Cargo.toml"]
 
@@ -390,7 +391,8 @@ class Side:
     def check(self):
         if self.language == "mettle":
             return self.runner.must([self.compiler, "check", self.entry,
-                                     "--cache-dir", self.check_target])
+                                     "--profile", "release", "--overflow-checks", "off",
+                                     "--cache-dir", self.check_target, "--standalone"])
         env = clean_environment(self.cargo_home, self.check_target)
         return self.runner.must(["cargo", "check", "--release", "--offline", "--quiet",
                                  "--manifest-path", self.tree / "Cargo.toml"], env=env)

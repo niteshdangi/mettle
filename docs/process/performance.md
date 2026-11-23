@@ -222,7 +222,7 @@ development machine.
 
 `tools/bench_compare.py` builds each paired workload from `benchmarks/<name>/`
 (Mettle `main.mt` and Rust `Cargo.toml`/`src/main.rs`) with
-`mettle build --profile release --overflow-checks off --cache-dir <fresh>` and
+`mettle build --standalone --profile release --overflow-checks off --cache-dir <fresh>` and
 `cargo build --release --offline` (fresh `CARGO_TARGET_DIR` and `CARGO_HOME`, no
 dependencies, `CARGO_INCREMENTAL=0`). Options and output format are documented
 by the tool's `--help`. Workloads cover the P01-P06 subsets the compiler
@@ -230,7 +230,11 @@ supports; P07-P12 are added when comparable. Programs return a 7-bit checksum
 as exit status; the harness requires equal status and stdout from both
 languages for the clean and the semantically edited build.
 Check-only measurements use a separate fresh cache/target directory on both
-sides. P05 uses fixed-key SipHash-1-3 builders and get-then-insert on both sides.
+sides, with release profile and overflow checks off. Mettle runs standalone so
+child-process wall time and RSS include the compiler and no resident endpoint
+survives a sample. Fresh Mettle caches include native-library production;
+application-only comparisons must prime those libraries outside timing.
+P05 uses fixed-key SipHash-1-3 builders and get-then-insert on both sides.
 
 Rust profile: `opt-level=3`, `debug=false`, `lto=false`, `codegen-units=16`,
 `panic=abort`, `overflow-checks=false`, `incremental=false`, edition 2024, host

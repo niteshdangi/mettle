@@ -201,7 +201,7 @@ class Runner:
             program = directory / f"{case.name}-{profile}"
             inputs = source_receipt(case.path)
             self.run([self.executable, "build", case.path, "-o", program,
-                      "--profile", profile, *case.flags])
+                      "--profile", profile, "--standalone", *case.flags])
             result = self.run([program], case.exits[profile])
             for stream, expected in case.output.items():
                 actual = getattr(result, stream)
@@ -220,7 +220,7 @@ class Runner:
         for profile in case.profiles:
             inputs = source_receipt(case.path)
             result = self.run([self.executable, "build", case.path, "-o", program,
-                               "--profile", profile, *case.flags], 1)
+                               "--profile", profile, "--standalone", *case.flags], 1)
             if program.read_bytes() != PRESERVED:
                 raise AssertionError(f"{case.name}: failed compilation damaged existing output")
             for phase, line, column, message in case.errors:

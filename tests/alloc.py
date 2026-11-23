@@ -26,7 +26,7 @@ def check(executable, source, output, profile="debug"):
     prefix = "// expect-error: "
     error = directives.parse_error(header[len(prefix):]) if header.startswith(prefix) else None
     build = processes.run([executable, "build", str(source), "-o", str(program),
-                           "--profile", profile],
+                           "--profile", profile, "--standalone"],
                            text=True, capture_output=True)
     if error:
         if build.returncode != 1 or not directives.matches_error(source, error, build.stderr):

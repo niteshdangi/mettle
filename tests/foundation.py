@@ -54,6 +54,7 @@ def harness_cases(root, executable):
             runner.check(executable, source, root, profile="release")
         build = invoke.call_args_list[0].args[0]
         assert build[build.index("--profile") + 1] == "release", build
+        assert "--standalone" in build, build
     source.write_text("// expect-error: type 2:1 unknown name\nmissing\n")
     for runner in (alloc, std):
         wrong = f"{source}:2:1: error[type]: other failure\n{source}:9:1: error[type]: unknown name\n"

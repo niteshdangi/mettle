@@ -1732,8 +1732,13 @@ Evidence: `~/w/anal/perf-application-parity-20261123/projections-final/`;
 compiler SHA-256
 `26202cef46fe8ba4cc23e36771cf3621b30986a42f5cea9e79e13353a6dd67aa`.
 This batch is focused-verified, not I14 qualification. Fresh-process parity
-remains open; next inspect optimized object-unit partitioning, then remaining
-archive/declaration admission. No optimization or validation contract changed.
+remains open; next target reuse before whole-module O2, measured at about 71 ms.
+Directory-lookup experiments established no convincing application-build gain
+and were discarded. The comparison harness now uses standalone compilation and
+matched release checks; independent source/alloc/std test workers also compile
+standalone instead of queuing behind one resident endpoint. Focused runner and
+public-harness build/check cases pass. No optimization or validation contract
+changed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
