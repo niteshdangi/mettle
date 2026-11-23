@@ -1931,6 +1931,13 @@ units reused, rebuild medians were 982.25 / 963.95 ms (19.29 ms paired saving).
 Outputs agreed; the paired median runtime difference was 0.01 ms. Evidence:
 `~/w/anal/mettle-current-batch/rebuild-p05/cleanup-only-pairs.json`.
 LLVM preparation is still the dominant rebuild cost.
+On-use type admission no longer allocates eager validation scratch or
+constructs definitions it will not decode. In 21 interleaved standalone
+warm-check pairs, median paired savings for P03/P04/P05 were 2.12/-0.09/1.89
+ms. This does not resolve the larger import cost: P05's first inherent
+inventory scan visited 6,101 imported headers, only 386 of them inherent.
+Skipping records based on the interface owner directory alone was not retained:
+an inconsistent directory could hide an inherent record before validation.
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17

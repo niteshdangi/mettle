@@ -3955,11 +3955,13 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       std::vector<Writer::SymbolFixup> symbols;
     };
     std::vector<SymbolicKey> symbolicKeys;
-    if (demand) {
+    if (demand && !onUse) {
       edges.offsets.reserve(ids.size() + 1);
       regional.resize(ids.size());
       hasIdentity.resize(ids.size());
       admittedFingerprints.resize(ids.size());
+    }
+    if (demand) {
       for (std::size_t i = 0; i < deferred->regions.size(); ++i)
         deferred->regionOrdinals.emplace(deferred->regions[i].index(),
                                          static_cast<std::uint32_t>(i));
@@ -4001,7 +4003,9 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
           bytes.subspan(identityBegin, reader.offset - identityBegin);
       DeferredTypeGraph::Record slice;
       slice.offset = reader.offset;
-      auto definition = compactDefinitionFor(deferred->kinds[i]);
+      std::optional<CompactDefinition> definition;
+      if (!onUse)
+        definition.emplace(compactDefinitionFor(deferred->kinds[i]));
       if (header.indexed) {
         std::span<const std::uint8_t> payload;
         if (demand) {
@@ -4012,22 +4016,22 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
           payload = reader.block();
         } else {
           reader.block();
-          payload = framedDefinition(reader, definition);
+          payload = framedDefinition(reader, *definition);
         }
         slice.offset =
             static_cast<std::size_t>(payload.data() - reader.bytes.data());
         slice.length = payload.size();
       } else {
-        std::visit([&](auto &record) { reader(record); }, definition);
+        std::visit([&](auto &record) { reader(record); }, *definition);
         slice.length = reader.offset - slice.offset;
       }
-      slice.nominal = onUse ? identity.has_value() : nominal(definition);
+      slice.nominal = onUse ? identity.has_value() : nominal(*definition);
       deferred->records.push_back(slice);
       if (!demand && slice.nominal != identity.has_value())
         reject("missing or unexpected logical definition identity");
       if (identity) {
         validIdentity(*identity,
-                      std::holds_alternative<CompactParameter>(definition));
+                      deferred->kinds[i] == ImportedTypeKind::Parameter);
         if (!identities
                  .insert({reinterpret_cast<const char *>(identityBytes.data()),
                           identityBytes.size()})
@@ -4035,9 +4039,9 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
           reject("duplicate logical definition identity");
         result.definitions.push_back({std::move(*identity), ids[i]});
       }
-      if (demand) {
+      if (demand && !onUse) {
         hasIdentity[i] = identity.has_value();
-      } else
+      } else if (!demand)
         definitions.push_back(std::visit(
             [&](auto &record) -> CompactDefinitionView {
               using T = std::decay_t<decltype(record)>;
@@ -4045,7 +4049,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
               storage.front() = std::move(record);
               return &storage.front();
             },
-            definition));
+            *definition));
     }
     result.roots.reserve(header.roots);
     for (std::uint32_t i = 0; i < header.roots; ++i) {
