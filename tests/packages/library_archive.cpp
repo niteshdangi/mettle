@@ -6,6 +6,8 @@
 #include "semantics/check.h"
 #include "semantics/library.h"
 #include "syntax/parser.h"
+#include <cerrno>
+#include <chrono>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
@@ -14,14 +16,218 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
 #include <utility>
+#if defined(__linux__)
+#include <sys/inotify.h>
+#endif
 
 namespace {
 void expect(bool condition, const char *message) {
   if (!condition) {
     std::cerr << message << '\n';
     std::exit(1);
+  }
+}
+
+void testStoreAccounting(const std::filesystem::path &root) {
+  namespace fs = std::filesystem;
+  using mettle::packages::Store;
+  fs::create_directories(root);
+  const auto source = root / "source", otherSource = root / "other-source";
+  fs::create_directory(source);
+  fs::create_directory(otherSource);
+  const std::string first(64, 'a'), second(64, 'b'), third(64, 'c');
+  {
+    Store store(root, {0, 0});
+    expect(store.putData(first, "shared") &&
+               store.commitProject("first", source).empty(),
+           "must index the first project's shared blob");
+  }
+  {
+    Store store(root, {0, 0});
+    expect(store.putData(second, "shared") &&
+               store.commitProject("second", otherSource).empty(),
+           "must retain a blob shared across independent project updates");
+  }
+#if defined(__linux__)
+  int events = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+  expect(events >= 0 && inotify_add_watch(
+                            events, (root / "entries" / "bb" / second).c_str(),
+                            IN_OPEN) >= 0,
+         "must observe unrelated entry reads");
+  {
+    std::ifstream observed(root / "entries" / "bb" / second);
+    expect(observed.good(), "must open the entry-read observation control");
+  }
+  char controlEvents[sizeof(inotify_event) + 256];
+  expect(read(events, controlEvents, sizeof controlEvents) > 0,
+         "cache test filesystem must report watched entry opens");
+#endif
+  {
+    Store store(root, {0, 0});
+    expect(store.putText(third, "replacement"),
+           "must publish the replacement working set");
+    store.commitProject("first", source);
+#if defined(__linux__)
+    char buffer[sizeof(inotify_event) + 256];
+    expect(read(events, buffer, sizeof buffer) < 0 && errno == EAGAIN,
+           "successful builds must not open unrelated cache entry files");
+    close(events);
+#endif
+    expect(!fs::exists(root / "entries" / "aa" / first) &&
+               store.data(second, 6).bytes == "shared" &&
+               store.usage().blobs == 1,
+           "project replacement must preserve other projects' blob references");
+  }
+  {
+    Store store(root, {0, 0});
+    auto lease = store.acquireLease(second);
+    fs::remove(otherSource);
+    store.text(third);
+    store.commitProject("first", source);
+    expect(store.data(second, 6).bytes == "shared",
+           "project retirement must preserve live leases");
+    lease = {};
+  }
+  {
+    Store store(root, {0, 0});
+    store.prune();
+    expect(store.data(second, 6).status == Store::Lookup::Miss &&
+               store.usage().blobs == 0,
+           "retired project entries must be reclaimed when their leases end");
+  }
+  {
+    std::ofstream dirty(root / "accounting.dirty");
+    dirty.close();
+    const auto entry = root / "entries" / "dd" / std::string(64, 'd');
+    fs::create_directories(entry.parent_path());
+    std::ofstream(entry) << "text\n" << std::string(1024, 'x');
+    const auto orphan = root / "blobs" / "ee" / std::string(64, 'e');
+    fs::create_directories(orphan.parent_path());
+    std::ofstream(orphan) << "interrupted publication";
+    Store store(root, {1, 0});
+    store.prune();
+    expect(store.usage().bytes <= 1 && !fs::exists(orphan),
+           "interrupted publications must recover accounting before budgeting");
+    std::ofstream(entry) << "text\n" << std::string(1024, 'x');
+    Store legacyWriter(root, {1, 0});
+    legacyWriter.prune();
+    expect(legacyWriter.usage().bytes <= 1,
+           "unindexed publications must be accounted before enforcing budgets");
+  }
+  {
+    Store store(root, {0, 0});
+    expect(store.putData(first, "shared") && store.putData(second, "shared"),
+           "must repopulate deduplicated references after recovery");
+    mettle::packages::Sha256 digest;
+    digest.update("shared");
+    auto blob = digest.finish();
+    auto file = root / "blobs" / blob.substr(0, 2) / blob;
+    fs::permissions(file, fs::perms::owner_write, fs::perm_options::add);
+    std::ofstream(file, std::ios::trunc) << "broken";
+    expect(
+        store.data(first, 6).status == Store::Lookup::Corrupt &&
+            store.putData(first, "shared") &&
+            store.data(second, 6).bytes == "shared",
+        "corruption repair must restore accounting for every shared reference");
+  }
+  for (const std::string kind : {"state", "entries-", "blobs-"}) {
+    Store seed(root, {0, 0});
+    expect(seed.putData(first, "shared") && seed.putData(second, "shared"),
+           "must seed independently persisted accounting references");
+    fs::path damaged;
+    for (const auto &file : fs::directory_iterator(root / "accounting")) {
+      if (!file.path().filename().string().starts_with(kind))
+        continue;
+      std::ifstream input(file.path(), std::ios::binary);
+      std::string content{std::istreambuf_iterator<char>(input), {}};
+      mettle::packages::Sha256 hash;
+      hash.update("shared");
+      if (kind == "state" ||
+          content.find(kind == "blobs-" ? hash.finish() : first) !=
+              std::string::npos) {
+        damaged = file.path();
+        break;
+      }
+    }
+    expect(!damaged.empty(), "must locate the accounting corruption fixture");
+    fs::resize_file(damaged, fs::file_size(damaged) - 1);
+    Store store(root, {1, 0});
+    auto lease = store.acquireLease(first);
+    store.prune();
+    expect(store.data(first, 6).bytes == "shared" &&
+               store.data(second, 6).status == Store::Lookup::Miss,
+           "torn accounting must rebuild blob references and preserve leases");
+    lease = {};
+    store.prune();
+    expect(store.usage().bytes <= 1,
+           "recovered accounting must enforce the budget without deferral");
+  }
+  {
+    Store store(root, {0, 0});
+    expect(store.putText(first, "old"), "must publish an age-limited entry");
+    expect(store.putText(second, "read"),
+           "must publish a concurrently refreshed age-limited entry");
+    fs::last_write_time(root / "entries" / "aa" / first,
+                        fs::file_time_type::clock::now() -
+                            std::chrono::hours(72));
+    fs::last_write_time(root / "entries" / "bb" / second,
+                        fs::file_time_type::clock::now() -
+                            std::chrono::hours(72));
+    std::ofstream(root / "accounting.dirty").close();
+    Store aged(root, {0, 1});
+    auto lease = aged.acquireLease(first);
+    auto otherLease = aged.acquireLease(second);
+    aged.prune();
+    expect(fs::exists(root / "entries" / "aa" / first),
+           "age pruning must preserve leased entries after recovery");
+    Store reader(root, {0, 0});
+    expect(reader.text(second) == "read",
+           "must refresh a use time without a project update");
+    lease = {};
+    otherLease = {};
+    aged.prune();
+    expect(
+        !fs::exists(root / "entries" / "aa" / first) &&
+            fs::exists(root / "entries" / "bb" / second),
+        "age pruning must reclaim expired leases but observe concurrent reads");
+  }
+  {
+    auto child = fork();
+    expect(child >= 0, "must fork an independent accounting publisher");
+    if (child == 0) {
+      Store store(root, {0, 0});
+      _exit(store.putData(first, "shared") ? 0 : 1);
+    }
+    Store store(root, {0, 0});
+    expect(store.putData(third, "shared"),
+           "parent accounting publication must succeed");
+    int status = 0;
+    expect(waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+               WEXITSTATUS(status) == 0,
+           "child accounting publication must succeed");
+    Store parallel(root, {0, 0});
+    std::thread publisher([&] {
+      expect(parallel.putData(first, "shared"),
+             "threaded accounting publication must succeed");
+    });
+    expect(parallel.putData(third, "shared"),
+           "concurrent accounting publication must succeed");
+    publisher.join();
+    Store fresh(root, {0, 0});
+    fresh.prune();
+    expect(
+        fresh.data(first, 6).bytes == "shared" &&
+            fresh.data(third, 6).bytes == "shared" && fresh.usage().blobs == 1,
+        "independent publishers must retain both entries and one shared blob");
+  }
+  {
+    Store store(root, {0, 0});
+    std::string error;
+    fs::remove(source);
+    expect(store.clear(false, error).has_value(), error.c_str());
   }
 }
 } // namespace
@@ -738,7 +944,7 @@ int main() {
              consumer.registeredSources().size() == before,
          "source ID collision must reject before registering anything");
   namespace fs = std::filesystem;
-  auto root = fs::temp_directory_path() /
+  auto root = fs::current_path() /
               ("mettle-library-archive-" + std::to_string(getpid()));
   expect(fs::create_directory(root), "must create a private test store");
   struct Cleanup {
@@ -748,6 +954,7 @@ int main() {
       fs::remove_all(root, error);
     }
   } cleanup{root};
+  testStoreAccounting(root / "accounting-test");
   packages::Store store(root, {1, 0});
   auto key = std::string(64, 'a'), other = std::string(64, 'b');
   auto lease = store.acquireLease(key);

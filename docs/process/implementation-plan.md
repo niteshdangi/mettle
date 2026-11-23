@@ -1792,8 +1792,7 @@ eight-way ThinLTO tool proof invalidates every cache unit after the seed edit;
 coarse partitions are not a selected fix. The next backend action is to check
 the existing operation-family partition boundary against LLVM's dependency-aware
 cache, preserving native inline bodies and matching program behavior before
-integrating a new cache path. Shared-store incremental accounting also remains
-open.
+integrating a new cache path.
 
 Source discovery now filters filenames and impossible shard/profile ownership
 before opening fixtures, and parses directives and the final newline from one
@@ -1887,8 +1886,17 @@ measure independent channels at 4.1% less elapsed time and independent selectors
 at 9.4% less; selected fan-in is 1.3% slower, so this is not an across-the-board
 throughput improvement. Evidence:
 `~/mettle-i-integrated-08ee/channel-notifier-evidence/comparison-results.json`.
-Native admission, pre-optimization reuse and shared-cache integration remain
-open; I14 qualification and runtime parity are not claimed.
+The shared store now maintains persistent sharded entry/blob accounting.
+Healthy publications touch affected shards rather than opening unrelated
+entries; synchronous recovery, immediate budgets, age limits and leases retain
+focused corruption/crash/concurrency regressions and sanitizer execution.
+Integrated archive CTest and four focused package cases pass. Fifteen paired
+tiny-build samples with 0/1,000/5,000 unrelated entries measure
+32.90/41.29/71.84 -> 34.53/36.44/36.89 ms: large-store scaling improves, with
+1.63 ms overhead at zero unrelated entries. Evidence:
+`~/mettle-i-integrated-08ee/cache-accounting-evidence/`.
+Native admission and pre-optimization reuse remain open; I14 qualification and
+runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

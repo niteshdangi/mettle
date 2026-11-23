@@ -148,7 +148,6 @@ private:
   std::optional<std::string> localText(const std::string &key);
   std::unique_ptr<Store> shipped;
   struct Record {
-    std::filesystem::path path;
     std::string key, blob;
     std::uint64_t size = 0;
     std::filesystem::file_time_type used;
@@ -157,14 +156,19 @@ private:
   std::filesystem::path blobPath(const std::string &blob) const;
   std::filesystem::path scratch() const;
   bool prepare();
-  bool publish(const std::filesystem::path &path, const std::string &content);
+  bool publish(const std::string &key, const std::string &content);
   bool publishLocked(const std::filesystem::path &path,
                      const std::string &content);
+  void invalidate(const std::string &key, const std::string &content,
+                  bool blob = false);
+  struct Accounting;
+  Accounting &accountingLocked();
+  std::shared_ptr<Accounting> accounting;
   std::vector<std::string> pruneLocked(const std::set<std::string> &keep,
                                        std::set<std::string> leased);
   std::vector<Record> records() const;
   struct Touched {
-    std::mutex lock;
+    std::mutex lock, accountingLock;
     std::set<std::string> keys;
   };
   void note(const std::string &key) const;

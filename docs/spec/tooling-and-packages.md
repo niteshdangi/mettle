@@ -225,9 +225,14 @@ a store with live leases.
 
 Each successful build records the entries it used as that project
 configuration's working set, so the store drops what edits and deleted projects
-leave behind without a global size cap. Working-set retirement and age/byte
-pruning share one store traversal; byte-budget eviction orders entries only
-when the remaining contents exceed that budget. `--no-cache` disables
+leave behind without a global size cap. Persistent, checksummed accounting
+records entry sizes and last use, shared-blob references, and project working
+sets in independently persisted shards. Successful builds load and update only
+affected accounting shards without traversing unrelated entry/blob files.
+Age and byte limits are enforced at that update, not deferred;
+eviction checks candidate timestamps to observe reads by concurrent processes.
+An interrupted update or damaged accounting rebuilds the index from the
+published store before pruning. `--no-cache` disables
 both whole-build and package-object caches. Storage design: performance.md
 section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
 `--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;

@@ -157,10 +157,12 @@ The user build cache is built to retain less than Cargo's `target/` directory:
   yield identical bytes (for example a feature that changes no code) share one
   blob. Blobs are read-only; outputs are private copies, never links into the
   store.
-- **No incidental data.** Only final executables/objects and tiny build-script
-  records are stored; there are no per-crate metadata, dependency-info,
-  incremental or debug side trees. Comment and layout edits reuse the existing
-  entry instead of adding one.
+- **No incidental artifacts.** Only final executables/objects and tiny
+  build-script records are cached; there are no per-crate metadata,
+  dependency-info, incremental or debug side trees. A compact, incremental
+  accounting index tracks sizes, last use, shared-blob references and project
+  working sets. Comment and layout edits reuse the existing entry instead of
+  adding one.
 - **Follows live projects.** The store has no default size cap; it stays
   proportional to what live projects currently build. Each successful build
   records the entries it used as the working set of that project
@@ -177,6 +179,20 @@ The user build cache is built to retain less than Cargo's `target/` directory:
 - **Verified and atomic.** Writes go to `tmp/` and are published by rename; a
   hit re-hashes the blob and a mismatch deletes the entry and blob and
   rebuilds (`entry corrupt`).
+  Store-locked mutations mark accounting dirty before publication and atomically
+  replace affected, checksummed accounting shards and their aggregate state
+  before clearing that marker. Length-framed checksums detect truncated
+  accounting, including truncation at a record boundary.
+  Interrupted updates and corrupt accounting rebuild from published entries,
+  blobs and project roots before applying budgets; recovery also removes
+  unreferenced blobs. Normal successful updates do not enumerate or open
+  unrelated entry/blob files: only affected accounting shards are loaded.
+  Aggregate byte totals and per-shard oldest-use times decide whether eviction
+  needs more metadata. Eviction rechecks candidate timestamps because readers
+  can refresh use times without taking the publication lock. Accounting size
+  follows live metadata, not build history. Directory timestamps detect
+  unindexed publications, including older cache writers, without opening entry
+  files.
 - **Clear removal.** `mettle clean` deletes only the store's own directories
   and refuses a directory lacking its `VERSION` marker; `--dry-run` reports
   the entries, blobs and bytes; `mettle clean PACKAGE` also removes that
@@ -185,7 +201,8 @@ The user build cache is built to retain less than Cargo's `target/` directory:
 Accounting uses logical file sizes; allocated bytes are at least as large, so
 the gate comparison must use allocated bytes per the definition above.
 The driver leases its active whole-build key; pruning preserves leased entries
-and `clean` refuses live leases.
+and `clean` refuses live leases. Retired project references protected by a lease
+remain pending for reclamation after the lease ends.
 
 For eligible debug executable builds, dependency objects contain only
 non-generic, owner-unambiguous package functions and statics. Generic instances,
