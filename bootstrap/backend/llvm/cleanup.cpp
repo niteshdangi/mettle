@@ -867,6 +867,20 @@ llvm::Value *CleanupFrame::hasLiveDrop(unsigned node) {
 void CleanupFrame::drop(unsigned node) {
   auto &builder = lowering.builder;
   const auto &entry = nodes[node];
+  const auto &types = *lowering.program.types;
+  const bool coroutine =
+      types.isProduct(entry.type) &&
+      types.product(entry.type).kind == AggregateKind::Coroutine;
+  const bool dynamicDrop = types.isSlice(entry.type) &&
+                           types.needsDrop(types.slice(entry.type).element);
+  if (entry.relocation < 0 && entry.destructor < 0 &&
+      entry.nativeAction == NativeCleanup::None && !coroutine && !dynamicDrop &&
+      (!types.isSum(entry.type) || entry.children.empty())) {
+    builder.CreateStore(builder.getFalse(), field(entry.flag));
+    for (auto child : entry.children)
+      drop(child);
+    return;
+  }
   auto *function = builder.GetInsertBlock()->getParent();
   auto *destroy = llvm::BasicBlock::Create(lowering.context, "drop", function);
   auto *next = llvm::BasicBlock::Create(lowering.context, "next", function);
@@ -914,9 +928,7 @@ void CleanupFrame::drop(unsigned node) {
             &lowering.module, llvm::Intrinsic::vaend, {builder.getPtrTy()}),
         {nodeAddress(node)});
   }
-  if (lowering.program.types->isProduct(entry.type) &&
-      lowering.program.types->product(entry.type).kind ==
-          AggregateKind::Coroutine) {
+  if (coroutine) {
     // Dropping a state drops whatever its body frame still owns, at any
     // suspension point; the frame's flags make this exact.
     auto *unwinding = function->arg_size() > 1
@@ -937,22 +949,20 @@ void CleanupFrame::drop(unsigned node) {
     }
     builder.CreateCall(lowering.functions[entry.destructor], {self});
   }
-  if (lowering.program.types->isSlice(entry.type)) {
-    auto element = lowering.program.types->slice(entry.type).element;
-    if (lowering.program.types->needsDrop(element)) {
-      auto drop = std::find_if(
-          lowering.program.dynamicDropFunctions.begin(),
-          lowering.program.dynamicDropFunctions.end(),
-          [&](const auto &entry) { return entry.first == element; });
-      if (drop != lowering.program.dynamicDropFunctions.end()) {
-        auto *handle = builder.CreateAlignedLoad(
-            lowering.viewType(entry.type), nodeAddress(node), llvm::Align(1));
-        auto *data = builder.CreateExtractValue(handle, 0);
-        auto *count = builder.CreateExtractValue(handle, 1);
-        builder.CreateCall(
-            lowering.functions.at(static_cast<std::size_t>(drop->second)),
-            {data, count});
-      }
+  if (dynamicDrop) {
+    auto element = types.slice(entry.type).element;
+    auto drop =
+        std::find_if(lowering.program.dynamicDropFunctions.begin(),
+                     lowering.program.dynamicDropFunctions.end(),
+                     [&](const auto &entry) { return entry.first == element; });
+    if (drop != lowering.program.dynamicDropFunctions.end()) {
+      auto *handle = builder.CreateAlignedLoad(
+          lowering.viewType(entry.type), nodeAddress(node), llvm::Align(1));
+      auto *data = builder.CreateExtractValue(handle, 0);
+      auto *count = builder.CreateExtractValue(handle, 1);
+      builder.CreateCall(
+          lowering.functions.at(static_cast<std::size_t>(drop->second)),
+          {data, count});
     }
   }
   builder.CreateBr(next);

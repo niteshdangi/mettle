@@ -1921,10 +1921,16 @@ prototype as an accepted speedup; the owner rejected the redesign.
 A separate cleanup-body early-inlining candidate reduced adjacent paired P05
 rebuild medians from 465.81 to 395.63 ms, but 31 fixed-core runtime pairs showed
 a 1.86% median paired slowdown (the candidate won only 6 pairs). The owner
-rejected that trade-off and requested wrap-up. No backend candidate is retained;
-LLVM preparation remains unresolved. Evidence:
+rejected that trade-off. Evidence:
 `~/w/anal/perf-cleanup-helper-final-20261124/paired-results.json` and
 `~/w/anal/perf-cleanup-helper-final-20261124/runtime-fixed-core.json`.
+A later lowering change removes branches around cleanup nodes whose only local
+effect is clearing their flag; child drops still check their own flags. On
+20 fixed-core P05 seed-edit pairs, with exact native object hits and 38/39 root
+units reused, rebuild medians were 982.25 / 963.95 ms (19.29 ms paired saving).
+Outputs agreed; the paired median runtime difference was 0.01 ms. Evidence:
+`~/w/anal/mettle-current-batch/rebuild-p05/cleanup-only-pairs.json`.
+LLVM preparation is still the dominant rebuild cost.
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
