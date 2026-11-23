@@ -507,7 +507,7 @@ ordinal arrays; retained archive owners outlive their borrowed lookup data.
 Changing an imported identity key invalidates the consumer's index, not its
 shared prefix in other consumers. Generic function and type environments are
 materialized on first use rather than recreated for every imported declaration.
-Declaration header schema 6 and checked contracts 20 persist producer-built
+Declaration header schema 6 and checked contracts 21 persist producer-built
 module/name and declaration-ID directories separately from framed syntax and
 signatures. Consumers reserve stable native declaration ranges without building
 header or parameter inventories. Resolution queries those immutable directories
@@ -524,6 +524,13 @@ complete implementation candidate groups. Imported implementation headers use
 sparse immutable records, and candidate selection does not reconstruct the
 library's declaration-to-implementation index. Consumer additions remain local
 overlays without hiding blanket implementations.
+Selection headers also retain the checked nominal target origin. Incompatible
+nominal candidates are rejected before demanding their implementation payload;
+non-nominal and blanket candidates retain ordinary matching. Raw admission
+compares each persisted origin with its implementation target. Nominal
+classification reads product kind and generic/regional origins from retained
+type projections without constructing private type bodies. Archive ownership
+and validated origin references remain authoritative until consumer mutation.
 Interface phases share unchanged immutable records and
 encode only phase replacements, retaining phase-specific selection contracts.
 Interface database admission validates framed records and their references
@@ -1044,6 +1051,12 @@ children. Scoped inference-change observers wake only dependent requests after
 unification, shape discovery or explicit type assignment; completed requests are
 retired from scheduling. These observers and request identities never cross the
 checked boundary.
+Generic-call result requests use the same inference-change stream rather than
+rescanning the complete request inventory. Their dependency sets include known
+aggregate children and remain watched after resolution so refinement and
+representative merging can update the result. Implementation method selection
+uses owner-local function ordinals in original order, retaining duplicate-method
+diagnostics and explicit method membership.
 Syntax ownership propagates const access through child/body owners; a const
 checked module must not expose mutable children through `unique_ptr` accessors.
 Moving the owner preserves heap-owned node addresses; deleting/replacing nodes
@@ -1167,6 +1180,9 @@ derives Unpin and structural properties through `T`; `core.iter.Phantom` is its
 reexport, not a separately recognized nominal type.
 Unpin parameter flags own their binding proofs, including deferred bindings;
 the remaining Unpin assumption pass owns requirements outside that path.
+It elaborates assumptions only when an unhandled bound can imply Unpin,
+including inherited interface properties; ordinary bound and equality proofs
+remain mandatory.
 Runtime normalization erases regions only after the semantic region checks;
 it never substitutes for those checks. Early callable applicability may compare
 temporary region-erased type shapes while retaining both semantic operands;

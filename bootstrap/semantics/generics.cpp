@@ -373,6 +373,15 @@ void Checker::proveDeferredObligations() {
 void Checker::propagateGenericBindings(const GenericEnvironment &environment,
                                        std::vector<TypeBinding> &bindings,
                                        Span span) {
+  if (std::none_of(bindings.begin(), bindings.end(), [](const auto &binding) {
+        return binding.argument == Type::Unknown;
+      }))
+    return;
+  if (environment.equalities.empty() &&
+      std::all_of(bindings.begin(), bindings.end(), [](const auto &binding) {
+        return binding.argument == Type::Unknown;
+      }))
+    return;
   if (environment.equalities.empty() &&
       std::all_of(environment.bounds.begin(), environment.bounds.end(),
                   [](const auto &entry) { return entry.second.empty(); }))
@@ -1040,6 +1049,22 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
   }
   auto saved = genericEnvironment;
   genericEnvironment = const_cast<GenericEnvironment *>(&environment);
+  bool remainingUnpin = false;
+  for (const auto &[subject, bounds] : environment.bounds) {
+    if (parameterUnpinRequirements.contains(subject))
+      continue;
+    if (std::any_of(bounds.begin(), bounds.end(), [&](const auto &bound) {
+          return bound.form != TypeForm::Callable &&
+                 interfaceProperty(bound, "Unpin", environment.declarationSpan);
+        })) {
+      remainingUnpin = true;
+      break;
+    }
+  }
+  if (!remainingUnpin) {
+    genericEnvironment = saved;
+    return valid;
+  }
   auto requirements = interfaceAssumptions();
   genericEnvironment = saved;
   if (std::none_of(requirements.begin(), requirements.end(),

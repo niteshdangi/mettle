@@ -1499,6 +1499,48 @@ with focused reports in the parent's `source-regressions` and
 Whole-I14 freeze stays blocked. Remaining work includes full producer checking,
 root optimization and consolidated performance/lifetime qualification.
 
+Native preparation follow-up (2026-11-23) rejects incompatible nominal
+implementation candidates before loading their payloads, including nominal
+candidates for non-product receivers. Checked contracts 21 persist the target
+origin in both interface phases; raw admission validates it against the actual
+target. Sparse type projections supply nominal kind and generic/regional
+origins without demanding private bodies. Blanket, structural and other
+non-nominal candidates retain ordinary selection and coherence. The same batch
+uses inference-dependent generic-call scheduling, owner-local method lookup,
+no-op binding-propagation early-outs and bounded remaining-Unpin elaboration.
+
+Three randomized matched empty-compiler-cache standalone P04 release pairs
+against `ffdfaade` measure **19.041 s to 13.725 s, 27.9% faster**. Complete native
+source checking remains; exit/output and executable sizes agree. Compiler
+caches are independently empty, but OS/page caches are not flushed. These
+matched medians supersede the initial follow-up's 5.9% result, not earlier
+unmatched absolute timings. Region-context, parameter-query and contextual
+implementation-result cache experiments did not show reliable gains and were
+removed.
+
+Five warm pairs remain mixed: fresh checks are approximately flat or slightly
+slower; P03/P04 builds are flat/1.9% slower and P05 builds are 5.8% faster.
+Resident checks/builds and runtime do not establish universal improvement.
+P04 runtime is 3.9% slower in this run; no runtime speedup or Rust-parity claim
+is made.
+
+Focused optimized source assertions pass 16 run/profile and seven fail/profile
+units, covering inference refinement, default/owner methods, nominal/blanket
+selection, coherence and contextual/inherited Unpin obligations. The affected
+boundary, type-graph and declaration executables pass under optimized builds
+and ASan/UBSan. Sparse-origin cases include generic/regional roots and an invalid
+unused private body that classification must not demand. ASan/UBSan source
+assertions pass six run/profile and two fail/profile units using the existing
+minimal native fixture, without full-core instrumented production. No fixture
+or diagnostic expectation is weakened.
+
+Evidence: `~/w/anal/perf-native-preparation-20261123/nominal-final/`
+contains `cold-results.json`, `results.json`, `source-regressions` and
+`sanitizer-minimal-regressions`. Measured compiler SHA-256:
+`ed86f81de79bbf1fdefc6d00932a3a3f4ff76987343bbefd01d8766f368c9eb0`.
+Whole-I14 freeze remains blocked on the existing producer/root-optimization
+and consolidated qualification obligations.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

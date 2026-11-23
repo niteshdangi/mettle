@@ -375,6 +375,7 @@ std::optional<int> Checker::genericCall(
   auto variable = inference.fresh(result);
   genericCallRequests.push_back(
       {&n, &function, variable, bindings, caller, current});
+  readyGenericCalls.push_back(genericCallRequests.size() - 1);
   if (deferred)
     deferredCalls.insert_or_assign(
         &n, DeferredCall{&function, bindings, signature, resultPattern,
@@ -433,8 +434,46 @@ void Checker::inferFromExpected(Type pattern, Type expected,
       inferFromExpected(a[i], b[i], bindings);
 }
 void Checker::resolveGenericCalls() {
-  for (auto &request : genericCallRequests) {
-    auto declarationResult = functionResult(*request.function);
+  while (true) {
+    while (genericCallChanges) {
+      auto variable = genericCallChanges->next();
+      if (!variable)
+        break;
+      auto waiting = waitingGenericCalls.find(*variable);
+      if (waiting == waitingGenericCalls.end())
+        continue;
+      for (auto index : waiting->second)
+        if (!genericCallRequests[index].queued) {
+          genericCallRequests[index].queued = true;
+          readyGenericCalls.push_back(index);
+        }
+    }
+    if (readyGenericCalls.empty())
+      break;
+    auto index = readyGenericCalls.front();
+    readyGenericCalls.pop_front();
+    auto &request = genericCallRequests[index];
+    request.queued = false;
+    for (auto dependency : request.dependencies) {
+      auto waiting = waitingGenericCalls.find(dependency);
+      waiting->second.erase(index);
+      if (waiting->second.empty())
+        waitingGenericCalls.erase(waiting);
+    }
+    request.dependencies.clear();
+    auto declarationResult =
+        imported(request.function->span)
+            ? functionResult(*request.function)
+            : inference.value(functionVariables.at(request.function), nullptr,
+                              &request.dependencies);
+    std::sort(request.dependencies.begin(), request.dependencies.end());
+    request.dependencies.erase(
+        std::unique(request.dependencies.begin(), request.dependencies.end()),
+        request.dependencies.end());
+    for (auto dependency : request.dependencies)
+      waitingGenericCalls[dependency].insert(index);
+    if (!request.dependencies.empty() && !genericCallChanges)
+      genericCallChanges.emplace(inference);
     if (declarationResult == Type::Unknown ||
         declarationResult == request.resolvedDeclaration)
       continue;

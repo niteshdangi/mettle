@@ -29,7 +29,8 @@ public:
   TypeInference &operator=(const TypeInference &) = delete;
   int fresh(Type type = Type::Unknown);
   int numeric(bool floating, Type type = Type::Unknown);
-  Type value(int variable, int *blocked = nullptr);
+  Type value(int variable, int *blocked = nullptr,
+             std::vector<int> *dependencies = nullptr);
   bool equal(int a, int b, Span span, bool coercion = false);
   int joined(int a, int b, Span span);
   void set(int variable, Type type);

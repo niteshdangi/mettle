@@ -606,8 +606,13 @@ private:
     const Function *caller;
     // Declaration result last resolved; an unchanged one needs no rework.
     Type resolvedDeclaration = Type::Unknown;
+    std::vector<int> dependencies{};
+    bool queued = true;
   };
   std::vector<GenericCallRequest> genericCallRequests;
+  std::deque<std::size_t> readyGenericCalls;
+  std::unordered_map<int, std::unordered_set<std::size_t>> waitingGenericCalls;
+  std::optional<TypeInference::Changes> genericCallChanges;
   void resolveGenericCalls();
   // A generic call at the tail of an `if`/`match` branch (or an argument of
   // such a call) may leave parameters that only the other branches fix, as in

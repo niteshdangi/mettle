@@ -444,6 +444,9 @@ struct ImportedTypeScalars {
   std::uint32_t declaration = 0;
   Type payload = Type::Unknown;
   RegionId region = RegionId::Unspecified;
+  AggregateKind aggregateKind = AggregateKind::Product;
+  Type genericOrigin = Type::Unknown;
+  Type regionOrigin = Type::Unknown;
 };
 class TypeStore {
 public:
@@ -632,6 +635,7 @@ public:
                                                   Type target) const;
   bool isSymbolic(Type type) const;
   std::vector<Type> typeParameters(Type type) const;
+  Type nominalOrigin(Type type) const;
   const TypeParameter &parameter(Type type) const;
   void constrainParameter(Type type, bool copyRequested, bool sized);
   void setGenericParameters(Type type, std::vector<Type> parameters);

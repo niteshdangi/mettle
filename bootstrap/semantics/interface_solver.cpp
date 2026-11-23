@@ -1151,12 +1151,12 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
   std::vector<TypeBinding> substitutions;
   std::vector<RegionBinding> selectedRegions;
   const auto wanted = types.erased(interfaceType);
+  const auto targetOrigin = types.nominalOrigin(self);
   for (auto position : database.implementationsFor(types, wanted.declaration)) {
-    const auto &candidate = database.implementations[position];
-    if (types.isProduct(candidate.target) && types.isProduct(self) &&
-        !structuralAggregate(types.product(candidate.target).kind) &&
-        nominalOrigin(types, candidate.target) != nominalOrigin(types, self))
+    auto origin = database.implementationOrigin(types, position);
+    if (origin != Type::Unknown && origin != targetOrigin)
       continue;
+    const auto &candidate = database.implementations[position];
     {
       const auto &provided = types.erased(candidate.interfaceType);
       if (provided.arguments.size() != wanted.arguments.size() ||

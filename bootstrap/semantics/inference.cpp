@@ -52,8 +52,10 @@ bool TypeInference::depends(int variable,
     return depends(child, representatives);
   });
 }
-Type TypeInference::value(int v, int *blocked) {
+Type TypeInference::value(int v, int *blocked, std::vector<int> *dependencies) {
   v = root(v);
+  if (dependencies)
+    dependencies->push_back(v);
   if (variables[v].type != Type::Unknown)
     return variables[v].type;
   if (!variables[v].kind) {
@@ -69,7 +71,7 @@ Type TypeInference::value(int v, int *blocked) {
   auto count = variables[v].count;
   std::vector<Type> components;
   for (auto child : children) {
-    auto type = value(child, blocked);
+    auto type = value(child, blocked, dependencies);
     if (type == Type::Unknown)
       return Type::Unknown;
     components.push_back(type);

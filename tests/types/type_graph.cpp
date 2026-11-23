@@ -201,6 +201,10 @@ int main() {
     auto imported = importTypeGraph(consumer, encoded.bytes, *retained,
                                     ValidationMode::OnDemand, retained);
     expect(bool(imported), imported.error);
+    expect(consumer.nominalOrigin(imported.roots[1]) == imported.roots[1] &&
+               consumer.nominalOrigin(imported.roots[4]) == Type::Unknown,
+           "nominal candidate classification demanded an unused body or "
+           "classified an array as nominal");
     encoded.bytes.clear();
     retained.reset();
     auto copy = consumer;
@@ -990,6 +994,18 @@ int main() {
     expect(decoded.roots[0] != decoded.roots[1] &&
                decoded.roots[0] == decoded.roots[2],
            "regional generic arguments retain distinct canonical identities");
+    auto indexed = exportTypeGraph(producer, std::array{nominal, first, second},
+                                   symbols, ValidationMode::OnDemand);
+    auto retained = std::make_shared<const TypeGraphSymbols>(symbols);
+    TypeStore sparse;
+    auto indexedImport = importTypeGraph(sparse, indexed.bytes, *retained,
+                                         ValidationMode::OnDemand, retained);
+    expect(indexedImport &&
+               sparse.nominalOrigin(indexedImport.roots[1]) ==
+                   indexedImport.roots[0] &&
+               sparse.nominalOrigin(indexedImport.roots[2]) ==
+                   indexedImport.roots[0],
+           "sparse nominal classification lost generic or regional origins");
     const auto &left = consumer.product(decoded.roots[0]).genericArguments;
     const auto &right = consumer.product(decoded.roots[1]).genericArguments;
     expect(left.size() == 1 && right.size() == 1 &&

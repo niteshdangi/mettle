@@ -1993,15 +1993,18 @@ std::uint64_t fixedWord(std::span<const std::uint8_t> bytes, std::size_t offset,
 }
 void wire(Archive &archive,
           interfaces::Database::ImplementationHeader &header) {
-  archive(header.interfaceType, header.span, header.inherent, header.fallback);
+  archive(header.interfaceType, header.nominalTarget, header.span,
+          header.inherent, header.fallback);
 }
 std::vector<interfaces::Database::ImplementationHeader>
-implementationHeaders(const interfaces::Database &database) {
+implementationHeaders(const interfaces::Database &database,
+                      const TypeStore &types) {
   std::vector<interfaces::Database::ImplementationHeader> result;
   result.reserve(database.implementations.size());
   for (const auto &item : database.implementations) {
     interfaces::Database::ImplementationHeader header;
     header.interfaceType = item.interfaceType;
+    header.nominalTarget = types.nominalOrigin(item.target);
     header.span = item.span;
     header.declaration = item.declaration;
     header.fallback = item.fallback;
@@ -2049,8 +2052,8 @@ void databases(Archive &archive, interfaces::Database &checking,
     archive.fail("checked interface phases have conflicting inventories");
     return;
   }
-  auto checkingHeaders = implementationHeaders(checking);
-  auto finalHeaders = implementationHeaders(finalized);
+  auto checkingHeaders = implementationHeaders(checking, *archive.types);
+  auto finalHeaders = implementationHeaders(finalized, *archive.types);
   implementationSelection(archive, checkingHeaders);
   bool shared = checkingHeaders == finalHeaders;
   archive(shared);
@@ -2442,9 +2445,11 @@ private:
     Archive reader(selection.headers.subspan(begin, end - begin), *references,
                    types.get(), selection.revisions);
     Type interfaceType = Type::Unknown;
+    Type nominalTarget = Type::Unknown;
     Span span;
-    reader(interfaceType, span);
-    bool matches = interfaceType == header.interfaceType && span == header.span;
+    reader(interfaceType, nominalTarget, span);
+    bool matches = interfaceType == header.interfaceType &&
+                   nominalTarget == header.nominalTarget && span == header.span;
     auto count = reader.collectionSize();
     matches &= count == header.inherent.size();
     for (std::size_t i = 0; i < count && reader.good(); ++i) {
@@ -2690,6 +2695,8 @@ private:
     archive.package(item.package);
     if (!types->contains(item.target))
       archive.fail("invalid checked implementation parameter inventory");
+    if (archive.good())
+      header.nominalTarget = types->nominalOrigin(item.target);
     parameters("invalid checked implementation parameter inventory");
     archive.discard(item.requirements);
     auto *definition = owner(header.interfaceType, database);
@@ -4320,7 +4327,7 @@ exportLibraryDeclarations(const CheckedModule &module,
   decltype(header.output){}.swap(header.output);
   header.headerSources.reset();
   Archive contracts(references, *module.types, header.hygieneState());
-  contracts.tag("mettle.checked-contracts.20");
+  contracts.tag("mettle.checked-contracts.21");
   auto &value = *module.declarationContracts;
   std::uint64_t count = value.functions.size() +
                         (module.importedDeclarations
@@ -4821,7 +4828,7 @@ declarationPayloadLayout(std::span<const std::uint8_t> bytes) {
     return std::optional<std::uint32_t>{0};
   };
   Archive archive(bytes, references, nullptr);
-  archive.tag("mettle.checked-contracts.20");
+  archive.tag("mettle.checked-contracts.21");
   std::uint64_t count = 0;
   archive(count);
   if (count > bytes.size())
@@ -4988,7 +4995,7 @@ LibraryDeclarationImport importLibraryDeclarations(
     target.facts = std::move(decoded->facts);
     target.constants = std::move(decoded->constants);
   };
-  archive.tag("mettle.checked-contracts.20");
+  archive.tag("mettle.checked-contracts.21");
   auto value = std::make_shared<ImportedDeclarations>();
   value->catalog = std::move(catalog);
   archive.declarationIndex = value->catalog;

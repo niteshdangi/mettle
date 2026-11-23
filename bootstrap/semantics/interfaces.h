@@ -380,6 +380,7 @@ struct Database {
   };
   struct ImplementationHeader {
     Type interfaceType = Type::Unknown;
+    Type nominalTarget = Type::Unknown;
     Span span;
     std::size_t declaration = static_cast<std::size_t>(-1);
     std::vector<std::string> inherent;
@@ -425,6 +426,12 @@ struct Database {
                    !implementations.isMaterialized(index)
                ? (*importedImplementations)[index].declaration
                : implementations[index].declaration;
+  }
+  Type implementationOrigin(const TypeStore &types, std::size_t index) const {
+    return importedImplementations && index < importedImplementations->size() &&
+                   !implementations.isMaterialized(index)
+               ? (*importedImplementations)[index].nominalTarget
+               : types.nominalOrigin(implementations[index].target);
   }
   // Lazily maintained index of `implementations` by interface declaration;
   // implementations are append-only, so only the new tail is indexed.

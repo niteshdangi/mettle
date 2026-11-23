@@ -3346,6 +3346,24 @@ struct DeferredTypeGraph {
   ImportedTypeScalars scalarFacts(std::size_t index) const {
     ImportedTypeScalars result;
     const auto kind = kinds.at(index);
+    if (kind == ImportedTypeKind::Product) {
+      const auto &slice = records.at(index);
+      TypeGraphSymbols noCallbacks;
+      CompactReader reader(
+          bytes.subspan(slice.projectionOffset, slice.projectionLength),
+          noCallbacks, header);
+      reader.types = types;
+      reader.regions = regions;
+      reader.universes = universes;
+      CompactProduct record;
+      reader(record);
+      if (reader.remaining())
+        reject("trailing bytes in type identity projection");
+      result.aggregateKind = record.descriptor.kind;
+      result.genericOrigin = record.descriptor.genericOrigin;
+      result.regionOrigin = record.descriptor.regionOrigin;
+      return result;
+    }
     if (kind != ImportedTypeKind::Parameter &&
         kind != ImportedTypeKind::Erased && kind != ImportedTypeKind::View)
       return result;

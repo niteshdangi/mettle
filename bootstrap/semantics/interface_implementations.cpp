@@ -97,9 +97,15 @@ void Checker::structuralPropertyDeclaration(
 void Checker::interfaceImplementations() {
   auto &database = *checked.interfaceData;
   auto *saved = genericEnvironment;
+  std::vector<std::vector<std::size_t>> implementationMethods(
+      module.implementations.size());
   for (std::size_t function = module.functions.nativeSize();
        function < module.functions.size(); ++function) {
     const auto &syntax = module.functions.header(function);
+    if (syntax.implementation >= 0 &&
+        static_cast<std::size_t>(syntax.implementation) <
+            implementationMethods.size())
+      implementationMethods[syntax.implementation].push_back(function);
     if (imported(syntax.span))
       continue;
     if (syntax.interfaceOwner.empty() || syntax.implementation >= 0)
@@ -127,6 +133,13 @@ void Checker::interfaceImplementations() {
     if (imported(module.implementations.header(i).span))
       continue;
     const auto &syntax = module.implementations[i];
+    auto &methods = implementationMethods[i];
+    for (auto function : syntax.methodFunctions)
+      if (function >= module.functions.nativeSize() &&
+          function < module.functions.size())
+        methods.push_back(function);
+    std::sort(methods.begin(), methods.end());
+    methods.erase(std::unique(methods.begin(), methods.end()), methods.end());
     auto foundEnvironment = implementationGenerics.find(&syntax);
     if (foundEnvironment == implementationGenerics.end()) {
       auto environment =
@@ -431,14 +444,9 @@ void Checker::interfaceImplementations() {
            ++method) {
         const auto &required = definition.methods[method];
         std::optional<int> provided;
-        for (std::size_t function = module.functions.nativeSize();
-             function < module.functions.size(); ++function) {
+        for (auto function : methods) {
           const auto &candidate = module.functions.header(function);
-          if ((candidate.implementation == static_cast<int>(i) ||
-               std::find(syntax.methodFunctions.begin(),
-                         syntax.methodFunctions.end(),
-                         function) != syntax.methodFunctions.end()) &&
-              candidate.name.ends_with("." + required.name)) {
+          if (candidate.name.ends_with("." + required.name)) {
             if (provided)
               error("name", candidate.span, "duplicate implementation method");
             provided = static_cast<int>(function);

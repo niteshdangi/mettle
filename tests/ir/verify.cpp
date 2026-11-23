@@ -85,6 +85,21 @@ void inferenceWakeupCases() {
               types.product(types.product(resolved).components.front())
                       .components.front() == Type::I32,
           "defaulted numeric inference did not resolve its aggregate owners");
+  std::vector<int> dependencies;
+  require(inference.value(array, nullptr, &dependencies) == resolved &&
+              std::find(dependencies.begin(), dependencies.end(), array) !=
+                  dependencies.end() &&
+              std::find(dependencies.begin(), dependencies.end(),
+                        inference.representative(children.front())) !=
+                  dependencies.end(),
+          "resolved aggregate inference lost its mutable child dependencies");
+  inference.set(children.front(), Type::I64);
+  dependencies.clear();
+  auto refined = inference.value(array, nullptr, &dependencies);
+  require(refined != resolved &&
+              types.product(types.product(refined).components.front())
+                      .components.front() == Type::I64,
+          "known inferred child refinement did not update its aggregate");
 }
 void constantValueSnapshotCases() {
   using mettle::evaluation::Value;

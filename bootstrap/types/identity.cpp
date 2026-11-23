@@ -5,6 +5,34 @@
 #include <vector>
 
 namespace mettle {
+Type TypeStore::nominalOrigin(Type type) const {
+  while (isProduct(type)) {
+    AggregateKind kind;
+    Type generic, regional;
+    auto ordinal = type.index() - builtinTypeCount;
+    if (importedScalars && ordinal < reservedImportedTypes &&
+        !products.isMaterialized(entries.at(ordinal).index)) {
+      auto facts = importedScalars(ordinal);
+      kind = facts.aggregateKind;
+      generic = facts.genericOrigin;
+      regional = facts.regionOrigin;
+    } else {
+      const auto &record = product(type);
+      kind = record.kind;
+      generic = record.genericOrigin;
+      regional = record.regionOrigin;
+    }
+    if (kind != AggregateKind::Product && kind != AggregateKind::Enumeration &&
+        kind != AggregateKind::NativeVector && kind != AggregateKind::Opaque)
+      return Type::Unknown;
+    if (regional != Type::Unknown) {
+      type = regional;
+      continue;
+    }
+    return generic == Type::Unknown ? type : generic;
+  }
+  return Type::Unknown;
+}
 namespace {
 // Builds an injective, compilation-independent encoding of a type. Every
 // variable-length component is length-prefixed and every alternative carries
