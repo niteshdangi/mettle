@@ -71,6 +71,7 @@ private:
                  expansion::Configuration configuration, TargetFacts target);
   bool prepareArchive(std::string &error);
   bool prepareInputs(std::string &error);
+  std::optional<resolution::BuiltinMethodIndex> builtinMethodIndex();
   const Source *input(const std::string &path) const;
   bool ensureMounted(std::string &error);
   std::optional<pipeline::ImportedProgram>
@@ -96,7 +97,7 @@ private:
   expansion::SourceAllocator allocate;
   std::string root;
   bool inputsPrepared = false, ineligible = false, mounted = false,
-       used = false, unavailable = false;
+       used = false, unavailable = false, methodIndexUsed = false;
 };
 
 class CheckedLibraries {

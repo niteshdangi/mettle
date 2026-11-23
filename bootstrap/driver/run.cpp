@@ -1223,7 +1223,7 @@ int build(const Options &requested,
   resolution::SourcePackages sourcePackages;
   auto tree = resolution::load(source, provider, diagnostics, library,
                                sourceModules, &loadedSources, &sourcePackages);
-  if (checkedCore && checkedCore->active())
+  if (checkedCore)
     checkedCore->recordInputs(inputs);
   pipeline::PackageOwners packageOwners;
   if (checkedCore)

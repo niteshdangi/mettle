@@ -994,35 +994,16 @@ private:
     builtinMethodsLoaded = true;
     if (library.directory.empty())
       return methods;
-    for (const char *module : {"option", "outcome", "slice"}) {
-      auto source = provider(
-          (fs::path(library.directory) / "core" / (std::string(module) + ".mt"))
-              .lexically_normal()
-              .generic_string());
-      if (!source)
-        continue;
-      Diagnostics scratch;
-      auto tree = parse(*source, scratch);
-      if (!scratch.empty())
-        continue;
-      for (const auto &function : tree.functions)
-        if (function.implementation >= 0 && function.interfaceOwner.empty())
-          methods.emplace(function.name.substr(function.name.rfind('.') + 1),
-                          module);
-    }
-    if (auto source =
-            provider((fs::path(library.directory) / "core" / "iter.mt")
-                         .lexically_normal()
-                         .generic_string())) {
-      Diagnostics scratch;
-      auto tree = parse(*source, scratch);
-      if (scratch.empty())
-        for (const auto &function : tree.functions)
-          if (function.implementation < 0 &&
-              function.interfaceOwner == "Iterator")
-            iteratorMethods.insert(
-                function.name.substr(function.name.rfind('.') + 1));
-    }
+    auto index = library.builtinMethodIndex ? library.builtinMethodIndex()
+                                            : std::nullopt;
+    if (!index)
+      index = discoverBuiltinMethods(library.directory, provider);
+    for (const auto &[module, names] : *index)
+      for (const auto &name : names)
+        if (module == "iter")
+          iteratorMethods.insert(name);
+        else
+          methods.emplace(name, module);
     return methods;
   }
 
@@ -1731,6 +1712,31 @@ private:
   }
 };
 } // namespace
+
+BuiltinMethodIndex discoverBuiltinMethods(const std::string &directory,
+                                          const SourceProvider &provider) {
+  BuiltinMethodIndex result;
+  for (const char *module : {"option", "outcome", "slice", "iter"}) {
+    auto source =
+        provider((fs::path(directory) / "core" / (std::string(module) + ".mt"))
+                     .lexically_normal()
+                     .generic_string());
+    if (!source)
+      continue;
+    Diagnostics diagnostics;
+    auto tree = parse(*source, diagnostics);
+    if (!diagnostics.empty())
+      continue;
+    for (const auto &function : tree.functions)
+      if (module == std::string_view("iter")
+              ? function.implementation < 0 &&
+                    function.interfaceOwner == "Iterator"
+              : function.implementation >= 0 && function.interfaceOwner.empty())
+        result[module].push_back(
+            function.name.substr(function.name.rfind('.') + 1));
+  }
+  return result;
+}
 
 std::optional<Module> load(Source root, const SourceProvider &provider,
                            Diagnostics &diagnostics, const Library &library,

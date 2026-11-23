@@ -20,6 +20,9 @@ namespace mettle::resolution {
 // callers supply a source catalog; this component never opens a file.
 using SourceProvider =
     std::function<std::optional<Source>(const std::string &path)>;
+using BuiltinMethodIndex = std::map<std::string, std::vector<std::string>>;
+BuiltinMethodIndex discoverBuiltinMethods(const std::string &directory,
+                                          const SourceProvider &provider);
 // Native libraries (`core`, `alloc`, `std`) live at DIRECTORY/NAME/module.mt
 // and are read through the same provider as program sources. A library root is
 // mounted as a root module only when the loaded sources reference it and the
@@ -66,6 +69,7 @@ struct Library {
     std::function<bool()> available{};
   };
   std::vector<CompiledModule> compiled;
+  std::function<std::optional<BuiltinMethodIndex>()> builtinMethodIndex;
   expansion::MacroModuleProvider compiledMacros;
   SourcePackages compiledSourcePackages;
   std::map<SourceId, std::vector<std::string>> compiledSourceModules;

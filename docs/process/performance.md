@@ -234,6 +234,10 @@ sides, with release profile and overflow checks off. Mettle runs standalone so
 child-process wall time and RSS include the compiler and no resident endpoint
 survives a sample. Fresh Mettle caches include native-library production;
 application-only comparisons must prime those libraries outside timing.
+This includes the builtin method-name index: its first miss discovers names
+from source, and later processes reuse an integrity-checked entry keyed to the
+core library inputs and compiler configuration. Source-only consumers retain
+those input dependencies even when no checked library is mounted.
 P05 uses fixed-key SipHash-1-3 builders and get-then-insert on both sides.
 
 Rust profile: `opt-level=3`, `debug=false`, `lto=false`, `codegen-units=16`,

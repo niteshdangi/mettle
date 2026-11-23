@@ -1219,6 +1219,45 @@ def native_demand_selection():
         assert "library object cache hit core " in reused, reused
 
 
+def native_method_discovery():
+    directory = evidence / "native-method-discovery"
+    core = directory / "library" / "core"
+    core.mkdir(parents=True)
+    (core / "module.mt").write_text("pub module option\n")
+    option = core / "option.mt"
+    option.write_text("extend i32 { pub fn from_library(): i32 { self } }\n")
+    source = directory / "main.mt"
+    source.write_text("type Step { pub value: i32 }\n"
+                      "extend Step { pub fn apply(): i32 { self.value } }\n"
+                      "fn main(): i32 { Step(42).apply() - 42 }\n")
+    arguments = ["--library-dir", core.parent, "--standalone",
+                 "--profile", "release"]
+    cold, program = explained(source, *arguments)
+    assert exit_code(program) == 0
+    edit(source, "Step(42)", "Step(43)")
+    warm, program = explained(source, *arguments)
+    assert exit_code(program) == 1
+    assert "builtin method index cache hit " in warm, warm
+    assert "checked library interface cache " not in warm, warm
+    option.write_text(option.read_text() +
+                      "extend i32 { pub fn added_method(): i32 { self } }\n")
+    invalidated, program = explained(source, *arguments)
+    assert exit_code(program) == 1
+    assert "cache miss" in last_cache_event(invalidated), invalidated
+    assert "builtin method index cache hit " not in invalidated, invalidated
+    source.write_text("fn main(): i32 { (42i32).added_method() - 42 }\n")
+    changed, program = explained(source, *arguments)
+    assert exit_code(program) == 0
+    assert "builtin method index cache hit " in changed, changed
+    assert "checked library interface cache stored core " in changed, changed
+    edit(source, "- 42", "- 41")
+    reused, program = explained(source, *arguments)
+    assert exit_code(program) == 1
+    assert "builtin method index cache hit " in reused, reused
+    assert "checked library interface cache hit core " in reused, reused
+    invoke(["check", source, *arguments, "--no-cache"])
+
+
 def bundled_native_linker():
     if not sys.platform.startswith("linux"):
         return
@@ -3746,6 +3785,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          manifest_diagnostics, data_format, lock_structure,
          package_options_need_package, incremental_reuse, checked_core_reuse,
          native_core_object_reuse, native_demand_selection,
+         native_method_discovery,
          native_core_inline_identity, checked_alloc_std_reuse,
          checked_alloc_std_release_reuse,
          checked_native_macro_reuse,

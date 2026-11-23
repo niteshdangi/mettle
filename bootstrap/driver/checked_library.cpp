@@ -3,6 +3,7 @@
 #include "ir/codec.h"
 #include "lowering/scalar.h"
 #include "metadata/type_graph.h"
+#include "packages/data.h"
 #include "packages/sha256.h"
 #include "resolution/resolve.h"
 #include "support/limits.h"
@@ -70,6 +71,29 @@ std::string definitionSymbol(metadata::SymbolKind kind,
 std::string supportPrefix(std::string_view root, std::string_view key) {
   return std::string(nativePackage) + ":" + std::string(root) + ":" +
          std::string(key) + ":support:";
+}
+
+std::optional<resolution::BuiltinMethodIndex>
+decodeMethodIndex(std::string bytes) {
+  Diagnostics diagnostics;
+  auto decoded = packages::data::parse(
+      {"<builtin-method-index>", std::move(bytes)}, diagnostics, "metadata");
+  if (!decoded || decoded->kind != packages::data::Value::Kind::Object)
+    return std::nullopt;
+  resolution::BuiltinMethodIndex result;
+  for (const auto &[module, names] : decoded->object) {
+    if ((module != "option" && module != "outcome" && module != "slice" &&
+         module != "iter") ||
+        names.kind != packages::data::Value::Kind::Array)
+      return std::nullopt;
+    for (const auto &name : names.array) {
+      if (name.kind != packages::data::Value::Kind::String ||
+          name.string.empty())
+        return std::nullopt;
+      result[module].push_back(name.string);
+    }
+  }
+  return result;
 }
 } // namespace
 
@@ -506,6 +530,68 @@ bool CheckedLibrary::prepareInputs(std::string &error) {
   return true;
 }
 
+std::optional<resolution::BuiltinMethodIndex>
+CheckedLibrary::builtinMethodIndex() {
+  if (ineligible)
+    return std::nullopt;
+  std::string error;
+  if (!prepareInputs(error)) {
+    ineligible = true;
+    if (options.explain)
+      std::cerr << "mettle: builtin method index unavailable: " << error
+                << "; using source\n";
+    return std::nullopt;
+  }
+  methodIndexUsed = true;
+  packages::Sha256 identity;
+  identity.update("mettle.builtin-methods.1:");
+  identity.update(archiveKey);
+  auto key = identity.finish();
+  auto lease = store.acquireLease(key);
+  if (!lease) {
+    receiverDiagnostics->error("io", {},
+                               "cannot acquire builtin method index lease");
+    return std::nullopt;
+  }
+  auto stored = store.data(key, limits::sourceBytes);
+  if (stored.status == packages::Store::Lookup::Hit)
+    if (auto index = decodeMethodIndex(std::move(stored.bytes))) {
+      if (options.explain)
+        std::cerr << "mettle: builtin method index cache hit "
+                  << key.substr(0, 12) << '\n';
+      return index;
+    }
+  if (stored.status != packages::Store::Lookup::Miss && options.explain)
+    std::cerr << "mettle: builtin method index cache corrupt; using source\n";
+  auto index = resolution::discoverBuiltinMethods(
+      options.libraryDirectory,
+      [&](const std::string &path) -> std::optional<Source> {
+        std::error_code fileError;
+        auto canonical = std::filesystem::weakly_canonical(path, fileError);
+        if (fileError) {
+          error = "cannot identify " + path + ": " + fileError.message();
+          return std::nullopt;
+        }
+        auto source = input(canonical.generic_string());
+        return source ? std::optional(*source) : std::nullopt;
+      });
+  if (!error.empty()) {
+    receiverDiagnostics->error("io", {}, error);
+    return std::nullopt;
+  }
+  std::string encoded = "{";
+  for (const auto &[module, names] : index) {
+    encoded += packages::data::quote(module) + ":[";
+    for (const auto &name : names)
+      encoded += packages::data::quote(name) + ",";
+    encoded += "],";
+  }
+  encoded += "}";
+  if (!store.putData(key, encoded))
+    receiverDiagnostics->error("io", {}, "cannot publish builtin method index");
+  return index;
+}
+
 const Source *CheckedLibrary::input(const std::string &path) const {
   for (auto unit = this; unit; unit = unit->dependency)
     if (unit->sourceInputs) {
@@ -525,6 +611,8 @@ bool CheckedLibrary::mount(resolution::Library &library,
   receiverDiagnostics = &diagnostics;
   this->allocate = allocate;
   library.allocateSource = allocate;
+  if (root == "core")
+    library.builtinMethodIndex = [this] { return builtinMethodIndex(); };
   library.compiled.push_back({root, [this]() -> std::optional<Module> {
                                 std::string error;
                                 if (!ensureMounted(error)) {
@@ -1097,6 +1185,10 @@ bool CheckedLibraries::containsInput(const std::string &path) const {
 void CheckedLibraries::recordInputs(BuildInputs &inputs) const {
   for (auto unit = selected; unit; unit = unit->dependency)
     inputs.record(*unit->sourceInputs);
+  if (!selected)
+    for (const auto &unit : units)
+      if (unit->methodIndexUsed)
+        inputs.record(*unit->sourceInputs);
 }
 
 pipeline::PackageOwners CheckedLibraries::packageOwners() const {

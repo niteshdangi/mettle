@@ -1740,6 +1740,20 @@ standalone instead of queuing behind one resident endpoint. Focused runner and
 public-harness build/check cases pass. No optimization or validation contract
 changed.
 
+Builtin method discovery now persists its name-only index instead of reparsing
+four core files in every fresh process. Custom library edits invalidate both
+the index and source-only consumer outputs; source discovery remains the miss
+and no-cache path. Focused package and resolver regressions pass. Nine randomized
+P06 triples with independent caches measure standalone checks 37.7 -> 8.9 ms
+(Rust 14.6 ms) and builds 72.4 -> 44.2 ms (Rust 217.7 ms), with matching
+program results. Evidence:
+`~/w/anal/perf-method-discovery-20261124/results.json`; selected compiler SHA-256
+`373c8cb3e5c1c1668efa75b19f4dd6057fcbc3c03c4bc33d3cb9938df33d162d`.
+This is P06 engineering evidence, not whole-I14 qualification. The next target
+is the roughly 140 ms unused-import cost: direct indexed library admission
+without walking unrelated declarations and type records. P04 load hoisting has
+no demonstrated runtime benefit and is not selected.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
