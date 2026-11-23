@@ -470,10 +470,20 @@ int main() {
         rejected,
         "revision-consistent malformed UTF8 must reject when text is demanded");
   }
+  const auto variantScope = bytes->find("variant", secondEnd);
+  const auto mappingDescription = bytes->find("value", variantScope + 7);
+  expect(variantScope != std::string::npos &&
+             mappingDescription != std::string::npos,
+         "provenance fixture must contain its context table and mappings");
   for (const auto &[offset, value, message] :
        {std::tuple{secondEnd + 8, 1u, "cyclic generation provenance"},
         std::tuple{secondEnd + 16, static_cast<unsigned>(first.text.size() + 1),
-                   "invalid generation origin"}}) {
+                   "invalid generation origin"},
+        std::tuple{variantScope + 7 + 8,
+                   static_cast<unsigned>(first.text.size() + 1),
+                   "invalid syntax context"},
+        std::tuple{mappingDescription + 5, ~0u,
+                   "invalid syntax-context reference"}}) {
     auto changed = *bytes;
     for (unsigned shift = 0; shift < 32; shift += 8)
       changed[offset + shift / 8] = static_cast<char>(value >> shift);

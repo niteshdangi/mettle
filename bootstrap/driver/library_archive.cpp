@@ -349,7 +349,46 @@ Generation readGeneration(Reader &in, std::size_t sourceCount,
   generation.source = in.integer();
   generation.origin = in.span(sourceCount);
   auto description = in.textView();
-  auto mappings = in.count(26);
+  const auto contextCount = in.count(20);
+  std::vector<SyntaxContextPtr> contexts;
+  std::unordered_map<std::string_view, SyntaxContextPtr> interned;
+  if constexpr (Materialize)
+    contexts.reserve(contextCount);
+  for (std::size_t j = 0; in.good() && j < contextCount; ++j) {
+    const auto contextBegin = in.position();
+    const auto binder = in.integer();
+    const auto parts = in.count(4);
+    const auto scopeBegin = in.position();
+    std::size_t longestPart = 0;
+    for (std::size_t k = 0; in.good() && k < parts; ++k)
+      longestPart = std::max(longestPart, in.textView().size());
+    const auto scopeEnd = in.position();
+    const auto definition = in.span(sourceCount);
+    if constexpr (Materialize) {
+      if (in.good()) {
+        auto [entry, inserted] =
+            interned.try_emplace(in.range(contextBegin, in.position()));
+        if (inserted) {
+          std::string error;
+          Reader scopeReader(in.range(scopeBegin, scopeEnd), error);
+          std::vector<std::string> scope;
+          scope.reserve(parts);
+          for (std::size_t k = 0; k < parts; ++k)
+            scope.push_back(scopeReader.text());
+          if (!scopeReader.good())
+            in.fail("invalid syntax-context scope");
+          entry->second = std::make_shared<const SyntaxContext>(
+              SyntaxContext{std::move(scope), definition, binder});
+        }
+        contexts.push_back(entry->second);
+      }
+    } else if (in.good()) {
+      scan->validator.context(definition, parts, longestPart);
+      if (binder && scan->seenBinders.insert(binder).second)
+        scan->binders.push_back(binder);
+    }
+  }
+  auto mappings = in.count(30);
   if constexpr (Materialize) {
     generation.description = description;
     generation.mappings.reserve(mappings);
@@ -357,7 +396,6 @@ Generation readGeneration(Reader &in, std::size_t sourceCount,
     scan->validator.generation(generation.source, generation.origin,
                                description.size(), mappings);
   }
-  std::unordered_map<std::string_view, SyntaxContextPtr> contexts;
   for (std::size_t j = 0; in.good() && j < mappings; ++j) {
     Generation::Mapping mapping;
     mapping.begin = in.integer();
@@ -373,44 +411,14 @@ Generation readGeneration(Reader &in, std::size_t sourceCount,
     if constexpr (!Materialize)
       if (in.good())
         scan->validator.mapping(mapping, description);
-    if (in.boolean()) {
-      mapping.syntaxContext = SyntaxContextPtr{};
-      if (in.boolean()) {
-        const auto contextBegin = in.position();
-        const auto binder = in.integer();
-        const auto parts = in.count(4);
-        const auto scopeBegin = in.position();
-        std::size_t longestPart = 0;
-        for (std::size_t k = 0; in.good() && k < parts; ++k)
-          longestPart = std::max(longestPart, in.textView().size());
-        const auto scopeEnd = in.position();
-        const auto definition = in.span(sourceCount);
-        if constexpr (Materialize) {
-          if (in.good()) {
-            auto [entry, inserted] =
-                contexts.try_emplace(in.range(contextBegin, in.position()));
-            if (inserted) {
-              std::string error;
-              Reader scopeReader(in.range(scopeBegin, scopeEnd), error);
-              std::vector<std::string> scope;
-              scope.reserve(parts);
-              for (std::size_t k = 0; k < parts; ++k)
-                scope.push_back(scopeReader.text());
-              if (!scopeReader.good())
-                in.fail("invalid syntax-context scope");
-              entry->second = std::make_shared<const SyntaxContext>(
-                  SyntaxContext{std::move(scope), definition, binder});
-            }
-            mapping.syntaxContext = entry->second;
-          }
-        } else if (in.good()) {
-          scan->validator.context(definition, parts, longestPart);
-          if (binder && scan->seenBinders.insert(binder).second)
-            scan->binders.push_back(binder);
-        }
-      }
-    }
+    const auto context = in.integer();
+    if (context >= 2 && context - 2 >= contextCount)
+      in.fail("invalid syntax-context reference");
     if constexpr (Materialize) {
+      if (context == 1)
+        mapping.syntaxContext = SyntaxContextPtr{};
+      else if (context >= 2 && in.good())
+        mapping.syntaxContext = contexts[context - 2];
       mapping.description = description;
       generation.mappings.push_back(std::move(mapping));
     }
@@ -695,7 +703,7 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
     return std::nullopt;
   }
   Writer out;
-  out.text("mettle-checked-library-5");
+  out.text("mettle-checked-library-6");
   out.text(data.identity);
   out.integer(static_cast<std::uint32_t>(data.sources.size()));
   std::vector<PayloadRange> excluded;
@@ -724,6 +732,32 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
         static_cast<std::uint32_t>(data.sourceIndex.at(generation.source)));
     span(generation.origin);
     out.text(generation.description);
+    std::unordered_map<const SyntaxContext *, std::uint32_t> contextIndices;
+    std::vector<const SyntaxContext *> contexts;
+    for (const auto &mapping : generation.mappings)
+      if (mapping.syntaxContext && *mapping.syntaxContext) {
+        const auto *context = mapping.syntaxContext->get();
+        if (contextIndices
+                .try_emplace(context,
+                             static_cast<std::uint32_t>(contexts.size() + 2))
+                .second)
+          contexts.push_back(context);
+      }
+    out.integer(static_cast<std::uint32_t>(contexts.size()));
+    for (const auto *context : contexts) {
+      const auto binder =
+          context->identity
+              ? binders
+                    .try_emplace(context->identity,
+                                 static_cast<std::uint32_t>(binders.size() + 1))
+                    .first->second
+              : 0;
+      out.integer(binder);
+      out.integer(static_cast<std::uint32_t>(context->scope.size()));
+      for (const auto &part : context->scope)
+        out.text(part);
+      span(context->definition);
+    }
     out.integer(static_cast<std::uint32_t>(generation.mappings.size()));
     for (const auto &mapping : generation.mappings) {
       out.integer(static_cast<std::uint32_t>(mapping.begin));
@@ -734,25 +768,10 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
       if (!mapping.description.empty())
         span(mapping.origin);
       out.text(mapping.description);
-      out.boolean(mapping.syntaxContext.has_value());
-      if (!mapping.syntaxContext)
-        continue;
-      out.boolean(static_cast<bool>(*mapping.syntaxContext));
-      if (!*mapping.syntaxContext)
-        continue;
-      const auto &context = **mapping.syntaxContext;
-      auto binder =
-          context.identity
-              ? binders
-                    .try_emplace(context.identity,
-                                 static_cast<std::uint32_t>(binders.size() + 1))
-                    .first->second
-              : 0;
-      out.integer(binder);
-      out.integer(static_cast<std::uint32_t>(context.scope.size()));
-      for (const auto &part : context.scope)
-        out.text(part);
-      span(context.definition);
+      out.integer(!mapping.syntaxContext ? 0
+                  : !*mapping.syntaxContext
+                      ? 1
+                      : contextIndices.at(mapping.syntaxContext->get()));
     }
   }
   out.integer(static_cast<std::uint32_t>(archive.sourceModules.size()));
@@ -801,7 +820,7 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
     backing = std::move(snapshot);
   }
   Reader in(bytes.substr(0, bytes.size() - 64), error);
-  if (in.textView() != "mettle-checked-library-5")
+  if (in.textView() != "mettle-checked-library-6")
     in.fail("unsupported format");
   auto revision = in.text();
   if (revision != identity || revision.empty())
@@ -853,7 +872,7 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
              }),
          static_cast<SourceId>(i)});
   }
-  auto generationCount = in.count(24);
+  auto generationCount = in.count(28);
   if (generationCount > count)
     in.fail("too many generated sources");
   ProvenanceScan scan{ProvenanceValidator(archive.sources.data->sources,

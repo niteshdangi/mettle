@@ -454,6 +454,10 @@ mounting. Source-provenance validation survives these copies; source recording
 or recapture invalidates it. Admission validates every generated mapping,
 context extent and provenance cycle directly from the archive, retaining framed
 records rather than constructing their mapping strings and syntax contexts.
+Archive v6 stores each generation's shared hygiene contexts once, in first-use
+order; mappings retain their complete extents and refer to that table. Admission
+validates every table entry, including unused entries, and every context
+reference before publishing retained records.
 Generated-source registration and lookup inspect source IDs before demanding a
 record. Mounting reserves bound hygiene identities in archive encounter order
 and retains immutable source/binder remaps; only requested records are decoded

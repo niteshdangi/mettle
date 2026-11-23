@@ -1687,6 +1687,27 @@ values (34,977 bytes). Archive framing, scanner, demand reader and existing
 provenance regressions own this next measured I14 change; type/declaration
 admission and repeated root O2 remain subsequent profiling targets.
 
+Archive v6 now shares per-generation context tables while preserving mapping
+boundaries, binder encounter order and null/unbound distinctions. Admission
+validates every context and reference, with retained-owner reconstruction only
+on demand. Optimized and ASan/UBSan archive CTests pass, including resealed bad
+context spans and references; both-profile native demand selection passes.
+The P04 artifact shrinks from 79,737,093 to 74,457,003 bytes (6.6%).
+Five paired application samples against the preceding query-index compiler
+measure checks 203.9 -> 198.5 ms, builds 343.1 -> 344.5 ms and resident builds
+179.8 -> 174.3 ms. No standalone build speedup is established. Same-run Rust
+builds take 231.4 ms; fresh-process parity remains open. Generated `.text`
+bytes agree; runtime variation is not a generated-code speedup or regression.
+Evidence: `~/w/anal/perf-application-parity-20261123/context-final/`;
+compiler SHA-256
+`6322a639b480c42a231dae638346a89924ae79a956b300be64b16c575293c175`.
+Focused-verified, not whole-I14 qualification. Next action: profile fresh
+type/declaration admission and root optimization against the remaining
+approximately 110 ms application-build gap. The prior 5 ms GDB sampler can
+starve an interrupted PLT instruction; its repeated identical samples are not
+reliable phase weights. Non-sampling semantic-edit phase traces are in
+`contexts/phases-miss.log`; debugger subprocess timing is not benchmark data.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
