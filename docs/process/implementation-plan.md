@@ -1942,6 +1942,9 @@ Repeated scalar type projection now returns its memoized result after the
 dependency proof succeeds, unless the caller supplied a lookup key to check.
 Across 17 fixed-core standalone warm-check pairs, median paired savings for
 P03/P04/P05 were 2.59/2.89/6.02 ms.
+Collecting canonical identity and dependency edges in one traversal and
+tracking proved ordinals in a bitmap saved a further 0.38/3.06/2.63 ms in
+19 interleaved pairs.
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17

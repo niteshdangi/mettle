@@ -2441,10 +2441,11 @@ template <class Definition>
 std::string canonicalKey(const Definition &definition,
                          std::vector<Type> *references = nullptr,
                          const std::function<Type(Type)> *mapper = nullptr,
-                         std::uint64_t *fingerprint = nullptr) {
+                         std::uint64_t *fingerprint = nullptr,
+                         bool retainBytes = false) {
   Writer key;
   key.typeReferences = references;
-  key.discardBytes = references != nullptr;
+  key.discardBytes = references != nullptr && !retainBytes;
   key.typeMapper = mapper;
   key.fingerprint = fingerprint;
   writeCanonicalKey(key, definition);
@@ -3352,7 +3353,7 @@ struct DeferredTypeGraph {
   mutable std::unordered_map<std::size_t,
                              std::array<std::vector<std::size_t>, 2>>
       projectionEdges;
-  mutable std::unordered_set<std::size_t> projectionProofs;
+  mutable std::vector<bool> projectionProofs;
   mutable std::unordered_map<std::string, std::size_t> projectionIdentities;
   mutable std::mutex projectionMutex, symbolMutex;
   std::shared_ptr<const CompactArena> arena;
@@ -3657,7 +3658,7 @@ ImportedTypeScalars
 DeferredTypeGraph::project(std::size_t index,
                            std::span<const std::uint8_t> requested) const {
   std::lock_guard lock(projectionMutex);
-  if (requested.empty() && projectionProofs.contains(index))
+  if (requested.empty() && projectionProofs.at(index))
     return scalars[index];
   try {
     auto read = [&](std::size_t index) {
@@ -3722,13 +3723,13 @@ DeferredTypeGraph::project(std::size_t index,
           facts.aggregateKind = product->descriptor.kind;
         std::array<std::vector<std::size_t>, 2> edges;
         if (!slice.nominal) {
-          auto identity = canonicalKey(view);
+          std::vector<Type> dependencies;
+          auto identity =
+              canonicalKey(view, &dependencies, nullptr, nullptr, true);
           auto [previous, inserted] =
               projectionIdentities.emplace(std::move(identity), index);
           if (!inserted && previous->second != index)
             reject("duplicate canonical indexed type");
-          std::vector<Type> dependencies;
-          canonicalKey(view, &dependencies);
           for (auto type : dependencies)
             if (type.index() >= builtinTypeCount)
               edges[0].push_back(type.index() - builtinTypeCount);
@@ -3746,7 +3747,7 @@ DeferredTypeGraph::project(std::size_t index,
         projectedKeys.emplace(index, std::move(keys));
       }
     };
-    if (!projectionProofs.contains(index)) {
+    if (!projectionProofs.at(index)) {
       std::vector<std::size_t> pending{index};
       std::unordered_map<std::size_t, std::size_t> positions{{index, 0}};
       FlatTypeEdges canonical;
@@ -3758,7 +3759,7 @@ DeferredTypeGraph::project(std::size_t index,
         const auto &edges = projectionEdges.at(current);
         for (std::size_t kind = 0; kind < edges.size(); ++kind)
           for (auto target : edges[kind]) {
-            if (projectionProofs.contains(target))
+            if (projectionProofs.at(target))
               continue;
             auto [position, added] = positions.emplace(target, pending.size());
             if (added)
@@ -3774,7 +3775,8 @@ DeferredTypeGraph::project(std::size_t index,
       recursiveRegionals(std::move(canonical), [&](std::size_t node) {
         return scalars[pending[node]].regionOrigin != Type::Unknown;
       });
-      projectionProofs.insert(pending.begin(), pending.end());
+      for (auto proven : pending)
+        projectionProofs[proven] = true;
     }
     const auto &keys = projectedKeys.at(index);
     if (!requested.empty() &&
@@ -4230,6 +4232,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     if (onUse) {
       deferred->retainedSymbols = std::move(retainedSymbols);
       deferred->scalars.resize(ids.size());
+      deferred->projectionProofs.resize(ids.size());
     } else if (demand) {
       deferred->retainedSymbols = std::move(retainedSymbols);
       for (std::size_t kind = 0; kind < Reader::symbolKinds; ++kind)
