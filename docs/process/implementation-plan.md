@@ -1938,6 +1938,10 @@ ms. This does not resolve the larger import cost: P05's first inherent
 inventory scan visited 6,101 imported headers, only 386 of them inherent.
 Skipping records based on the interface owner directory alone was not retained:
 an inconsistent directory could hide an inherent record before validation.
+Repeated scalar type projection now returns its memoized result after the
+dependency proof succeeds, unless the caller supplied a lookup key to check.
+Across 17 fixed-core standalone warm-check pairs, median paired savings for
+P03/P04/P05 were 2.59/2.89/6.02 ms.
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17

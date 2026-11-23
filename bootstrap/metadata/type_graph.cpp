@@ -3657,6 +3657,8 @@ ImportedTypeScalars
 DeferredTypeGraph::project(std::size_t index,
                            std::span<const std::uint8_t> requested) const {
   std::lock_guard lock(projectionMutex);
+  if (requested.empty() && projectionProofs.contains(index))
+    return scalars[index];
   try {
     auto read = [&](std::size_t index) {
       auto found = projectedKeys.find(index);
