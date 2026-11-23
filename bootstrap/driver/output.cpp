@@ -479,7 +479,8 @@ static int emitOne(const Options &options, const Source &source,
     module->setSourceFileName(source.path);
     module->setTargetTriple(
         llvm::Triple(llvm::Triple::normalize(options.target)));
-    if (llvm::verifyModule(*module, &llvm::errs())) {
+    if ((options.emit == "llvm" || sharedBackend) &&
+        llvm::verifyModule(*module, &llvm::errs())) {
       std::cerr << "mettle: error[internal]: invalid generated LLVM module\n";
       return 1;
     }
@@ -600,12 +601,6 @@ static int emitOne(const Options &options, const Source &source,
           dependency->setSourceFileName(package.source);
           dependency->setTargetTriple(
               llvm::Triple(llvm::Triple::normalize(options.target)));
-          if (llvm::verifyModule(*dependency, &llvm::errs())) {
-            std::cerr << "mettle: error[internal]: invalid generated package "
-                         "LLVM module for "
-                      << package.identity << '\n';
-            return 1;
-          }
           auto emitDependency = [&]() {
             if (native)
               return emitUnitArchive(*dependency, options, packagePath,
@@ -615,8 +610,8 @@ static int emitOne(const Options &options, const Source &source,
                                                packagePath, false);
           };
           if (auto error = emitDependency()) {
-            std::cerr << "mettle: error[backend]: "
-                      << llvm::toString(std::move(error)) << '\n';
+            std::cerr << "mettle: error[backend]: package " << cacheIdentity
+                      << ": " << llvm::toString(std::move(error)) << '\n';
             return 1;
           }
           if (backend.failed) {

@@ -1945,6 +1945,11 @@ P03/P04/P05 were 2.59/2.89/6.02 ms.
 Collecting canonical identity and dependency edges in one traversal and
 tracking proved ordinals in a bitmap saved a further 0.38/3.06/2.63 ms in
 19 interleaved pairs.
+Standalone object emission now relies on the backend's pre- and
+post-optimization LLVM verification instead of verifying once more in the
+driver. In 16 paired P05 warm rebuilds with both native objects cached,
+the median paired saving was 19.15 ms and all paired executables were
+byte-identical. This does not measure a first-application build speedup.
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
