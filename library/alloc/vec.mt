@@ -693,7 +693,7 @@ extend<region r, T: fmt.Debug, A: Allocator> Drain<region r, T, A> implements fm
 
 extend<T: Clone, A: Allocator> List<T, A> {
     pub mut fn extend_from_slice(read items: [T]): Unit {
-        self.reserve(items.len())
+        if items.len() > self.cap - self.len { self.reserve(items.len()) }
         var i = 0usize
         while i < items.len() {
             self.push(items[i].clone())
