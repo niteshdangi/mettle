@@ -60,6 +60,14 @@ fn run(): i32 throws io.Error {
     if retry.get_ref().bytes.as_slice() != "prefix\n".as_bytes() { return 8 }
     try retry.flush()
     if retry.get_ref().bytes.as_slice() != "prefix\ntail!".as_bytes() { return 9 }
+    var short = io.LineWriter.new(PartialWriter(vec.new<u8>(), 0usize))
+    let accepted = try short.write_some("a\nb".as_bytes())
+    if accepted != 1usize { return 10 }
+    if short.get_ref().bytes.as_slice() != "a".as_bytes() { return 11 }
+    try short.write_some("\nb".as_bytes())
+    if short.get_ref().bytes.as_slice() != "a\n".as_bytes() { return 12 }
+    try short.flush()
+    if short.get_ref().bytes.as_slice() != "a\nb".as_bytes() { return 13 }
     0
 }
 

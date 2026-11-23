@@ -1970,6 +1970,10 @@ The split P05 root module went from 287 to 110 definitions under optimization.
 Only four drop and two install callbacks disappeared; all six came from
 `drop_run<Bucket<i32, i32>>`. Disappearance after LLVM optimization does not
 establish that those callbacks are unreachable before lowering.
+Moving line-flush error handling out of the buffered `LineWriter.write_some`
+path reduced the 16,384-write loop from 1.530 to 1.295 ms (0.238 ms paired
+saving across 90 pairs). The short-write retry case checks that a successful
+prefix is not written twice and the trailing bytes still flush.
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17

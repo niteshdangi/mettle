@@ -869,6 +869,26 @@ extend<W: Writer + unsized> LineWriter<W> {
         }
         self.pending = 0usize
     }
+
+    @inline(never)
+    mut fn finish_line(end: usize, before: usize, count: usize): usize throws Error {
+        match take capture self.write_until(end) {
+            success(_) => self.discard_written(),
+            failure(error) => {
+                self.searched = 0usize
+                if self.pending > before {
+                    let accepted = self.pending - before
+                    self.buffer.truncate(self.pending)
+                    self.discard_written()
+                    return accepted
+                }
+                self.buffer.truncate(before)
+                throw error
+            }
+        }
+        self.searched = self.buffer.len()
+        count
+    }
 }
 
 extend<W: Writer + unsized> LineWriter<W> implements Writer {
@@ -887,20 +907,7 @@ extend<W: Writer + unsized> LineWriter<W> implements Writer {
             end
         }
         if line_end != 0usize {
-            match take capture self.write_until(line_end) {
-                success(_) => self.discard_written(),
-                failure(error) => {
-                    self.searched = 0usize
-                    if self.pending > before {
-                        let accepted = self.pending - before
-                        self.buffer.truncate(self.pending)
-                        self.discard_written()
-                        return accepted
-                    }
-                    self.buffer.truncate(before)
-                    throw error
-                }
-            }
+            return try self.finish_line(line_end, before, input.len())
         }
         self.searched = self.buffer.len()
         input.len()
