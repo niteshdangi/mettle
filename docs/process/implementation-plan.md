@@ -1956,6 +1956,11 @@ medians were 1.849 / 1.603 ms (0.246 ms paired saving across 75 trials);
 Rust took 0.066 ms. In a separate 90-pair P05 runtime comparison, the
 median paired change was 0.028 ms slower, with a resampled 95% interval
 spanning zero (−0.123 to +0.167 ms).
+Checked declaration span lookups now build the same key with one allocation.
+Across 19 warm-check pairs, median paired savings for P03/P04/P05 were
+0.48/3.65/2.72 ms. In a separate first-application P05 comparison, exact
+native object hits saved 133.49 ms over ten paired builds with checked
+archives already warm and all 39 application units generated in both arms.
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17

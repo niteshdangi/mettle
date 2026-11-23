@@ -3921,9 +3921,15 @@ public:
     auto coordinates = sources->coordinates(span);
     if (!coordinates)
       return std::nullopt;
-    return one<std::uint64_t>("t:" + ordinalKey(kind) + revision->second +
-                              '\0' + ordinalKey(coordinates->first) +
-                              ordinalKey(coordinates->second));
+    std::string key;
+    key.reserve(3 + 3 * sizeof(std::uint64_t) + revision->second.size());
+    key += "t:";
+    key += ordinalKey(kind);
+    key += revision->second;
+    key += '\0';
+    key += ordinalKey(coordinates->first);
+    key += ordinalKey(coordinates->second);
+    return one<std::uint64_t>(key);
   }
   std::optional<std::uint32_t>
   function(std::string_view canonical) const override {
