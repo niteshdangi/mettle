@@ -3096,23 +3096,30 @@ struct WireTypeLookup {
     }
   }
   std::span<const std::uint8_t> find(std::span<const std::uint8_t> key) const {
+    auto text = [](std::span<const std::uint8_t> bytes) {
+      return std::string_view(reinterpret_cast<const char *>(bytes.data()),
+                              bytes.size());
+    };
+    const auto wanted = text(key);
     std::size_t first = 0, last = count;
+    const auto records = bytes.subspan(directorySize());
     while (first != last) {
       auto middle = first + (last - first) / 2;
-      auto current = group(middle);
-      if (std::lexicographical_compare(current.key.begin(), current.key.end(),
-                                       key.begin(), key.end()))
+      const auto begin = wireU32(bytes, 4 + middle * 4);
+      auto record = records.subspan(begin);
+      auto current = text(record.subspan(4, wireU32(record, 0)));
+      const auto order = current.compare(wanted);
+      if (order == 0) {
+        const auto end = wireU32(bytes, 8 + middle * 4);
+        const auto offset = 8 + current.size();
+        return record.subspan(offset, end - begin - offset);
+      }
+      if (order < 0)
         first = middle + 1;
       else
         last = middle;
     }
-    if (first == count)
-      return {};
-    auto current = group(first);
-    return std::equal(key.begin(), key.end(), current.key.begin(),
-                      current.key.end())
-               ? current.ordinals
-               : std::span<const std::uint8_t>{};
+    return {};
   }
 };
 void writeLookupTable(Writer &body, Graph &graph,
