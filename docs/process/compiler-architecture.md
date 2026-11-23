@@ -1637,6 +1637,8 @@ protected return storage and explicit scope exits. The backend-independent
 declaration-order fields. Native flags distinguish initialized paths and established
 whole values; moving a value transfers its obligations. User destructors precede
 their fields, and partially initialized products drop only initialized fields.
+Hosted lexical scope exits skip runtime cleanup only when the root and every
+descendant have clear flags; a partially moved root can still own live fields.
 
 Generated wrapper frames keep owned storage alive while body callbacks unwind;
 cleanup never follows addresses into an already-unwound callback frame. The native

@@ -12,6 +12,15 @@ type PointerGuard {
     result: ptr<mut i32>
     drop { unsafe { *self.result += *self.value } }
 }
+type GuardPair { first: PointerGuard; second: PointerGuard }
+
+fn partial(result: ptr<mut i32>): Unit {
+    let first = 2
+    let second = 3
+    let pair = GuardPair(PointerGuard(core.ptr.from_ref(first), result),
+                         PointerGuard(core.ptr.from_ref(second), result))
+    core.mem.drop(pair.first)
+}
 
 fn fail(result: ptr<mut i32>): Unit {
     let pair = Pair(40, true)
@@ -42,5 +51,7 @@ fn main(): i32 {
     }
     if result != 51 { return 2 }
     if ordinary() != 46 { return 3 }
+    partial(pointer)
+    if result != 56 { return 4 }
     0
 }

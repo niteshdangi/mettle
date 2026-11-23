@@ -179,6 +179,7 @@ private:
   void set(unsigned node, bool initialized);
   void initialize(unsigned node, llvm::Value *initialized);
   void updateParents(unsigned node);
+  llvm::Value *hasLiveDrop(unsigned node);
   void drop(unsigned node);
   llvm::Function *dropCallback(unsigned node);
   void emitCallbacks();

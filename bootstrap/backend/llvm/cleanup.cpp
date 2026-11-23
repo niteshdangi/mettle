@@ -854,6 +854,16 @@ void CleanupFrame::consume(ir::Value value) {
     set(roots[found->second].node, false);
 }
 
+llvm::Value *CleanupFrame::hasLiveDrop(unsigned node) {
+  auto &builder = lowering.builder;
+  const auto &entry = nodes[node];
+  llvm::Value *live =
+      builder.CreateLoad(builder.getInt1Ty(), field(entry.flag));
+  for (auto child : entry.children)
+    live = builder.CreateOr(live, hasLiveDrop(child));
+  return live;
+}
+
 void CleanupFrame::drop(unsigned node) {
   auto &builder = lowering.builder;
   const auto &entry = nodes[node];
@@ -1261,12 +1271,25 @@ void CleanupFrame::store(const ir::Instruction &instruction,
 }
 
 void CleanupFrame::scopeExit(int scope) {
+  auto &builder = lowering.builder;
   for (int node : plan.scopes.at(scope)) {
-    llvm::Value *unwinding = lowering.builder.getInt32(0);
-    if (!lowering.freestanding)
-      unwinding = lowering.builder.CreateCall(lowering.runtime(
-          "mettle_rt_panicking", lowering.builder.getInt32Ty(), {}));
-    callDrop(planNodes[node], unwinding);
+    auto place = planNodes[node];
+    if (lowering.freestanding) {
+      callDrop(place, builder.getInt32(0));
+      continue;
+    }
+    auto *function = builder.GetInsertBlock()->getParent();
+    auto *active =
+        llvm::BasicBlock::Create(lowering.context, "scope.drop", function);
+    auto *next =
+        llvm::BasicBlock::Create(lowering.context, "scope.next", function);
+    builder.CreateCondBr(hasLiveDrop(place), active, next);
+    builder.SetInsertPoint(active);
+    auto *unwinding = builder.CreateCall(
+        lowering.runtime("mettle_rt_panicking", builder.getInt32Ty(), {}));
+    callDrop(place, unwinding);
+    builder.CreateBr(next);
+    builder.SetInsertPoint(next);
   }
 }
 void CleanupFrame::dropPlace(const Place &place) {
