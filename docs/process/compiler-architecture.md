@@ -479,7 +479,9 @@ completeness and regional cycles remain checked at the relevant publication
 boundary; a lazy path cannot publish an unchecked proof or executable IR.
 
 The existing indexed-v5 path validates the complete type/declaration index
-inventory and IR query directory. Empty type stores directly adopt validated graph
+inventory and IR query directory. Native constructor patterns admit their owner
+on a type-table miss before inspecting its product or variant contract.
+Empty type stores directly adopt validated graph
 records only when structural identities need no canonical remapping; duplicate
 keys, existing consumer types and logical lookups retain canonical merging.
 Indexed projection admission uses independent readers and arenas for contiguous

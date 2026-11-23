@@ -1802,6 +1802,18 @@ comparison for the same selected fixture measures run discovery at
 5258.5 -> 11.8 ms and fail discovery at 4150.3 -> 10.4 ms, with identical selected
 case data. These are discovery measurements, not application compiler gains.
 
+Early folding of generated body helpers reduced P05 build time from 515.0 to
+436.0 ms, but regressed runtime from 33.5 to 48.7 ms; it was discarded completely.
+Evidence: `~/w/anal/perf-early-body-20261124/results.json`.
+No backend performance change from either trial is selected.
+
+The cleanup regression exposed a native-admission correctness bug: canonical
+constructor patterns skipped admitting their owner's type contract. Source-only
+checking passed while a fresh native-cache check rejected valid `CatchResult`
+patterns. Pattern checking now admits a missing canonical owner before lookup;
+already-admitted owners retain the direct table path. The existing
+`cleanup-local-lifetime-unwind` execution passes in debug and release.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

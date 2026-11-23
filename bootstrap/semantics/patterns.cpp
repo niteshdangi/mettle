@@ -249,6 +249,10 @@ void Checker::pattern(Pattern &p, int variable, ParameterMode mode,
             ? spelling.substr(0, delimiter)
             : typeName(spelling.substr(0, delimiter), p.span, current->owner);
     auto found = typeNames.find(owner);
+    if (found == typeNames.end() && canonical) {
+      admitNative(owner);
+      found = typeNames.find(owner);
+    }
     if (found == typeNames.end() || !checked.types->isProduct(found->second)) {
       error("name", p.span,
             "unknown pattern constructor '" + displayPath(p.text) + "'");
