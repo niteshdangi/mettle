@@ -862,11 +862,11 @@ extend<W: Writer + unsized> LineWriter<W> {
         self.searched = if self.searched > self.pending {
             self.searched - self.pending
         } else { 0usize }
-        if self.pending == self.buffer.len() {
-            self.buffer.clear()
-        } else {
-            self.buffer = self.buffer.split_off(self.pending)
+        let length = self.buffer.len()
+        if self.pending < length {
+            self.buffer.as_mut_slice().copy_within(self.pending, length, 0usize)
         }
+        self.buffer.truncate(length - self.pending)
         self.pending = 0usize
     }
 

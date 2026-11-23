@@ -40,14 +40,15 @@ fn run(): i32 throws io.Error {
     }
     if inner.as_slice() != "first line\nsecond tail".as_bytes() { return 4 }
     var partial = io.LineWriter.new(PartialWriter(vec.new<u8>(), 0usize))
-    try partial.write_some("ab".as_bytes())
+    try partial.write_some("abcd".as_bytes())
     match take capture partial.flush() {
         failure(_) => {},
         success(_) => { return 5 }
     }
     try partial.write_some("\nc".as_bytes())
+    if partial.get_ref().bytes.as_slice() != "abcd\n".as_bytes() { return 6 }
     try partial.flush()
-    if partial.get_ref().bytes.as_slice() != "ab\nc".as_bytes() { return 6 }
+    if partial.get_ref().bytes.as_slice() != "abcd\nc".as_bytes() { return 6 }
     var retry = io.LineWriter.new(PanicWriter(vec.new<u8>(), 0usize))
     try retry.write_some("prefix".as_bytes())
     match take std.panic.catch_panic(fn(): Unit {
