@@ -329,7 +329,8 @@ bool TypeStore::isSymbolic(Type type) const {
   };
   return symbolic(type);
 }
-std::vector<Type> TypeStore::typeParameters(Type type) const {
+std::vector<Type> TypeStore::typeParameters(Type type,
+                                            bool nominalArgumentsOnly) const {
   std::vector<Type> result;
   std::unordered_set<std::uint32_t> visited;
   std::function<void(Type)> visit = [&](Type current) {
@@ -362,6 +363,15 @@ std::vector<Type> TypeStore::typeParameters(Type type) const {
       const auto &record = product(current);
       for (auto argument : record.genericArguments)
         visit(argument);
+      if (nominalArgumentsOnly && (record.kind == AggregateKind::Product ||
+                                   record.kind == AggregateKind::Enumeration ||
+                                   record.kind == AggregateKind::NativeVector ||
+                                   record.kind == AggregateKind::Opaque)) {
+        if (record.genericArguments.empty())
+          for (auto parameter : record.genericParameters)
+            visit(parameter);
+        return;
+      }
       for (const auto &field : record.fields)
         visit(field.type);
       // A symbolically sized array has no fields; its element is a component.

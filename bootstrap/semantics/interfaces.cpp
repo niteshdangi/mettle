@@ -612,9 +612,12 @@ Type Checker::normalizeGenericType(Type type,
     substitutions.insert(substitutions.end(),
                          genericEnvironment->equalities.begin(),
                          genericEnvironment->equalities.end());
+  type = checked.types->substitute(type, substitutions);
+  if (type.index() < builtinTypeCount)
+    return type;
   interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
                             interfaceAssumptions(), regionEnvironment());
-  auto normalized = solver.normalize(type, substitutions, span);
+  auto normalized = solver.normalize(type, {}, span);
   return annotationRegionScopes.empty()
              ? checked.types->eraseRegions(normalized)
              : normalized;
@@ -627,6 +630,9 @@ Type Checker::normalizeCallType(Type type,
     substitutions.insert(substitutions.end(),
                          genericEnvironment->equalities.begin(),
                          genericEnvironment->equalities.end());
+  type = checked.types->substitute(type, substitutions);
+  if (type.index() < builtinTypeCount)
+    return type;
   auto regions = regionEnvironment();
   const auto &declaration = functionRegions(callee).environment;
   regions.assumptions.insert(regions.assumptions.end(),
@@ -634,8 +640,7 @@ Type Checker::normalizeCallType(Type type,
                              declaration.assumptions.end());
   interfaces::Solver solver(*checked.types, *checked.interfaceData, diagnostics,
                             interfaceAssumptions(), std::move(regions));
-  return checked.types->eraseRegions(
-      solver.normalize(type, substitutions, span));
+  return checked.types->eraseRegions(solver.normalize(type, {}, span));
 }
 
 void Checker::interfaceSignatures() {

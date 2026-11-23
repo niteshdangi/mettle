@@ -63,17 +63,22 @@ std::optional<std::vector<TypeBinding>>
 Solver::match(Type pattern, Type actual, bool symmetric,
               RegionEnvironment *regions, bool partialActual) {
   std::vector<TypeBinding> bindings;
+  if (!symmetric && !partialActual) {
+    auto origin = types.nominalOrigin(pattern);
+    if (origin != Type::Unknown && origin != types.nominalOrigin(actual))
+      return std::nullopt;
+  }
   if (types.isProduct(pattern) && types.isProduct(actual) &&
       !structuralAggregate(types.product(pattern).kind) &&
       nominalOrigin(types, pattern) != nominalOrigin(types, actual))
     return std::nullopt;
-  auto patternParameters = types.typeParameters(pattern);
+  auto patternParameters = types.typeParameters(pattern, true);
   auto variables = patternParameters;
   if (partialActual)
     variables.clear();
   std::vector<Type> actualParameters;
   if (symmetric) {
-    actualParameters = types.typeParameters(actual);
+    actualParameters = types.typeParameters(actual, true);
     variables.insert(variables.end(), actualParameters.begin(),
                      actualParameters.end());
   }
@@ -91,6 +96,8 @@ Solver::match(Type pattern, Type actual, bool symmetric,
     return answer == RegionAnswer::Proven;
   };
   std::function<bool(Type, Type)> unify = [&](Type pattern, Type actual) {
+    if (pattern == actual)
+      return true;
     pattern = types.substitute(pattern, bindings);
     actual = types.substitute(actual, bindings);
     if (partialActual && actual == Type::Unknown)
@@ -112,7 +119,7 @@ Solver::match(Type pattern, Type actual, bool symmetric,
       for (const auto &binding : bindings)
         if (binding.parameter == pattern)
           return binding.argument == actual;
-      const auto parameters = types.typeParameters(actual);
+      const auto parameters = types.typeParameters(actual, true);
       if (std::find(parameters.begin(), parameters.end(), pattern) !=
           parameters.end())
         return false;
@@ -298,7 +305,7 @@ Solver::match(Type pattern, Type actual, bool symmetric,
   if (!unify(pattern, actual))
     return std::nullopt;
   if (!symmetric && !patternParameters.empty())
-    actualParameters = types.typeParameters(actual);
+    actualParameters = types.typeParameters(actual, true);
   for (auto parameter : patternParameters)
     if (std::find(actualParameters.begin(), actualParameters.end(),
                   parameter) != actualParameters.end() &&

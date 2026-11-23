@@ -146,6 +146,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
   if (pinned)
     self = checked.types->view(checked.types->product(receiver).components[0])
                .payload;
+  const auto selfOrigin = checked.types->nominalOrigin(self);
   const std::string methodName(name);
   const auto &indexed = receiverCandidates(name, false);
   auto accepts = [&](std::size_t index) {
@@ -192,6 +193,10 @@ std::optional<std::size_t> Checker::receiverCandidate(
   for (std::size_t position = 0, count = indexed.inherent.size();
        position < count; ++position) {
     auto implIndex = indexed.inherent[position];
+    auto origin =
+        checked.interfaceData->implementationOrigin(*checked.types, implIndex);
+    if (origin != Type::Unknown && origin != selfOrigin)
+      continue;
     const auto &implementation =
         std::as_const(*checked.interfaceData).implementations[implIndex];
     if (protocol ||

@@ -382,20 +382,9 @@ Solver::applicable(const Implementation &implementation, Type self, Span span,
   if (implementation.target.index() < builtinTypeCount &&
       implementation.target != self)
     return std::nullopt;
-  if (types.isProduct(implementation.target) && types.isProduct(self)) {
-    const auto kind = types.product(implementation.target).kind;
-    if (kind == AggregateKind::Product || kind == AggregateKind::Enumeration ||
-        kind == AggregateKind::NativeVector || kind == AggregateKind::Opaque) {
-      auto origin = [&](Type type) {
-        while (types.product(type).regionOrigin != Type::Unknown)
-          type = types.product(type).regionOrigin;
-        auto generic = types.product(type).genericOrigin;
-        return generic == Type::Unknown ? type : generic;
-      };
-      if (origin(implementation.target) != origin(self))
-        return std::nullopt;
-    }
-  }
+  auto origin = types.nominalOrigin(implementation.target);
+  if (origin != Type::Unknown && origin != types.nominalOrigin(self))
+    return std::nullopt;
   std::vector<TypeBinding> bindings;
   auto environment = regionEnvironment;
   auto scope = types.regions().binder(environment.universe);

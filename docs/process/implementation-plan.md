@@ -1541,6 +1541,46 @@ contains `cold-results.json`, `results.json`, `source-regressions` and
 Whole-I14 freeze remains blocked on the existing producer/root-optimization
 and consolidated qualification obligations.
 
+Nominal matching follow-up (2026-11-23) extends pre-payload rejection to inherent
+receiver candidates and rejects incompatible applicability targets before region
+variable construction. Matching discovers nominal identity parameters rather
+than traversing private layouts; ordinary representation queries are unchanged.
+Unused generic declaration parameters now match correctly, and identity occurs
+checks reject recursive bindings through those parameters. Symmetric, partial,
+structural, blanket and callable matching remain supported. Equal shape IDs
+avoid redundant substitution. Call/annotation normalization applies explicit
+bindings and enclosing equalities first, then avoids building projection solvers
+for builtin types; declaration and binding obligations remain mandatory.
+
+Three randomized matched empty-compiler-cache standalone P04 release pairs
+against `b61da692` measure **13.983 s to 12.625 s, 9.7% faster** with complete
+native source checking. All exit/output and 78,744-byte executable sizes agree.
+This is a bounded additional gain, not another 27.9% improvement or Rust parity.
+Five matched warm P04 pairs show fresh checks 2.6% faster, fresh builds 3.4%
+slower, approximately unchanged resident checks and 1.0% faster resident builds.
+Runtime is 4.9% faster in this run but still 6.3% slower than direct Rust.
+Fresh checks remain 10.6 times Rust metadata checks; no general warm-build,
+runtime or qualification claim is made.
+
+Current-function, owned-function and scoped bound-validation assumption caches
+were tried and removed. They did not establish a useful added cold gain.
+Identity-only and scoped-cache trial evidence remains separate from the final
+integrated result. Focused optimized boundary, declaration and type-graph cases
+pass, including unused nominal parameters, identity-cycle rejection and
+unchanged symmetric/partial matching. Existing source assertions pass 16
+run/profile and seven fail/profile units without changed fixtures or diagnostics.
+ASan/UBSan startup and the same three algorithm/metadata executables pass;
+the existing minimal native fixture passes six run/profile and two fail/profile
+units. No full-core instrumented production or qualification matrix was run.
+
+Evidence: `~/w/anal/perf-native-next-20261123/final/`
+contains `cold-results.json`, `results.json`, `source-regressions` and
+`sanitizer-minimal-regressions`.
+Measured compiler SHA-256:
+`f243b1d5a43d0aec6ce2ae790d05363e7c3a95f8f5f29b42c176ec53d63cad8e`.
+Whole-I14 freeze stays blocked; full producer checking, root optimization,
+warm-build cost and consolidated qualification remain open obligations.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

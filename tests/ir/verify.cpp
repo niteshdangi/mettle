@@ -241,6 +241,25 @@ void coherenceCandidateCases() {
   require(!mettle::interfaces::Solver(types, database, inherent).coherent() &&
               inherent.items.size() == 1,
           "inherent candidate indexing missed or duplicated a conflict");
+  auto parameter = types.declareParameter("T", false);
+  auto phantom = types.declareProduct("Phantom", true);
+  types.setGenericParameters(phantom, {parameter});
+  types.defineProduct(phantom, {});
+  auto instance = types.instantiateProduct(phantom, {Type::I32});
+  mettle::Diagnostics matching;
+  mettle::interfaces::Solver matcher(types, database, matching);
+  auto bindings = matcher.match(phantom, instance);
+  require(bindings && bindings->size() == 1 &&
+              bindings->front().parameter == parameter &&
+              bindings->front().argument == Type::I32,
+          "nominal matching depended on an unused parameter's private fields");
+  auto actualParameter = types.declareParameter("U", false);
+  require(!matcher.match(phantom, parameter) &&
+              matcher.match(phantom, actualParameter, true) &&
+              matcher.match(phantom, Type::Unknown, false, nullptr, true),
+          "nominal rejection changed symmetric or partial matching");
+  require(!matcher.match(parameter, phantom),
+          "nominal identity matching admitted a recursive parameter binding");
 }
 void rejected(const Program &program, const char *expected) {
   mettle::Diagnostics diagnostics;

@@ -531,6 +531,21 @@ compares each persisted origin with its implementation target. Nominal
 classification reads product kind and generic/regional origins from retained
 type projections without constructing private type bodies. Archive ownership
 and validated origin references remain authoritative until consumer mutation.
+Inherent receiver selection uses the same nominal headers before loading
+candidate details. Applicability rejects incompatible nominal origins before
+creating region variables. Asymmetric complete matching applies this rejection
+without narrowing symmetric or partial matching.
+Matching discovers parameters through nominal identity arguments, not private
+layouts; structural and callable shapes retain their ordinary traversal.
+Generic declaration roots include unused declared parameters. Occurs checks
+follow the same identity dependency, preventing recursive bindings through
+unused parameters. Representation-dependent type queries retain full field
+traversal. Equal type identities need no substitution during shape comparison.
+Call and annotation normalization apply explicit bindings and enclosing
+equalities before constructing an interface solver. A resulting builtin scalar,
+Unit, Never or unresolved sentinel cannot contain an associated projection and
+needs no assumption elaboration. Bound validation and binding obligations remain
+independent mandatory checks; non-builtin types retain ordinary normalization.
 Interface phases share unchanged immutable records and
 encode only phase replacements, retaining phase-specific selection contracts.
 Interface database admission validates framed records and their references

@@ -634,7 +634,8 @@ public:
   std::optional<std::pair<Type, Type>> erasedTail(Type source,
                                                   Type target) const;
   bool isSymbolic(Type type) const;
-  std::vector<Type> typeParameters(Type type) const;
+  std::vector<Type> typeParameters(Type type,
+                                   bool nominalArgumentsOnly = false) const;
   Type nominalOrigin(Type type) const;
   const TypeParameter &parameter(Type type) const;
   void constrainParameter(Type type, bool copyRequested, bool sized);

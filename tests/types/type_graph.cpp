@@ -958,6 +958,11 @@ int main() {
     auto nominal = producer.declareProduct("Phantom", true);
     producer.setGenericParameters(nominal, {parameter});
     producer.defineProduct(nominal, {});
+    expect(producer.typeParameters(nominal, true) ==
+                   std::vector<Type>{parameter} &&
+               producer.typeParameters(nominal).empty(),
+           "nominal matching lost an unused declaration parameter or changed "
+           "representation dependencies");
     auto plain = producer.viewType(Type::U8, ParameterMode::Read);
     auto instance = producer.instantiateProduct(nominal, {plain});
     auto scope = producer.regions().binder();
