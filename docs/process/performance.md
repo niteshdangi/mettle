@@ -261,8 +261,9 @@ The builtin method-name index first discovers names from source, and later
 processes reuse an integrity-checked entry keyed to the core library inputs
 and compiler configuration. Only unrestricted public inherent receiver
 methods from the builtin extension modules and Iterator interface methods
-participate. Source-only consumers retain those input dependencies even when
-no checked library is mounted.
+participate. Calls whose receiver resolves to a module without a lexical
+value shadow bypass builtin discovery. Source-only consumers retain index
+input dependencies even when no checked library is mounted.
 P05 uses fixed-key SipHash-1-3 builders and get-then-insert on both sides.
 
 Rust profile: `opt-level=3`, `debug=false`, `lto=false`, `codegen-units=16`,

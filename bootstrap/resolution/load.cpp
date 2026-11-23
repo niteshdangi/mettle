@@ -46,10 +46,18 @@ struct DefinitionReference {
   Span span;
 };
 
+struct QualifiedCall {
+  Span root;
+  std::string module, head;
+};
+using QualifiedCalls =
+    std::map<std::pair<SourceId, std::size_t>, QualifiedCall>;
+
 class DefinitionReferences {
 public:
-  explicit DefinitionReferences(Diagnostics &diagnostics)
-      : diagnostics(diagnostics) {}
+  explicit DefinitionReferences(Diagnostics &diagnostics,
+                                QualifiedCalls *qualifiedCalls)
+      : diagnostics(diagnostics), qualifiedCalls(qualifiedCalls) {}
 
   std::vector<DefinitionReference> collect(const Module &tree) {
     for (const auto &function : tree.functions) {
@@ -161,6 +169,7 @@ private:
     };
   };
   Diagnostics &diagnostics;
+  QualifiedCalls *qualifiedCalls;
   std::vector<DefinitionReference> references;
 
   static Key key(std::string_view name, const SyntaxContextPtr &context) {
@@ -282,6 +291,20 @@ private:
         syntax.children[0]->kind == Kind::Field) {
       const auto &selector = *syntax.children[0];
       reference(selector.text, selector.context, selector.span, {});
+      if (qualifiedCalls && !selector.flag && selector.children.size() == 1) {
+        const auto &receiver = *selector.children.front();
+        if (auto path = dottedPath(receiver)) {
+          const auto *root = &receiver;
+          while (root->kind == Kind::Field)
+            root = root->children.front().get();
+          if (!root->context && !selector.context &&
+              root->text.find("::") == std::string::npos &&
+              !bindings.values.contains(key(root->text, {})))
+            qualifiedCalls->try_emplace(
+                std::pair{selector.span.source, selector.span.end},
+                QualifiedCall{root->span, std::move(*path), root->text});
+        }
+      }
     }
     if (syntax.kind == Kind::Binding) {
       for (const auto &child : syntax.children) {
@@ -506,6 +529,7 @@ private:
   std::map<SourceId, MacroSource> macroSources;
   std::map<SourceId, std::vector<std::string>> nativeSources;
   std::vector<DefinitionReference> definitionReferences;
+  QualifiedCalls qualifiedCalls;
   std::size_t nextDefinitionReference = 0;
   // Library root that owns each loaded source; user sources are absent.
   std::unordered_map<SourceId, std::string> owner;
@@ -1089,6 +1113,42 @@ private:
                        span, true});
     }
     scannedLiterals = result.textLiterals.size();
+    std::unordered_set<std::string_view> moduleHeads;
+    for (const auto &module : result.modules)
+      moduleHeads.insert(module.name);
+    for (const auto &[root, package] : result.packageNames) {
+      (void)root;
+      moduleHeads.insert(package);
+    }
+    bool glob = false;
+    for (const auto &entry : result.imports) {
+      glob |= entry.glob;
+      if (!entry.alias.empty())
+        moduleHeads.insert(entry.alias);
+      else if (!entry.path.empty() && entry.names.empty())
+        moduleHeads.insert(entry.path.back());
+      for (const auto &name : entry.names)
+        moduleHeads.insert(name.alias.empty() ? name.name : name.alias);
+    }
+    std::shared_ptr<const Resolution> names;
+    bool resolved = false;
+    auto moduleCall = [&](const Token &token) {
+      auto call = qualifiedCalls.find({token.span.source, token.span.end});
+      if (call == qualifiedCalls.end())
+        return false;
+      const auto &[root, path, head] = call->second;
+      if (!glob && head != "self" && head != "super" &&
+          !moduleHeads.contains(head))
+        return false;
+      if (!resolved) {
+        Diagnostics scratch;
+        names = resolve(result, scratch, sourceInstances);
+        resolved = true;
+      }
+      return names &&
+             names->lookup(names->moduleOf(root), path, Namespace::Module, root)
+                 .has_value();
+    };
     // A program type named like a prelude entry shadows it, so the prelude's
     // library is not mounted for that name.
     std::set<std::string> declaredTypes;
@@ -1116,7 +1176,7 @@ private:
       if (!nativePath && token.kind == TokenKind::Word && from(token).empty() &&
           i > 0 && significant[i - 1]->text == "." &&
           i + 1 < significant.size() && significant[i + 1]->text == "(" &&
-          available("core")) {
+          !moduleCall(token) && available("core")) {
         const auto &known = builtinMethods();
         for (const auto &index : builtinIndexes) {
           if (auto method = index->builtinMethod(token.text))
@@ -1630,7 +1690,11 @@ private:
       result.tests.push_back(std::move(test));
     }
     completeDeclarations(tree);
-    auto references = DefinitionReferences(diagnostics).collect(tree);
+    auto references =
+        DefinitionReferences(diagnostics, currentRoot.empty() || currentPackage
+                                              ? &qualifiedCalls
+                                              : nullptr)
+            .collect(tree);
     definitionReferences.insert(definitionReferences.end(),
                                 std::make_move_iterator(references.begin()),
                                 std::make_move_iterator(references.end()));

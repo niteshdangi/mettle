@@ -1236,6 +1236,14 @@ def native_method_discovery():
                       "fn main(): i32 { local_math.run(Step(42).apply()) - 42 }\n")
     arguments = ["--library-dir", core.parent, "--standalone",
                  "--profile", "release"]
+    qualified = directory / "qualified.mt"
+    qualified.write_text(
+        "module arithmetic { pub fn from_library(x: i32): i32 { x } }\n"
+        "import arithmetic as math\n"
+        "fn main(): i32 { math.from_library(42) - 42 }\n")
+    without_core, program = explained(qualified, *arguments)
+    assert exit_code(program) == 0
+    assert "checked library interface cache " not in without_core, without_core
     cold, program = explained(source, *arguments)
     assert exit_code(program) == 0
     assert "checked library interface cache " not in cold, cold
@@ -1261,6 +1269,13 @@ def native_method_discovery():
     assert "builtin method index cache hit " in reused, reused
     assert "checked library interface cache hit core " in reused, reused
     invoke(["check", source, *arguments, "--no-cache"])
+    qualified.write_text(
+        "module arithmetic { pub fn from_library(x: i32): i32 { x } }\n"
+        "import arithmetic as math\n"
+        "fn main(): i32 { let math = 42i32; math.from_library() - 42 }\n")
+    shadowed, program = explained(qualified, *arguments)
+    assert exit_code(program) == 0
+    assert "checked library interface cache hit core " in shadowed, shadowed
     source.write_text("module local_math { pub fn run(x: i32): i32 { x } }\n"
                       "fn main(): i32 { local_math.run(42) - 42 }\n")
     private_collision, program = explained(source, *arguments)
