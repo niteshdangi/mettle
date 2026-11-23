@@ -1961,6 +1961,15 @@ Across 19 warm-check pairs, median paired savings for P03/P04/P05 were
 0.48/3.65/2.72 ms. In a separate first-application P05 comparison, exact
 native object hits saved 133.49 ms over ten paired builds with checked
 archives already warm and all 39 application units generated in both arms.
+Fusing replacement's cleanup and installation in one runtime entry reduced
+the 16,384-write `LineWriter` loop by 0.045 ms at the paired median (110
+pairs, 1.563 / 1.529 ms medians). The same application objects relinked with
+the two runtimes gave a P05 paired difference of 0.009 ms slower (330 pairs;
+95% resampled interval from 0.039 ms faster to 0.079 ms slower).
+The split P05 root module went from 287 to 110 definitions under optimization.
+Only four drop and two install callbacks disappeared; all six came from
+`drop_run<Bucket<i32, i32>>`. Disappearance after LLVM optimization does not
+establish that those callbacks are unreachable before lowering.
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17

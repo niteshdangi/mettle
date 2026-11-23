@@ -67,6 +67,8 @@ void install(void *raw) {
   auto &context = *static_cast<Context *>(raw);
   require(!context.oldLive && !context.fieldLive,
           "replacement installed before old cleanup");
+  require(mettle_rt_panicking() == 0,
+          "replacement inherited the completed cleanup's unwind state");
   context.pending = false;
   context.value = 42;
   context.events.push_back(3);

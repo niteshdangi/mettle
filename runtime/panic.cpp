@@ -116,8 +116,10 @@ extern "C" void mettle_rt_run_c(void *context, MettleAction body,
   }
 }
 
-extern "C" void mettle_rt_cleanup(void *context, MettleCleanup cleanup,
-                                  std::int32_t unwinding) {
+namespace {
+template <bool replacing>
+void cleanupWithInstall(void *context, MettleCleanup cleanup,
+                        std::int32_t unwinding, MettleAction install) {
   bool alreadyUnwinding = unwinding != 0 || panicking();
   if (alreadyUnwinding) {
     Unwinding state;
@@ -126,32 +128,39 @@ extern "C" void mettle_rt_cleanup(void *context, MettleCleanup cleanup,
     } catch (...) {
       std::abort();
     }
-    return;
-  }
-  try {
-    cleanup(context, 0);
-  } catch (...) {
-    Unwinding state;
-    // Generated glue clears each flag before destruction; re-entry finishes
-    // only fields that remain initialized, without repeating the destructor.
+  } else {
     try {
-      cleanup(context, 1);
+      cleanup(context, 0);
     } catch (...) {
-      std::abort();
+      {
+        Unwinding state;
+        // Generated glue clears each flag before destruction; re-entry finishes
+        // only fields that remain initialized, without repeating the
+        // destructor.
+        try {
+          cleanup(context, 1);
+        } catch (...) {
+          std::abort();
+        }
+      }
+      if constexpr (replacing)
+        installReplacement(context, install);
+      throw;
     }
-    throw;
   }
+  if constexpr (replacing)
+    installReplacement(context, install);
+}
+} // namespace
+
+extern "C" void mettle_rt_cleanup(void *context, MettleCleanup cleanup,
+                                  std::int32_t unwinding) {
+  cleanupWithInstall<false>(context, cleanup, unwinding, nullptr);
 }
 
 extern "C" void mettle_rt_replace(void *context, MettleCleanup destroyOld,
                                   MettleAction install) {
-  try {
-    mettle_rt_cleanup(context, destroyOld, 0);
-  } catch (...) {
-    installReplacement(context, install);
-    throw;
-  }
-  installReplacement(context, install);
+  cleanupWithInstall<true>(context, destroyOld, 0, install);
 }
 
 extern "C" std::int32_t mettle_rt_catch(void *context, MettleAction body) {
