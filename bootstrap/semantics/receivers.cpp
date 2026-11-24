@@ -386,19 +386,24 @@ std::optional<std::size_t> Checker::receiverCandidate(
     std::set<std::uint32_t> inferredConversions;
     std::map<std::uint32_t, bool> visibility;
     const auto &interfaceCandidates = receiverCandidates(name, true).interfaces;
+    const auto &database = std::as_const(*checked.interfaceData);
     for (std::size_t position = 0, count = interfaceCandidates.size();
          position < count; ++position) {
       auto index = interfaceCandidates[position];
-      const auto &implementation =
-          std::as_const(*checked.interfaceData).implementations[index];
-      const auto declaration =
-          checked.types->erased(implementation.interfaceType).declaration;
-      const auto &definition = checked.interfaceData->definitions[declaration];
+      const auto interfaceType =
+          database.importedImplementations &&
+                  index < database.importedImplementations->size() &&
+                  !database.implementations.isMaterialized(index)
+              ? (*database.importedImplementations)[index].interfaceType
+              : database.implementations[index].interfaceType;
+      const auto declaration = checked.types->erasedDeclaration(interfaceType);
+      const auto &definition = database.definitions[declaration];
       auto [cachedVisibility, inserted] = visibility.try_emplace(declaration);
       if (inserted)
         cachedVisibility->second = visible(definition);
       if (!cachedVisibility->second)
         continue;
+      const auto &implementation = database.implementations[index];
       std::vector<RegionBinding> regions;
       const auto targetHead = head(implementation.target);
       auto bindings =

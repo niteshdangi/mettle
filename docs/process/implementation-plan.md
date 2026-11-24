@@ -1985,6 +1985,9 @@ Comparing keys directly in the validated lookup directory saved another
 Erased interface name resolution now visits only the matching range in the
 validated directory. In 100 warm P05 pairs it saved 1.24 ms at the paired
 median (resampled 95% interval: 0.31 to 2.62 ms); P03 and P04 were inconclusive.
+Receiver lookup now checks interface visibility from the validated imported
+implementation header before decoding its body. In 80 warm P05 pairs it
+saved 2.93 ms at the paired median (resampled 95% interval: 0.17 to 3.52 ms).
 Compacting the unwritten `LineWriter` suffix in place instead of replacing its
 buffer reduced the 16,384-write line-and-tail loop from 14.550 to 10.988 ms
 (3.510 ms paired saving across 90 pairs).
