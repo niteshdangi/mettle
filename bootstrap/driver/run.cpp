@@ -1208,7 +1208,10 @@ int build(const Options &requested,
     return hash.finish();
   };
   std::optional<std::string> traceKey;
+  std::optional<std::string> recordedTrace;
   std::optional<std::string> corruptKey;
+  std::string missedKey;
+  packages::Store::Lease missedLease;
   if (!options.noCache && !sourceOverrides && !sourceModules && !procedural &&
       !discovered && !options.libraryDirectory.empty() && cacheable() &&
       !pathError) {
@@ -1239,12 +1242,15 @@ int build(const Options &requested,
     };
     auto trace = store->data(*traceKey, limits::sourceBytes);
     std::optional<BuildReplay> replayed;
-    if (trace.status == packages::Store::Lookup::Hit)
+    if (trace.status == packages::Store::Lookup::Hit) {
+      recordedTrace = trace.bytes;
       replayed =
           BuildInputs::replay(options.libraryDirectory, trace.bytes, shipped);
-    if (replayed && consumerKey(replayed->inputs.key(options, mounts,
-                                                     configuration.features),
-                                replayed->checked) == replayed->key) {
+    }
+    if (replayed) {
+      auto key = consumerKey(
+          replayed->inputs.key(options, mounts, configuration.features),
+          replayed->checked);
       std::error_code error;
       auto output = std::filesystem::weakly_canonical(options.output, error);
       auto library =
@@ -1262,24 +1268,32 @@ int build(const Options &requested,
             std::make_shared<const Source>(Source{path, "", ++id}));
       if (separate && !outputOverwritesSource(options, source, traced) &&
           !workCopies.protects(options, traced)) {
-        auto lease = store->acquireLease(replayed->key);
-        auto found = lease ? store->materialize(replayed->key, options.output)
+        auto lease = store->acquireLease(key);
+        auto found = lease ? store->materialize(key, options.output)
                            : packages::Store::Lookup::Miss;
         if (found == packages::Store::Lookup::Hit) {
           if (options.explain)
-            std::cerr << "mettle: cache hit " << replayed->key.substr(0, 12)
+            std::cerr << "mettle: cache hit " << key.substr(0, 12)
                       << ": compile and link skipped\n";
           return 0;
         }
         if (found == packages::Store::Lookup::Corrupt)
-          corruptKey = replayed->key;
+          corruptKey = key;
+        if (lease) {
+          missedKey = std::move(key);
+          missedLease = std::move(lease);
+        }
       }
     }
   }
-  auto recordTrace = [&](const std::string &key, const std::string &checked) {
-    if (!traceKey)
-      return;
-    if (auto trace = inputs.trace(key, checked))
+  auto traceUpdate = [&](const std::string &checked) {
+    std::optional<std::string> trace;
+    if (traceKey && (trace = inputs.trace(checked)) && trace == recordedTrace)
+      trace.reset();
+    return trace;
+  };
+  auto recordTrace = [&](const std::string &checked) {
+    if (auto trace = traceUpdate(checked))
       store->putData(*traceKey, *trace);
   };
   SourceId nextSource = 1;
@@ -1365,19 +1379,23 @@ int build(const Options &requested,
         checkedKey = checkedCore->key();
       cacheKey = consumerKey(
           inputs.key(options, mounts, configuration.features), checkedKey);
-      cacheLease = store->acquireLease(*cacheKey);
+      bool missed = missedLease && *cacheKey == missedKey;
+      cacheLease =
+          missed ? std::move(missedLease) : store->acquireLease(*cacheKey);
+      missedLease = {};
       if (!cacheLease) {
         if (options.explain)
           std::cerr << "mettle: cache unavailable: could not acquire build "
                        "lease\n";
         cacheKey.reset();
       } else {
-        auto found = store->materialize(*cacheKey, options.output);
+        auto found = missed ? packages::Store::Lookup::Miss
+                            : store->materialize(*cacheKey, options.output);
         if (found == packages::Store::Lookup::Hit) {
           if (options.explain)
             std::cerr << "mettle: cache hit " << cacheKey->substr(0, 12)
                       << ": compile and link skipped\n";
-          recordTrace(*cacheKey, checkedKey.empty() ? "" : checkedCore->name());
+          recordTrace(checkedKey.empty() ? "" : checkedCore->name());
           return 0;
         }
         if (options.explain)
@@ -1588,10 +1606,12 @@ int build(const Options &requested,
   int status = emit(options, source, *program, diagnostics, packageObjects,
                     store ? &*store : nullptr);
   if (status == 0 && cacheKey && store) {
-    bool stored =
-        store->put(*cacheKey, options.output, options.emit == "executable");
-    if (stored)
-      recordTrace(*cacheKey, checkedKey.empty() ? "" : checkedCore->name());
+    std::vector<packages::Store::Artifact> artifacts{
+        {*cacheKey, options.output, options.emit == "executable"}};
+    auto trace = traceUpdate(checkedKey.empty() ? "" : checkedCore->name());
+    if (trace)
+      artifacts.push_back({*traceKey, {}, false, *trace});
+    bool stored = store->putMany(artifacts);
     if (options.explain)
       std::cerr << "mettle: cache " << (stored ? "stored " : "could not store ")
                 << cacheKey->substr(0, 12) << '\n';

@@ -49,11 +49,10 @@ public:
   std::string key(const Options &options,
                   const std::vector<resolution::Library::Package> &mounts,
                   const std::set<std::string> &rootFeatures) const;
-  // The probes that produced build `key` from these inputs, replayable
-  // without loading the program, or none when an input is not reproducible
-  // that way. `checked` names the shipped library `key` also covers.
-  std::optional<std::string> trace(const std::string &key,
-                                   const std::string &checked) const;
+  // The probes that produced these inputs, replayable without loading the
+  // program, or none when an input is not reproducible that way. `checked`
+  // names the shipped library the build also covers.
+  std::optional<std::string> trace(const std::string &checked) const;
   // Repeats a trace's probes against the current files and environment;
   // `shipped` yields a shipped library's current key. Fails when a probe
   // resolves differently.
@@ -83,7 +82,7 @@ private:
 
 struct BuildReplay {
   BuildInputs inputs;
-  // The traced build key and the key of the shipped library it covers.
-  std::string key, checked;
+  // The current key of the shipped library the traced build covers.
+  std::string checked;
 };
 } // namespace mettle::driver

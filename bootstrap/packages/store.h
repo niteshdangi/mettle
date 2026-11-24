@@ -49,6 +49,7 @@ public:
     std::string key;
     std::filesystem::path file;
     bool executable = false;
+    std::string_view bytes = {};
   };
 
   class Lease {

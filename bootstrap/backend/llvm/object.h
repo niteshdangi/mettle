@@ -4,6 +4,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/Error.h"
+#include <memory>
 #include <string>
 
 namespace llvm {
@@ -42,8 +43,11 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
                             llvm::StringRef symbolNamespace, bool optimize,
                             ObjectUnitConsumer consume);
 
-llvm::Error
-partitionObjectModule(llvm::Module &module, llvm::StringRef symbolNamespace,
-                      llvm::function_ref<llvm::Error(llvm::Module &)> consume);
+using UnitConsumer = llvm::function_ref<llvm::Error(
+    llvm::Module &unit, std::unique_ptr<llvm::Module> owner)>;
+
+llvm::Error partitionObjectModule(llvm::Module &module,
+                                  llvm::StringRef symbolNamespace,
+                                  UnitConsumer consume);
 
 } // namespace mettle::backend

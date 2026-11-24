@@ -12,6 +12,7 @@
 #include "llvm/Transforms/Utils/ValueMapper.h"
 
 #include <map>
+#include <memory>
 #include <numeric>
 #include <vector>
 
@@ -54,11 +55,12 @@ private:
   llvm::Module &unit;
 };
 
-llvm::Error
-consumeUnit(llvm::Module &module,
-            const std::vector<llvm::GlobalObject *> &definitions,
-            llvm::function_ref<llvm::Error(llvm::Module &)> consume) {
-  llvm::Module unit(module.getModuleIdentifier(), module.getContext());
+llvm::Error consumeUnit(llvm::Module &module,
+                        const std::vector<llvm::GlobalObject *> &definitions,
+                        UnitConsumer consume) {
+  auto owner = std::make_unique<llvm::Module>(module.getModuleIdentifier(),
+                                              module.getContext());
+  auto &unit = *owner;
   unit.setSourceFileName(module.getSourceFileName());
   unit.setTargetTriple(module.getTargetTriple());
   unit.setDataLayout(module.getDataLayout());
@@ -107,27 +109,27 @@ consumeUnit(llvm::Module &module,
   if (llvm::verifyModule(unit, &stream))
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "invalid object unit: " + diagnostic);
-  return consume(unit);
+  return consume(unit, std::move(owner));
 }
 } // namespace
 
-llvm::Error
-partitionObjectModule(llvm::Module &module, llvm::StringRef symbolNamespace,
-                      llvm::function_ref<llvm::Error(llvm::Module &)> consume) {
+llvm::Error partitionObjectModule(llvm::Module &module,
+                                  llvm::StringRef symbolNamespace,
+                                  UnitConsumer consume) {
   if (!module.getModuleInlineAsm().empty() || !module.alias_empty() ||
       !module.ifunc_empty() || module.getNamedMetadata("llvm.dbg.cu"))
-    return consume(module);
+    return consume(module, nullptr);
   for (const auto &global : module.global_values())
     if (global.hasExternalWeakLinkage())
-      return consume(module);
+      return consume(module, nullptr);
   for (const auto &global : module.globals())
     if (global.hasAppendingLinkage() || global.getName().starts_with("llvm."))
-      return consume(module);
+      return consume(module, nullptr);
   llvm::SmallPtrSet<const llvm::GlobalObject *, 32> assemblyLocals;
   for (const auto &function : module)
     for (const auto &block : function)
       if (block.hasAddressTaken())
-        return consume(module);
+        return consume(module, nullptr);
   for (const auto &function : module)
     for (const auto &block : function)
       for (const auto &instruction : block)
@@ -144,7 +146,7 @@ partitionObjectModule(llvm::Module &module, llvm::StringRef symbolNamespace,
             llvm::StringRef(separated).split(lines, '\n');
             for (auto line : lines)
               if (line.trim().starts_with("."))
-                return consume(module);
+                return consume(module, nullptr);
             for (const auto &global : module.global_objects())
               if (global.hasLocalLinkage() && global.hasName() &&
                   text.contains(global.getName()))
@@ -158,7 +160,7 @@ partitionObjectModule(llvm::Module &module, llvm::StringRef symbolNamespace,
       definitions.push_back(&global);
     }
   if (definitions.size() < 2)
-    return consume(module);
+    return consume(module, nullptr);
   for (auto *global : definitions)
     if (global->hasLocalLinkage() && !assemblyLocals.contains(global)) {
       global->setName("mettle.unit." + symbolNamespace + "." +

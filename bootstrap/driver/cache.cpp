@@ -226,7 +226,7 @@ std::vector<std::string> BuildInputs::paths() const {
 }
 
 std::optional<std::string>
-BuildInputs::trace(const std::string &key, const std::string &checked) const {
+BuildInputs::trace(const std::string &checked) const {
   if (!traceable)
     return std::nullopt;
   std::string text;
@@ -234,8 +234,7 @@ BuildInputs::trace(const std::string &key, const std::string &checked) const {
     text += field;
     text.push_back('\0');
   };
-  add("mettle-build-trace-1");
-  add(key);
+  add("mettle-build-trace-2");
   add(checked);
   for (const auto &[path, requested] : requests)
     for (const auto &from : requested) {
@@ -271,11 +270,10 @@ std::optional<BuildReplay> BuildInputs::replay(
     return field;
   };
   auto version = next();
-  auto key = next();
   auto checked = next();
-  if (!version || *version != "mettle-build-trace-1" || !key || !checked)
+  if (!version || *version != "mettle-build-trace-2" || !checked)
     return std::nullopt;
-  BuildReplay result{BuildInputs(libraryDirectory), *key, {}};
+  BuildReplay result{BuildInputs(libraryDirectory), {}};
   if (!checked->empty()) {
     auto current = shipped(*checked);
     if (!current)

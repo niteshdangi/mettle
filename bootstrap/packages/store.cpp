@@ -921,72 +921,11 @@ bool Store::publishLocked(const fs::path &path, const std::string &content) {
 }
 
 bool Store::put(const std::string &key, const fs::path &file, bool executable) {
-  note(key);
-  if (key.size() < 2 || !prepare())
-    return false;
-  auto temporary = scratch();
-  std::error_code error;
-  fs::copy_file(file, temporary, fs::copy_options::overwrite_existing, error);
-  if (error) {
-    fs::remove(temporary, error);
-    return false;
-  }
-  struct Cleanup {
-    fs::path path;
-    ~Cleanup() {
-      std::error_code ignored;
-      fs::remove(path, ignored);
-    }
-  } cleanup{temporary};
-  std::uint64_t size = 0;
-  auto blob = hashFile(temporary, size);
-  if (!blob)
-    return false;
-  fs::permissions(temporary,
-                  fs::perms::owner_read | fs::perms::group_read |
-                      fs::perms::others_read,
-                  fs::perm_options::replace, error);
-  if (error)
-    return false;
-  std::lock_guard accountingGuard(touched->accountingLock);
-  StoreLock lock(directory);
-  if (!lock)
-    return false;
-  auto &index = accountingLocked();
-  if (!index.begin(*this))
-    return false;
-  auto path = blobPath(*blob);
-  fs::create_directories(path.parent_path(), error);
-  if (!error)
-    fs::rename(temporary, path, error);
-  if (error)
-    return false;
-  if (!publishLocked(entryPath(key), "file " + *blob + " " +
-                                         std::to_string(size) +
-                                         (executable ? " x\n" : " -\n")))
-    return false;
-  index.refresh(*this, key);
-  return index.finish(*this);
+  return !file.empty() && putMany({{key, file, executable}});
 }
 
 bool Store::putData(const std::string &key, std::string_view bytes) {
-  note(key);
-  if (key.size() < 2 ||
-      bytes.size() > static_cast<std::uint64_t>(
-                         std::numeric_limits<std::streamsize>::max()) ||
-      !prepare())
-    return false;
-  struct Temporary {
-    fs::path path;
-    ~Temporary() {
-      std::error_code error;
-      fs::remove(path, error);
-    }
-  } temporary{scratch()};
-  std::ofstream out(temporary.path, std::ios::binary | std::ios::trunc);
-  out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-  out.close();
-  return out && put(key, temporary.path, false);
+  return putMany({{key, {}, false, bytes}});
 }
 
 void Store::useShipped(fs::path root) {
@@ -1161,15 +1100,25 @@ bool Store::putMany(const std::vector<Artifact> &artifacts) {
     }
     auto temporary = scratch();
     std::error_code error;
-    fs::copy_file(artifact.file, temporary,
-                  fs::copy_options::overwrite_existing, error);
-    if (error) {
-      fs::remove(temporary, error);
-      discardTemporaries();
-      return false;
-    }
     std::uint64_t size = 0;
-    auto blob = hashFile(temporary, size);
+    std::optional<std::string> blob;
+    if (artifact.file.empty()) {
+      std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+      out.write(artifact.bytes.data(),
+                static_cast<std::streamsize>(artifact.bytes.size()));
+      out.close();
+      if (out) {
+        Sha256 hash;
+        hash.update(artifact.bytes);
+        blob = hash.finish();
+        size = artifact.bytes.size();
+      }
+    } else {
+      fs::copy_file(artifact.file, temporary,
+                    fs::copy_options::overwrite_existing, error);
+      if (!error)
+        blob = hashFile(temporary, size);
+    }
     if (!blob) {
       fs::remove(temporary, error);
       discardTemporaries();

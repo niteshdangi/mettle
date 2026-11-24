@@ -559,8 +559,13 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
     std::string output;
   };
   std::vector<Job> jobs;
+  std::unique_ptr<llvm::Module> localOwner;
+  llvm::Module *local = nullptr;
+  std::string localOutput;
   if (auto error = partitionObjectModule(
-          module, symbolNamespace, [&](llvm::Module &unit) -> llvm::Error {
+          module, symbolNamespace,
+          [&](llvm::Module &unit,
+              std::unique_ptr<llvm::Module> owner) -> llvm::Error {
             Job job;
             llvm::raw_svector_ostream stream(job.bitcode);
             llvm::WriteBitcodeToFile(unit, stream);
@@ -569,10 +574,16 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
                         &unit == &module);
             if (!output)
               return output.takeError();
-            if (!output->empty()) {
-              job.output = std::move(*output);
-              jobs.push_back(std::move(job));
+            if (output->empty())
+              return llvm::Error::success();
+            if (!local) {
+              local = &unit;
+              localOwner = std::move(owner);
+              localOutput = std::move(*output);
+              return llvm::Error::success();
             }
+            job.output = std::move(*output);
+            jobs.push_back(std::move(job));
             return llvm::Error::success();
           }))
     return error;
@@ -596,14 +607,24 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
     if (auto error = writeObject(**unit, **worker, job.output))
       failures[index] = llvm::toString(std::move(error));
   };
-  if (jobs.size() > 1 && llvm::llvm_is_multithreaded()) {
+  auto runLocal = [&] {
+    return local ? writeObject(*local, **machine, localOutput)
+                 : llvm::Error::success();
+  };
+  llvm::Error localError = llvm::Error::success();
+  if (!jobs.empty() && llvm::llvm_is_multithreaded()) {
     llvm::DefaultThreadPool pool(llvm::hardware_concurrency());
     for (std::size_t index = 0; index < jobs.size(); ++index)
       pool.async(run, index);
+    localError = runLocal();
     pool.wait();
-  } else
+  } else {
+    localError = runLocal();
     for (std::size_t index = 0; index < jobs.size(); ++index)
       run(index);
+  }
+  if (localError)
+    return localError;
   for (const auto &failure : failures)
     if (!failure.empty())
       return llvm::createStringError(llvm::inconvertibleErrorCode(), failure);
