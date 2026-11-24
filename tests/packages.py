@@ -838,6 +838,15 @@ def shipped_library_selector():
     assert consumer.returncode == 0, consumer.stderr
     assert "shipped library selector hit core" in consumer.stderr, consumer.stderr
     assert all(path.stat().st_mtime_ns == stamp for path, stamp in before.items())
+    archive = max((path for path in (shipped / "blobs").rglob("*") if path.is_file()),
+                  key=lambda path: path.stat().st_size)
+    corrupted = bytearray(archive.read_bytes())
+    corrupted[len(corrupted) // 2] ^= 0xFF
+    archive.chmod(0o644)
+    archive.write_bytes(corrupted)
+    recovered = invoke_result(arguments, environment)
+    assert recovered.returncode == 0, recovered.stderr
+    assert "checked library interface cache corrupt core" in recovered.stderr, recovered.stderr
     library = Path(__file__).resolve().parents[1] / "library"
     editable = invoke_result([*arguments, "--library-dir", library], environment)
     assert editable.returncode == 0, editable.stderr

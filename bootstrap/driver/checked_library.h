@@ -73,8 +73,10 @@ private:
   bool loadArchive(std::string &error, bool shipped = false);
   bool publishShippedSelector(std::string &error);
   bool prepareInputs(std::string &error);
+  bool collectInputs(std::string &error);
+  bool loadShipped(std::string &error);
   std::optional<resolution::BuiltinMethodIndex> builtinMethodIndex();
-  const Source *input(const std::string &path) const;
+  const Source *input(const std::string &path);
   bool ensureMounted(std::string &error);
   std::optional<pipeline::ImportedProgram>
   import(const Module &module, const resolution::Resolution &resolution,
@@ -100,7 +102,7 @@ private:
   std::string root;
   bool inputsPrepared = false, ineligible = false, mounted = false,
        used = false, unavailable = false, methodIndexUsed = false,
-       shippedArchive = false;
+       shippedArchive = false, shippedLoaded = false;
 };
 
 class CheckedLibraries {

@@ -188,7 +188,11 @@ The user build cache is built to retain less than Cargo's `target/` directory:
   reason.
 - **Verified and atomic.** Writes go to `tmp/` and are published by rename; a
   hit re-hashes the blob and a mismatch deletes the entry and blob and
-  rebuilds (`entry corrupt`).
+  rebuilds (`entry corrupt`). As in git's index, a verified blob of at least
+  1 MiB records its device, inode, size, mtime and ctime under `verified/`
+  (`verified-shipped/` for the shipped store); while that stamp matches, a hit
+  skips re-hashing. Any write changes the stamp and forces verification, and
+  blobs changed within two seconds of the check are not stamped.
   Store-locked mutations mark accounting dirty before publication and atomically
   replace affected, checksummed accounting shards and their aggregate state
   before clearing that marker. Length-framed checksums detect truncated

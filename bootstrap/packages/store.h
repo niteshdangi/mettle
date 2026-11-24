@@ -20,6 +20,10 @@ namespace mettle::packages {
 //   VERSION            marks a directory as a store (required before `clear`)
 //   entries/AA/KEY     one small file per key; its mtime is the last use
 //   blobs/AA/SHA       immutable, read-only artifact bytes
+//   verified/AA/SHA    stat stamp (device, inode, size, mtime, ctime) of a
+//                      blob that passed verification; while it matches, the
+//                      blob is not re-hashed (git's index stat cache)
+//   verified-shipped/  the same for the shipped store's blobs
 //   roots/ID           working set (source path, then keys) of one project
 //                      configuration, written by `commitProject`
 //   leases/KEY/TOKEN   live-build markers; excluded from cache accounting
@@ -105,7 +109,8 @@ public:
     Lookup status = Lookup::Miss;
     std::shared_ptr<const Mapping> mapping;
   };
-  using Verifier = std::function<bool(const std::shared_ptr<const Mapping> &)>;
+  using Verifier = std::function<bool(const std::shared_ptr<const Mapping> &,
+                                      bool authenticated)>;
   Mapped mapped(const std::string &key, std::uint64_t maximumBytes,
                 const Verifier &verify = {});
   Mapped shippedMapped(const std::string &key, std::uint64_t maximumBytes,
@@ -158,6 +163,8 @@ private:
   };
   std::filesystem::path entryPath(const std::string &key) const;
   std::filesystem::path blobPath(const std::string &blob) const;
+  std::filesystem::path stampPath(const std::string &blob) const;
+  void removeBlob(const std::string &blob, std::error_code &error) const;
   std::filesystem::path scratch() const;
   bool prepare();
   bool publish(const std::string &key, const std::string &content);
@@ -177,6 +184,7 @@ private:
   };
   void note(const std::string &key) const;
   std::filesystem::path directory;
+  std::filesystem::path stamps;
   StoreLimits bounds;
   std::shared_ptr<Touched> touched = std::make_shared<Touched>();
 };

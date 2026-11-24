@@ -32,7 +32,7 @@ private:
                                                          std::string &);
   friend std::optional<LibraryArchive>
   decodeLibraryArchive(std::string_view, std::string_view, std::string &,
-                       std::shared_ptr<const void>);
+                       std::shared_ptr<const void>, bool);
   bool validate(std::string &error) const;
   struct Data {
     std::string identity;
@@ -113,8 +113,7 @@ std::string archiveDigest(std::string_view bytes);
 std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
                                                 std::string &error);
 // With `backing`, `bytes` lives in it and the sections are views, not copies.
-std::optional<LibraryArchive>
-decodeLibraryArchive(std::string_view bytes, std::string_view identity,
-                     std::string &error,
-                     std::shared_ptr<const void> backing = nullptr);
+std::optional<LibraryArchive> decodeLibraryArchive(
+    std::string_view bytes, std::string_view identity, std::string &error,
+    std::shared_ptr<const void> backing = nullptr, bool authenticated = false);
 } // namespace mettle::driver

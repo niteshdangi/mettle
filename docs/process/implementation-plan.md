@@ -2081,6 +2081,13 @@ Mettle (Rust), in seconds: noop build 0.072 -> 0.018 (0.012), comment edit
 0.076 -> 0.018 (0.078); clean build 0.36 (0.12), semantic edit 0.29 (0.081),
 check 0.15 (0.074), application build 0.36 (0.073) and application check 0.14
 (0.022) remain open. Evidence: `~/w/anal/p03-lag/h3b` and `h4`.
+A shipped library selected by its source selector is now mapped only when
+first demanded, and is the only source of its dependencies' inputs, so an
+alloc check no longer decodes core's archive. Store blobs of at least 1 MiB
+that passed verification carry a stat stamp and are not re-hashed while it
+matches. Medians, Mettle (Rust): check 0.15 -> 0.12 (0.071), application
+check 0.14 -> 0.11 (0.021), semantic edit 0.29 -> 0.25 (0.21), clean build
+0.36 -> 0.34 (0.25); checks remain open. Evidence: `~/w/anal/p03-lag/h5`.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

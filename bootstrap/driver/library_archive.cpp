@@ -808,7 +808,8 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
 
 std::optional<LibraryArchive>
 decodeLibraryArchive(std::string_view bytes, std::string_view identity,
-                     std::string &error, std::shared_ptr<const void> backing) {
+                     std::string &error, std::shared_ptr<const void> backing,
+                     bool authenticated) {
   error.clear();
   if (bytes.size() > limits::sourceBytes || bytes.size() < 64) {
     error = "invalid compiled library archive size or checksum";
@@ -961,8 +962,9 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
                    irLayout.bodies.size());
   excludePayloads(excluded, declarationsOffset, declarationsLayout.payloads);
   excludePayloads(excluded, irOffset, irLayout.bodies);
-  if (metadataDigest(bytes.substr(0, bytes.size() - 64), excluded) !=
-      bytes.substr(bytes.size() - 64)) {
+  if (!authenticated &&
+      metadataDigest(bytes.substr(0, bytes.size() - 64), excluded) !=
+          bytes.substr(bytes.size() - 64)) {
     error = "invalid compiled library archive metadata checksum";
     return std::nullopt;
   }

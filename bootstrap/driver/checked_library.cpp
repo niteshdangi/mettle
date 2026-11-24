@@ -182,9 +182,11 @@ bool CheckedLibrary::loadArchive(std::string &error, bool shipped) {
     }
   std::optional<LibraryArchive> decoded;
   auto verify =
-      [&](const std::shared_ptr<const packages::Store::Mapping> &mapping) {
+      [&](const std::shared_ptr<const packages::Store::Mapping> &mapping,
+          bool authenticated) {
         const auto bytes = mapping->bytes();
-        decoded = decodeLibraryArchive(bytes, archiveKey, error, mapping);
+        decoded = decodeLibraryArchive(bytes, archiveKey, error, mapping,
+                                       authenticated);
         if (decoded)
           archiveContent = std::string(bytes.substr(bytes.size() - 64));
         return decoded.has_value();
@@ -221,6 +223,8 @@ bool CheckedLibrary::publishShippedSelector(std::string &error) {
 }
 
 bool CheckedLibrary::prepareArchive(std::string &error) {
+  if (!loadShipped(error))
+    return false;
   if (shippedArchive)
     return true;
   lease = store.acquireLease(archiveKey);
@@ -545,21 +549,22 @@ bool CheckedLibrary::prepareInputs(std::string &error) {
           entry.bytes.size() == 64 &&
           entry.bytes.find_first_not_of("0123456789abcdef") ==
               std::string::npos) {
+        if (options.explain)
+          std::cerr << "mettle: shipped library selector hit " << root << '\n';
         archiveKey = std::move(entry.bytes);
-        if (loadArchive(error, true)) {
-          if (options.explain)
-            std::cerr << "mettle: shipped library selector hit " << root
-                      << '\n';
-          shippedArchive = inputsPrepared = true;
-          return true;
-        }
-        error.clear();
+        shippedArchive = inputsPrepared = true;
+        return true;
       }
       if (entry.status != packages::Store::Lookup::Miss && options.explain)
         std::cerr << "mettle: shipped library selector unusable " << root
                   << "; scanning sources\n";
     }
   }
+  return collectInputs(error);
+}
+
+bool CheckedLibrary::collectInputs(std::string &error) {
+  auto directory = std::filesystem::path(options.libraryDirectory) / root;
   std::shared_ptr<const LibraryInputs> inputs;
   if (options.libraryQueries) {
     std::string fallback;
@@ -579,6 +584,22 @@ bool CheckedLibrary::prepareInputs(std::string &error) {
   return true;
 }
 
+bool CheckedLibrary::loadShipped(std::string &error) {
+  if (!shippedArchive || shippedLoaded)
+    return true;
+  if (loadArchive(error, true))
+    return shippedLoaded = true;
+  error.clear();
+  shippedArchive = false;
+  auto selected = archiveKey;
+  if (!collectInputs(error))
+    return false;
+  if (archiveKey == selected)
+    return true;
+  error = "shipped " + root + " library sources do not match its selector";
+  return false;
+}
+
 std::optional<resolution::BuiltinMethodIndex>
 CheckedLibrary::builtinMethodIndex() {
   if (ineligible)
@@ -592,6 +613,26 @@ CheckedLibrary::builtinMethodIndex() {
     return std::nullopt;
   }
   methodIndexUsed = true;
+  packages::Sha256 identity;
+  identity.update("mettle.builtin-methods.2:");
+  identity.update(archiveKey);
+  auto key = identity.finish();
+  if (shippedArchive && !shippedLoaded) {
+    auto shipped = store.shippedData(key, limits::sourceBytes);
+    if (shipped.status == packages::Store::Lookup::Hit)
+      if (auto index = decodeMethodIndex(std::move(shipped.bytes))) {
+        if (options.explain)
+          std::cerr << "mettle: shipped builtin method index hit\n";
+        return index;
+      }
+    if (!loadShipped(error)) {
+      ineligible = true;
+      if (options.explain)
+        std::cerr << "mettle: builtin method index unavailable: " << error
+                  << "; using source\n";
+      return std::nullopt;
+    }
+  }
 #ifdef METTLE_PREPARED_BUILTIN_METHOD_INDEX
   auto directory = std::filesystem::path(options.libraryDirectory) / "core";
   if (std::all_of(std::begin(builtinMethodDigests),
@@ -617,15 +658,15 @@ CheckedLibrary::builtinMethodIndex() {
     if (!index)
       receiverDiagnostics->error("internal", {},
                                  "invalid prepared builtin method index");
+    else if (options.prepareShippedLibrary &&
+             !store.putData(key, builtinMethodNames))
+      receiverDiagnostics->error("io", {},
+                                 "cannot publish builtin method index");
     else if (options.explain)
       std::cerr << "mettle: prepared builtin method index hit\n";
     return index;
   }
 #endif
-  packages::Sha256 identity;
-  identity.update("mettle.builtin-methods.2:");
-  identity.update(archiveKey);
-  auto key = identity.finish();
   auto lease = store.acquireLease(key);
   if (!lease) {
     receiverDiagnostics->error("io", {},
@@ -671,13 +712,22 @@ CheckedLibrary::builtinMethodIndex() {
   return index;
 }
 
-const Source *CheckedLibrary::input(const std::string &path) const {
+const Source *CheckedLibrary::input(const std::string &path) {
   for (auto unit = this; unit; unit = unit->dependency) {
+    std::string error;
+    if (!unit->loadShipped(error)) {
+      unit->unavailable = true;
+      if (receiverDiagnostics)
+        receiverDiagnostics->error("metadata", {}, error);
+      return nullptr;
+    }
     if (unit->shippedArchive) {
       for (const auto &source : unit->archive.sources.snapshots())
         if (source.path == path)
           return &source;
-    } else if (unit->sourceInputs) {
+      return nullptr;
+    }
+    if (unit->sourceInputs) {
       auto found = unit->sourceInputs->sources.find(path);
       if (found != unit->sourceInputs->sources.end())
         return &found->second;

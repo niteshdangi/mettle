@@ -7,6 +7,7 @@
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
+#include <ctime>
 #include <fcntl.h>
 #include <fstream>
 #include <limits>
@@ -30,6 +31,39 @@ std::optional<std::string> readText(const fs::path &path) {
   std::ostringstream text;
   text << stream.rdbuf();
   return text.str();
+}
+
+std::string fileStamp(const struct stat &status) {
+#ifdef __APPLE__
+  const auto &modified = status.st_mtimespec, &changed = status.st_ctimespec;
+#else
+  const auto &modified = status.st_mtim, &changed = status.st_ctim;
+#endif
+  if (changed.tv_sec + 2 > std::time(nullptr))
+    return {};
+  std::ostringstream text;
+  text << status.st_dev << ' ' << status.st_ino << ' ' << status.st_size << ' '
+       << modified.tv_sec << ' ' << modified.tv_nsec << ' ' << changed.tv_sec
+       << ' ' << changed.tv_nsec << '\n';
+  return text.str();
+}
+
+void recordStamp(const fs::path &path, const std::string &stamp) {
+  static std::atomic<unsigned> counter{0};
+  std::error_code error;
+  fs::create_directories(path.parent_path(), error);
+  auto temporary = path;
+  temporary +=
+      "." + std::to_string(getpid()) + "-" + std::to_string(counter++) + ".tmp";
+  bool written = false;
+  {
+    std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+    written = static_cast<bool>(out << stamp << std::flush);
+  }
+  if (written)
+    fs::rename(temporary, path, error);
+  if (!written || error)
+    fs::remove(temporary, error);
 }
 
 struct Entry {
@@ -537,14 +571,15 @@ struct Store::Accounting {
       auto size = record.blob.empty() ? 0 : sizeOf(store.blobPath(record.blob));
       insert(std::move(record), size);
     }
-    for (fs::recursive_directory_iterator it(store.directory / "blobs", error),
-         end;
-         !error && it != end; it.increment(error)) {
-      std::error_code ignored;
-      if (it->is_regular_file(ignored) &&
-          !blobs.contains(it->path().filename().string()))
-        fs::remove(it->path(), ignored);
-    }
+    for (const auto *root : {"blobs", "verified"})
+      for (fs::recursive_directory_iterator it(store.directory / root, error),
+           end;
+           !error && it != end; it.increment(error)) {
+        std::error_code ignored;
+        if (it->is_regular_file(ignored) &&
+            !blobs.contains(it->path().filename().string()))
+          fs::remove(it->path(), ignored);
+      }
     error.clear();
     for (fs::directory_iterator it(store.directory / "roots", error), end;
          !error && it != end; it.increment(error)) {
@@ -678,7 +713,7 @@ struct Store::Accounting {
     released.erase(key);
     if (!blob.empty() && !blobs.contains(blob)) {
       std::error_code ignored;
-      fs::remove(store.blobPath(blob), ignored);
+      store.removeBlob(blob, ignored);
     }
   }
   void refresh(Store &store, const std::string &key) {
@@ -712,7 +747,7 @@ struct Store::Accounting {
     auto previousBlob = old == entries.end() ? std::string() : old->second.blob;
     insert(std::move(record), blobSize);
     if (!previousBlob.empty() && !blobs.contains(previousBlob))
-      fs::remove(store.blobPath(previousBlob), error);
+      store.removeBlob(previousBlob, error);
   }
 };
 
@@ -741,7 +776,8 @@ std::optional<std::string> hashFile(const fs::path &file, std::uint64_t &size) {
 }
 
 Store::Store(fs::path root, StoreLimits limits)
-    : directory(std::move(root)), bounds(limits) {}
+    : directory(std::move(root)), stamps(directory / "verified"),
+      bounds(limits) {}
 
 Store::Lease::Lease(fs::path marker) : marker(std::move(marker)) {}
 
@@ -804,6 +840,16 @@ fs::path Store::entryPath(const std::string &key) const {
 
 fs::path Store::blobPath(const std::string &blob) const {
   return directory / "blobs" / blob.substr(0, 2) / blob;
+}
+
+fs::path Store::stampPath(const std::string &blob) const {
+  return stamps / blob.substr(0, 2) / blob;
+}
+
+void Store::removeBlob(const std::string &blob, std::error_code &error) const {
+  std::error_code ignored;
+  fs::remove(stampPath(blob), ignored);
+  fs::remove(blobPath(blob), error);
 }
 
 fs::path Store::scratch() const {
@@ -946,6 +992,7 @@ bool Store::putData(const std::string &key, std::string_view bytes) {
 void Store::useShipped(fs::path root) {
   shipped = std::make_unique<Store>(std::move(root), StoreLimits{0, 0});
   shipped->readOnly = true;
+  shipped->stamps = directory / "verified-shipped";
 }
 
 Store::Data Store::data(const std::string &key, std::uint64_t maximumBytes) {
@@ -1003,7 +1050,7 @@ void Store::invalidate(const std::string &key, const std::string &content,
   std::error_code error;
   if (blob)
     if (auto entry = parseEntry(content); entry && !entry->blob.empty()) {
-      fs::remove(blobPath(entry->blob), error);
+      removeBlob(entry->blob, error);
       auto found = index.blobs.find(entry->blob);
       if (found != index.blobs.end()) {
         index.total -= found->second.size;
@@ -1054,6 +1101,10 @@ Store::Mapped Store::localMapped(const std::string &key,
   int descriptor = open(blob.c_str(), O_RDONLY);
   if (descriptor < 0)
     return corrupt();
+  struct stat status{};
+  auto stamp = size < (std::uintmax_t{1} << 20) || fstat(descriptor, &status)
+                   ? std::string()
+                   : fileStamp(status);
   const void *address = size ? mmap(nullptr, static_cast<std::size_t>(size),
                                     PROT_READ, MAP_PRIVATE, descriptor, 0)
                              : nullptr;
@@ -1062,15 +1113,19 @@ Store::Mapped Store::localMapped(const std::string &key,
     return corrupt();
   auto mapping =
       std::make_shared<const Mapping>(address, static_cast<std::size_t>(size));
+  auto stampFile = stampPath(entry->blob);
+  bool authenticated = !stamp.empty() && readText(stampFile) == stamp;
   if (verify) {
-    if (!verify(mapping))
+    if (!verify(mapping, authenticated))
       return corrupt();
-  } else {
+  } else if (!authenticated) {
     packages::Sha256 hash;
     hash.update(mapping->bytes());
     if (hash.finish() != entry->blob)
       return corrupt();
   }
+  if (!stamp.empty() && !authenticated)
+    recordStamp(stampFile, stamp);
   if (!readOnly)
     touch(path);
   return {Lookup::Hit, std::move(mapping)};
@@ -1541,8 +1596,9 @@ std::optional<StoreUsage> Store::clear(bool dryRun, std::string &error) {
     error = "cache store has live build leases";
     return std::nullopt;
   }
-  for (const char *name : {"entries", "blobs", "tmp", "leases", "roots",
-                           "accounting", "accounting.dirty"}) {
+  for (const char *name :
+       {"entries", "blobs", "tmp", "leases", "roots", "verified",
+        "verified-shipped", "accounting", "accounting.dirty"}) {
     fs::remove_all(directory / name, code);
     if (code) {
       error = "cannot remove " + (directory / name).generic_string() + ": " +
