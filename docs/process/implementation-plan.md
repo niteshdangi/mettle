@@ -1988,6 +1988,11 @@ median (resampled 95% interval: 0.31 to 2.62 ms); P03 and P04 were inconclusive.
 Compacting the unwritten `LineWriter` suffix in place instead of replacing its
 buffer reduced the 16,384-write line-and-tail loop from 14.550 to 10.988 ms
 (3.510 ms paired saving across 90 pairs).
+Lowering now avoids moving a throwing return through two cleanup slots and
+reuses the immediately preceding outcome slot for `try` when its cleanup
+scope is unchanged. The 16,384-write no-LF `LineWriter` loop improved from
+1.415 to 0.824 ms (0.592 ms paired saving over 110 trials). The 260 paired
+P05 executions had matching results and no measurable runtime change.
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17

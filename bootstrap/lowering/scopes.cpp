@@ -68,7 +68,16 @@ void Builder::returnValue(Value value, Span span, bool failure) {
         emit({Op::Move, {}, {}, {}, "", {constructorSelfSlot, {}}, -1, 0, span},
              function.locals[constructorSelfSlot].type);
   if (errorType != Type::Unknown)
-    value = variant(function.result, failure ? 1 : 0, {value}, span);
+    value = emit({Op::VariantConstruct,
+                  {},
+                  {use(value)},
+                  {},
+                  "",
+                  {-1, {}},
+                  -1,
+                  failure ? 1 : 0,
+                  span},
+                 function.result);
   std::optional<Place> pending;
   if (module.typeStore()->needsDrop(value.type))
     pending = materialize(value, span, -2);

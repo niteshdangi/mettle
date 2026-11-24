@@ -17,7 +17,15 @@ void Builder::fail(Value error, Span span) {
   jump(effectHandlers.back().failed);
 }
 Builder::Value Builder::unwrapOutcome(Value outcome, Span span) {
-  auto storage = materialize(outcome, span, temporaryScope);
+  Place storage;
+  auto owned = owners.find(outcome.id);
+  if (owned != owners.end() &&
+      function.locals[owned->second.root].scope == temporaryScope &&
+      function.locals[owned->second.root].order + 1 == order) {
+    storage = owned->second;
+    owners.erase(owned);
+  } else
+    storage = materialize(outcome, span, temporaryScope);
   const auto &sum = module.typeStore()->product(outcome.type);
   auto test =
       emit({Op::VariantTest, {}, {}, {}, "", storage, -1, 0, span}, Type::Bool);
