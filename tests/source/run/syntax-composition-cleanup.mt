@@ -11,12 +11,12 @@ fn guarded(mut count: i32): Unit throws i32 {
     }
 }
 
-fn choose<region r>(take guard: Guard<region r>, passes: bool): Guard<region r> throws i32 {
-    if !passes { throw guard.tag }
+fn choose<region r>(take guard: Guard<region r>, passes: bool): Guard<region r> throws Guard<region r> {
+    if !passes { throw guard }
     guard
 }
 
-fn forward<region r>(take guard: Guard<region r>, passes: bool): Guard<region r> throws i32 {
+fn forward<region r>(take guard: Guard<region r>, passes: bool): Guard<region r> throws Guard<region r> {
     try choose(guard, passes)
 }
 
@@ -57,7 +57,7 @@ fn main(): i32 {
     if drops != 8 { return 11 }
     match take capture forward(Guard(mut drops, 12), false) {
         success(_) => { return 12 },
-        failure(tag) => { if tag != 12 { return 13 } }
+        failure(guard) => { if guard.tag != 12 { return 13 } }
     }
     if drops != 9 { return 14 }
     0

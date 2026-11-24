@@ -1996,6 +1996,8 @@ reuses the immediately preceding outcome slot for `try` when its cleanup
 scope is unchanged. The 16,384-write no-LF `LineWriter` loop improved from
 1.415 to 0.824 ms (0.592 ms paired saving over 110 trials). The 260 paired
 P05 executions had matching results and no measurable runtime change.
+For 16,384 `"a\nb"` writes, the same outcome lowering reduced the loop from
+10.894 to 7.430 ms (3.438 ms paired saving over 100 trials).
 I14 qualification and runtime parity are not claimed.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
