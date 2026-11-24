@@ -196,6 +196,14 @@ public:
     result.requireEntry = source.requireEntry && !library;
     result.statics = source.statics;
     result.staticPackages = source.staticPackages;
+    if (library) {
+      auto owned = result.statics.size();
+      while (owned > 0 && !packageOwned(source.staticPackages, owned - 1))
+        --owned;
+      result.statics.resize(owned);
+      result.staticPackages.resize(
+          std::min(owned, source.staticPackages.size()));
+    }
     result.libraries = source.libraries;
     result.target = source.target;
   }
@@ -1031,6 +1039,8 @@ private:
                         : header.externalName;
       result.functions.push_back(header.externalDeclaration(std::move(symbol)));
       result.functionPackages.push_back(source.functionPackages[index]);
+      result.declarationSources.resize(id);
+      result.declarationSources.push_back(index);
       return id;
     }
     if (header.declarationOnly)

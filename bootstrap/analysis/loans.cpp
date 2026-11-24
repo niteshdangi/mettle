@@ -5,6 +5,7 @@
 #include <iterator>
 #include <map>
 #include <optional>
+#include <ranges>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -88,11 +89,12 @@ void check(const ir::Function &function, const ir::Program &program,
     for (const auto &[instruction, point] : block)
       for (auto id : point.defines)
         external.erase(id);
+  const auto order = reversePostorder(function);
   std::vector<std::set<int>> liveValues(count);
   bool changed;
   do {
     changed = false;
-    for (std::size_t b = count; b-- > 0;) {
+    for (auto b : std::views::reverse(order)) {
       if (!reachable[b])
         continue;
       std::set<int> live;
@@ -145,12 +147,12 @@ void check(const ir::Function &function, const ir::Program &program,
             (void)path;
             join(held, sources);
           }
-    held = ancestors(held, info.loans);
+    held = ancestors(std::move(held), info.loans);
   }
   std::vector<Origins> pendingIn(count), pendingOut(count);
   do {
     changed = false;
-    for (std::size_t b = 0; b < count; ++b) {
+    for (auto b : order) {
       if (!reachable[b])
         continue;
       Origins available = b == 0 ? external : Origins{}, active, pending;
@@ -264,13 +266,15 @@ void check(const ir::Function &function, const ir::Program &program,
     for (auto id : info.point(b, i).defines)
       live.erase(id);
     join(live, info.point(b, i).uses);
-    return includeParents ? ancestors(live, info.loans) : live;
+    if (includeParents)
+      return ancestors(std::move(live), info.loans);
+    return live;
   };
   std::vector<Origins> inputs(count), outputs(count), directInputs(count),
       directOutputs(count);
   do {
     changed = false;
-    for (std::size_t b = count; b-- > 0;) {
+    for (auto b : std::views::reverse(order)) {
       if (!reachable[b])
         continue;
       Origins live = info.returns[b], direct = info.returns[b];
@@ -650,9 +654,12 @@ std::vector<std::size_t> calleeFirstRank(const ir::Program &program) {
   return rank;
 }
 } // namespace
-LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
-                  const ir::Program *prepared, const LoanResults *previous,
-                  const std::vector<bool> *trusted) {
+LoanResults
+loans(const ir::Program &program, Diagnostics &diagnostics,
+      const ir::Program *prepared, const LoanResults *previous,
+      const std::vector<bool> *trusted,
+      const std::function<std::optional<ir::Function>(std::size_t)> &loadBody,
+      const std::vector<std::size_t> *seeds) {
   LoanResults result;
   try {
     auto isTrusted = [&](std::size_t f) {
@@ -660,11 +667,27 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
     };
     EffectSummaries summaries(program.functions.size());
     std::vector<std::set<std::size_t>> dependents(program.functions.size());
-    std::vector<bool> reusable(program.functions.size(), false);
+    std::vector<bool> reusable(program.functions.size(), false),
+        declared(program.functions.size(), false);
+    if (seeds && previous)
+      for (std::size_t f = 0;
+           f < program.functions.size() && f < previous->analyzed.size(); ++f)
+        if (previous->analyzed[f]) {
+          reusable[f] = true;
+          summaries.slot(f) = previous->effects[f];
+          summaries.setBodied(f, f < program.lazyFunctionRecords.size() &&
+                                     program.lazyFunctionRecords[f]);
+        }
+    if (prepared && previous)
+      for (std::size_t f = 0; f < program.declarationSources.size(); ++f)
+        if (auto source = program.declarationSources[f];
+            source && *source < previous->effects.size() &&
+            *source < previous->analyzed.size() && previous->analyzed[*source])
+          declared[f] = true;
     if (prepared && previous &&
         previous->effects.size() == prepared->functions.size()) {
       for (std::size_t f = 0; f < program.functions.size(); ++f) {
-        if (isTrusted(f) && program.deferredFunctionIndex(f))
+        if ((isTrusted(f) && program.deferredFunctionIndex(f)) || declared[f])
           continue;
         const auto &function = program.functions[f];
         reusable[f] = f < prepared->functions.size() &&
@@ -699,25 +722,49 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
           ++result.reusedFunctions;
         }
     }
+    for (std::size_t f = 0; f < declared.size(); ++f)
+      if (declared[f]) {
+        reusable[f] = true;
+        summaries.slot(f) = previous->effects[*program.declarationSources[f]];
+        summaries.setBodied(f, true);
+      }
     // Analyzing callees before callers lets most summaries settle on the first
     // visit instead of re-running every caller after each callee changes.
     const auto rank = calleeFirstRank(program);
     std::set<std::pair<std::size_t, std::size_t>> pending;
     std::vector<bool> scheduled(program.functions.size(), false);
-    for (std::size_t f = 0; f < program.functions.size(); ++f)
-      if (!reusable[f] && !isTrusted(f)) {
-        pending.emplace(rank[f], f);
-        scheduled[f] = true;
-      }
+    if (seeds) {
+      for (auto f : *seeds)
+        if (!reusable[f] && !scheduled[f]) {
+          pending.emplace(rank[f], f);
+          scheduled[f] = true;
+        }
+    } else
+      for (std::size_t f = 0; f < program.functions.size(); ++f)
+        if (!reusable[f] && !isTrusted(f)) {
+          pending.emplace(rank[f], f);
+          scheduled[f] = true;
+        }
     std::vector<std::optional<ir::Function>> expanded(program.functions.size());
+    std::vector<std::optional<ir::Function>> bodies(program.functions.size());
+    std::vector<std::optional<OriginInfo>> infos(program.functions.size());
     std::size_t steps = 0;
     while (!pending.empty()) {
       auto f = pending.begin()->second;
       pending.erase(pending.begin());
+      bool loaded = false;
+      if (loadBody && !bodies[f] && isTrusted(f) &&
+          f < program.lazyFunctionRecords.size() &&
+          program.lazyFunctionRecords[f] && program.functions[f].blocks.empty())
+        if ((bodies[f] = loadBody(f)) && !bodies[f]->blocks.empty()) {
+          summaries.setBodied(f, true);
+          loaded = true;
+        }
       std::set<std::size_t> reads;
       summaries.record(&reads);
-      auto &function = withStaticOrigins(program.functions[f], program,
-                                         summaries, expanded[f]);
+      auto &function =
+          withStaticOrigins(bodies[f] ? *bodies[f] : program.functions[f],
+                            program, summaries, expanded[f]);
       auto info = origins(function, program, summaries);
       summaries.record(nullptr);
       for (auto callee : reads) {
@@ -728,21 +775,20 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
         }
       }
       const bool stable = info.effects == summaries.slot(f);
-      if (!stable) {
+      if (!stable || loaded) {
         if (++steps > limits::activeLoans)
           throw std::length_error("view effect analysis limit exceeded");
-        summaries.slot(f) = std::move(info.effects);
+        summaries.slot(f) = info.effects;
         for (auto dependent : dependents[f])
           pending.emplace(rank[dependent], dependent);
       }
+      if (!isTrusted(f))
+        infos[f] = std::move(info);
     }
     for (std::size_t f = 0; f < program.functions.size(); ++f)
-      if (!reusable[f] && !isTrusted(f)) {
-        const auto &function =
-            expanded[f] ? *expanded[f] : program.functions[f];
-        auto info = origins(function, program, summaries);
-        check(function, program, info, diagnostics);
-      }
+      if (infos[f])
+        check(expanded[f] ? *expanded[f] : program.functions[f], program,
+              *infos[f], diagnostics);
     if (diagnostics.empty()) {
       result.analyzed.assign(program.functions.size(), true);
       for (std::size_t f = 0; f < program.functions.size(); ++f)

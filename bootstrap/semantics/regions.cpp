@@ -695,6 +695,7 @@ private:
   std::unordered_map<const Node *, Type> expressionErrors;
   std::unordered_map<const Node *, Type> expectedTypes;
   std::unordered_map<const Node *, Type> callableAdaptations;
+  std::unordered_map<const Node *, Type> capturingTypes;
   std::unordered_map<std::uint32_t, CallableType> closureDescriptors;
   std::vector<Type> *inferredReturns = nullptr;
   unsigned captureDepth = 0;
@@ -2808,12 +2809,31 @@ Type RegionPass::call(const Node &node, bool operatorIndex) {
       existing->second = region;
     }
   }
+  auto boundBindings = typeBindings;
+  bool capturing = false;
+  for (std::size_t i = 0; i < arguments.size(); ++i) {
+    auto environment = capturingTypes.find(node.children[i + 1].get());
+    auto parameter = parameterForArgument(i);
+    if (environment == capturingTypes.end() ||
+        parameter >= signature.parameters.size())
+      continue;
+    for (auto &binding : boundBindings)
+      if (binding.parameter == signature.parameters[parameter]) {
+        binding.argument = environment->second;
+        capturing = true;
+      }
+  }
+  if (capturing)
+    capturingTypes[&node] =
+        replace(types.substitute(replace(signature.result, substitution),
+                                 boundBindings),
+                bindings);
   if (!typeBindings.empty())
     withinBounds(declaration.genericParameters, declaration.constraints,
-                 typeBindings, *declarationContext, bindings, node.span);
+                 boundBindings, *declarationContext, bindings, node.span);
   for (const auto &bound : facts(node).deferredInterfaceBounds) {
     auto subject =
-        replace(types.substitute(bound.subject, typeBindings), bindings);
+        replace(types.substitute(bound.subject, boundBindings), bindings);
     auto required = bound.property == interfaces::Property::Interface
                         ? decorate(bound.interfaceType, bound.syntax,
                                    *declarationContext, node.span)
@@ -3119,6 +3139,8 @@ Type RegionPass::closure(const Node &node) {
     types.defineClosure(checked.type, std::move(fields), std::move(descriptor));
   }
   auto environmentType = types.regionalProduct(checked.type, captures, {});
+  if (expected && !captures.empty())
+    capturingTypes[&node] = environmentType;
   auto result = expectedType;
   if (!expected) {
     result = environmentType;

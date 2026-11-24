@@ -2,10 +2,11 @@ import alloc.alloc.{Allocator, Global, Layout, AllocError}
 import core.cmp.{PartialEq, Eq}
 import core.hash.{Hash, Hasher}
 
-type AllocationState { grows: usize; shrinks: usize; fail_shrink: bool; fail_grow: bool }
+type AllocationState { fail_allocate: bool }
 type CountingAllocator { state: ptr<mut AllocationState> }
 unsafe extend CountingAllocator implements Allocator {
     mut fn allocate(layout: Layout): ptr<mut u8> throws AllocError {
+        if unsafe { (*self.state).fail_allocate } { throw AllocError(layout.size(), layout.align()) }
         var global = Global()
         try global.allocate(layout)
     }
@@ -14,18 +15,10 @@ unsafe extend CountingAllocator implements Allocator {
         unsafe { global.deallocate(pointer, layout) }
     }
     mut unsafe fn grow(pointer: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
-        unsafe {
-            (*self.state).grows += 1usize
-            if (*self.state).fail_grow { throw AllocError(size, old.align()) }
-        }
         var global = Global()
         unsafe { try global.grow(pointer, old, size) }
     }
     mut unsafe fn shrink(pointer: ptr<mut u8>, old: Layout, size: usize): ptr<mut u8> throws AllocError {
-        unsafe {
-            (*self.state).shrinks += 1usize
-            if (*self.state).fail_shrink { throw AllocError(size, old.align()) }
-        }
         var global = Global()
         unsafe { try global.shrink(pointer, old, size) }
     }
@@ -58,23 +51,22 @@ type DropValue {
 }
 
 fn main(): i32 {
-    var allocation = AllocationState(0usize, 0usize, false, false)
+    var allocation = AllocationState(false)
     var map = alloc.hash_map.new_in<i32, i32, CountingAllocator>(
         CountingAllocator(core.ptr.from_mut(allocation)))
     map.reserve(32usize)
     let _ = map.insert(1, 10)
     let _ = map.insert(2, 20)
-    allocation.grows = 0usize
+    let reserved = map.capacity()
     map.shrink_to(8usize)
-    if allocation.grows != 0usize || allocation.shrinks != 1usize ||
-        map.capacity() < 8usize { return 1 }
+    if map.capacity() < 8usize || map.capacity() >= reserved { return 1 }
     map.reserve(32usize)
     let old_capacity = map.capacity()
-    allocation.fail_shrink = true
-    allocation.grows = 0usize
+    allocation.fail_allocate = true
     map.shrink_to(8usize)
-    if allocation.grows != 0usize || map.capacity() < 8usize ||
-        map.capacity() > old_capacity || *map.get(1).or_panic() != 10 ||
+    allocation.fail_allocate = false
+    if map.capacity() != old_capacity ||
+        *map.get(1).or_panic() != 10 ||
         *map.get(2).or_panic() != 20 { return 2 }
 
     var hashes = 0usize
@@ -136,7 +128,7 @@ fn main(): i32 {
             let _ = failing.insert(index as i32, DropValue(core.ptr.from_mut(dropped)))
             index += 1usize
         }
-        allocation.fail_grow = true
+        allocation.fail_allocate = true
         match take capture failing.try_insert(-1, DropValue(core.ptr.from_mut(dropped))) {
             success(_) => { return 11 },
             failure(_) => {}

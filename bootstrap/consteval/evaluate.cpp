@@ -886,6 +886,11 @@ private:
         for (auto &element : value.elements)
           if (!coerce(element, want.elements().front(), span))
             return false;
+        if (want.count == UINT64_MAX) {
+          value.type = host.arrayType(want.elements().front().type,
+                                      value.elements.size());
+          return true;
+        }
         value.type = want.type;
         if (complete(want))
           value.elements.checkedShape = want.aggregate;

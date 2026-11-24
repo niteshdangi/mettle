@@ -16,11 +16,14 @@ fn run(): i32 throws Error {
     unsafe { try std.env.set_var(name, ffi.os_str_from_text("a=b")) }
     match std.env.var_os(name) { present(v) => { if !v.as_os_str().same(ffi.os_str_from_text("a=b")) { return 5 } }, none => { return 6 } }
     var seen = false
-    let all = std.env.vars_os()
-    var i = 0usize
-    while i < all.len() {
-        if all[i].name.as_os_str().same(name) && all[i].value.as_os_str().same(ffi.os_str_from_text("a=b")) { seen = true }
-        i += 1usize
+    var all = std.env.vars_os()
+    while true {
+        match take all.next() {
+            present((entry_name, entry_value)) => {
+                if entry_name.as_os_str().same(name) && entry_value.as_os_str().same(ffi.os_str_from_text("a=b")) { seen = true }
+            },
+            none => { break }
+        }
     }
     if !seen { return 7 }
     unsafe { try std.env.remove_var(name) }

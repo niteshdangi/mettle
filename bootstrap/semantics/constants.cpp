@@ -166,6 +166,11 @@ public:
     }
     return value.kind == Value::Kind::Integer ? Type::I32 : value.type;
   }
+  Type arrayType(Type element, std::uint64_t count) override {
+    auto &types = checker.typeStore();
+    return types.arrayType(element,
+                           types.constant(Type::Usize, integerLiteral(count)));
+  }
   std::optional<Layout> layout(Type type) override {
     auto result = objectLayout(checker.typeStore(), substitute(type));
     if (!result)

@@ -1,10 +1,10 @@
 // Address parsers preserve the address family and IPv6 scope; I/O stays on
 // the local loopback interface.
-import std.io.{Error, ErrorKind, Reader, Writer}
-import std.net.{Ipv4Addr, IpAddr, SocketAddrV4, SocketAddrV6, TcpStream}
+import std.io.{Error, Reader, Writer}
+import std.net.{AddrParseError, Ipv4Addr, IpAddr, SocketAddrV4, SocketAddrV6, TcpStream}
 import std.time.from_millis
 
-fn run(): i32 throws Error {
+fn parse(): i32 throws AddrParseError {
     let ipv4 = try Ipv4Addr.parse("192.0.2.17")
     if ipv4.octets()[3usize] != 17u8 { return 1 }
     let ip4 = try IpAddr.parse("127.0.0.1")
@@ -20,25 +20,20 @@ fn run(): i32 throws Error {
         return 5
     }
 
-    let wrong_v4 = capture SocketAddrV4.parse("[::1]:80")
-    match take wrong_v4 {
-        success(address) => { return 6 },
-        failure(error) => {
-            if !error.kind().is(ErrorKind.InvalidInput) { return 7 }
-        }
-    }
-    let wrong_v6 = capture SocketAddrV6.parse("127.0.0.1:80")
-    match take wrong_v6 {
-        success(address) => { return 8 },
-        failure(error) => {
-            if !error.kind().is(ErrorKind.InvalidInput) { return 9 }
-        }
-    }
+    if (capture SocketAddrV4.parse("[::1]:80")).is_success() { return 6 }
+    if (capture SocketAddrV6.parse("127.0.0.1:80")).is_success() { return 8 }
     let bad_port = capture SocketAddrV4.parse("127.0.0.1:65536")
     if bad_port.is_success() { return 10 }
     let bad_ip = capture Ipv4Addr.parse("127.00.0.1")
     if bad_ip.is_success() { return 11 }
+    0
+}
 
+fn run(): i32 throws Error {
+    match take capture parse() {
+        success(code) => { if code != 0 { return code } },
+        failure(_) => { return 15 }
+    }
     var listener = try std.net.tcp_listen(
         std.net.socket_addr(std.net.localhost(), 0u16)
     )

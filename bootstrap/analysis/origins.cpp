@@ -474,8 +474,7 @@ overwrites(const ir::Function &function,
   return result.value_or(Written{});
 }
 } // namespace
-Origins ancestors(const Origins &origins, const std::map<int, Loan> &loans) {
-  Origins result = origins;
+Origins ancestors(Origins origins, const std::map<int, Loan> &loans) {
   std::vector<int> work(origins.begin(), origins.end());
   while (!work.empty()) {
     int id = work.back();
@@ -484,10 +483,10 @@ Origins ancestors(const Origins &origins, const std::map<int, Loan> &loans) {
     if (found == loans.end())
       continue;
     for (auto parent : found->second.parents)
-      if (result.insert(parent).second)
+      if (origins.insert(parent).second)
         work.push_back(parent);
   }
-  return result;
+  return origins;
 }
 
 Origins strongAncestors(const Origins &origins,
@@ -525,6 +524,42 @@ bool disjointLoans(const Origins &authority, int other,
   return false;
 }
 
+std::vector<std::size_t> reversePostorder(const ir::Function &function) {
+  const auto count = function.blocks.size();
+  std::vector<std::size_t> order;
+  order.reserve(count);
+  std::vector<bool> seen(count);
+  std::vector<std::pair<std::size_t, int>> stack;
+  if (count) {
+    seen[0] = true;
+    stack.emplace_back(0, 0);
+  }
+  while (!stack.empty()) {
+    auto &[block, next] = stack.back();
+    if (next == 2) {
+      order.push_back(block);
+      stack.pop_back();
+      continue;
+    }
+    const auto &exit = function.blocks[block].exit;
+    bool follows =
+        next == 0 ? ir::continues(exit.kind) || exit.kind == ir::Exit::Branch
+                  : exit.kind == ir::Exit::Branch;
+    auto target =
+        static_cast<std::size_t>(next == 0 ? exit.first : exit.second);
+    ++next;
+    if (follows && !seen[target]) {
+      seen[target] = true;
+      stack.emplace_back(target, 0);
+    }
+  }
+  std::reverse(order.begin(), order.end());
+  for (std::size_t block = 0; block < count; ++block)
+    if (!seen[block])
+      order.push_back(block);
+  return order;
+}
+
 namespace {
 // A `Within` bound permits the callee to retain the views contained in the
 // source argument in storage reachable from the target argument.
@@ -557,7 +592,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
   std::map<int, std::set<ViewPath>> calleeContents;
   if (function.blocks.empty()) {
     if (function.indirectContract || function.declarationOnly ||
-        function.foreignDeclaration) {
+        function.foreignDeclaration || !function.externalName.empty()) {
       std::set<Place> inputs;
       std::map<int, std::set<Place>> parameterInputs;
       for (std::size_t p = 0; p < function.parameters; ++p) {
@@ -949,13 +984,41 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
   }
   std::vector<Memory> outputs(function.blocks.size());
   std::vector<std::optional<Place>> variantPlaces(function.blocks.size());
+  std::map<Place, bool> cleanupLocations;
+  std::map<Type, bool> destructorTrees;
+  std::function<bool(Type)> destructorTree = [&](Type type) {
+    if (!types.isProduct(type) || suppressesCleanup(types, type))
+      return false;
+    if (auto found = destructorTrees.find(type); found != destructorTrees.end())
+      return found->second;
+    const auto &product = types.product(type);
+    bool reachable = product.hasDestructor;
+    for (std::size_t field = 0; !reachable && field < product.fields.size();
+         ++field)
+      reachable = destructorTree(product.fields[field].type);
+    destructorTrees.emplace(type, reachable);
+    return reachable;
+  };
+  auto cleanupLocation = [&](std::map<Place, bool>::iterator hint,
+                             const Place &location) {
+    if (hint == cleanupLocations.end() || hint->first != location)
+      hint = cleanupLocations.lower_bound(location);
+    if (hint == cleanupLocations.end() || hint->first != location)
+      hint = cleanupLocations.emplace_hint(
+          hint, location,
+          destructorUses(types, function.locals[location.root].type,
+                         location.fields,
+                         location.root != function.constructorSelfSlot));
+    return hint;
+  };
   bool changed;
+  const auto order = reversePostorder(function);
   // Result paths some return leaves without any tracked loan (raw storage).
   std::set<ViewPath> untracked;
   do {
     changed = false;
     untracked.clear();
-    for (std::size_t b = 0; b < function.blocks.size(); ++b) {
+    for (auto b : order) {
       Memory memory = b == 0 ? entry : Memory{};
       for (auto predecessor : predecessors[b]) {
         if (!variantPlaces[predecessor]) {
@@ -1129,7 +1192,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       auto drop = [&](const Place &owner, int valueId, Point &point, Span span,
                       Origins &uses) {
         std::function<void(Place, Type)> visit = [&](Place place, Type type) {
-          if (!types.isProduct(type) || suppressesCleanup(types, type))
+          if (!destructorTree(type))
             return;
           const auto &product = types.product(type);
           if (product.hasDestructor &&
@@ -1751,9 +1814,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
               point.dead.push_back(root);
               for (auto it = memory.lower_bound(root);
                    it != memory.end() && it->first.root == local;) {
-                if (destructorUses(types, function.locals[local].type,
-                                   it->first.fields,
-                                   local != function.constructorSelfSlot)) {
+                if (cleanupLocation(cleanupLocations.end(), it->first)
+                        ->second) {
                   join(uses, it->second);
                   join(point.drops, it->second);
                 }
@@ -2051,7 +2113,8 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
                 }
             Origins shadowed, retained;
             for (auto source : callee.resultSources) {
-              if (!callee.blocks.empty() &&
+              if ((!callee.blocks.empty() ||
+                   summaries.bodied(instruction.callee)) &&
                   contentsOnlyCallPaths.contains(paths[path].first) &&
                   !returnedSources.contains(static_cast<int>(source)))
                 continue;
@@ -2271,12 +2334,15 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           }
         }
         // Destructors can use their views on any later unwind edge.
-        for (const auto &[location, sources] : memory)
-          if (location.root >= 0 &&
-              destructorUses(types, function.locals[location.root].type,
-                             location.fields,
-                             location.root != function.constructorSelfSlot))
+        auto cached = cleanupLocations.begin();
+        for (const auto &[location, sources] : memory) {
+          if (location.root < 0)
+            continue;
+          cached = cleanupLocation(cached, location);
+          if (cached->second)
             join(uses, sources);
+          ++cached;
+        }
         join(point.uses, uses);
         if (!point.empty())
           result.points[b].insert_or_assign(i, std::move(point));
@@ -2345,7 +2411,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       for (const auto &instruction : function.blocks[b].instructions)
         if (instruction.op == ir::Op::Phi)
           join(loopPhis, flatten(result.value(instruction.result.id)));
-  loopPhis = ancestors(loopPhis, result.loans);
+  loopPhis = ancestors(std::move(loopPhis), result.loans);
   for (std::size_t b = 0; b < function.blocks.size(); ++b) {
     if (std::none_of(function.blocks[b].instructions.begin(),
                      function.blocks[b].instructions.end(),
@@ -2364,7 +2430,7 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
           (void)place;
           join(carried, sources);
         }
-      carried = ancestors(carried, result.loans);
+      carried = ancestors(std::move(carried), result.loans);
     }
     for (std::size_t i = 0; i < function.blocks[b].instructions.size(); ++i) {
       const auto &instruction = function.blocks[b].instructions[i];

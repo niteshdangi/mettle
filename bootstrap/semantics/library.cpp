@@ -2524,17 +2524,15 @@ private:
               if (types->isErased(header.interfaceType))
                 header.interfaceDeclaration =
                     types->erasedDeclaration(header.interfaceType);
-              if (queryValidation) {
-                if ((*retained.owners)[index] != header.interfaceDeclaration)
-                  throw metadata::InvalidMetadata(
-                      "checked implementation candidate does not match its "
-                      "record");
-                if (retained.previousHeaders &&
-                    !sameSpan((*retained.previousHeaders)[index].span,
-                              header.span))
-                  throw metadata::InvalidMetadata(
-                      "checked interface phases have conflicting inventories");
-              }
+              if ((*retained.owners)[index] != header.interfaceDeclaration)
+                throw metadata::InvalidMetadata(
+                    "checked implementation candidate does not match its "
+                    "record");
+              if (queryValidation && retained.previousHeaders &&
+                  !sameSpan((*retained.previousHeaders)[index].span,
+                            header.span))
+                throw metadata::InvalidMetadata(
+                    "checked interface phases have conflicting inventories");
               return header;
             }));
     database.importedImplementations = std::move(headers);

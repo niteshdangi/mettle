@@ -6,8 +6,7 @@ import core.convert.From
 import core.fmt.{Display, buffer_writer, formatter, spec, written_text}
 import core.hash.hash_one
 import core.text.{FromStr, Text}
-import std.io.{Error, ErrorKind}
-import std.net.{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6}
+import std.net.{AddrParseError, IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6}
 
 fn render<T: Display>(read value: T, mut buffer: [u8]): usize throws core.fmt.Error {
     var writer = buffer_writer(mut buffer)
@@ -27,7 +26,7 @@ fn equals<T: Display>(read value: T, read expected: Text, mut buffer: [u8]): boo
     }
 }
 
-fn run(): i32 throws Error {
+fn run(): i32 throws AddrParseError {
     var buffer = [0u8; 128]
     let low = Ipv4Addr.new(10u8, 0u8, 0u8, 1u8)
     let high = Ipv4Addr.new(10u8, 0u8, 0u8, 2u8)
@@ -85,7 +84,8 @@ fn run(): i32 throws Error {
 
     // IpAddr: IPv4 sorts before IPv6, and each family orders by its bytes.
     let v4_address = IpAddr.(From<Ipv4Addr>).from(Ipv4Addr.new(10u8, 0u8, 0u8, 1u8))
-    let v6_address = IpAddr.(From<Ipv6Addr>).from(v6)
+    let v6_owned = v6
+    let v6_address = IpAddr.(From<Ipv6Addr>).from(v6_owned)
     if !v4_address.cmp(v6_address).is_lt() || !v6_address.cmp(v4_address).is_gt() { return 22 }
     if !(Ipv4Addr.new(10u8, 0u8, 0u8, 1u8) == v4_address) ||
        !(v6 == v6_address) ||

@@ -269,6 +269,7 @@ struct Program {
   std::vector<std::string> functionPackages{};
   // Archive record ordinals for imported functions whose CFGs are deferred.
   std::vector<std::optional<std::size_t>> lazyFunctionRecords{};
+  std::vector<std::optional<std::size_t>> declarationSources{};
   std::shared_ptr<const TypeStore> types = std::make_shared<const TypeStore>();
   std::vector<int> closureFunctions{};
   // Interface dispatch for an opaque or erased self type, selected when a

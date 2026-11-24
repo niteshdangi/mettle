@@ -186,7 +186,7 @@ fn main(): i32 {
         )
         match capture map.try_insert(1, 2) { success(_) => {}, failure(_) => { return 70 } }
         let capacity = map.capacity()
-        let entries = map.as_entries().as_ptr()
+        let entries = core.ptr.from_ref(*map.get(1).or_panic())
         let live_before = reserve_live
         reserve_budget = 1
         let overflow = match take capture map.try_reserve(usize.MAX) {
@@ -194,7 +194,7 @@ fn main(): i32 {
             failure(error) => error
         }
         if reserve_budget != 1 || map.capacity() != capacity ||
-            map.as_entries().as_ptr() != entries || reserve_live != live_before {
+            core.ptr.from_ref(*map.get(1).or_panic()) != entries || reserve_live != live_before {
             return 72
         }
         let exhausted = match take capture map.try_reserve(10usize) {
@@ -208,7 +208,7 @@ fn main(): i32 {
             exhausted_message.as_text() != "memory allocation failed because the memory allocator returned an error" {
             return 79
         }
-        if map.capacity() != capacity || map.as_entries().as_ptr() != entries ||
+        if map.capacity() != capacity || core.ptr.from_ref(*map.get(1).or_panic()) != entries ||
             map.len() != 1usize || reserve_live != live_before {
             return 75
         }

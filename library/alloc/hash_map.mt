@@ -1847,6 +1847,8 @@ extend<K: Hash + PartialEq, const N: usize> Set<K> implements core.convert.From<
 // Owned storage moves or is shared exactly when its elements and allocator do.
 unsafe extend<K: Transferable, V: Transferable, A: Allocator + Transferable, S: BuildHasher + Transferable> Map<K, V, A, S> implements Transferable {}
 unsafe extend<K: Shareable, V: Shareable, A: Allocator + Shareable, S: BuildHasher + Shareable> Map<K, V, A, S> implements Shareable {}
+unsafe extend<region r, K: Transferable, V: Transferable, A: Allocator + Transferable> MapDrain<region r, K, V, A> implements Transferable {}
+unsafe extend<region r, K: Shareable, V: Shareable, A: Allocator + Shareable> MapDrain<region r, K, V, A> implements Shareable {}
 
 // An entry owns the query key and exclusively borrows its map until consumed.
 // The occupied index remains valid because the loan excludes map mutation.

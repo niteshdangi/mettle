@@ -38,8 +38,18 @@ public:
   }
   FunctionEffects &slot(std::size_t index) { return items[index]; }
   void record(std::set<std::size_t> *sink) const { reads = sink; }
+  // The summary was computed from a CFG the program record does not hold.
+  bool bodied(std::size_t index) const {
+    return index < bodies.size() && bodies[index];
+  }
+  void setBodied(std::size_t index, bool value) {
+    if (bodies.size() <= index)
+      bodies.resize(items.size());
+    bodies[index] = value;
+  }
 
 private:
+  std::vector<bool> bodies;
   const FunctionEffects &read(std::size_t index,
                               const FunctionEffects &value) const {
     if (reads)
@@ -109,7 +119,8 @@ struct OriginInfo {
 };
 OriginInfo origins(const ir::Function &function, const ir::Program &program,
                    const EffectSummaries &summaries);
-Origins ancestors(const Origins &origins, const std::map<int, Loan> &loans);
+std::vector<std::size_t> reversePostorder(const ir::Function &function);
+Origins ancestors(Origins origins, const std::map<int, Loan> &loans);
 // Like ancestors, but without the parents a loan only keeps unavailable.
 Origins strongAncestors(const Origins &origins,
                         const std::map<int, Loan> &loans);

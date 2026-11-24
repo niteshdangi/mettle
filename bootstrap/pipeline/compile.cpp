@@ -25,6 +25,24 @@ mettle::ir::VerifiedProgram::operator=(VerifiedProgram &&) noexcept = default;
 mettle::ir::VerifiedProgram::~VerifiedProgram() = default;
 
 namespace mettle::pipeline {
+static std::function<std::optional<ir::Function>(std::size_t)>
+bodyLoader(const ir::Program &program, const lowering::ImportedBodies *bodies,
+           Diagnostics &diagnostics) {
+  if (!bodies || !bodies->loadFunction)
+    return {};
+  return [&program, bodies,
+          &diagnostics](std::size_t f) -> std::optional<ir::Function> {
+    std::string error;
+    const auto &header = program.functions[f];
+    auto body =
+        bodies->loadFunction(*program.lazyFunctionRecords[f], header, error);
+    if (!body)
+      diagnostics.error("metadata", header.span,
+                        error.empty() ? "compiled library body failed to load"
+                                      : error);
+    return body;
+  };
+}
 class Compiler {
 public:
   static bool mergeImportedMetadata(ir::Program &program,
@@ -580,8 +598,10 @@ public:
     analysis::initialization(program, diagnostics, nullptr, &analyzed);
     if (!diagnostics.empty())
       return std::nullopt;
-    auto loans =
-        analysis::loans(program, diagnostics, nullptr, nullptr, &analyzed);
+    auto loans = analysis::loans(
+        program, diagnostics, nullptr, nullptr, &analyzed,
+        bodyLoader(program, library ? library->bodies.get() : nullptr,
+                   diagnostics));
     if (!diagnostics.empty())
       return std::nullopt;
     auto instanceQueries = nextQueries ? nextQueries->instances : nullptr;
@@ -790,10 +810,26 @@ public:
       return proveUnpin(*concrete->types, database, diagnostics, subject,
                         runtime, function, span);
     };
+    std::vector<std::size_t> unanalyzed;
+    for (const auto &source : concrete->program.declarationSources)
+      if (source && *source < prepared.loans.analyzed.size() &&
+          !prepared.loans.analyzed[*source])
+        unanalyzed.push_back(*source);
+    std::optional<analysis::LoanResults> extended;
+    if (!unanalyzed.empty()) {
+      const std::vector<bool> trusted(program.functions.size(), true);
+      extended = analysis::loans(
+          program, diagnostics, nullptr, &prepared.loans, &trusted,
+          bodyLoader(program, prepared.importedBodies.get(), diagnostics),
+          &unanalyzed);
+      if (!diagnostics.empty())
+        return std::nullopt;
+    }
     // Specialization extends type identities; remapped destructor IDs do not
     // change initialization or loan facts for otherwise identical functions.
-    auto verified = admit(std::move(concrete->program), diagnostics,
-                          concreteProof, &program, &prepared.loans);
+    auto verified =
+        admit(std::move(concrete->program), diagnostics, concreteProof,
+              &program, extended ? &*extended : &prepared.loans);
     if (verified && instanceQueries)
       *prepared.instances = std::move(*instanceQueries);
     return verified;

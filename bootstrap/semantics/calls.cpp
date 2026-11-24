@@ -460,7 +460,7 @@ int Checker::call(Node &n, bool reachable) {
   if (n.children[0]->kind == Kind::Name)
     if (auto generic = genericConstruction(n, reachable, name))
       return *generic;
-  if (n.children[0]->kind == Kind::Name)
+  if (n.children[0]->kind == Kind::Name && !names.contains(name))
     if (auto variant = variantCall(n, n.children[0]->text, reachable))
       return *variant;
   struct Argument {

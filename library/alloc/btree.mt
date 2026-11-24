@@ -1048,6 +1048,28 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         var parent = null_node<K, V>()
         var pos = 0usize
         var root = null_node<K, V>()
+        if (*left_level).leaf && (*right_level).leaf &&
+            (*left).len + (*right).len + 1usize <= max_entries() {
+            let llen = (*left).len
+            let rlen = (*right).len
+            core.ptr.write(node_entry(left, llen), middle)
+            copy_entries(node_entry(right, 0usize), node_entry(left, llen + 1usize), rlen)
+            if !(*left).leaf {
+                var j = 0usize
+                while j <= rlen {
+                    set_child(left, llen + 1usize + j, node_child(right, j))
+                    j += 1usize
+                }
+            }
+            (*left).len = llen + 1usize + rlen
+            (*left).subtree_len = total
+            other.root = null_node<K, V>()
+            other.len = 0usize
+            self.root = left
+            self.len = total
+            free_node<K, V, A>(a, right)
+            return ()
+        }
         if (*left_level).leaf && (*right_level).leaf {
             parent = self.join_node(a, false)
             set_child(parent, 0usize, left)

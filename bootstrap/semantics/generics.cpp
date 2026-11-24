@@ -922,7 +922,7 @@ bool Checker::genericObligations(const GenericEnvironment &environment,
           proof.collectStaticRegions(&regions);
           if (proof.prove({binding.argument, Type::Unknown, *property}, span,
                           false)) {
-            if (!regions.empty())
+            if (!regions.empty() || proof.hidesStaticCaptures())
               facts(*call).deferredInterfaceBounds.push_back(
                   {binding.parameter, Type::Unknown, bound, *property});
             continue;

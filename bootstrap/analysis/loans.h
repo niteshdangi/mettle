@@ -3,6 +3,8 @@
 #include "analysis/origins.h"
 #include "diagnostics/diagnostics.h"
 #include "ir/ir.h"
+#include <functional>
+#include <optional>
 
 namespace mettle::analysis {
 struct LoanResults {
@@ -17,5 +19,10 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
                   const LoanResults *previous = nullptr,
                   // Unchanged bodies whose analysis has already succeeded:
                   // they are summarized only when something else calls them.
-                  const std::vector<bool> *trusted = nullptr);
+                  const std::vector<bool> *trusted = nullptr,
+                  // Supplies the CFG of a trusted function whose body is
+                  // deferred, so its summary reflects the body.
+                  const std::function<std::optional<ir::Function>(std::size_t)>
+                      &loadBody = {},
+                  const std::vector<std::size_t> *seeds = nullptr);
 } // namespace mettle::analysis

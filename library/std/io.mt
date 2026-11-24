@@ -1692,7 +1692,7 @@ pub type StderrLock { token: StdioLock }
 
 @cfg(target_os = "linux")
 extern "C" {
-    unsafe fn fcntl(fd: i32, command: i32): i32;
+    unsafe fn fcntl(fd: i32, command: i32, ...): i32;
 }
 
 @cfg(target_os = "linux")

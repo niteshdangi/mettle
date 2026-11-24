@@ -216,6 +216,7 @@ public:
   virtual std::optional<Shape> typeShape(Type) { return std::nullopt; }
   virtual bool project(Type, std::size_t, const Node &) { return true; }
   virtual Type valueType(const Value &value) { return value.type; }
+  virtual Type arrayType(Type, std::uint64_t) { return Type::Unknown; }
   virtual std::string typeIdentity(Type) { return {}; }
   virtual Type referenceType(Type, bool, bool) { return Type::Unknown; }
   virtual bool pointerCastAllowed(Type, Type) { return false; }

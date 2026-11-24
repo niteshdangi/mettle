@@ -362,6 +362,8 @@ extend Ipv6Addr {
 }
 
 extend Ipv4Addr {
+    pub static fn localhost(): Ipv4Addr { ipv4(127u8, 0u8, 0u8, 1u8) }
+    pub static fn unspecified(): Ipv4Addr { ipv4(0u8, 0u8, 0u8, 0u8) }
     pub static fn parse(read text: Text): Ipv4Addr throws AddrParseError {
         try parse_ipv4(text)
     }

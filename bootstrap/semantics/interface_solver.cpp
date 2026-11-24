@@ -832,8 +832,11 @@ bool Solver::proveStructuralProperty(Property property, Type subject,
     }
     return finish(false);
   }
-  if (!types.isProduct(subject))
+  if (!types.isProduct(subject)) {
+    if (isStatic && staticRegions && types.isCallable(subject))
+      hiddenCaptures = true;
     return finish(true);
+  }
   const auto &record = types.product(subject);
   auto origin = subject;
   while (types.product(origin).regionOrigin != Type::Unknown)

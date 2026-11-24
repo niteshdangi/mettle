@@ -477,6 +477,7 @@ public:
   void collectStaticRegions(std::vector<RegionId> *sink) {
     staticRegions = sink;
   }
+  bool hidesStaticCaptures() const { return hiddenCaptures; }
   void setEqualities(std::span<const TypeBinding> equalities) {
     contextualEqualities.assign(equalities.begin(), equalities.end());
   }
@@ -538,6 +539,7 @@ public:
 private:
   CallableProof callableProof{};
   std::vector<RegionId> *staticRegions = nullptr;
+  bool hiddenCaptures = false;
   TypeStore &types;
   const Database &database;
   Diagnostics &diagnostics;
