@@ -1982,6 +1982,9 @@ dependency proofs preserved archive validation and saved 6.19 / 5.48 /
 7.01 ms at the paired median in 25 warm P03/P04/P05 checks.
 Comparing keys directly in the validated lookup directory saved another
 4.55 / 2.29 / 4.46 ms at the paired median over 25 warm checks per workload.
+Erased interface name resolution now visits only the matching range in the
+validated directory. In 100 warm P05 pairs it saved 1.24 ms at the paired
+median (resampled 95% interval: 0.31 to 2.62 ms); P03 and P04 were inconclusive.
 Compacting the unwritten `LineWriter` suffix in place instead of replacing its
 buffer reduced the 16,384-write line-and-tail loop from 14.550 to 10.988 ms
 (3.510 ms paired saving across 90 pairs).

@@ -3029,6 +3029,7 @@ struct WireTypeLookup {
   };
   std::span<const std::uint8_t> bytes;
   std::uint32_t count = 0;
+  std::size_t erasedBegin = 0, erasedEnd = 0;
   std::size_t membershipCount = 0;
 
   std::size_t directorySize() const {
@@ -3056,6 +3057,7 @@ struct WireTypeLookup {
             bytes.size() - directorySize())
       reject("invalid type lookup directory");
     std::span<const std::uint8_t> previous;
+    erasedBegin = erasedEnd = 0;
     membershipCount = 0;
     if (admission)
       admission->offsets.assign(static_cast<std::size_t>(typeCount) + 1, 0);
@@ -3071,6 +3073,12 @@ struct WireTypeLookup {
                                               current.key.begin(),
                                               current.key.end())))
         reject("unordered or empty type lookup group");
+      if (current.key.front() ==
+          static_cast<std::uint8_t>(ImportedTypeQuery::Kind::Erased)) {
+        if (erasedBegin == erasedEnd)
+          erasedBegin = i;
+        erasedEnd = i + 1;
+      }
       std::uint32_t last = 0;
       for (std::size_t j = 0; j < current.ordinals.size(); j += 4) {
         auto value = wireU32(current.ordinals, j);
@@ -3591,11 +3599,8 @@ DeferredTypeGraph::resolve(const ImportedTypeQuery &query) const {
     if (queryValidation && !interfaceNamesReady) {
       auto callbacks = resolver();
       decltype(interfaces) mapped;
-      for (std::size_t i = 0; i < lookup.count; ++i) {
+      for (auto i = lookup.erasedBegin; i < lookup.erasedEnd; ++i) {
         auto key = lookup.group(i).key;
-        if (key.front() !=
-            static_cast<std::uint8_t>(ImportedTypeQuery::Kind::Erased))
-          continue;
         if (key.size() < 5)
           throw InvalidMetadata("invalid erased type lookup key");
         auto size = wireU32(key, 1);
