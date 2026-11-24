@@ -3,6 +3,8 @@
 #include "types/layout.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Analysis/ValueTracking.h"
+#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -18,6 +20,7 @@
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
@@ -405,10 +408,9 @@ static void versionIndexedStores(llvm::Function &function) {
   }
 }
 
-static llvm::Error prepareObject(llvm::Module &module,
-                                 const llvm::Triple &targetTriple,
-                                 llvm::TargetMachine &machine, bool optimize,
-                                 bool sanitizeAddress, bool sanitizeThread) {
+static llvm::Error verifyObject(llvm::Module &module,
+                                const llvm::Triple &targetTriple,
+                                llvm::TargetMachine &machine) {
   std::string diagnostic;
   if (auto *identity = llvm::dyn_cast_or_null<llvm::MDString>(
           module.getModuleFlag("mettle.target.triple"));
@@ -436,6 +438,15 @@ static llvm::Error prepareObject(llvm::Module &module,
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "invalid backend module: " + diagnostic);
   }
+  return llvm::Error::success();
+}
+
+static llvm::Error optimizeObject(llvm::Module &module,
+                                  const llvm::Triple &targetTriple,
+                                  llvm::TargetMachine &machine, bool optimize,
+                                  bool sanitizeAddress, bool sanitizeThread) {
+  std::string diagnostic;
+  llvm::raw_string_ostream diagnostics(diagnostic);
   if (sanitizeAddress || sanitizeThread)
     dropZeroSizedAccesses(module);
   {
@@ -523,8 +534,10 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
   auto machine = createMachine(targetTriple, optimize);
   if (!machine)
     return machine.takeError();
-  if (auto error = prepareObject(module, targetTriple, **machine, optimize,
-                                 sanitizeAddress, sanitizeThread))
+  if (auto error = verifyObject(module, targetTriple, **machine))
+    return error;
+  if (auto error = optimizeObject(module, targetTriple, **machine, optimize,
+                                  sanitizeAddress, sanitizeThread))
     return error;
   return writeObject(module, **machine, output);
 }
@@ -536,15 +549,65 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
   auto machine = createMachine(targetTriple, optimize);
   if (!machine)
     return machine.takeError();
-  if (auto error = prepareObject(module, targetTriple, **machine, optimize,
-                                 false, false))
+  if (auto error = verifyObject(module, targetTriple, **machine))
     return error;
-  return partitionObjectModule(
-      module, symbolNamespace, [&](llvm::Module &unit) {
-        return consume(unit, [&](llvm::StringRef output) {
-          return writeObject(unit, **machine, output);
-        });
-      });
+  if (auto error = optimizeObject(module, targetTriple, **machine, optimize,
+                                  false, false))
+    return error;
+  struct Job {
+    llvm::SmallVector<char, 0> bitcode;
+    std::string output;
+  };
+  std::vector<Job> jobs;
+  if (auto error = partitionObjectModule(
+          module, symbolNamespace, [&](llvm::Module &unit) -> llvm::Error {
+            Job job;
+            llvm::raw_svector_ostream stream(job.bitcode);
+            llvm::WriteBitcodeToFile(unit, stream);
+            auto output =
+                consume(llvm::StringRef(job.bitcode.data(), job.bitcode.size()),
+                        &unit == &module);
+            if (!output)
+              return output.takeError();
+            if (!output->empty()) {
+              job.output = std::move(*output);
+              jobs.push_back(std::move(job));
+            }
+            return llvm::Error::success();
+          }))
+    return error;
+  std::vector<std::string> failures(jobs.size());
+  auto run = [&](std::size_t index) {
+    auto &job = jobs[index];
+    llvm::LLVMContext context;
+    auto unit = llvm::parseBitcodeFile(
+        llvm::MemoryBufferRef(
+            llvm::StringRef(job.bitcode.data(), job.bitcode.size()), ""),
+        context);
+    if (!unit) {
+      failures[index] = llvm::toString(unit.takeError());
+      return;
+    }
+    auto worker = createMachine(targetTriple, optimize);
+    if (!worker) {
+      failures[index] = llvm::toString(worker.takeError());
+      return;
+    }
+    if (auto error = writeObject(**unit, **worker, job.output))
+      failures[index] = llvm::toString(std::move(error));
+  };
+  if (jobs.size() > 1 && llvm::llvm_is_multithreaded()) {
+    llvm::DefaultThreadPool pool(llvm::hardware_concurrency());
+    for (std::size_t index = 0; index < jobs.size(); ++index)
+      pool.async(run, index);
+    pool.wait();
+  } else
+    for (std::size_t index = 0; index < jobs.size(); ++index)
+      run(index);
+  for (const auto &failure : failures)
+    if (!failure.empty())
+      return llvm::createStringError(llvm::inconvertibleErrorCode(), failure);
+  return llvm::Error::success();
 }
 
 } // namespace mettle::backend

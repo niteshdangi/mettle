@@ -686,8 +686,8 @@ int main() {
              mappingDescription != std::string::npos,
          "provenance fixture must contain its context table and mappings");
   for (const auto &[offset, value, message] :
-       {std::tuple{secondEnd + 8, 1u, "cyclic generation provenance"},
-        std::tuple{secondEnd + 16, static_cast<unsigned>(first.text.size() + 1),
+       {std::tuple{secondEnd + 12, 1u, "cyclic generation provenance"},
+        std::tuple{secondEnd + 20, static_cast<unsigned>(first.text.size() + 1),
                    "invalid generation origin"},
         std::tuple{variantScope + 7 + 8,
                    static_cast<unsigned>(first.text.size() + 1),
@@ -971,11 +971,13 @@ int main() {
   expect(store.usage().blobs == 1, "equal interfaces must share a blob");
   {
     std::optional<driver::LibraryArchive> retained;
-    auto mapped = store.mapped(key, bytes->size(), [&](const auto &mapping) {
-      retained = driver::decodeLibraryArchive(
-          mapping->bytes(), "library-revision", error, mapping);
-      return retained.has_value();
-    });
+    auto mapped = store.mapped(
+        key, bytes->size(), [&](const auto &mapping, bool authenticated) {
+          retained =
+              driver::decodeLibraryArchive(mapping->bytes(), "library-revision",
+                                           error, mapping, authenticated);
+          return retained.has_value();
+        });
     expect(mapped.status == packages::Store::Lookup::Hit && retained,
            "archive admission must retain the Store mapping");
     const auto *source = retained->sources.source(reference->revision);

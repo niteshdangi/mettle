@@ -35,10 +35,8 @@ llvm::Error emitObject(llvm::Module &module, llvm::StringRef triple,
                        bool sanitizeAddress = false,
                        bool sanitizeThread = false);
 
-using ObjectUnitEmitter =
-    llvm::function_ref<llvm::Error(llvm::StringRef output)>;
-using ObjectUnitConsumer =
-    llvm::function_ref<llvm::Error(llvm::Module &unit, ObjectUnitEmitter emit)>;
+using ObjectUnitConsumer = llvm::function_ref<llvm::Expected<std::string>(
+    llvm::StringRef bitcode, bool retained)>;
 
 llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
                             llvm::StringRef symbolNamespace, bool optimize,

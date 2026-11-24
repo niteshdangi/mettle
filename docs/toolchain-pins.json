@@ -32,6 +32,17 @@
       "repository": "https://github.com/ninja-build/ninja",
       "tag": "v1.12.1",
       "commit": "2daa09ba270b0a43e1929d29b073348aa985dfaa"
+    },
+    {
+      "component": "mimalloc",
+      "repository": "https://github.com/microsoft/mimalloc",
+      "tag": "v3.6.1",
+      "tag_object": "07d6126055867a3c6c8977eb0066be27c0671054",
+      "commit": "56dc5eb80145f9a3ba7ca23d47c6a248b9d8586c",
+      "archive_sha256": "2672e6a99d4579fb4bb32d9de0d63aa424ce600d31fbfaf06eb74d940d2e07a6",
+      "license": "MIT",
+      "scope": "Linux compiler executable allocator only; not linked into Mettle programs or sanitizer builds",
+      "reason": "Allocation-heavy compiler phases; rustc links jemalloc for the same reason"
     }
   ],
   "build_policy": {

@@ -51,6 +51,7 @@ struct Options {
   std::uint64_t cacheLimitKib = 0, cacheMaxAgeDays = 30;
   bool noCache = false, explain = false, dryRun = false, standalone = false;
   bool editableLibrary = false, prepareShippedLibrary = false;
+  bool processExit = false;
   std::shared_ptr<LibraryQueries> libraryQueries;
   std::shared_ptr<pipeline::FunctionQueries> functionQueries;
   // Link libraries requested by build scripts.

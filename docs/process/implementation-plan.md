@@ -2088,6 +2088,17 @@ that passed verification carry a stat stamp and are not re-hashed while it
 matches. Medians, Mettle (Rust): check 0.15 -> 0.12 (0.071), application
 check 0.14 -> 0.11 (0.021), semantic edit 0.29 -> 0.25 (0.21), clean build
 0.36 -> 0.34 (0.25); checks remain open. Evidence: `~/w/anal/p03-lag/h5`.
+Checked library archives (format 7) frame each generated-source record and
+skip seal, revision and provenance revalidation when the store's stat stamp
+authenticates the blob; type graphs and macro libraries decode on worker
+threads while declarations mount. Code generation splits the optimized module
+into units emitted in parallel, the compiler allocates with mimalloc, and a
+process-exiting driver skips program teardown. Medians, Mettle (Rust): check
+0.12 -> 0.078 (0.094), clean build 0.34 -> 0.26 (0.30), semantic edit 0.25 ->
+0.22 (0.25), application build 0.32 -> 0.23 (0.22), runtime 0.11 (0.22).
+Application check 0.059 (0.024) and noop build 0.022 (0.012) remain open;
+optimizing units separately removed whole-module inlining and doubled runtime.
+Evidence: `~/w/anal/p03-lag/h6`.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

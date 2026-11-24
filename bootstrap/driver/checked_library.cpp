@@ -57,11 +57,11 @@ std::string macroRevision(const Source &source, const std::string &directory) {
 
 const Source *macroSnapshot(const LibrarySources &sources,
                             const expansion::MacroSource &reference,
-                            const std::string &directory) {
+                            const std::string *directory) {
   for (const auto &source : sources.snapshots())
     if (source.path == reference.path &&
         source.text.size() == reference.bytes &&
-        macroRevision(source, directory) == reference.identity)
+        (!directory || macroRevision(source, *directory) == reference.identity))
       return &source;
   return nullptr;
 }
@@ -249,8 +249,8 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
   library.macroExports = [&](const expansion::MacroLibrary &source) {
     auto remap = [&](const expansion::MacroSource &reference)
         -> std::optional<SourceId> {
-      auto snapshot =
-          macroSnapshot(candidate.sources, reference, options.libraryDirectory);
+      auto snapshot = macroSnapshot(candidate.sources, reference,
+                                    &options.libraryDirectory);
       if (!snapshot)
         return std::nullopt;
       return snapshot->id;
@@ -796,11 +796,12 @@ CheckedLibrary::macroSource(const std::vector<std::string> &path) {
   source.compiled = macros;
   source.remapSources =
       [this](const expansion::MacroSource &source) -> std::optional<SourceId> {
-    auto snapshot =
-        macroSnapshot(archive.sources, source, options.libraryDirectory);
-    if (!snapshot)
-      return std::nullopt;
-    return snapshot->id;
+    auto [entry, inserted] = macroSources.try_emplace(source.identity);
+    if (inserted)
+      if (auto snapshot =
+              macroSnapshot(archive.sources, source, &options.libraryDirectory))
+        entry->second = snapshot->id;
+    return entry->second;
   };
   return source;
 }
@@ -816,6 +817,20 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
     unavailable = true;
     return false;
   }
+  auto decodingMacros = std::async(std::launch::async, [this] {
+    Diagnostics diagnostics;
+    auto rules = expansion::decodeMacros(archive.macros, diagnostics);
+    std::string error;
+    if (!rules) {
+      std::ostringstream text;
+      diagnostics.print({}, text);
+      error = text.str();
+    }
+    return std::pair{std::move(rules), std::move(error)};
+  });
+  pendingTypes = std::async(options.libraryQueries ? std::launch::deferred
+                                                   : std::launch::async,
+                            [this] { return importTypes(); });
   auto &library = *receiverLibrary;
   auto &diagnostics = *receiverDiagnostics;
   // Registers directly and rolls back on failure instead of copying every
@@ -870,18 +885,13 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
                                           std::move(sourceIds), retained);
     decoded = copyLibraryHeader(*retained);
   }
-  Diagnostics macroDiagnostics;
-  auto rules = expansion::decodeMacros(archive.macros, macroDiagnostics);
+  auto [rules, macroError] = decodingMacros.get();
   if (!rules) {
-    std::ostringstream text;
-    macroDiagnostics.print({}, text);
-    error = text.str();
+    error = std::move(macroError);
     return false;
   }
   for (const auto &source : rules->sources) {
-    auto snapshot =
-        macroSnapshot(archive.sources, source, options.libraryDirectory);
-    if (!snapshot) {
+    if (!macroSnapshot(archive.sources, source, nullptr)) {
       error =
           "compiled macro source revision does not match the library archive";
       return false;
@@ -915,6 +925,11 @@ pipeline::LibraryImporter CheckedLibrary::importer() {
   };
 }
 
+void CheckedLibraries::releaseLeases() {
+  for (auto &unit : units)
+    unit->lease = {};
+}
+
 pipeline::PackageOwners CheckedLibrary::packageOwners() const {
   pipeline::PackageOwners owners;
   if (!used)
@@ -931,6 +946,18 @@ std::string CheckedLibrary::sourcePath() const {
       if (auto source = archive.sources.source(revision))
         return source->path;
   return {};
+}
+
+CheckedLibrary::ImportedTypes CheckedLibrary::importTypes() const {
+  ImportedTypes result{std::make_shared<TypeStore>(),
+                       std::make_shared<metadata::TypeGraphSymbols>(),
+                       {}};
+  result.types->setPointerBits(target.pointerBits);
+  result.types->setVaListAbi(targetVaListAbi(target));
+  result.graph = metadata::importTypeGraph(
+      *result.types, archive.types, *result.symbols,
+      metadata::ValidationMode::OnUse, result.symbols, archive.types.owner());
+  return result;
 }
 
 std::optional<pipeline::ImportedProgram>
@@ -1081,16 +1108,13 @@ CheckedLibrary::import(const Module &module,
   references.source = [storage](const auto &source) {
     return storage->sources.resolve(source);
   };
-  auto types = std::make_shared<TypeStore>();
-  types->setPointerBits(target.pointerBits);
-  types->setVaListAbi(targetVaListAbi(target));
-  auto typeSymbols = std::make_shared<metadata::TypeGraphSymbols>();
-  typeSymbols->resolve = references.symbol;
-  auto graph = metadata::importTypeGraph(*types, archive.types, *typeSymbols,
-                                         metadata::ValidationMode::OnUse,
-                                         typeSymbols, archive.types.owner());
-  if (!graph)
-    return fail(graph.error);
+  auto importedTypes =
+      pendingTypes.valid() ? pendingTypes.get() : importTypes();
+  if (!importedTypes.graph)
+    return fail(importedTypes.graph.error);
+  auto types = std::move(importedTypes.types);
+  auto &graph = importedTypes.graph;
+  importedTypes.symbols->resolve = references.symbol;
   auto roots = std::make_shared<std::vector<Type>>(std::move(graph.roots));
   references.type = [roots](std::uint32_t reference) -> std::optional<Type> {
     if (reference >= roots->size())

@@ -99,22 +99,24 @@ int main(int argc, char **argv) {
                           ? std::string(argv[2])
                           : llvm::sys::getDefaultTargetTriple();
   if (units) {
-    std::vector<llvm::NewArchiveMember> members;
     std::vector<std::string> paths;
     auto error = mettle::backend::emitObjectUnits(
         module, triple, "smoke", true,
-        [&](llvm::Module &,
-            mettle::backend::ObjectUnitEmitter emit) -> llvm::Error {
+        [&](llvm::StringRef, bool) -> llvm::Expected<std::string> {
           paths.push_back(std::string(argv[1]) + "." +
                           std::to_string(paths.size()) + ".o");
-          if (auto error = emit(paths.back()))
-            return error;
-          auto member = llvm::NewArchiveMember::getFile(paths.back(), true);
-          if (!member)
-            return member.takeError();
-          members.push_back(std::move(*member));
-          return llvm::Error::success();
+          return paths.back();
         });
+    std::vector<llvm::NewArchiveMember> members;
+    for (const auto &path : paths) {
+      if (error)
+        break;
+      auto member = llvm::NewArchiveMember::getFile(path, true);
+      if (!member)
+        error = member.takeError();
+      else
+        members.push_back(std::move(*member));
+    }
     if (!error)
       error = llvm::writeArchive(
           argv[1], members, llvm::SymtabWritingMode::NormalSymtab,

@@ -99,6 +99,9 @@ consumeUnit(llvm::Module &module,
     for (auto *operand : metadata.operands())
       cloned->addOperand(mapper.mapMDNode(*operand));
   }
+  if (auto *units = unit.getNamedMetadata("llvm.dbg.cu");
+      units && units->getNumOperands() == 0)
+    unit.eraseNamedMetadata(units);
   std::string diagnostic;
   llvm::raw_string_ostream stream(diagnostic);
   if (llvm::verifyModule(unit, &stream))
@@ -106,7 +109,7 @@ consumeUnit(llvm::Module &module,
                                    "invalid object unit: " + diagnostic);
   return consume(unit);
 }
-}
+} // namespace
 
 llvm::Error
 partitionObjectModule(llvm::Module &module, llvm::StringRef symbolNamespace,
@@ -262,4 +265,4 @@ partitionObjectModule(llvm::Module &module, llvm::StringRef symbolNamespace,
       return error;
   return llvm::Error::success();
 }
-}
+} // namespace mettle::backend

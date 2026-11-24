@@ -8,6 +8,7 @@ import itertools
 import json
 import os
 import platform
+import re
 import sys
 from pathlib import Path
 
@@ -61,8 +62,9 @@ def instrument(text):
     for line in text.splitlines():
         if line.startswith("define ") and line.endswith(" {"):
             head = line[:-2]
-            if " personality " in head:
-                head = head.replace(" personality ", " sanitize_thread personality ", 1)
+            match = re.search(r" (personality |!)", head)
+            if match:
+                head = head[:match.start()] + " sanitize_thread" + head[match.start():]
             else:
                 head += " sanitize_thread"
             line = head + " {"

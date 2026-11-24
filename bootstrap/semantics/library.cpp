@@ -432,21 +432,25 @@ public:
       constexpr bool isSigned = std::is_signed_v<T>;
       if (reading()) {
         std::uint64_t bits = 0;
-        unsigned shift = 0;
-        for (;;) {
-          if (offset >= input.size() || shift > 63) {
-            fail("truncated declaration integer");
-            return;
+        if (offset < input.size() && input[offset] < 0x80)
+          bits = input[offset++];
+        else {
+          unsigned shift = 0;
+          for (;;) {
+            if (offset >= input.size() || shift > 63) {
+              fail("truncated declaration integer");
+              return;
+            }
+            auto byte = input[offset++];
+            if (shift == 63 && byte > 1) {
+              fail("declaration integer exceeds its representation");
+              return;
+            }
+            bits |= std::uint64_t(byte & 0x7f) << shift;
+            if (!(byte & 0x80))
+              break;
+            shift += 7;
           }
-          auto byte = input[offset++];
-          if (shift == 63 && byte > 1) {
-            fail("declaration integer exceeds its representation");
-            return;
-          }
-          bits |= std::uint64_t(byte & 0x7f) << shift;
-          if (!(byte & 0x80))
-            break;
-          shift += 7;
         }
         if constexpr (std::is_same_v<T, bool>) {
           if (bits > 1)
@@ -2211,6 +2215,7 @@ public:
     if (sharedSelection) {
       finalSelection = checkingSelection;
       finalized.importedImplementations = checking.importedImplementations;
+      finalized.importedInterfaceOwners = checking.importedInterfaceOwners;
       finalized.implementationsByDeclaration =
           checking.implementationsByDeclaration;
     } else {
@@ -2220,6 +2225,7 @@ public:
     if (!archive.good())
       return;
     auto finalHeaders = finalized.importedImplementations;
+    auto finalOwners = finalized.importedInterfaceOwners;
     auto finalCandidates = finalized.implementationsByDeclaration;
     auto definitions =
         std::make_shared<std::vector<interfaces::Database::DefinitionHeader>>();
@@ -2291,6 +2297,7 @@ public:
     checking.projectionsByParameter.freeze();
     finalized = checking;
     finalized.importedImplementations = std::move(finalHeaders);
+    finalized.importedInterfaceOwners = std::move(finalOwners);
     finalized.implementationsByDeclaration = std::move(finalCandidates);
     auto finalDefinitions = definitions;
     changes(checking.definitions, finalized.definitions, definitionRecords,
@@ -2531,6 +2538,7 @@ private:
               return header;
             }));
     database.importedImplementations = std::move(headers);
+    database.importedInterfaceOwners = selection.owners;
     database.implementationsByDeclaration.deferPrefix(
         selection.groups->size(),
         std::make_shared<const TypeRecords<std::vector<std::size_t>>::Loader>(
@@ -4808,9 +4816,11 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
   sources->spans.reserve(sources->references.size());
   std::vector<std::size_t> order;
   std::vector<std::optional<Span>> ranges;
-  if (references.sourceRange)
+  std::vector<std::uint8_t> resolvedRanges;
+  if (references.sourceRange) {
     ranges.resize(sources->revisions.size());
-  else
+    resolvedRanges.resize(sources->revisions.size());
+  } else
     order.reserve(sources->references.size());
   metadata::SourceReference reference;
   auto revisionIndex = sources->revisions.size();
@@ -4825,22 +4835,37 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
     std::optional<Span> span;
     if (references.sourceRange) {
       auto &range = ranges[source[0]];
-      if (!range)
+      if (!resolvedRanges[source[0]]) {
+        resolvedRanges[source[0]] = 1;
         range = references.sourceRange(sources->revisions[source[0]]);
+        if (range && range->begin <= range->end) {
+          sources->mountedOrigins.try_emplace(
+              range->source, std::pair{std::size_t{0}, range->begin});
+          if (!sources->mountedRevisions
+                   .try_emplace(range->source, sources->revisions[source[0]])
+                   .second)
+            envelope.fail("conflicting declaration source revision");
+        }
+      }
       if (range && range->begin <= range->end &&
           source[2] <= range->end - range->begin)
         span = Span{range->begin + source[1], range->begin + source[2],
                     range->source};
-    } else {
-      if (source[0] != revisionIndex) {
-        reference.revision = sources->revisions[source[0]];
-        revisionIndex = source[0];
+      if (!span) {
+        envelope.fail("unknown declaration source revision");
+        break;
       }
-      reference.begin = static_cast<std::uint32_t>(source[1]);
-      reference.end = static_cast<std::uint32_t>(source[2]);
-      span = references.source ? references.source(reference) : std::nullopt;
-      order.push_back(sources->spans.size());
+      sources->spans.push_back(*span);
+      continue;
     }
+    if (source[0] != revisionIndex) {
+      reference.revision = sources->revisions[source[0]];
+      revisionIndex = source[0];
+    }
+    reference.begin = static_cast<std::uint32_t>(source[1]);
+    reference.end = static_cast<std::uint32_t>(source[2]);
+    span = references.source ? references.source(reference) : std::nullopt;
+    order.push_back(sources->spans.size());
     if (!span) {
       envelope.fail("unknown declaration source revision");
       break;

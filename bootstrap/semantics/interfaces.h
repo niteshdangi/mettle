@@ -396,6 +396,7 @@ struct Database {
   std::shared_ptr<const std::vector<DefinitionHeader>> importedDefinitions;
   std::shared_ptr<const TypeRecords<ImplementationHeader, true>>
       importedImplementations;
+  std::shared_ptr<const std::vector<std::uint32_t>> importedInterfaceOwners;
   DatabaseRecords<Definition> definitions;
   DatabaseRecords<Implementation> implementations;
   std::string_view definitionName(std::size_t index) const {

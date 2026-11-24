@@ -35,6 +35,7 @@ int main(int argc, char **argv) {
     }
     if (auto status = mettle::driver::residentCompilation(*options, argc, argv))
       return *status;
+    options->processExit = true;
     return mettle::driver::run(*options);
   } catch (const std::exception &error) {
     std::cerr << "mettle: error[internal]: " << error.what() << '\n';

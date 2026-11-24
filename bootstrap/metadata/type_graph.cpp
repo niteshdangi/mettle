@@ -435,17 +435,19 @@ struct Reader : Fields<Reader> {
   std::uint32_t u32() {
     if (remaining() < 4)
       reject("truncated type graph integer");
-    std::uint32_t n = 0;
-    for (unsigned i = 0; i != 4; ++i)
-      n |= static_cast<std::uint32_t>(byte()) << (8 * i);
-    return n;
+    const auto *p = bytes.data() + offset;
+    offset += 4;
+    return std::uint32_t(p[0]) | std::uint32_t(p[1]) << 8 |
+           std::uint32_t(p[2]) << 16 | std::uint32_t(p[3]) << 24;
   }
   std::uint64_t u64() {
     if (remaining() < 8)
       reject("truncated type graph integer");
+    const auto *p = bytes.data() + offset;
+    offset += 8;
     std::uint64_t n = 0;
     for (unsigned i = 0; i != 8; ++i)
-      n |= static_cast<std::uint64_t>(byte()) << (8 * i);
+      n |= std::uint64_t(p[i]) << (8 * i);
     return n;
   }
   bool flag() {
@@ -3973,6 +3975,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     deferred->records.reserve(header.types);
     TypeGraphImport result;
     std::unordered_set<std::string_view> identities;
+    identities.reserve(header.types);
     bool uniqueKeys = true;
     std::size_t memberships = 0;
     FlatTypeEdges edges;
@@ -4027,7 +4030,22 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     for (std::uint32_t i = 0; i < header.types; ++i) {
       const auto identityBegin = reader.offset;
       std::optional<DefinitionIdentity> identity;
-      reader(identity);
+      bool identified = false;
+      if (onUse) {
+        identified = reader.flag();
+        if (identified) {
+          std::string_view package, name;
+          std::optional<std::uint32_t> ordinal;
+          reader(package, name, ordinal);
+          if (package.empty() || name.empty() ||
+              ordinal.has_value() !=
+                  (deferred->kinds[i] == ImportedTypeKind::Parameter))
+            reject("invalid logical definition identity");
+        }
+      } else {
+        reader(identity);
+        identified = identity.has_value();
+      }
       const auto identityBytes =
           bytes.subspan(identityBegin, reader.offset - identityBegin);
       DeferredTypeGraph::Record slice;
@@ -4054,22 +4072,24 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
         std::visit([&](auto &record) { reader(record); }, *definition);
         slice.length = reader.offset - slice.offset;
       }
-      slice.nominal = onUse ? identity.has_value() : nominal(*definition);
+      slice.nominal = onUse ? identified : nominal(*definition);
       deferred->records.push_back(slice);
-      if (!demand && slice.nominal != identity.has_value())
+      if (!demand && slice.nominal != identified)
         reject("missing or unexpected logical definition identity");
-      if (identity) {
-        validIdentity(*identity,
-                      deferred->kinds[i] == ImportedTypeKind::Parameter);
+      if (identified) {
         if (!identities
                  .insert({reinterpret_cast<const char *>(identityBytes.data()),
                           identityBytes.size()})
                  .second)
           reject("duplicate logical definition identity");
+      }
+      if (identity) {
+        validIdentity(*identity,
+                      deferred->kinds[i] == ImportedTypeKind::Parameter);
         result.definitions.push_back({std::move(*identity), ids[i]});
       }
       if (demand && !onUse) {
-        hasIdentity[i] = identity.has_value();
+        hasIdentity[i] = identified;
       } else if (!demand)
         definitions.push_back(std::visit(
             [&](auto &record) -> CompactDefinitionView {

@@ -1,6 +1,7 @@
 #include "expansion/macro_library.h"
 #include "support/limits.h"
 #include <algorithm>
+#include <array>
 #include <set>
 #include <type_traits>
 #include <utility>
@@ -9,13 +10,21 @@ namespace mettle::expansion {
 namespace {
 constexpr std::string_view magic{"MTMACRO\1", 8};
 
+constexpr auto crcTable = [] {
+  std::array<std::uint32_t, 256> table{};
+  for (std::uint32_t i = 0; i < table.size(); ++i) {
+    auto value = i;
+    for (unsigned bit = 0; bit < 8; ++bit)
+      value = (value >> 1) ^ (0xedb88320u & (0u - (value & 1u)));
+    table[i] = value;
+  }
+  return table;
+}();
+
 std::uint32_t checksum(std::string_view bytes) {
   std::uint32_t result = UINT32_MAX;
-  for (unsigned char byte : bytes) {
-    result ^= byte;
-    for (unsigned bit = 0; bit < 8; ++bit)
-      result = (result >> 1) ^ (0xedb88320u & (0u - (result & 1u)));
-  }
+  for (unsigned char byte : bytes)
+    result = (result >> 8) ^ crcTable[(result ^ byte) & 0xffu];
   return ~result;
 }
 

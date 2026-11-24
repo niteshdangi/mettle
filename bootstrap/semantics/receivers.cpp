@@ -23,6 +23,8 @@ Checker::receiverCandidates(std::string_view name, bool includeInterfaces) {
     if (database.importedImplementations &&
         index < database.importedImplementations->size() &&
         !implementations.isMaterialized(index)) {
+      if ((*database.importedInterfaceOwners)[index] != UINT32_MAX)
+        continue;
       const auto &header = (*database.importedImplementations)[index];
       if (header.interfaceType == Type::Unknown)
         for (const auto &method : header.inherent)
@@ -394,7 +396,7 @@ std::optional<std::size_t> Checker::receiverCandidate(
           database.importedImplementations &&
                   index < database.importedImplementations->size() &&
                   !database.implementations.isMaterialized(index)
-              ? (*database.importedImplementations)[index].interfaceDeclaration
+              ? (*database.importedInterfaceOwners)[index]
               : checked.types->erasedDeclaration(
                     database.implementations[index].interfaceType);
       const auto &definition = database.definitions[declaration];

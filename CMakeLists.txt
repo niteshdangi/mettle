@@ -36,7 +36,7 @@ endif()
 
 find_package(LLVM ${METTLE_LLVM_VERSION} EXACT REQUIRED CONFIG)
 llvm_map_components_to_libnames(METTLE_LLVM_LIBRARIES
-                               Core BitWriter CodeGen MC Object Passes Instrumentation X86 AArch64
+                               Core BitReader BitWriter CodeGen MC Object Passes Instrumentation X86 AArch64
                                WebAssembly ARM)
 
 if(METTLE_ENABLE_SANITIZERS)
@@ -172,6 +172,24 @@ target_link_libraries(mettle_backend_llvm PUBLIC mettle_ir mettle_cleanup mettle
 target_link_libraries(mettle_packages PUBLIC mettle_source mettle_diagnostics mettle_support)
 target_compile_definitions(mettle_packages PRIVATE METTLE_VERSION="${PROJECT_VERSION}")
 target_link_libraries(mettle PUBLIC mettle_source mettle_diagnostics mettle_syntax mettle_expansion mettle_documentation mettle_resolution mettle_packages mettle_ir mettle_types mettle_semantics mettle_lint mettle_pipeline mettle_lsp mettle_backend_llvm mettle_support)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT METTLE_ENABLE_SANITIZERS)
+  string(JSON METTLE_MIMALLOC_TAG GET "${METTLE_PINS}" sources 3 tag)
+  string(JSON METTLE_MIMALLOC_SHA256 GET "${METTLE_PINS}" sources 3 archive_sha256)
+  include(FetchContent)
+  FetchContent_Declare(mimalloc
+    URL "https://github.com/microsoft/mimalloc/archive/refs/tags/${METTLE_MIMALLOC_TAG}.tar.gz"
+    URL_HASH SHA256=${METTLE_MIMALLOC_SHA256}
+    DOWNLOAD_DIR "${PROJECT_SOURCE_DIR}/.tools/downloads"
+    EXCLUDE_FROM_ALL)
+  set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+  set(MI_BUILD_STATIC OFF CACHE BOOL "" FORCE)
+  set(MI_BUILD_OBJECT ON CACHE BOOL "" FORCE)
+  set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(MI_OVERRIDE ON CACHE BOOL "" FORCE)
+  set(MI_INSTALL_TOPLEVEL OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(mimalloc)
+  target_link_libraries(mettle PRIVATE mimalloc-obj)
+endif()
 if(NOT CMAKE_CROSSCOMPILING)
   add_executable(mettle-builtin-method-index tools/builtin_method_index.cpp)
   target_link_libraries(mettle-builtin-method-index PRIVATE mettle_resolution mettle_packages)

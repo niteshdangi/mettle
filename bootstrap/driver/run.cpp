@@ -1453,8 +1453,17 @@ int build(const Options &requested,
                           options.format == "json")
                ? 0
                : 1;
-  if (options.command == "check")
+  if (options.command == "check") {
+    if (options.processExit) {
+      if (checkedCore)
+        checkedCore->releaseLeases();
+      static const void *retained[3];
+      retained[0] = checkedCore.release();
+      retained[1] = new auto(std::move(*prepared));
+      retained[2] = new auto(std::move(*program));
+    }
     return 0;
+  }
   nativeConsumer = &program->program();
   std::vector<PackageObject> packageObjects;
   const auto &irProgram = program->program();

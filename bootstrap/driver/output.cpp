@@ -147,7 +147,7 @@ llvm::Error emitUnitArchive(llvm::Module &module, const Options &options,
                             std::vector<packages::Store::Artifact> &artifacts,
                             std::ostream &explain) {
   packages::Sha256 namespaceHash;
-  for (const auto &field : {std::string("mettle-object-units-2"), identity,
+  for (const auto &field : {std::string("mettle-object-units-3"), identity,
                             module.getSourceFileName()}) {
     namespaceHash.update(field);
     namespaceHash.update(std::string_view("\0", 1));
@@ -195,39 +195,43 @@ llvm::Error emitUnitArchive(llvm::Module &module, const Options &options,
       }
     }
   }
-  std::vector<llvm::NewArchiveMember> members;
+  std::vector<std::optional<llvm::NewArchiveMember>> reusedMembers;
   std::deque<std::string> memberNames;
   std::size_t reused = 0, generated = 0;
   if (auto error = mettle::backend::emitObjectUnits(
           module, options.target, symbolNamespace, options.profile == "release",
-          [&](llvm::Module &unit,
-              mettle::backend::ObjectUnitEmitter emit) -> llvm::Error {
-            std::string text;
-            llvm::raw_string_ostream stream(text);
-            unit.print(stream, nullptr);
+          [&](llvm::StringRef bitcode,
+              bool retained) -> llvm::Expected<std::string> {
             packages::Sha256 hash;
             hash.update(bucketKey);
-            hash.update(text);
-            const auto name =
-                (&unit == &module ? "retained-" : "") + hash.finish() + ".o";
-            if (auto found = previous.find(name); found != previous.end()) {
-              members.push_back(std::move(found->second));
+            hash.update(bitcode);
+            memberNames.push_back((retained ? "retained-" : "") +
+                                  hash.finish() + ".o");
+            if (auto found = previous.find(memberNames.back());
+                found != previous.end()) {
+              reusedMembers.push_back(std::move(found->second));
               ++reused;
-            } else {
-              const auto path = (directory / name).string();
-              if (auto error = emit(path))
-                return error;
-              auto member = llvm::NewArchiveMember::getFile(path, true);
-              if (!member)
-                return member.takeError();
-              memberNames.push_back(name);
-              member->MemberName = memberNames.back();
-              members.push_back(std::move(*member));
-              ++generated;
+              return std::string();
             }
-            return llvm::Error::success();
+            reusedMembers.emplace_back();
+            ++generated;
+            return (directory / memberNames.back()).string();
           }))
     return error;
+  std::vector<llvm::NewArchiveMember> members;
+  members.reserve(reusedMembers.size());
+  for (std::size_t index = 0; index < reusedMembers.size(); ++index) {
+    if (reusedMembers[index]) {
+      members.push_back(std::move(*reusedMembers[index]));
+      continue;
+    }
+    auto member = llvm::NewArchiveMember::getFile(
+        (directory / memberNames[index]).string(), true);
+    if (!member)
+      return member.takeError();
+    member->MemberName = memberNames[index];
+    members.push_back(std::move(*member));
+  }
   if (auto error = llvm::writeArchive(
           output, members, llvm::SymtabWritingMode::NormalSymtab,
           llvm::object::Archive::getDefaultKindForTriple(
@@ -591,6 +595,7 @@ static int emitOne(const Options &options, const Source &source,
         std::unique_ptr<BackendOutput> backend;
         std::string path, key;
         const PackageObject *package;
+        const ir::VerifiedProgram *source;
       };
       std::vector<NativeObject> nativeObjects;
       std::optional<std::set<std::pair<std::string_view, std::string_view>>>
@@ -666,23 +671,21 @@ static int emitOne(const Options &options, const Source &source,
           auto nativeBackend = native && overlapNative.value_or(false)
                                    ? std::make_unique<BackendOutput>()
                                    : nullptr;
-          if (nativeBackend)
+          if (nativeBackend) {
             nativeBackend->captureDiagnostics();
+            nativeObjects.push_back({std::move(nativeBackend), packagePath,
+                                     packageKey, &package, source});
+            packagePaths.push_back(std::move(packagePath));
+            continue;
+          }
           auto dependency = mettle::backend::lower(
-              *source, nativeBackend ? nativeBackend->context : context,
-              checked, options.target, options.freestanding, nullptr, false,
-              false, {true, package.identity, false, bool(package.library)},
+              *source, context, checked, options.target, options.freestanding,
+              nullptr, false, false,
+              {true, package.identity, false, bool(package.library)},
               &debugRequest);
           dependency->setSourceFileName(package.source);
           dependency->setTargetTriple(
               llvm::Triple(llvm::Triple::normalize(options.target)));
-          if (nativeBackend) {
-            nativeBackend->module = std::move(dependency);
-            nativeObjects.push_back(
-                {std::move(nativeBackend), packagePath, packageKey, &package});
-            packagePaths.push_back(std::move(packagePath));
-            continue;
-          }
           auto emitDependency = [&]() {
             if (native)
               return emitUnitArchive(*dependency, options, packagePath,
@@ -722,6 +725,14 @@ static int emitOne(const Options &options, const Source &source,
         nativeEmission = std::async(std::launch::async, [&] {
           for (auto &entry : nativeObjects) {
             const auto &identity = entry.package->identity;
+            entry.backend->module = mettle::backend::lower(
+                *entry.source, entry.backend->context, checked, options.target,
+                options.freestanding, nullptr, false, false,
+                {true, identity, false, bool(entry.package->library)},
+                &debugRequest);
+            entry.backend->module->setSourceFileName(entry.package->source);
+            entry.backend->module->setTargetTriple(
+                llvm::Triple(llvm::Triple::normalize(options.target)));
             if (auto error = emitUnitArchive(
                     *entry.backend->module, options, entry.path, directory,
                     identity, store, nativeArtifacts, nativeLog)) {

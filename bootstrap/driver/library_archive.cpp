@@ -94,7 +94,6 @@ std::string_view textBytes(std::span<const std::uint8_t> bytes) {
 struct PayloadSeals {
   std::shared_ptr<const void> backing;
   std::vector<std::string_view> digests;
-  std::vector<std::size_t> sizes;
 };
 
 void excludePayloads(std::vector<PayloadRange> &excluded,
@@ -103,18 +102,13 @@ void excludePayloads(std::vector<PayloadRange> &excluded,
     excluded.push_back({sectionOffset + payload.offset, payload.size});
 }
 
-ir::FunctionBodyVerifier payloadVerifier(std::shared_ptr<const void> backing,
-                                         std::vector<std::string_view> digests,
-                                         const auto &payloads) {
-  std::vector<std::size_t> sizes;
-  sizes.reserve(payloads.size());
-  for (const auto &payload : payloads)
-    sizes.push_back(payload.size);
+ir::FunctionBodyVerifier
+payloadVerifier(std::shared_ptr<const void> backing,
+                std::vector<std::string_view> digests) {
   auto integrity = std::make_shared<const PayloadSeals>(
-      PayloadSeals{std::move(backing), std::move(digests), std::move(sizes)});
+      PayloadSeals{std::move(backing), std::move(digests)});
   return [integrity](std::size_t index, std::span<const std::uint8_t> payload) {
     return integrity->backing && index < integrity->digests.size() &&
-           payload.size() == integrity->sizes[index] &&
            archiveDigest(textBytes(payload)) == integrity->digests[index];
   };
 }
@@ -133,6 +127,10 @@ public:
   }
   void data(std::span<const std::uint8_t> value) {
     text({reinterpret_cast<const char *>(value.data()), value.size()});
+  }
+  void patch(std::size_t offset, std::uint32_t value) {
+    for (unsigned shift = 0; shift < 32; shift += 8)
+      bytes[offset++] = static_cast<char>(value >> shift);
   }
 };
 
@@ -703,7 +701,7 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
     return std::nullopt;
   }
   Writer out;
-  out.text("mettle-checked-library-6");
+  out.text("mettle-checked-library-7");
   out.text(data.identity);
   out.integer(static_cast<std::uint32_t>(data.sources.size()));
   std::vector<PayloadRange> excluded;
@@ -728,6 +726,8 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
   out.integer(static_cast<std::uint32_t>(data.generations.size()));
   for (const auto &record : data.generations) {
     const auto &generation = record.get();
+    const auto frame = out.bytes.size();
+    out.integer(0);
     out.integer(
         static_cast<std::uint32_t>(data.sourceIndex.at(generation.source)));
     span(generation.origin);
@@ -773,7 +773,9 @@ std::optional<std::string> encodeLibraryArchive(const LibraryArchive &archive,
                       ? 1
                       : contextIndices.at(mapping.syntaxContext->get()));
     }
+    out.patch(frame, static_cast<std::uint32_t>(out.bytes.size() - frame - 4));
   }
+  out.integer(static_cast<std::uint32_t>(binders.size()));
   out.integer(static_cast<std::uint32_t>(archive.sourceModules.size()));
   for (const auto &[revision, path] : archive.sourceModules) {
     out.text(revision);
@@ -821,7 +823,7 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
     backing = std::move(snapshot);
   }
   Reader in(bytes.substr(0, bytes.size() - 64), error);
-  if (in.textView() != "mettle-checked-library-6")
+  if (in.textView() != "mettle-checked-library-7")
     in.fail("unsupported format");
   auto revision = in.text();
   if (revision != identity || revision.empty())
@@ -838,13 +840,13 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
     auto binding = in.textView();
     auto prefix =
         sourcePrefix(archive.sources.data->identity, i, path, text.size());
-    if (revision.size() != 64 ||
-        std::any_of(revision.begin(), revision.end(),
-                    [](unsigned char byte) {
-                      return !(byte >= '0' && byte <= '9') &&
-                             !(byte >= 'a' && byte <= 'f');
-                    }) ||
-        sourceDigest(prefix, revision) != binding)
+    if (!authenticated && (revision.size() != 64 ||
+                           std::any_of(revision.begin(), revision.end(),
+                                       [](unsigned char byte) {
+                                         return !(byte >= '0' && byte <= '9') &&
+                                                !(byte >= 'a' && byte <= 'f');
+                                       }) ||
+                           sourceDigest(prefix, revision) != binding))
       in.fail("source revision binding does not match its identity");
     if (!in.good())
       break;
@@ -873,21 +875,26 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
              }),
          static_cast<SourceId>(i)});
   }
-  auto generationCount = in.count(28);
+  auto generationCount = in.count(32);
   if (generationCount > count)
     in.fail("too many generated sources");
-  ProvenanceScan scan{ProvenanceValidator(archive.sources.data->sources,
-                                          archive.sources.data->sourceIndex,
-                                          error),
-                      {},
-                      {}};
+  std::optional<ProvenanceScan> scan;
+  if (!authenticated)
+    scan.emplace(ProvenanceValidator(archive.sources.data->sources,
+                                     archive.sources.data->sourceIndex, error));
   for (std::size_t i = 0; in.good() && i < generationCount; ++i) {
-    const auto begin = in.position();
-    const auto generation = readGeneration<false>(in, count, &scan);
+    const auto frame = in.textView();
+    Reader generation(frame, error);
+    SourceId source = 0;
+    if (scan) {
+      source = readGeneration<false>(generation, count, &*scan).source;
+      if (generation.remaining())
+        generation.fail("trailing generated-source data");
+    } else
+      source = generation.integer();
     if (in.good())
       archive.sources.data->generations.emplace_back(
-          generation.source,
-          [frame = in.range(begin, in.position()), count, backing] {
+          source, [frame, count, backing] {
             std::string error;
             Reader reader(frame, error);
             auto generation = readGeneration<true>(reader, count);
@@ -897,9 +904,18 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
             return generation;
           });
   }
-  if (in.good())
-    scan.validator.finish();
-  archive.sources.data->binders = std::move(scan.binders);
+  const auto binderCount = in.count(1, limits::tokens);
+  if (scan && in.good()) {
+    scan->validator.finish();
+    for (std::size_t i = 0; in.good() && i < scan->binders.size(); ++i)
+      if (scan->binders[i] != i + 1)
+        in.fail("non-canonical syntax-context binder order");
+    if (scan->binders.size() != binderCount)
+      in.fail("syntax-context binder count mismatch");
+  }
+  archive.sources.data->binders.emplace(binderCount);
+  for (std::size_t i = 0; i < binderCount; ++i)
+    (*archive.sources.data->binders)[i] = i + 1;
   auto modules = in.count(8);
   if (modules > count)
     in.fail("source-module table exceeds source table");
@@ -926,11 +942,12 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
     seals.reserve(count);
     for (std::size_t i = 0; in.good() && i < count; ++i) {
       auto seal = in.textView();
-      if (seal.size() != 64 ||
-          std::any_of(seal.begin(), seal.end(), [](unsigned char byte) {
-            return !(byte >= '0' && byte <= '9') &&
-                   !(byte >= 'a' && byte <= 'f');
-          }))
+      if (!authenticated &&
+          (seal.size() != 64 ||
+           std::any_of(seal.begin(), seal.end(), [](unsigned char byte) {
+             return !(byte >= '0' && byte <= '9') &&
+                    !(byte >= 'a' && byte <= 'f');
+           })))
         in.fail("invalid deferred payload seal");
       seals.push_back(seal);
     }
@@ -944,34 +961,35 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
     in.fail("trailing data");
   if (!in.good())
     return std::nullopt;
-  auto declarationsLayout = archive.declarations.size()
-                                ? declarationPayloadLayout(archive.declarations)
-                                : DeclarationPayloadLayout{};
-  if (!declarationsLayout ||
-      declarationsLayout.payloads.size() != declarationSeals.size()) {
-    error =
-        "invalid compiled library declaration framing or payload seal count";
-    return std::nullopt;
+  if (!authenticated) {
+    auto declarationsLayout =
+        archive.declarations.size()
+            ? declarationPayloadLayout(archive.declarations)
+            : DeclarationPayloadLayout{};
+    if (!declarationsLayout ||
+        declarationsLayout.payloads.size() != declarationSeals.size()) {
+      error =
+          "invalid compiled library declaration framing or payload seal count";
+      return std::nullopt;
+    }
+    auto irLayout = ir::programLayout(archive.ir);
+    if (!irLayout || irLayout.bodies.size() != irSeals.size()) {
+      error = "invalid compiled library IR framing or body seal count";
+      return std::nullopt;
+    }
+    excluded.reserve(excluded.size() + declarationsLayout.payloads.size() +
+                     irLayout.bodies.size());
+    excludePayloads(excluded, declarationsOffset, declarationsLayout.payloads);
+    excludePayloads(excluded, irOffset, irLayout.bodies);
+    if (metadataDigest(bytes.substr(0, bytes.size() - 64), excluded) !=
+        bytes.substr(bytes.size() - 64)) {
+      error = "invalid compiled library archive metadata checksum";
+      return std::nullopt;
+    }
   }
-  auto irLayout = ir::programLayout(archive.ir);
-  if (!irLayout || irLayout.bodies.size() != irSeals.size()) {
-    error = "invalid compiled library IR framing or body seal count";
-    return std::nullopt;
-  }
-  excluded.reserve(excluded.size() + declarationsLayout.payloads.size() +
-                   irLayout.bodies.size());
-  excludePayloads(excluded, declarationsOffset, declarationsLayout.payloads);
-  excludePayloads(excluded, irOffset, irLayout.bodies);
-  if (!authenticated &&
-      metadataDigest(bytes.substr(0, bytes.size() - 64), excluded) !=
-          bytes.substr(bytes.size() - 64)) {
-    error = "invalid compiled library archive metadata checksum";
-    return std::nullopt;
-  }
-  archive.verifyDeclarationPayload = payloadVerifier(
-      backing, std::move(declarationSeals), declarationsLayout.payloads);
-  archive.verifyIRBody =
-      payloadVerifier(backing, std::move(irSeals), irLayout.bodies);
+  archive.verifyDeclarationPayload =
+      payloadVerifier(backing, std::move(declarationSeals));
+  archive.verifyIRBody = payloadVerifier(backing, std::move(irSeals));
   archive.backing = std::move(backing);
   archive.sources.validated = true;
   return archive;

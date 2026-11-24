@@ -4,9 +4,12 @@
 #include "driver/library_cache.h"
 #include "driver/options.h"
 #include "expansion/macros.h"
+#include "metadata/type_graph.h"
 #include "packages/store.h"
 #include "pipeline/compile.h"
 #include "semantics/library.h"
+#include <future>
+#include <map>
 #include <memory>
 
 namespace mettle::driver {
@@ -81,7 +84,14 @@ private:
   std::optional<pipeline::ImportedProgram>
   import(const Module &module, const resolution::Resolution &resolution,
          Diagnostics &diagnostics);
+  struct ImportedTypes {
+    std::shared_ptr<TypeStore> types;
+    std::shared_ptr<metadata::TypeGraphSymbols> symbols;
+    metadata::TypeGraphImport graph;
+  };
+  ImportedTypes importTypes() const;
   LibraryArchive archive;
+  std::future<ImportedTypes> pendingTypes;
   std::string archiveKey;
   std::string archiveContent;
   std::shared_ptr<const LibraryInputs> sourceInputs;
@@ -91,6 +101,7 @@ private:
   expansion::Configuration configuration;
   TargetFacts target;
   std::shared_ptr<const expansion::MacroLibrary> macros;
+  std::map<std::string, std::optional<SourceId>, std::less<>> macroSources;
   LibraryHeaderImport header;
   std::size_t functions = 0, statics = 0, interfaces = 0;
   const Options &options;
@@ -124,6 +135,7 @@ public:
   pipeline::PackageOwners packageOwners() const;
   std::map<std::string, std::vector<std::string>> packageSources() const;
   std::map<std::string, std::string> packageKeys() const;
+  void releaseLeases();
 
 private:
   std::vector<std::unique_ptr<CheckedLibrary>> units;
