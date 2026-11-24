@@ -133,6 +133,29 @@ def main():
             run([executable, str(units), "--units"])
             run([compiler, *linker_flags, str(units), "-o", str(unit_program)])
             run([str(unit_program)], expected=37)
+            if platform.machine().lower() in ("amd64", "x86_64"):
+                fixture = root / "indexed.c"
+                fixture.write_text(
+                    "#include <stdint.h>\n#include <string.h>\n"
+                    "_Bool init_indexed_store_frame(uint64_t *frame, uint64_t *length,\n"
+                    "                               int overlap) {\n"
+                    "  uint64_t *data = frame + (overlap ? 1 : 2);\n"
+                    "  memcpy(frame, &data, sizeof data);\n"
+                    "  *length = 4;\n"
+                    "  return overlap >= 0;\n"
+                    "}\n"
+                    "uint64_t indexed_store_probe(int);\n"
+                    "int main(void) {\n"
+                    "  return indexed_store_probe(0) != 4 || indexed_store_probe(1) != 1\n"
+                    "      || indexed_store_probe(-1) != 0;\n"
+                    "}\n"
+                )
+                indexed = root / "indexed.o"
+                indexed_program = root / "indexed"
+                run([executable, str(indexed), "--indexed-stores"])
+                run([compiler, *linker_flags, str(fixture), str(indexed),
+                     "-o", str(indexed_program)])
+                run([str(indexed_program)])
             print(json.dumps({
                 "kind": "constructed-LLVM-module-not-Mettle-source",
                 "system": platform.system(), "machine": platform.machine(),

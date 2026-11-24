@@ -1,8 +1,13 @@
 #include "backend/llvm/object.h"
 
 #include "types/layout.h"
+#include "llvm/ADT/STLExtras.h"
+#include "llvm/Analysis/ValueTracking.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -21,6 +26,8 @@
 #include "llvm/Transforms/IPO/GlobalDCE.h"
 #include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
 #include "llvm/Transforms/Instrumentation/ThreadSanitizer.h"
+#include "llvm/Transforms/Utils/BasicBlockUtils.h"
+#include "llvm/Transforms/Utils/Cloning.h"
 
 #include <memory>
 #include <mutex>
@@ -213,6 +220,165 @@ llvm::Error instrumentModule(llvm::Module &module, bool sanitizeAddress,
   return llvm::Error::success();
 }
 
+static void versionIndexedStores(llvm::Function &function) {
+  const auto &layout = function.getDataLayout();
+  if (function.hasOptNone() || layout.getPointerSizeInBits() != 64 ||
+      layout.getIndexSizeInBits(0) != 64 || layout.isNonIntegralAddressSpace(0))
+    return;
+  for (auto &block : llvm::make_early_inc_range(function)) {
+    auto *latch = llvm::dyn_cast<llvm::BranchInst>(block.getTerminator());
+    if (!latch || !latch->isConditional() || latch->getSuccessor(0) != &block ||
+        latch->getSuccessor(1) == &block)
+      continue;
+    if (!block.hasNPredecessors(2))
+      continue;
+    auto *entry = *llvm::pred_begin(&block);
+    if (entry == &block)
+      entry = *std::next(llvm::pred_begin(&block));
+    auto *exit = latch->getSuccessor(1);
+    auto *test = llvm::dyn_cast<llvm::ICmpInst>(latch->getCondition());
+    if (entry == &block ||
+        !llvm::isa<llvm::BranchInst>(entry->getTerminator()) || !test ||
+        test->getPredicate() != llvm::ICmpInst::ICMP_ULT)
+      continue;
+    auto *step = llvm::dyn_cast<llvm::BinaryOperator>(test->getOperand(0));
+    auto *length = llvm::dyn_cast<llvm::LoadInst>(test->getOperand(1));
+    if (!step || step->getOpcode() != llvm::Instruction::Add || !length ||
+        length->getParent() != &block || !length->isSimple() ||
+        !step->getType()->isIntegerTy(64))
+      continue;
+    auto *index = llvm::dyn_cast<llvm::PHINode>(step->getOperand(0));
+    auto *one = llvm::dyn_cast<llvm::ConstantInt>(step->getOperand(1));
+    if (!index || index->getParent() != &block || !one || !one->isOne() ||
+        index->getIncomingValueForBlock(&block) != step)
+      continue;
+    auto *initial = llvm::dyn_cast<llvm::ConstantInt>(
+        index->getIncomingValueForBlock(entry));
+    if (!initial || !initial->isZero())
+      continue;
+    llvm::StoreInst *store = nullptr;
+    bool supported = true;
+    for (auto &instruction : block) {
+      if (auto *candidate = llvm::dyn_cast<llvm::StoreInst>(&instruction)) {
+        supported &= !store && candidate->isSimple();
+        store = candidate;
+      } else if (auto *load = llvm::dyn_cast<llvm::LoadInst>(&instruction)) {
+        supported &= load->isSimple();
+      } else if (&instruction != latch) {
+        supported &= !instruction.mayReadOrWriteMemory() &&
+                     !instruction.mayHaveSideEffects() &&
+                     !llvm::isa<llvm::CallBase>(instruction);
+      }
+      for (const auto &operand : instruction.uses()) {
+        const auto *use = llvm::dyn_cast<llvm::Instruction>(operand.getUser());
+        if (use && use->getParent() == &block)
+          continue;
+        const auto *phi = llvm::dyn_cast_or_null<llvm::PHINode>(use);
+        supported &= phi && phi->getParent() == exit &&
+                     phi->getIncomingBlock(operand) == &block;
+      }
+    }
+    if (!supported || !store || !store->comesBefore(length))
+      continue;
+    auto *element =
+        llvm::dyn_cast<llvm::GetElementPtrInst>(store->getPointerOperand());
+    if (!element || !element->isInBounds() || element->getNumIndices() != 1 ||
+        element->getOperand(1) != index || element->getPointerAddressSpace())
+      continue;
+    if (!index->hasNUses(2) || !step->hasNUses(2) || !test->hasOneUse())
+      continue;
+    auto *data = llvm::dyn_cast<llvm::LoadInst>(element->getPointerOperand());
+    if (!data || data->getParent() != &block || !data->isSimple() ||
+        data->getPointerAddressSpace() || length->getPointerAddressSpace() ||
+        !data->comesBefore(store))
+      continue;
+    const auto stride =
+        layout.getTypeAllocSize(element->getSourceElementType());
+    if (stride.isScalable() || stride.getFixedValue() == 0 ||
+        stride != layout.getTypeStoreSize(store->getValueOperand()->getType()))
+      continue;
+    llvm::DominatorTree dom(function);
+    auto *insertion = entry->getTerminator();
+    auto canRead = [&](llvm::LoadInst *load) {
+      return llvm::isa<llvm::AllocaInst>(
+                 llvm::getUnderlyingObject(load->getPointerOperand())) &&
+             dom.dominates(load->getPointerOperand(), insertion) &&
+             llvm::isSafeToSpeculativelyExecute(load, insertion, nullptr, &dom);
+    };
+    if (!canRead(data) || !canRead(length))
+      continue;
+    auto *guard = llvm::SplitEdge(entry, &block, &dom);
+    auto *terminator = guard->getTerminator();
+    llvm::IRBuilder<> builder(terminator);
+    auto read = [&](llvm::LoadInst *load) {
+      auto *copy = builder.CreateAlignedLoad(
+          load->getType(), load->getPointerOperand(), load->getAlign());
+      return builder.CreateFreeze(copy);
+    };
+    auto *base = read(data);
+    auto *count = read(length);
+    auto *start = builder.CreatePtrToInt(base, builder.getInt64Ty());
+    auto *bytes =
+        builder.CreateMul(count, builder.getInt64(stride.getFixedValue()));
+    auto *end = builder.CreateAdd(start, bytes);
+    auto *limit = builder.CreateGEP(builder.getInt8Ty(), base, bytes);
+    auto disjoint = [&](llvm::LoadInst *load) {
+      auto *first = builder.CreatePtrToInt(load->getPointerOperand(),
+                                           builder.getInt64Ty());
+      auto *last = builder.CreateAdd(
+          first, builder.getInt64(
+                     layout.getTypeStoreSize(load->getType()).getFixedValue()));
+      return builder.CreateAnd(
+          builder.CreateICmpULT(first, last),
+          builder.CreateOr(builder.CreateICmpULE(end, first),
+                           builder.CreateICmpULE(last, start)));
+    };
+    auto *fits = builder.CreateAnd(
+        builder.CreateICmpULE(
+            count, builder.getInt64(INT64_MAX / stride.getFixedValue())),
+        builder.CreateICmpULT(start, end));
+    auto *safe = builder.CreateAnd(
+        fits, builder.CreateAnd(disjoint(data), disjoint(length)));
+
+    llvm::ValueToValueMapTy values;
+    auto *fast = llvm::CloneBasicBlock(&block, values, ".disjoint", &function);
+    values[&block] = fast;
+    llvm::Value *fastData = values.lookup(data);
+    llvm::Value *fastLength = values.lookup(length);
+    values[data] = base;
+    values[length] = count;
+    for (auto &instruction : *fast)
+      llvm::RemapInstruction(&instruction, values,
+                             llvm::RF_IgnoreMissingLocals);
+    auto *fastLatch = llvm::cast<llvm::BranchInst>(fast->getTerminator());
+    llvm::IRBuilder<> atStart(&fast->front());
+    auto *cursor = atStart.CreatePHI(base->getType(), 2);
+    cursor->addIncoming(base, guard);
+    llvm::IRBuilder<> atEnd(fastLatch);
+    auto *next = atEnd.CreateGEP(element->getSourceElementType(), cursor, one);
+    cursor->addIncoming(next, fast);
+    fastLatch->setCondition(atEnd.CreateICmpNE(next, limit));
+    auto *fastElement = llvm::cast<llvm::Instruction>(values.lookup(element));
+    fastElement->replaceAllUsesWith(cursor);
+    values[element] = cursor;
+    fastElement->eraseFromParent();
+    llvm::cast<llvm::Instruction>(values.lookup(test))->eraseFromParent();
+    auto *fastIndex = llvm::cast<llvm::Instruction>(values.lookup(index));
+    fastIndex->dropAllReferences();
+    llvm::cast<llvm::Instruction>(values.lookup(step))->eraseFromParent();
+    fastIndex->eraseFromParent();
+    for (auto &phi : exit->phis()) {
+      auto *original = phi.getIncomingValueForBlock(&block);
+      llvm::Value *mapped = values.lookup(original);
+      phi.addIncoming(mapped ? mapped : original, fast);
+    }
+    builder.CreateCondBr(safe, fast, &block);
+    terminator->eraseFromParent();
+    llvm::cast<llvm::Instruction>(fastData)->eraseFromParent();
+    llvm::cast<llvm::Instruction>(fastLength)->eraseFromParent();
+  }
+}
+
 static llvm::Error prepareObject(llvm::Module &module,
                                  const llvm::Triple &targetTriple,
                                  llvm::TargetMachine &machine, bool optimize,
@@ -278,6 +444,11 @@ static llvm::Error prepareObject(llvm::Module &module,
       pipeline =
           builder.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
       pipeline.run(module, modules);
+      if (targetTriple.getArch() == llvm::Triple::x86_64 && !sanitizeAddress &&
+          !sanitizeThread)
+        for (auto &function : module)
+          if (!function.isDeclaration())
+            versionIndexedStores(function);
     } else {
       pipeline.addPass(llvm::GlobalDCEPass());
       pipeline.run(module, modules);

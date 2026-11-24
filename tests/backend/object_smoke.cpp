@@ -19,15 +19,21 @@
 
 int main(int argc, char **argv) {
   if (argc != 2 && argc != 3) {
-    llvm::errs() << "Usage: mettle-object-smoke output.o "
-                    "[target-triple|--invalid-module|--units]\n";
+    llvm::errs()
+        << "Usage: mettle-object-smoke output.o "
+           "[target-triple|--invalid-module|--units|--indexed-stores]\n";
     return 2;
   }
   llvm::LLVMContext context;
   llvm::Module module("mettle-foundation-smoke", context);
-  auto *type = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), false);
-  auto *function = llvm::Function::Create(type, llvm::Function::ExternalLinkage,
-                                          "main", module);
+  const bool indexed = argc == 3 && std::string(argv[2]) == "--indexed-stores";
+  auto *i32 = llvm::Type::getInt32Ty(context);
+  auto *type = indexed ? llvm::FunctionType::get(
+                             llvm::Type::getInt64Ty(context), {i32}, false)
+                       : llvm::FunctionType::get(i32, false);
+  auto *function =
+      llvm::Function::Create(type, llvm::Function::ExternalLinkage,
+                             indexed ? "indexed_store_probe" : "main", module);
   llvm::IRBuilder<> builder(
       llvm::BasicBlock::Create(context, "entry", function));
   const bool invalid = argc == 3 && std::string(argv[2]) == "--invalid-module";
@@ -55,11 +61,41 @@ int main(int argc, char **argv) {
     auto missing = module.getOrInsertFunction("missing_unused_reference", type);
     body.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", unused));
     body.CreateRet(body.CreateCall(missing));
+  } else if (indexed) {
+    auto *word = builder.getInt64Ty();
+    auto *pointer = builder.getPtrTy();
+    auto *entry = builder.GetInsertBlock();
+    auto *loop = llvm::BasicBlock::Create(context, "loop", function);
+    auto *done = llvm::BasicBlock::Create(context, "done", function);
+    auto *frame = builder.CreateAlloca(word, builder.getInt64(8));
+    auto *lengthAddress =
+        builder.CreateInBoundsGEP(word, frame, builder.getInt64(1));
+    auto setup = module.getOrInsertFunction("init_indexed_store_frame",
+                                            builder.getInt1Ty(), pointer,
+                                            pointer, builder.getInt32Ty());
+    auto *enter =
+        builder.CreateCall(setup, {frame, lengthAddress, function->getArg(0)});
+    builder.CreateCondBr(enter, loop, done);
+    builder.SetInsertPoint(loop);
+    auto *index = builder.CreatePHI(word, 2);
+    index->addIncoming(builder.getInt64(0), entry);
+    auto *data = builder.CreateLoad(pointer, frame);
+    auto *element = builder.CreateInBoundsGEP(word, data, index);
+    builder.CreateStore(builder.getInt64(1), element);
+    auto *step = builder.CreateAdd(index, builder.getInt64(1));
+    index->addIncoming(step, loop);
+    auto *length = builder.CreateLoad(word, lengthAddress);
+    builder.CreateCondBr(builder.CreateICmpULT(step, length), loop, done);
+    builder.SetInsertPoint(done);
+    auto *result = builder.CreatePHI(word, 2);
+    result->addIncoming(builder.getInt64(0), entry);
+    result->addIncoming(length, loop);
+    builder.CreateRet(result);
   } else {
     builder.CreateRet(
         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 37));
   }
-  const auto triple = argc == 3 && !invalid && !units
+  const auto triple = argc == 3 && !invalid && !units && !indexed
                           ? std::string(argv[2])
                           : llvm::sys::getDefaultTargetTriple();
   if (units) {
@@ -93,9 +129,18 @@ int main(int argc, char **argv) {
     }
     return 0;
   }
-  if (auto error = mettle::backend::emitObject(module, triple, argv[1])) {
+  if (auto error =
+          mettle::backend::emitObject(module, triple, argv[1], indexed)) {
     llvm::logAllUnhandledErrors(std::move(error), llvm::errs(),
                                 "mettle-object-smoke: ");
+    return 1;
+  }
+  if (indexed) {
+    for (const auto &block : *function)
+      if (block.getName().ends_with(".disjoint"))
+        return 0;
+    llvm::errs() << "indexed store loop did not get a guarded fast path\n";
+    function->print(llvm::errs());
     return 1;
   }
   return 0;
