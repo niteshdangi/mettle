@@ -582,14 +582,50 @@ bool CheckedLibrary::collectInputs(std::string &error) {
     if (!fallback.empty() && options.explain)
       std::cerr << "mettle: checked library snapshot reuse unavailable " << root
                 << ": " << fallback << "; scanning sources\n";
-  } else if (auto collected =
-                 collectLibraryInputs(directory, cacheConfiguration, error))
-    inputs = std::make_shared<const LibraryInputs>(std::move(*collected));
+  } else {
+    auto selector = librarySnapshotSelector(directory, cacheConfiguration);
+    if (!selector.empty()) {
+      auto entry = store.data(selector, limits::sourceBytes);
+      if (entry.status == packages::Store::Lookup::Hit)
+        if (auto restored = restoreLibraryInputs(entry.bytes)) {
+          inputs = std::make_shared<const LibraryInputs>(std::move(*restored));
+          partialInputs = true;
+        }
+    }
+    if (!inputs) {
+      std::string snapshot;
+      if (auto collected = collectLibraryInputs(directory, cacheConfiguration,
+                                                error, &snapshot)) {
+        inputs = std::make_shared<const LibraryInputs>(std::move(*collected));
+        if (!selector.empty() && !snapshot.empty() &&
+            !store.putData(selector, snapshot) && options.explain)
+          std::cerr << "mettle: cannot record checked library snapshot " << root
+                    << '\n';
+      }
+    }
+  }
   if (!inputs)
     return false;
   archiveKey = inputs->key;
   sourceInputs = std::move(inputs);
   inputsPrepared = true;
+  return true;
+}
+
+bool CheckedLibrary::completeInputs(std::string &error) {
+  if (!partialInputs)
+    return true;
+  auto collected = collectLibraryInputs(
+      std::filesystem::path(options.libraryDirectory) / root,
+      cacheConfiguration, error);
+  if (!collected)
+    return false;
+  if (collected->key != archiveKey) {
+    error = "checked " + root + " library sources changed during compilation";
+    return false;
+  }
+  sourceInputs = std::make_shared<const LibraryInputs>(std::move(*collected));
+  partialInputs = false;
   return true;
 }
 
@@ -736,13 +772,40 @@ const Source *CheckedLibrary::input(const std::string &path) {
           return &source;
       return nullptr;
     }
-    if (unit->sourceInputs) {
+    if (unit->sourceInputs && unit->sourceInputs->digests.count(path)) {
+      if (!unit->completeInputs(error)) {
+        unit->unavailable = true;
+        if (receiverDiagnostics)
+          receiverDiagnostics->error("metadata", {}, error);
+        return nullptr;
+      }
       auto found = unit->sourceInputs->sources.find(path);
       if (found != unit->sourceInputs->sources.end())
         return &found->second;
     }
   }
   return nullptr;
+}
+
+bool CheckedLibrary::hasInput(const std::string &path) {
+  for (auto unit = this; unit; unit = unit->dependency) {
+    std::string error;
+    if (!unit->loadShipped(error)) {
+      unit->unavailable = true;
+      if (receiverDiagnostics)
+        receiverDiagnostics->error("metadata", {}, error);
+      return false;
+    }
+    if (unit->shippedArchive) {
+      for (const auto &source : unit->archive.sources.snapshots())
+        if (source.path == path)
+          return true;
+      return false;
+    }
+    if (unit->sourceInputs && unit->sourceInputs->digests.count(path))
+      return true;
+  }
+  return false;
 }
 
 bool CheckedLibrary::mount(resolution::Library &library,
@@ -1350,7 +1413,7 @@ pipeline::LibraryImporter CheckedLibraries::importer() {
 }
 
 bool CheckedLibraries::containsInput(const std::string &path) const {
-  return selected && selected->input(path);
+  return selected && selected->hasInput(path);
 }
 
 void CheckedLibraries::recordInputs(BuildInputs &inputs) const {
@@ -1413,7 +1476,7 @@ CheckedLibraries::packageSources() const {
     return sources;
   for (const auto &[revision, scope] : selected->archive.sourceModules)
     if (auto source = selected->archive.sources.source(revision);
-        source && !scope.empty() && selected->input(source->path))
+        source && !scope.empty() && selected->hasInput(source->path))
       sources["native:" + scope.front()].push_back(source->path);
   for (auto &[owner, paths] : sources) {
     (void)owner;

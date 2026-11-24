@@ -1163,6 +1163,25 @@ int main() {
       driver::collectLibraryInputs(libraryRoot, configuration, error);
   expect(addition && addition->key != compiler->key,
          "a formerly absent module appearing must invalidate the library");
+  std::string record;
+  expect(driver::collectLibraryInputs(libraryRoot, configuration, error,
+                                      &record) &&
+             record.empty(),
+         "sources changed within the timestamp window must not be stamped");
+  std::this_thread::sleep_for(std::chrono::seconds(3));
+  auto stamped =
+      driver::collectLibraryInputs(libraryRoot, configuration, error, &record);
+  auto restored = driver::restoreLibraryInputs(record);
+  expect(stamped && restored && restored->key == stamped->key &&
+             restored->digests == stamped->digests,
+         "settled stamped sources must restore their content identity");
+  {
+    std::ofstream source(libraryRoot / "new.mt");
+    source << "pub const NEW: i32 = 1";
+  }
+  expect(!driver::restoreLibraryInputs(record),
+         "edited sources must reject their stamped snapshot");
+  std::ofstream(libraryRoot / "new.mt").flush();
 
   driver::LibraryInputSnapshots snapshots;
   std::string fallback;

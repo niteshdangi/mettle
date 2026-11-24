@@ -28,7 +28,13 @@ shippedLibrarySelector(const std::filesystem::path &directory,
 std::optional<LibraryInputs>
 collectLibraryInputs(const std::filesystem::path &directory,
                      const LibraryCacheConfiguration &configuration,
-                     std::string &error);
+                     std::string &error, std::string *snapshot = nullptr);
+
+std::string
+librarySnapshotSelector(const std::filesystem::path &directory,
+                        const LibraryCacheConfiguration &configuration);
+
+std::optional<LibraryInputs> restoreLibraryInputs(std::string_view record);
 
 class LibraryInputSnapshots {
 public:

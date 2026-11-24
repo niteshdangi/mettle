@@ -165,8 +165,10 @@ void BuildInputs::record(const Source &source, const std::string &requested) {
 }
 
 void BuildInputs::record(const LibraryInputs &snapshot) {
-  for (const auto &[path, source] : snapshot.sources)
-    recordDigest(source, snapshot.digests.at(path));
+  for (const auto &[path, contentDigest] : snapshot.digests) {
+    inputs[path] = "text:" + contentDigest;
+    sourceDigests[path] = contentDigest;
+  }
   traceable = false;
 }
 

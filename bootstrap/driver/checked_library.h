@@ -77,6 +77,8 @@ private:
   bool publishShippedSelector(std::string &error);
   bool prepareInputs(std::string &error);
   bool collectInputs(std::string &error);
+  bool completeInputs(std::string &error);
+  bool hasInput(const std::string &path);
   bool loadShipped(std::string &error);
   std::optional<resolution::BuiltinMethodIndex> builtinMethodIndex();
   const Source *input(const std::string &path);
@@ -111,6 +113,7 @@ private:
   Diagnostics *receiverDiagnostics = nullptr;
   expansion::SourceAllocator allocate;
   std::string root;
+  bool partialInputs = false;
   bool inputsPrepared = false, ineligible = false, mounted = false,
        used = false, unavailable = false, methodIndexUsed = false,
        shippedArchive = false, shippedLoaded = false;
