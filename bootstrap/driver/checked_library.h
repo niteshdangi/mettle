@@ -70,6 +70,8 @@ private:
   CheckedLibrary(const Options &options, packages::Store &store,
                  expansion::Configuration configuration, TargetFacts target);
   bool prepareArchive(std::string &error);
+  bool loadArchive(std::string &error, bool shipped = false);
+  bool publishShippedSelector(std::string &error);
   bool prepareInputs(std::string &error);
   std::optional<resolution::BuiltinMethodIndex> builtinMethodIndex();
   const Source *input(const std::string &path) const;
@@ -97,7 +99,8 @@ private:
   expansion::SourceAllocator allocate;
   std::string root;
   bool inputsPrepared = false, ineligible = false, mounted = false,
-       used = false, unavailable = false, methodIndexUsed = false;
+       used = false, unavailable = false, methodIndexUsed = false,
+       shippedArchive = false;
 };
 
 class CheckedLibraries {
@@ -110,8 +113,12 @@ public:
   pipeline::LibraryImporter importer();
   bool active() const { return selected != nullptr; }
   const std::string &key() const { return selected->key(); }
+  const std::string &name() const { return selected->name(); }
   bool containsInput(const std::string &path) const;
   void recordInputs(BuildInputs &inputs) const;
+  // The archive keys the shipped selectors name for the native roots, without
+  // loading the archives.
+  std::map<std::string, std::string> shippedKeys() const;
   pipeline::PackageOwners packageOwners() const;
   std::map<std::string, std::vector<std::string>> packageSources() const;
   std::map<std::string, std::string> packageKeys() const;

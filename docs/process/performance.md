@@ -146,6 +146,12 @@ inconclusive result does not count as a pass.
 
 #### 5.1.1. Build-cache storage design
 
+The `mettle-shipped-store` target publishes selectors for the prebuilt
+standard-library archives. The default library can select an archive without
+walking the source tree when the compiler, library location, build
+configuration, and dependency archive identities match. The archive still
+undergoes normal admission. Missing or unusable entries fall back to source
+snapshots; an explicit `--library-dir` always uses content-based invalidation.
 Rust comparisons use Rust's installed sysroot, so the measured toolchain must
 build `mettle-shipped-store` after every compiler build; otherwise each clean
 build and check recompiles `core` and `alloc`.

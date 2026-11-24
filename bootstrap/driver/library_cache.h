@@ -21,6 +21,10 @@ struct LibraryInputs {
   std::map<std::string, std::string> digests;
 };
 
+std::string
+shippedLibrarySelector(const std::filesystem::path &directory,
+                       const LibraryCacheConfiguration &configuration);
+
 std::optional<LibraryInputs>
 collectLibraryInputs(const std::filesystem::path &directory,
                      const LibraryCacheConfiguration &configuration,

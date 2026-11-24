@@ -2514,12 +2514,11 @@ private:
                       "checked implementation is absent from its header");
                 header.declaration = found->second;
               }
+              if (types->isErased(header.interfaceType))
+                header.interfaceDeclaration =
+                    types->erasedDeclaration(header.interfaceType);
               if (queryValidation) {
-                auto owner =
-                    types->isErased(header.interfaceType)
-                        ? types->erasedDeclaration(header.interfaceType)
-                        : UINT32_MAX;
-                if ((*retained.owners)[index] != owner)
+                if ((*retained.owners)[index] != header.interfaceDeclaration)
                   throw metadata::InvalidMetadata(
                       "checked implementation candidate does not match its "
                       "record");
@@ -4127,6 +4126,7 @@ private:
         if (row != UINT64_MAX) {
           auto identity = symbolView(row);
           valid = identity.kind == kind && identity.index == result &&
+                  keyAt(row) == symbolKey('S', kind) + ordinalKey(result) &&
                   identity.definition == key.substr(3);
         }
       } else if (key.starts_with("f:"))

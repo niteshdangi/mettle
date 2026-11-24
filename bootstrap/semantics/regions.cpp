@@ -713,7 +713,6 @@ private:
     unsigned state = 0;
   };
   std::map<NominalKey, NominalRegion> nominalRegions;
-  std::map<Type, Type> nominalPatterns;
   OverlayMap<Type, Type> &callableContracts;
   const NodeFacts &facts(const Node &node) const { return nodes.at(&node); }
   Type originalType(const Node &node) const {
@@ -882,6 +881,11 @@ const Module::Product *RegionPass::declaration(Type type) const {
   for (const auto &[identity, syntax] : products)
     if (identity == type)
       return &module.products[module.products.indexOf(syntax)];
+  if (imports && imports->catalog && types.isProduct(type) &&
+      types.product(type).regionPattern != Type::Unknown)
+    if (auto entry = imports->catalog->namedType(types.name(type));
+        entry && entry->first == 0)
+      return &module.products[entry->second];
   return nullptr;
 }
 Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
@@ -1224,10 +1228,8 @@ Type RegionPass::decorate(Type type, const TypeSyntax &syntax,
       return found->second.type;
     }
     if (found == nominalRegions.end()) {
-      auto pattern = nominalPatterns.find(origin);
-      auto shell = types.regionalShell(
-          base, arguments, typeArguments,
-          pattern == nominalPatterns.end() ? Type::Unknown : pattern->second);
+      auto shell = types.regionalShell(base, arguments, typeArguments,
+                                       types.product(origin).regionPattern);
       found =
           nominalRegions.emplace(std::move(key), NominalRegion{shell}).first;
     }
@@ -4403,7 +4405,6 @@ void RegionPass::run() {
   std::vector<RegionContext> productContexts;
   for (const auto &[identity, product] : products) {
     if (product->item.checkedImport) {
-      nominalPatterns.emplace(identity, types.product(identity).regionPattern);
       productContexts.emplace_back(RegionContext{store.binder(), {}, {}, {}});
       continue;
     }
@@ -4421,7 +4422,6 @@ void RegionPass::run() {
     auto shell = types.regionalShell(identity, regions, arguments);
     types.setRegionPattern(shell, shell);
     types.setRegionPattern(identity, shell);
-    nominalPatterns.emplace(identity, shell);
     nominalRegions.emplace(NominalKey{identity, regions, arguments},
                            NominalRegion{shell});
     productContexts.push_back(std::move(context));

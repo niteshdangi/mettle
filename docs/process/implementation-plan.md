@@ -1966,10 +1966,21 @@ the 16,384-write `LineWriter` loop by 0.045 ms at the paired median (110
 pairs, 1.563 / 1.529 ms medians). The same application objects relinked with
 the two runtimes gave a P05 paired difference of 0.009 ms slower (330 pairs;
 95% resampled interval from 0.039 ms faster to 0.079 ms slower).
+For P02, x86-64 lowering keeps a proven disjoint 32-bit induction offset
+as an addition when its only use converts it to floating point. The final
+loop replaces a move and OR with one LEA, without changing floating-point
+operations. The original source returned 17 in all 80 paired release
+runs; median runtime fell from 52.75 to 49.52 ms on one pinned CPU
+(3.24 ms paired saving; resampled 95% interval: 3.06 to 3.36 ms).
+In a separate 40-pair comparison, Mettle and checksum-matched Rust took
+49.94 and 49.60 ms respectively; Mettle was 0.33 ms slower at the paired median.
 The split P05 root module went from 287 to 110 definitions under optimization.
 Only four drop and two install callbacks disappeared; all six came from
 `drop_run<Bucket<i32, i32>>`. Disappearance after LLVM optimization does not
-establish that those callbacks are unreachable before lowering.
+establish that those callbacks are unreachable before lowering. A `needs_drop`
+guard in `drop_run` did not reliably improve native-cache-hit seed rebuilds:
+2.48 ms paired saving over 16 pairs, with a resampled 95% interval ranging
+from 5.82 ms slower to 19.65 ms faster. The guard was not retained.
 Moving line-flush error handling out of the buffered `LineWriter.write_some`
 path reduced the 16,384-write loop from 1.530 to 1.295 ms (0.238 ms paired
 saving across 90 pairs). The short-write retry case checks that a successful
@@ -1988,6 +1999,37 @@ median (resampled 95% interval: 0.31 to 2.62 ms); P03 and P04 were inconclusive.
 Receiver lookup now checks interface visibility from the validated imported
 implementation header before decoding its body. In 80 warm P05 pairs it
 saved 2.93 ms at the paired median (resampled 95% interval: 0.17 to 3.52 ms).
+A warm P05 recount found 3, 0, 3, and 78 interface candidates for the
+application's `get`, `insert`, `get`, and `len` calls, respectively. All four
+lookups caused zero additional header decodes, zero body decodes, and zero
+interface receiver matches. A receiver-constructor index for this loop would
+not avoid those decodes; the separate initial inherent inventory remains.
+Warm P03 and P04 checks each visited 6,100 imported headers in that inventory,
+386 inherent. At the application `List` calls, nominal-origin filtering
+rejected 9 of 12 `push` and 32 of 40 `len` candidates before reading their
+bodies. Both workloads had one applicable inherent method per call. Each
+`len` lookup also visited 78 interface candidates, none visible and none
+requiring another header decode. A faster inventory still needs to validate
+the archived owners against their records. Bypassing the projection mutex
+for already-proven scalar results showed no reliable gain in 32 warm
+standalone pairs per workload and was not retained.
+On a P05 first application build, native `alloc` and `core` object emission
+can overlap root object emission after serial specialization and lowering.
+With warm checked archives, exact native object misses, and all 39 root units
+generated in both arms, 12 paired builds on four eligible CPUs saved 128.68 ms
+at the paired median. The single-CPU comparison regressed with overlap, so
+single-CPU builds remain serial. The serial and parallel paths produced
+byte-identical executables in the final affinity check. This does not speed up
+rebuilds that already hit both native objects. On Linux the driver reads
+affinity through `sched_getaffinity`: the pinned LLVM mask function returned
+uninitialized storage in the cold writer build. A scoped AddressSanitizer
+probe of that build passed with the replacement on one and multiple CPUs.
+A scoped ThreadSanitizer build
+instrumenting the driver emission, package store, and LLVM object adapter
+reported no races for the serial and parallel P05 object-miss builds; the
+prebuilt LLVM libraries were not instrumented. Evidence:
+`~/w/anal/mettle-current-batch/native-final.MgGf77` and `native-affinity.O3Di6T`
+and `overlap-tsan.Yr4OVt` in the same directory.
 Compacting the unwritten `LineWriter` suffix in place instead of replacing its
 buffer reduced the 16,384-write line-and-tail loop from 14.550 to 10.988 ms
 (3.510 ms paired saving across 90 pairs).
@@ -1998,7 +2040,22 @@ scope is unchanged. The 16,384-write no-LF `LineWriter` loop improved from
 P05 executions had matching results and no measurable runtime change.
 For 16,384 `"a\nb"` writes, the same outcome lowering reduced the loop from
 10.894 to 7.430 ms (3.438 ms paired saving over 100 trials).
+Scanning incoming bytes while appending them reduced the paired median by
+0.108 ms for single-byte writes and 2.753 ms for `"a\nb"` writes in a separate
+24-pair release comparison. The writer still searches an unscanned buffered
+suffix after a downstream panic, even if the next input contains no LF.
 I14 qualification and runtime parity are not claimed.
+
+On x86-64, a counted single-block update loop can keep its data pointer and
+length in registers when a runtime check proves that the sole indexed store
+cannot touch either field. The checked range covers every store of the cloned
+loop, rejects zero or wrapping ranges, and makes no distinct-allocation
+assumption. The original loop handles overlap and failed checks. The object
+regression exercises disjoint and overlapping ranges in one allocation and a
+zero-trip path. Using a pointer cursor and end pointer on the guarded path,
+18 rotated checksum-matched runs measured 315.10 ms before, 281.08 ms
+after, and 280.88 ms for Rust (33.59 ms paired saving against the baseline).
+Evidence: `~/w/anal/mettle-current-batch/guard-final.1X5xKf/final-cursor-runtime.json`.
 
 P03 compile lag had three causes: a toolchain without `mettle-shipped-store`,
 output-overlap checks that canonicalized every library source, and a sibling
@@ -2013,6 +2070,17 @@ build 13.10 -> 1.08 (0.15), noop build 1.05 -> 0.10 (0.014), comment edit
 (0.089), application build 2.10 -> 1.08 (0.097), application check 0.66 ->
 0.19 (0.022); compiler peak RSS fell from 1.34 GB to 245 MB. Evidence:
 `~/w/anal/p03-lag/h1` and `h2`.
+Measured with a toolchain built on a local disk, a repeated unchanged build
+replays a stored input trace instead of loading and keying the program: it
+rereads each traced file, absent path, environment variable and shipped
+library selector and materializes only the exact recorded key. Files read by
+`include!`, `include_str!` and `include_bytes!` are keyed by content, so a
+whitespace edit to them is no longer a stale hit. The resident daemon enters
+each client's directory before resolving relative paths. Three-pair medians,
+Mettle (Rust), in seconds: noop build 0.072 -> 0.018 (0.012), comment edit
+0.076 -> 0.018 (0.078); clean build 0.36 (0.12), semantic edit 0.29 (0.081),
+check 0.15 (0.074), application build 0.36 (0.073) and application check 0.14
+(0.022) remain open. Evidence: `~/w/anal/p03-lag/h3b` and `h4`.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

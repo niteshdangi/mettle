@@ -164,6 +164,11 @@ std::optional<Options> options(int argc, char **argv) {
       result.documentPrivate = true;
       continue;
     }
+    if (arg == "--prepare-shipped-library") {
+      result.prepareShippedLibrary = true;
+      result.standalone = true;
+      continue;
+    }
     if (arg == "--freestanding") {
       result.freestanding = true;
       continue;
@@ -216,9 +221,10 @@ std::optional<Options> options(int argc, char **argv) {
         result.target = value;
       else if (arg == "--cc")
         result.cc = value;
-      else if (arg == "--library-dir")
+      else if (arg == "--library-dir") {
         result.libraryDirectory = value;
-      else if (arg == "--sanitize") {
+        result.editableLibrary = true;
+      } else if (arg == "--sanitize") {
         for (std::size_t begin = 0; begin <= value.size();) {
           auto end = std::min(value.find(',', begin), value.size());
           if (end == begin) {

@@ -92,7 +92,12 @@ enum class Scope {
   Library,
   DemandedLibrary
 };
-std::optional<ir::Program>
+struct SpecializedProgram {
+  ir::Program program;
+  std::shared_ptr<TypeStore> types;
+};
+
+std::optional<SpecializedProgram>
 specialize(const ir::Program &declarations, Diagnostics &diagnostics,
            const Hooks &hooks = {}, Scope scope = Scope::Program,
            Queries *queries = nullptr, std::span<const std::size_t> roots = {});

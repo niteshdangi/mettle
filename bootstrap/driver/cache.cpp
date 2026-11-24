@@ -7,6 +7,7 @@
 #include "llvm/Object/BuildID.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -158,20 +159,40 @@ BuildInputs::BuildInputs(const std::string &libraryDirectory) {
       (error ? fs::path(libraryDirectory) : canonical).generic_string() + "/";
 }
 
-void BuildInputs::record(const Source &source) {
-  record(source, digest(source.text));
+void BuildInputs::record(const Source &source, const std::string &requested) {
+  requests[source.path].insert(requested);
+  recordDigest(source, digest(source.text));
 }
 
 void BuildInputs::record(const LibraryInputs &snapshot) {
   for (const auto &[path, source] : snapshot.sources)
-    record(source, snapshot.digests.at(path));
+    recordDigest(source, snapshot.digests.at(path));
+  traceable = false;
 }
 
-void BuildInputs::record(const Source &source, std::string contentDigest) {
+void BuildInputs::include(const Source &source) {
+  auto content = digest(source.text);
+  inputs[source.path] = "text:" + content;
+  sourceDigests[source.path] = std::move(content);
+  exactPaths.insert(source.path);
+}
+
+void BuildInputs::recordShippedLibrary(const std::string &name,
+                                       const std::string &key) {
+  inputs["shipped-library:" + name] = key;
+  shippedNames.insert(name);
+}
+
+void BuildInputs::recordDigest(const Source &source,
+                               std::string contentDigest) {
   bool library =
       !libraryPrefix.empty() &&
       source.path.compare(0, libraryPrefix.size(), libraryPrefix) == 0;
-  inputs[source.path] = library ? "text:" + contentDigest : tokenDigest(source);
+  if (exactPaths.count(source.path))
+    inputs[source.path] = "text:" + contentDigest;
+  else
+    inputs[source.path] =
+        library ? "text:" + contentDigest : tokenDigest(source);
   sourceDigests[source.path] = std::move(contentDigest);
 }
 
@@ -180,9 +201,125 @@ void BuildInputs::absent(const std::string &path) {
   absentPaths.insert(path);
 }
 
+std::optional<std::string> BuildInputs::environment(const std::string &name) {
+  const char *value = std::getenv(name.c_str());
+  inputs["generated:environment:" + name] =
+      "text:" + digest(value ? "present:" + std::string(value) : "absent");
+  packageInputsSafe = false;
+  environmentNames.insert(name);
+  if (!value)
+    return std::nullopt;
+  return std::string(value);
+}
+
 void BuildInputs::generated(const std::string &name, const std::string &text) {
   inputs["generated:" + name] = "text:" + digest(text);
   packageInputsSafe = false;
+  traceable = false;
+}
+
+std::vector<std::string> BuildInputs::paths() const {
+  std::vector<std::string> result;
+  for (const auto &[path, requested] : requests)
+    result.push_back(path);
+  return result;
+}
+
+std::optional<std::string>
+BuildInputs::trace(const std::string &key, const std::string &checked) const {
+  if (!traceable)
+    return std::nullopt;
+  std::string text;
+  auto add = [&](std::string_view field) {
+    text += field;
+    text.push_back('\0');
+  };
+  add("mettle-build-trace-1");
+  add(key);
+  add(checked);
+  for (const auto &[path, requested] : requests)
+    for (const auto &from : requested) {
+      add(exactPaths.count(path) ? "exact" : "source");
+      add(from);
+      add(path);
+    }
+  for (const auto &path : absentPaths) {
+    add("absent");
+    add(path);
+  }
+  for (const auto &name : environmentNames) {
+    add("environment");
+    add(name);
+  }
+  for (const auto &name : shippedNames) {
+    add("shipped");
+    add(name);
+  }
+  return text;
+}
+
+std::optional<BuildReplay> BuildInputs::replay(
+    const std::string &libraryDirectory, std::string_view trace,
+    const std::function<std::optional<std::string>(const std::string &)>
+        &shipped) {
+  auto next = [&]() -> std::optional<std::string> {
+    auto end = trace.find('\0');
+    if (end == std::string_view::npos)
+      return std::nullopt;
+    std::string field(trace.substr(0, end));
+    trace.remove_prefix(end + 1);
+    return field;
+  };
+  auto version = next();
+  auto key = next();
+  auto checked = next();
+  if (!version || *version != "mettle-build-trace-1" || !key || !checked)
+    return std::nullopt;
+  BuildReplay result{BuildInputs(libraryDirectory), *key, {}};
+  if (!checked->empty()) {
+    auto current = shipped(*checked);
+    if (!current)
+      return std::nullopt;
+    result.checked = std::move(*current);
+  }
+  while (!trace.empty()) {
+    auto kind = next();
+    auto field = next();
+    if (!kind || !field)
+      return std::nullopt;
+    std::error_code error;
+    if (*kind == "source" || *kind == "exact") {
+      auto path = next();
+      if (!path)
+        return std::nullopt;
+      if (!field->empty()) {
+        auto canonical = fs::canonical(*field, error);
+        if (error || canonical.generic_string() != *path)
+          return std::nullopt;
+      }
+      auto buffer = llvm::MemoryBuffer::getFile(*path);
+      if (!buffer)
+        return std::nullopt;
+      Source source{*path, (*buffer)->getBuffer().str()};
+      result.inputs.record(source, *field);
+      if (*kind == "exact")
+        result.inputs.include(source);
+    } else if (*kind == "absent") {
+      if (fs::exists(*field, error) || error)
+        return std::nullopt;
+      result.inputs.absent(*field);
+    } else if (*kind == "environment") {
+      result.inputs.environment(*field);
+    } else if (*kind == "shipped") {
+      auto current = shipped(*field);
+      if (!current)
+        return std::nullopt;
+      result.inputs.recordShippedLibrary(*field, *current);
+    } else {
+      return std::nullopt;
+    }
+  }
+  return result;
 }
 
 std::string

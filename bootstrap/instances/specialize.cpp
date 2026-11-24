@@ -199,7 +199,7 @@ public:
     result.libraries = source.libraries;
     result.target = source.target;
   }
-  std::optional<ir::Program> run() {
+  std::optional<SpecializedProgram> run() {
     try {
       if (demandedLibrary)
         for (auto root : roots)
@@ -262,7 +262,7 @@ public:
       queries->entries = std::move(nextQueries);
       queries->reused += queryHits;
     }
-    return std::move(result);
+    return SpecializedProgram{std::move(result), std::move(types)};
   }
 
 private:
@@ -1399,11 +1399,10 @@ private:
     return id;
   }
 };
-std::optional<ir::Program> specialize(const ir::Program &declarations,
-                                      Diagnostics &diagnostics,
-                                      const Hooks &hooks, Scope scope,
-                                      Queries *queries,
-                                      std::span<const std::size_t> roots) {
+std::optional<SpecializedProgram>
+specialize(const ir::Program &declarations, Diagnostics &diagnostics,
+           const Hooks &hooks, Scope scope, Queries *queries,
+           std::span<const std::size_t> roots) {
   if (!diagnostics.empty())
     return std::nullopt;
   return Planner(declarations, diagnostics, hooks, scope, queries, roots).run();

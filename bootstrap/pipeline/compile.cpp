@@ -785,17 +785,15 @@ public:
         instanceQueries ? &*instanceQueries : nullptr, roots);
     if (!concrete)
       return std::nullopt;
-    auto concreteTypes = std::make_shared<TypeStore>(*concrete->types);
-    concrete->types = concreteTypes;
     auto concreteProof = [&](Type subject, Type runtime,
                              const ir::Function &function, Span span) {
-      return proveUnpin(*concreteTypes, database, diagnostics, subject, runtime,
-                        function, span);
+      return proveUnpin(*concrete->types, database, diagnostics, subject,
+                        runtime, function, span);
     };
     // Specialization extends type identities; remapped destructor IDs do not
     // change initialization or loan facts for otherwise identical functions.
-    auto verified = admit(std::move(*concrete), diagnostics, concreteProof,
-                          &program, &prepared.loans);
+    auto verified = admit(std::move(concrete->program), diagnostics,
+                          concreteProof, &program, &prepared.loans);
     if (verified && instanceQueries)
       *prepared.instances = std::move(*instanceQueries);
     return verified;

@@ -1633,6 +1633,8 @@ private:
       auto included = provider(path);
       if (!included)
         return std::nullopt;
+      if (library.included)
+        library.included(*included);
       sourceId(*included);
       sourceInstances[included->id] = sourceInstance();
       if (!currentRoot.empty())

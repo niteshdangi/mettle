@@ -188,7 +188,9 @@ enabled features, mounts, link libraries, and every source the load step read.
 Relinking changes compiler identity; post-link binary edits that preserve its
 build ID do not. User sources count by token stream (comments, spacing and blank
 lines do not matter; sound while no source position reaches the output, so debug info or
-panic locations must add positions to the key), library sources by content,
+panic locations must add positions to the key), library sources and files read
+by source-inclusion macros by content, environment variables read by `env!`
+by value,
 and probed-but-absent paths as absent. A whole-build hit copies the stored
 artifact and skips checking, lowering, code generation and linking; a miss runs
 the same whole-build path as a clean build. CTest builds use a cache in the

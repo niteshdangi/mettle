@@ -181,7 +181,7 @@ void emptySpecializationCases() {
   auto specialized = mettle::instances::specialize(program, diagnostics);
   require(specialized && diagnostics.empty(),
           "empty specialization propagation failed");
-  const auto &blocks = specialized->functions[0].blocks;
+  const auto &blocks = specialized->program.functions[0].blocks;
   require(blocks[3].exit.kind == Exit::Unreachable &&
               blocks[2].exit.kind == Exit::Unreachable &&
               blocks[2].instructions[0].op == Op::Constant &&

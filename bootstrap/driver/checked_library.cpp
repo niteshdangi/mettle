@@ -170,13 +170,8 @@ bool CheckedLibrary::contains(std::string_view name) const {
   return false;
 }
 
-bool CheckedLibrary::prepareArchive(std::string &error) {
-  lease = store.acquireLease(archiveKey);
-  if (!lease) {
-    error = "cannot acquire checked " + root + " cache lease";
-    return false;
-  }
-  if (options.libraryQueries)
+bool CheckedLibrary::loadArchive(std::string &error, bool shipped) {
+  if (!shipped && options.libraryQueries)
     if (auto reused = options.libraryQueries->findArchive(root, archiveKey,
                                                           archiveContent)) {
       archive = std::move(*reused);
@@ -186,15 +181,17 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
       return true;
     }
   std::optional<LibraryArchive> decoded;
-  auto stored = store.mapped(
-      archiveKey, limits::sourceBytes,
+  auto verify =
       [&](const std::shared_ptr<const packages::Store::Mapping> &mapping) {
         const auto bytes = mapping->bytes();
         decoded = decodeLibraryArchive(bytes, archiveKey, error, mapping);
         if (decoded)
           archiveContent = std::string(bytes.substr(bytes.size() - 64));
         return decoded.has_value();
-      });
+      };
+  auto stored =
+      shipped ? store.shippedMapped(archiveKey, limits::sourceBytes, verify)
+              : store.mapped(archiveKey, limits::sourceBytes, verify);
   if (stored.status == packages::Store::Lookup::Hit) {
     archive = std::move(*decoded);
     if (options.libraryQueries)
@@ -208,6 +205,31 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
   if (stored.status == packages::Store::Lookup::Corrupt && options.explain)
     std::cerr << "mettle: checked library interface cache corrupt " << root
               << (error.empty() ? "" : ": " + error) << "; rebuilding\n";
+  return false;
+}
+
+bool CheckedLibrary::publishShippedSelector(std::string &error) {
+  if (!options.prepareShippedLibrary)
+    return true;
+  auto selector = shippedLibrarySelector(
+      std::filesystem::path(options.libraryDirectory) / root,
+      cacheConfiguration);
+  if (!selector.empty() && store.putData(selector, archiveKey))
+    return true;
+  error = "cannot publish shipped " + root + " library selector";
+  return false;
+}
+
+bool CheckedLibrary::prepareArchive(std::string &error) {
+  if (shippedArchive)
+    return true;
+  lease = store.acquireLease(archiveKey);
+  if (!lease) {
+    error = "cannot acquire checked " + root + " cache lease";
+    return false;
+  }
+  if (loadArchive(error))
+    return publishShippedSelector(error);
   error.clear();
   LibraryArchive candidate(archiveKey);
   Diagnostics diagnostics;
@@ -500,7 +522,7 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
   if (options.explain)
     std::cerr << "mettle: checked library interface cache stored " << root
               << " " << archiveKey.substr(0, 12) << '\n';
-  return true;
+  return publishShippedSelector(error);
 }
 
 bool CheckedLibrary::prepareInputs(std::string &error) {
@@ -515,6 +537,29 @@ bool CheckedLibrary::prepareInputs(std::string &error) {
                                             dependency->archiveKey);
   }
   auto directory = std::filesystem::path(options.libraryDirectory) / root;
+  if (!options.editableLibrary && !options.prepareShippedLibrary) {
+    auto selector = shippedLibrarySelector(directory, cacheConfiguration);
+    if (!selector.empty()) {
+      auto entry = store.shippedData(selector, 64);
+      if (entry.status == packages::Store::Lookup::Hit &&
+          entry.bytes.size() == 64 &&
+          entry.bytes.find_first_not_of("0123456789abcdef") ==
+              std::string::npos) {
+        archiveKey = std::move(entry.bytes);
+        if (loadArchive(error, true)) {
+          if (options.explain)
+            std::cerr << "mettle: shipped library selector hit " << root
+                      << '\n';
+          shippedArchive = inputsPrepared = true;
+          return true;
+        }
+        error.clear();
+      }
+      if (entry.status != packages::Store::Lookup::Miss && options.explain)
+        std::cerr << "mettle: shipped library selector unusable " << root
+                  << "; scanning sources\n";
+    }
+  }
   std::shared_ptr<const LibraryInputs> inputs;
   if (options.libraryQueries) {
     std::string fallback;
@@ -554,6 +599,15 @@ CheckedLibrary::builtinMethodIndex() {
                     std::error_code fileError;
                     auto path = std::filesystem::weakly_canonical(
                         directory / entry.first, fileError);
+                    if (shippedArchive) {
+                      auto source =
+                          fileError ? nullptr : input(path.generic_string());
+                      if (!source)
+                        return false;
+                      packages::Sha256 hash;
+                      hash.update(source->text);
+                      return hash.finish() == entry.second;
+                    }
                     auto found =
                         sourceInputs->digests.find(path.generic_string());
                     return !fileError && found != sourceInputs->digests.end() &&
@@ -618,12 +672,17 @@ CheckedLibrary::builtinMethodIndex() {
 }
 
 const Source *CheckedLibrary::input(const std::string &path) const {
-  for (auto unit = this; unit; unit = unit->dependency)
-    if (unit->sourceInputs) {
+  for (auto unit = this; unit; unit = unit->dependency) {
+    if (unit->shippedArchive) {
+      for (const auto &source : unit->archive.sources.snapshots())
+        if (source.path == path)
+          return &source;
+    } else if (unit->sourceInputs) {
       auto found = unit->sourceInputs->sources.find(path);
       if (found != unit->sourceInputs->sources.end())
         return &found->second;
     }
+  }
   return nullptr;
 }
 
@@ -1025,10 +1084,6 @@ CheckedLibrary::import(const Module &module,
     if (destination < functions) {
       if (bodies->functionRecords[destination])
         return fail("duplicate compiled function destination");
-      auto symbol =
-          catalog->symbol(metadata::SymbolKind::Function, destination);
-      if (!symbol || decoded.functionIdentities[i] != symbol->definition)
-        return fail("compiled function identity does not match its header");
       bodies->functionRecords[destination] = i;
       ++sourceBodies;
     } else if (destination < supportBase) {
@@ -1211,12 +1266,40 @@ bool CheckedLibraries::containsInput(const std::string &path) const {
 }
 
 void CheckedLibraries::recordInputs(BuildInputs &inputs) const {
+  auto record = [&](const CheckedLibrary &unit) {
+    if (unit.shippedArchive)
+      inputs.recordShippedLibrary(unit.root, unit.archiveKey);
+    else
+      inputs.record(*unit.sourceInputs);
+  };
   for (auto unit = selected; unit; unit = unit->dependency)
-    inputs.record(*unit->sourceInputs);
+    record(*unit);
   if (!selected)
     for (const auto &unit : units)
       if (unit->methodIndexUsed)
-        inputs.record(*unit->sourceInputs);
+        record(*unit);
+}
+
+std::map<std::string, std::string> CheckedLibraries::shippedKeys() const {
+  std::map<std::string, std::string> keys;
+  for (const auto &unit : units) {
+    if (unit->options.editableLibrary || unit->options.prepareShippedLibrary)
+      break;
+    auto configuration = unit->cacheConfiguration;
+    configuration.dependencies = keys;
+    auto selector = shippedLibrarySelector(
+        std::filesystem::path(unit->options.libraryDirectory) / unit->root,
+        configuration);
+    if (selector.empty())
+      break;
+    auto entry = unit->store.shippedData(selector, 64);
+    if (entry.status != packages::Store::Lookup::Hit ||
+        entry.bytes.size() != 64 ||
+        entry.bytes.find_first_not_of("0123456789abcdef") != std::string::npos)
+      break;
+    keys.emplace(unit->root, std::move(entry.bytes));
+  }
+  return keys;
 }
 
 pipeline::PackageOwners CheckedLibraries::packageOwners() const {

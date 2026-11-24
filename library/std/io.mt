@@ -895,22 +895,29 @@ extend<W: Writer + unsized> LineWriter<W> implements Writer {
     mut fn write_some(read input: [u8]): usize throws Error {
         if self.pending != 0usize { self.discard_written() }
         let before = self.buffer.len()
-        self.buffer.extend_from_slice(input)
-        let line_end = {
+        var line_end = 0usize
+        if self.searched < before {
             let bytes = self.buffer.as_slice()
-            var end = 0usize
             var index = self.searched
-            while index < bytes.len() {
-                if bytes[index] == 10u8 { end = index + 1usize }
+            while index < before {
+                if bytes[index] == 10u8 { line_end = index + 1usize }
                 index += 1usize
             }
-            end
+        }
+        let count = input.len()
+        if count > self.buffer.capacity() - before { self.buffer.reserve(count) }
+        var index = 0usize
+        while index < count {
+            let byte = input[index]
+            index += 1usize
+            if byte == 10u8 { line_end = before + index }
+            self.buffer.push(byte)
         }
         if line_end != 0usize {
-            return try self.finish_line(line_end, before, input.len())
+            return try self.finish_line(line_end, before, count)
         }
-        self.searched = self.buffer.len()
-        input.len()
+        self.searched = before + count
+        count
     }
 
     mut fn flush(): Unit throws Error {

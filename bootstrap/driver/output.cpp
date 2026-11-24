@@ -10,6 +10,7 @@
 #include "llvm/Object/ArchiveWriter.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Program.h"
+#include "llvm/Support/Threading.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
@@ -17,14 +18,30 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <unordered_map>
+#ifdef __linux__
+#include <sched.h>
+#endif
 
 namespace mettle::driver {
 namespace {
+bool canOverlapNativeEmission() {
+  if (!llvm::llvm_is_multithreaded())
+    return false;
+#ifdef __linux__
+  cpu_set_t affinity;
+  return sched_getaffinity(0, sizeof(affinity), &affinity) == 0 &&
+         CPU_COUNT(&affinity) > 1;
+#else
+  return llvm::hardware_concurrency().compute_thread_count() > 1;
+#endif
+}
+
 struct Temporary {
   llvm::SmallString<256> path;
   ~Temporary() {
@@ -57,6 +74,19 @@ struct BackendOutput {
   llvm::LLVMContext context;
   std::unique_ptr<llvm::Module> module;
   Temporary object;
+
+  void captureDiagnostics() {
+    context.setDiagnosticHandlerCallBack(
+        [](const llvm::DiagnosticInfo *diagnostic, void *opaque) {
+          auto &state = *static_cast<BackendOutput *>(opaque);
+          llvm::raw_string_ostream text(state.diagnostics);
+          llvm::DiagnosticPrinterRawOStream printer(text);
+          diagnostic->print(printer);
+          text << '\n';
+          state.failed |= diagnostic->getSeverity() == llvm::DS_Error;
+        },
+        this);
+  }
 };
 
 bool sameRuntimeTarget(llvm::StringRef requested, llvm::StringRef runtime) {
@@ -114,7 +144,8 @@ llvm::Error emitUnitArchive(llvm::Module &module, const Options &options,
                             llvm::StringRef output,
                             const std::filesystem::path &directory,
                             const std::string &identity, packages::Store *store,
-                            std::vector<packages::Store::Artifact> &artifacts) {
+                            std::vector<packages::Store::Artifact> &artifacts,
+                            std::ostream &explain) {
   packages::Sha256 namespaceHash;
   for (const auto &field : {std::string("mettle-object-units-2"), identity,
                             module.getSourceFileName()}) {
@@ -206,8 +237,8 @@ llvm::Error emitUnitArchive(llvm::Module &module, const Options &options,
   if (store)
     artifacts.push_back({bucketKey, output.str(), false});
   if (options.explain)
-    std::cerr << "mettle: machine unit cache " << identity << " reused "
-              << reused << " generated " << generated << '\n';
+    explain << "mettle: machine unit cache " << identity << " reused " << reused
+            << " generated " << generated << '\n';
   return llvm::Error::success();
 }
 
@@ -431,16 +462,7 @@ static int emitOne(const Options &options, const Source &source,
       localBackend.emplace();
     auto &backend = sharedBackend ? *sharedBackend : *localBackend;
     auto &context = backend.context;
-    context.setDiagnosticHandlerCallBack(
-        [](const llvm::DiagnosticInfo *diagnostic, void *opaque) {
-          auto &state = *static_cast<BackendOutput *>(opaque);
-          llvm::raw_string_ostream text(state.diagnostics);
-          llvm::DiagnosticPrinterRawOStream printer(text);
-          diagnostic->print(printer);
-          text << '\n';
-          state.failed |= diagnostic->getSeverity() == llvm::DS_Error;
-        },
-        &backend);
+    backend.captureDiagnostics();
     auto target = llvm::Triple(llvm::Triple::normalize(options.target));
     auto facts = targetFacts(options.target);
     if (program.program().target.arch != facts.arch ||
@@ -564,6 +586,15 @@ static int emitOne(const Options &options, const Source &source,
                              options.emits.size() <= 1 && !options.debugInfo &&
                              options.sanitizers.empty() &&
                              program.program().globalAssembly.empty();
+      std::optional<bool> overlapNative;
+      struct NativeObject {
+        std::unique_ptr<BackendOutput> backend;
+        std::string path, key;
+        const PackageObject *package;
+      };
+      std::vector<NativeObject> nativeObjects;
+      std::optional<std::set<std::pair<std::string_view, std::string_view>>>
+          nativeDemand;
       if (rootUnits)
         objectPath = (directory / "main.a").string();
       for (std::size_t i = 0; i < packageObjects.size(); ++i) {
@@ -571,18 +602,20 @@ static int emitOne(const Options &options, const Source &source,
         const bool native = package.identity.starts_with("native:");
         std::string packageKey = package.key;
         if (native) {
-          std::set<std::pair<std::string, std::string>> demand;
-          const auto &consumer = program.program();
-          for (std::size_t function = 0; function < consumer.functions.size();
-               ++function)
-            if (function < consumer.functionPackages.size() &&
-                consumer.functionPackages[function].starts_with("native:"))
-              demand.emplace(consumer.functions[function].name,
-                             consumer.functions[function].externalName);
+          if (!nativeDemand) {
+            auto &demand = nativeDemand.emplace();
+            const auto &consumer = program.program();
+            for (std::size_t function = 0; function < consumer.functions.size();
+                 ++function)
+              if (function < consumer.functionPackages.size() &&
+                  consumer.functionPackages[function].starts_with("native:"))
+                demand.emplace(consumer.functions[function].name,
+                               consumer.functions[function].externalName);
+          }
           packages::Sha256 key;
           key.update("mettle-demanded-native-object-2");
           key.update(package.key);
-          for (const auto &[name, symbol] : demand) {
+          for (const auto &[name, symbol] : *nativeDemand) {
             key.update(std::string_view("\0", 1));
             key.update(name);
             key.update(std::string_view("\0", 1));
@@ -628,19 +661,33 @@ static int emitOne(const Options &options, const Source &source,
           if (native && options.explain)
             std::cerr << "mettle: native code demand "
                       << source->program().functions.size() << " functions\n";
+          if (native && rootUnits && !overlapNative.has_value())
+            overlapNative = canOverlapNativeEmission();
+          auto nativeBackend = native && overlapNative.value_or(false)
+                                   ? std::make_unique<BackendOutput>()
+                                   : nullptr;
+          if (nativeBackend)
+            nativeBackend->captureDiagnostics();
           auto dependency = mettle::backend::lower(
-              *source, context, checked, options.target, options.freestanding,
-              nullptr, false, false,
-              {true, package.identity, false, bool(package.library)},
+              *source, nativeBackend ? nativeBackend->context : context,
+              checked, options.target, options.freestanding, nullptr, false,
+              false, {true, package.identity, false, bool(package.library)},
               &debugRequest);
           dependency->setSourceFileName(package.source);
           dependency->setTargetTriple(
               llvm::Triple(llvm::Triple::normalize(options.target)));
+          if (nativeBackend) {
+            nativeBackend->module = std::move(dependency);
+            nativeObjects.push_back(
+                {std::move(nativeBackend), packagePath, packageKey, &package});
+            packagePaths.push_back(std::move(packagePath));
+            continue;
+          }
           auto emitDependency = [&]() {
             if (native)
               return emitUnitArchive(*dependency, options, packagePath,
                                      directory, package.identity, store,
-                                     packageArtifacts);
+                                     packageArtifacts, std::cerr);
             return mettle::backend::emitObject(*dependency, options.target,
                                                packagePath, false);
           };
@@ -664,19 +711,48 @@ static int emitOne(const Options &options, const Source &source,
         packagePaths.push_back(std::move(packagePath));
       }
       const bool reusedObject = !backend.object.path.empty();
+      if (!reusedObject && sharedBackend)
+        if (auto error =
+                backend.object.create(options.output + ".mettle-object-%%%%%%"))
+          return ioFailure("cannot stage reusable object", error);
+      std::vector<packages::Store::Artifact> nativeArtifacts;
+      std::ostringstream nativeLog;
+      std::future<int> nativeEmission;
+      if (!nativeObjects.empty())
+        nativeEmission = std::async(std::launch::async, [&] {
+          for (auto &entry : nativeObjects) {
+            const auto &identity = entry.package->identity;
+            if (auto error = emitUnitArchive(
+                    *entry.backend->module, options, entry.path, directory,
+                    identity, store, nativeArtifacts, nativeLog)) {
+              nativeLog << "mettle: error[backend]: package "
+                        << identity.substr(7) << ": "
+                        << llvm::toString(std::move(error)) << '\n';
+              return 1;
+            }
+            if (entry.backend->failed) {
+              nativeLog << "mettle: error[assembly]: target assembly/code "
+                           "generation rejected package '"
+                        << identity.substr(7) << "':\n"
+                        << entry.backend->diagnostics;
+              return 1;
+            }
+            if (store)
+              nativeArtifacts.push_back({entry.key, entry.path, false});
+          }
+          return 0;
+        });
+      std::optional<std::string> rootError;
+      std::ostringstream rootLog;
       if (!reusedObject) {
-        if (sharedBackend)
-          if (auto error = backend.object.create(options.output +
-                                                 ".mettle-object-%%%%%%"))
-            return ioFailure("cannot stage reusable object", error);
         if (options.explain)
-          std::cerr << "mettle: backend object " << options.target << '\n';
+          rootLog << "mettle: backend object " << options.target << '\n';
         auto generated = sharedBackend ? llvm::CloneModule(*module) : nullptr;
         auto emitRoot = [&]() {
           auto &lowered = generated ? *generated : *module;
           if (rootUnits)
             return emitUnitArchive(lowered, options, objectPath, directory,
-                                   "root", store, packageArtifacts);
+                                   "root", store, packageArtifacts, rootLog);
           return mettle::backend::emitObject(
               lowered, options.target,
               sharedBackend ? backend.object.path.str()
@@ -684,11 +760,28 @@ static int emitOne(const Options &options, const Source &source,
               release, options.sanitizers.contains("address"),
               options.sanitizers.contains("thread"));
         };
-        if (auto error = emitRoot()) {
-          std::cerr << "mettle: error[backend]: "
-                    << llvm::toString(std::move(error)) << '\n';
-          return 1;
+        if (auto error = emitRoot())
+          rootError = llvm::toString(std::move(error));
+      }
+      if (nativeEmission.valid()) {
+        const auto status = nativeEmission.get();
+        std::cerr << nativeLog.str();
+        if (status)
+          return status;
+        if (store) {
+          packageArtifacts.insert(
+              packageArtifacts.end(),
+              std::make_move_iterator(nativeArtifacts.begin()),
+              std::make_move_iterator(nativeArtifacts.end()));
+          for (const auto &entry : nativeObjects)
+            packagesToStore.emplace_back(entry.package, entry.key);
         }
+      }
+      if (options.explain)
+        std::cerr << rootLog.str();
+      if (rootError) {
+        std::cerr << "mettle: error[backend]: " << *rootError << '\n';
+        return 1;
       }
       if (backend.failed) {
         std::cerr << "mettle: error[assembly]: target assembly/code generation "

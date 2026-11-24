@@ -1857,8 +1857,14 @@ def check_ir_shape(run, args, directory, evidence):
     if "mettle_rt_run" in undefined or "mettle_rt_panicking" in undefined:
         raise AssertionError("Trivial release object links the unwind runtime:\n" + undefined)
     cleanup = emit_llvm("shape-cleanup", CLEANUP_SOURCE, "--profile", "release")
-    if "mettle_rt_run" not in cleanup:
+    if not any("invoke " in body and "landingpad " in body and
+               "mettle_rt_unwind_begin" in body
+               for _, _, body in functions(cleanup)):
         raise AssertionError("A function with a destructor lost its cleanup frame")
+    obj = directory / "shape-cleanup-run"
+    run([args.compiler, "build", directory / "shape-cleanup.mt",
+         "-o", obj, "--profile", "release"])
+    run([obj])
     evidence["cases"].append({"name": "ir-shape-no-cleanup-no-unwind-runtime",
                               "phase": "backend"})
 
@@ -1931,6 +1937,20 @@ def check_ir_shape(run, args, directory, evidence):
 
 
 def check_driver_outputs(run, args, directory, evidence):
+    if not ARM64 and platform.machine().lower() in ("amd64", "x86_64"):
+        source = (Path(__file__).resolve().parents[2] / "benchmarks" /
+                  "p02_float_kernel" / "main.mt")
+        output = directory / "float-induction"
+        run([args.compiler, "build", source, "--standalone", "--profile",
+             "release", "-o", output])
+        run([output], expected=17)
+        assembly = run([args.cxx.with_name("llvm-objdump"), "-d", output]).stdout
+        if not re.search(r"\bleal\s+(?:0x)?1\(%r\w+\),\s*%e\w+[^\n]*\n"
+                         r"(?:[^\n]*\bxorps[^\n]*\n)?"
+                         r"[^\n]*\bcvtsi2sd\b", assembly):
+            raise AssertionError("x86 floating induction offset did not fold into LEA")
+        evidence["cases"].append({"name": "x86-float-induction-offset", "phase": "backend"})
+
     linkage = directory / "explicit-library-linkage"
     linkage.mkdir(exist_ok=True)
     companion = linkage / "probe.c"

@@ -278,6 +278,44 @@ private:
   std::string reason;
 };
 
+void hashField(packages::Sha256 &hash, std::string_view value) {
+  char length[8];
+  auto size = static_cast<std::uint64_t>(value.size());
+  for (unsigned i = 0; i < 8; ++i)
+    length[i] = static_cast<char>(size >> (i * 8));
+  hash.update({length, sizeof(length)});
+  hash.update(value);
+}
+
+void hashConfiguration(packages::Sha256 &hash,
+                       const std::filesystem::path &root,
+                       const LibraryCacheConfiguration &configuration) {
+  auto field = [&](std::string_view value) { hashField(hash, value); };
+  auto strings = [&](const std::set<std::string> &values) {
+    field(std::to_string(values.size()));
+    for (const auto &value : values)
+      field(value);
+  };
+  field(configuration.compiler);
+  field(configuration.identity);
+  field(root.generic_string());
+  field(configuration.target);
+  field(configuration.profile);
+  field(configuration.cc);
+  field(configuration.sysroot);
+  field(configuration.checks ? "checks" : "wrap");
+  field(configuration.freestanding ? "freestanding" : "hosted");
+  field(configuration.debugInfo ? "debug-info" : "no-debug-info");
+  strings(configuration.features);
+  strings(configuration.targetFeatures);
+  strings(configuration.sanitizers);
+  field(std::to_string(configuration.dependencies.size()));
+  for (const auto &[identity, key] : configuration.dependencies) {
+    field(identity);
+    field(key);
+  }
+}
+
 std::optional<LibraryInputs>
 collectInputs(const std::filesystem::path &directory,
               const LibraryCacheConfiguration &configuration,
@@ -314,38 +352,9 @@ collectInputs(const std::filesystem::path &directory,
     return fail("directory traversal failed: " + error.message());
   std::sort(paths.begin(), paths.end());
   packages::Sha256 hash;
-  auto field = [&](std::string_view value) {
-    char length[8];
-    auto size = static_cast<std::uint64_t>(value.size());
-    for (unsigned i = 0; i < 8; ++i)
-      length[i] = static_cast<char>(size >> (i * 8));
-    hash.update({length, sizeof(length)});
-    hash.update(value);
-  };
-  auto strings = [&](const std::set<std::string> &values) {
-    field(std::to_string(values.size()));
-    for (const auto &value : values)
-      field(value);
-  };
+  auto field = [&](std::string_view value) { hashField(hash, value); };
   field("mettle-checked-library-inputs-1");
-  field(configuration.compiler);
-  field(configuration.identity);
-  field(root.generic_string());
-  field(configuration.target);
-  field(configuration.profile);
-  field(configuration.cc);
-  field(configuration.sysroot);
-  field(configuration.checks ? "checks" : "wrap");
-  field(configuration.freestanding ? "freestanding" : "hosted");
-  field(configuration.debugInfo ? "debug-info" : "no-debug-info");
-  strings(configuration.features);
-  strings(configuration.targetFeatures);
-  strings(configuration.sanitizers);
-  field(std::to_string(configuration.dependencies.size()));
-  for (const auto &[identity, key] : configuration.dependencies) {
-    field(identity);
-    field(key);
-  }
+  hashConfiguration(hash, root, configuration);
   LibraryInputs inputs;
   for (const auto &path : paths) {
     auto status = fs::symlink_status(path, error);
@@ -403,6 +412,19 @@ collectInputs(const std::filesystem::path &directory,
   return inputs;
 }
 } // namespace
+
+std::string
+shippedLibrarySelector(const std::filesystem::path &directory,
+                       const LibraryCacheConfiguration &configuration) {
+  std::error_code error;
+  auto root = std::filesystem::weakly_canonical(directory, error);
+  if (error)
+    return {};
+  packages::Sha256 hash;
+  hashField(hash, "mettle-shipped-library-selector-1");
+  hashConfiguration(hash, root, configuration);
+  return hash.finish();
+}
 
 struct LibraryInputSnapshots::Entry {
   std::filesystem::path root;

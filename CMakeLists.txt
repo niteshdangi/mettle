@@ -434,7 +434,8 @@ if(BUILD_TESTING)
       list(APPEND shipped_store_commands
            COMMAND mettle build "${PROJECT_SOURCE_DIR}/tests/cache_prime/${library}.mt"
                    -o "${PROJECT_BINARY_DIR}/shipped-store-${profile}-${library}"
-                   --profile ${profile} --cache-dir "${METTLE_SHIPPED_STORE_DIR}")
+                   --profile ${profile} --prepare-shipped-library
+                   --cache-dir "${METTLE_SHIPPED_STORE_DIR}")
     endforeach()
   endforeach()
   add_custom_target(mettle-shipped-store ${shipped_store_commands}

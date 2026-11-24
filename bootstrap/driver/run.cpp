@@ -16,6 +16,7 @@
 #include "pipeline/compile.h"
 #include "resolution/load.h"
 #include "semantics/checked.h"
+#include "support/limits.h"
 #include "syntax/format.h"
 #include "syntax/lexer.h"
 #include "syntax/parser.h"
@@ -1153,7 +1154,7 @@ int build(const Options &requested,
           replacement != sourceOverrides->end())
         text = replacement->second;
     Source loaded{canonical.generic_string(), std::move(text)};
-    inputs.record(loaded);
+    inputs.record(loaded, path);
     return loaded;
   };
   auto facts = targetFacts(options.target);
@@ -1180,14 +1181,11 @@ int build(const Options &requested,
   library.packageDependencies = std::move(packageDependencies);
   library.configuration = configuration;
   library.configuration.packageName = options.packageName;
-  library.macroEnvironment =
-      [&inputs](const std::string &name) -> std::optional<std::string> {
-    const char *value = std::getenv(name.c_str());
-    inputs.generated("environment:" + name,
-                     value ? "present:" + std::string(value) : "absent");
-    if (!value)
-      return std::nullopt;
-    return std::string(value);
+  library.macroEnvironment = [&inputs](const std::string &name) {
+    return inputs.environment(name);
+  };
+  library.included = [&inputs](const Source &included) {
+    inputs.include(included);
   };
   if (options.harness == "test")
     library.harness = resolution::Library::Harness::Test;
@@ -1195,6 +1193,95 @@ int build(const Options &requested,
     library.harness = resolution::Library::Harness::Bench;
   if (procedural)
     library.procedures = &procedural->procedures();
+  auto cacheable = [&] {
+    return options.command == "build" && !options.debugInfo &&
+           options.emits.size() <= 1 &&
+           (options.emit == "executable" || options.emit == "object");
+  };
+  auto consumerKey = [](std::string key, const std::string &checked) {
+    if (checked.empty())
+      return key;
+    packages::Sha256 hash;
+    hash.update("mettle-checked-library-consumer-1");
+    hash.update(key);
+    hash.update(checked);
+    return hash.finish();
+  };
+  std::optional<std::string> traceKey;
+  std::optional<std::string> corruptKey;
+  if (!options.noCache && !sourceOverrides && !sourceModules && !procedural &&
+      !discovered && !options.libraryDirectory.empty() && cacheable() &&
+      !pathError) {
+    if (!store)
+      store = openStore(options);
+    if (store) {
+      packages::Sha256 hash;
+      hash.update("mettle-build-trace-key-1");
+      hash.update(BuildInputs(options.libraryDirectory)
+                      .key(options, mounts, configuration.features));
+      hash.update(source.path);
+      traceKey = "trace-" + hash.finish();
+    }
+  }
+  if (traceKey) {
+    std::unique_ptr<CheckedLibraries> shippedLibraries;
+    std::optional<std::map<std::string, std::string>> shippedKeys;
+    auto shipped = [&](const std::string &root) -> std::optional<std::string> {
+      if (!shippedKeys) {
+        shippedLibraries = CheckedLibraries::create(
+            options, configuration, *store, facts, backend::evaluateNumeric);
+        shippedKeys = shippedLibraries->shippedKeys();
+      }
+      auto found = shippedKeys->find(root);
+      if (found == shippedKeys->end())
+        return std::nullopt;
+      return found->second;
+    };
+    auto trace = store->data(*traceKey, limits::sourceBytes);
+    std::optional<BuildReplay> replayed;
+    if (trace.status == packages::Store::Lookup::Hit)
+      replayed =
+          BuildInputs::replay(options.libraryDirectory, trace.bytes, shipped);
+    if (replayed && consumerKey(replayed->inputs.key(options, mounts,
+                                                     configuration.features),
+                                replayed->checked) == replayed->key) {
+      std::error_code error;
+      auto output = std::filesystem::weakly_canonical(options.output, error);
+      auto library =
+          std::filesystem::weakly_canonical(options.libraryDirectory, error);
+      bool separate = !error && !beneath(output, library) &&
+                      !beneath(library, output) && output != library &&
+                      output != std::filesystem::path(source.path);
+      if (separate && std::filesystem::exists(output, error))
+        separate =
+            std::filesystem::hard_link_count(output, error) <= 1 && !error;
+      Diagnostics traced;
+      SourceId id = 0;
+      for (const auto &path : replayed->inputs.paths())
+        traced.registerSource(
+            std::make_shared<const Source>(Source{path, "", ++id}));
+      if (separate && !outputOverwritesSource(options, source, traced) &&
+          !workCopies.protects(options, traced)) {
+        auto lease = store->acquireLease(replayed->key);
+        auto found = lease ? store->materialize(replayed->key, options.output)
+                           : packages::Store::Lookup::Miss;
+        if (found == packages::Store::Lookup::Hit) {
+          if (options.explain)
+            std::cerr << "mettle: cache hit " << replayed->key.substr(0, 12)
+                      << ": compile and link skipped\n";
+          return 0;
+        }
+        if (found == packages::Store::Lookup::Corrupt)
+          corruptKey = replayed->key;
+      }
+    }
+  }
+  auto recordTrace = [&](const std::string &key, const std::string &checked) {
+    if (!traceKey)
+      return;
+    if (auto trace = inputs.trace(key, checked))
+      store->putData(*traceKey, *trace);
+  };
   SourceId nextSource = 1;
   if (!options.noCache && !sourceOverrides && !sourceModules && !procedural &&
       !options.libraryDirectory.empty() &&
@@ -1265,24 +1352,19 @@ int build(const Options &requested,
                            tree->statics.localHeaders().end(), linked));
   // `-g` builds are never cached: paths and the Darwin dSYM are outputs that
   // the cache does not store.
-  if (tree && options.command == "build" && !options.debugInfo &&
-      (options.emit != "executable" || !externalLibraries) &&
-      options.emits.size() <= 1 &&
-      (options.emit == "executable" || options.emit == "object")) {
+  std::string checkedKey;
+  if (tree && cacheable() &&
+      (options.emit != "executable" || !externalLibraries)) {
     if (!store)
       store = openStore(options);
     std::error_code error;
     auto sourcePath = std::filesystem::weakly_canonical(source.path, error);
     if (store && (error || sourcePath != std::filesystem::weakly_canonical(
                                              options.output, error))) {
-      cacheKey = inputs.key(options, mounts, configuration.features);
-      if (checkedCore && checkedCore->active()) {
-        packages::Sha256 hash;
-        hash.update("mettle-checked-library-consumer-1");
-        hash.update(*cacheKey);
-        hash.update(checkedCore->key());
-        cacheKey = hash.finish();
-      }
+      if (checkedCore && checkedCore->active())
+        checkedKey = checkedCore->key();
+      cacheKey = consumerKey(
+          inputs.key(options, mounts, configuration.features), checkedKey);
       cacheLease = store->acquireLease(*cacheKey);
       if (!cacheLease) {
         if (options.explain)
@@ -1295,11 +1377,13 @@ int build(const Options &requested,
           if (options.explain)
             std::cerr << "mettle: cache hit " << cacheKey->substr(0, 12)
                       << ": compile and link skipped\n";
+          recordTrace(*cacheKey, checkedKey.empty() ? "" : checkedCore->name());
           return 0;
         }
         if (options.explain)
           std::cerr << "mettle: cache "
-                    << (found == packages::Store::Lookup::Corrupt
+                    << (found == packages::Store::Lookup::Corrupt ||
+                                corruptKey == *cacheKey
                             ? "entry corrupt, rebuilding "
                             : "miss ")
                     << cacheKey->substr(0, 12) << '\n';
@@ -1497,6 +1581,8 @@ int build(const Options &requested,
   if (status == 0 && cacheKey && store) {
     bool stored =
         store->put(*cacheKey, options.output, options.emit == "executable");
+    if (stored)
+      recordTrace(*cacheKey, checkedKey.empty() ? "" : checkedCore->name());
     if (options.explain)
       std::cerr << "mettle: cache " << (stored ? "stored " : "could not store ")
                 << cacheKey->substr(0, 12) << '\n';

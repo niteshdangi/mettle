@@ -945,6 +945,7 @@ bool Store::putData(const std::string &key, std::string_view bytes) {
 
 void Store::useShipped(fs::path root) {
   shipped = std::make_unique<Store>(std::move(root), StoreLimits{0, 0});
+  shipped->readOnly = true;
 }
 
 Store::Data Store::data(const std::string &key, std::uint64_t maximumBytes) {
@@ -967,6 +968,17 @@ Store::Mapped Store::mapped(const std::string &key, std::uint64_t maximumBytes,
              : result;
 }
 
+Store::Data Store::shippedData(const std::string &key,
+                               std::uint64_t maximumBytes) {
+  return shipped ? shipped->localData(key, maximumBytes) : Data{};
+}
+
+Store::Mapped Store::shippedMapped(const std::string &key,
+                                   std::uint64_t maximumBytes,
+                                   const Verifier &verify) {
+  return shipped ? shipped->localMapped(key, maximumBytes, verify) : Mapped{};
+}
+
 Store::Data Store::localData(const std::string &key,
                              std::uint64_t maximumBytes) {
   auto found = localMapped(key, maximumBytes, {});
@@ -977,6 +989,8 @@ Store::Data Store::localData(const std::string &key,
 
 void Store::invalidate(const std::string &key, const std::string &content,
                        bool blob) {
+  if (readOnly)
+    return;
   std::lock_guard accountingGuard(touched->accountingLock);
   StoreLock lock(directory);
   if (!lock || readText(entryPath(key)) != content)
@@ -1057,7 +1071,8 @@ Store::Mapped Store::localMapped(const std::string &key,
     if (hash.finish() != entry->blob)
       return corrupt();
   }
-  touch(path);
+  if (!readOnly)
+    touch(path);
   return {Lookup::Hit, std::move(mapping)};
 }
 
@@ -1220,7 +1235,8 @@ Store::Lookup Store::localMaterialize(const std::string &key,
       invalidate(key, *content, true);
     return corrupt ? Lookup::Corrupt : Lookup::Miss;
   }
-  touch(path);
+  if (!readOnly)
+    touch(path);
   return Lookup::Hit;
 }
 
@@ -1242,7 +1258,8 @@ std::optional<std::string> Store::localText(const std::string &key) {
     invalidate(key, *content);
     return std::nullopt;
   }
-  touch(path);
+  if (!readOnly)
+    touch(path);
   return entry->payload;
 }
 

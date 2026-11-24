@@ -28,8 +28,10 @@ def reset():
     shutil.copytree(fixtures, evidence)
 
 
-def invoke_result(arguments):
+def invoke_result(arguments, env=None):
     environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
+    if env:
+        environment.update(env)
     command = [str(mettle), *map(str, arguments)]
     begin = time.perf_counter()
     result = processes.run(command, text=True, capture_output=True, env=environment)
@@ -97,7 +99,7 @@ def cache_files(kind):
 
 def program_cache_files(kind):
     entries = [path for path in cache_files("entries")
-               if not path.name.startswith("unit-")]
+               if not path.name.startswith(("unit-", "trace-"))]
     if kind == "entries":
         return entries
     digests = {line.split()[1] for path in entries
@@ -821,6 +823,27 @@ def incremental_reuse():
     assert clean.read_bytes() == bytes_built
 
 
+def shipped_library_selector():
+    source = evidence / "shipped.mt"
+    source.write_text('fn main(): i32 { "x".len() as i32 - 1 }\n')
+    shipped = evidence / "shipped-store"
+    environment = {"METTLE_SHIPPED_STORE": str(shipped)}
+    producer = invoke_result(["check", source, "--prepare-shipped-library",
+                              "--cache-dir", shipped, "--explain"], environment)
+    assert producer.returncode == 0, producer.stderr
+    before = {path: path.stat().st_mtime_ns
+              for path in (shipped / "entries").rglob("*") if path.is_file()}
+    arguments = ["check", source, "--standalone", "--explain"]
+    consumer = invoke_result(arguments, environment)
+    assert consumer.returncode == 0, consumer.stderr
+    assert "shipped library selector hit core" in consumer.stderr, consumer.stderr
+    assert all(path.stat().st_mtime_ns == stamp for path, stamp in before.items())
+    library = Path(__file__).resolve().parents[1] / "library"
+    editable = invoke_result([*arguments, "--library-dir", library], environment)
+    assert editable.returncode == 0, editable.stderr
+    assert "shipped library selector hit" not in editable.stderr, editable.stderr
+
+
 def checked_core_reuse():
     directory = evidence / "checked-core"
     directory.mkdir()
@@ -1475,6 +1498,34 @@ def comment_newline_invalidates_cache():
     text = invoke(["build", source, "-o", output, "--explain"], 1)
     assert "cache hit" not in text, text
     assert output.read_bytes() == before
+
+
+def macro_inputs_invalidate_cache():
+    data = evidence / "included.txt"
+    data.write_text("abc")
+    source = evidence / "macro-inputs.mt"
+    source.write_text('import core.text.Text\n'
+                      'const DATA: read Text = include_str!("included.txt")\n'
+                      'fn main(): i32 {\n'
+                      '  if env!("METTLE_CACHE_FLAG") == "on" { 100 } '
+                      'else { DATA.len() as i32 }\n'
+                      '}\n')
+    output = evidence / "macro-inputs"
+
+    def build(flag):
+        result = invoke_result(["build", source, "-o", output, "--explain"],
+                               {"METTLE_CACHE_FLAG": flag})
+        assert result.returncode == 0, result.stderr
+        return last_cache_event(result.stderr), exit_code(output)
+
+    assert build("off")[1] == 3
+    event, status = build("off")
+    assert "hit" in event and status == 3, (event, status)
+    data.write_text("abc  ")
+    event, status = build("off")
+    assert "miss" in event and status == 5, (event, status)
+    event, status = build("on")
+    assert "miss" in event and status == 100, (event, status)
 
 
 def cache_dedup_and_bound():
@@ -3764,6 +3815,15 @@ def driver_resident_context():
         for client in clients:
             out, err = client.communicate(timeout=60)
             assert client.returncode == 0, (out, err)
+        recreated = directory / "recreated"
+        for _ in range(2):
+            shutil.rmtree(recreated, ignore_errors=True)
+            recreated.mkdir()
+            (recreated / "main.mt").write_text("fn main(): i32 { 0 }\n")
+            relative = processes.run([str(mettle), "check", "main.mt"], text=True,
+                                     capture_output=True, env=environment,
+                                     cwd=recreated)
+            assert relative.returncode == 0, relative.stderr
     finally:
         processes.run([str(mettle), "serve", "--stop"], check=True, env=environment)
 
@@ -3871,7 +3931,8 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          backtracking, cycle_backtracking, lock_publication_isolated, offline, features,
          coexisting_versions, git_source, git_concurrent_output, host_target_separation,
          manifest_diagnostics, data_format, lock_structure,
-         package_options_need_package, incremental_reuse, checked_core_reuse,
+         package_options_need_package, incremental_reuse, shipped_library_selector,
+         checked_core_reuse,
          native_core_object_reuse, native_demand_selection,
          native_method_discovery,
          native_core_inline_identity, checked_alloc_std_reuse,
@@ -3881,6 +3942,7 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          bundled_native_linker, linked_archive_changes_invalidate_executable,
          object_cache_integrity,
          sanitizer_cache_key, edit_invalidation, comment_newline_invalidates_cache,
+         macro_inputs_invalidate_cache,
          cache_dedup_and_bound, cache_follows_live_project_builds,
          cache_project_budget,
          cache_corruption_and_clean, cache_corrupt_digest_preserves_other_files,

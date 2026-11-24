@@ -4,6 +4,7 @@
 #include "packages/store.h"
 #include "resolution/load.h"
 #include "source/source.h"
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -24,14 +25,21 @@ void resetRuntimeIdentity();
 // reuse the cached output (sound only while no source position reaches the
 // output: emitting debug info or panic locations must key positions too);
 // library sources count by content; a probed path that does not exist counts as
-// absent so creating it invalidates the build.
+// absent so creating it invalidates the build; a file a source-inclusion macro
+// reads counts by content.
 struct LibraryInputs;
+struct BuildReplay;
 class BuildInputs {
 public:
   explicit BuildInputs(const std::string &libraryDirectory);
-  void record(const Source &source);
+  // `requested` is the path the source was resolved from, when it differs.
+  void record(const Source &source, const std::string &requested = {});
   void record(const LibraryInputs &snapshot);
+  void include(const Source &source);
+  void recordShippedLibrary(const std::string &name, const std::string &key);
   void absent(const std::string &path);
+  // Records and returns the environment variable `name`.
+  std::optional<std::string> environment(const std::string &name);
   // Generated text that is not a source file (a procedural macro's output)
   // counts by content under `name`.
   void generated(const std::string &name, const std::string &text);
@@ -41,6 +49,19 @@ public:
   std::string key(const Options &options,
                   const std::vector<resolution::Library::Package> &mounts,
                   const std::set<std::string> &rootFeatures) const;
+  // The probes that produced build `key` from these inputs, replayable
+  // without loading the program, or none when an input is not reproducible
+  // that way. `checked` names the shipped library `key` also covers.
+  std::optional<std::string> trace(const std::string &key,
+                                   const std::string &checked) const;
+  // Repeats a trace's probes against the current files and environment;
+  // `shipped` yields a shipped library's current key. Fails when a probe
+  // resolves differently.
+  static std::optional<BuildReplay>
+  replay(const std::string &libraryDirectory, std::string_view trace,
+         const std::function<std::optional<std::string>(const std::string &)>
+             &shipped);
+  std::vector<std::string> paths() const;
   // A package object key excludes root sources but includes exact package and
   // library source bytes plus the package's resolved dependency object keys.
   std::optional<std::string> packageObjectKey(
@@ -50,11 +71,19 @@ public:
   bool packageObjectsSafe() const { return packageInputsSafe; }
 
 private:
-  void record(const Source &source, std::string contentDigest);
+  void recordDigest(const Source &source, std::string contentDigest);
   std::string libraryPrefix;
   std::map<std::string, std::string> inputs;
   std::map<std::string, std::string> sourceDigests;
   std::set<std::string> absentPaths;
-  bool packageInputsSafe = true;
+  std::map<std::string, std::set<std::string>> requests;
+  std::set<std::string> exactPaths, environmentNames, shippedNames;
+  bool packageInputsSafe = true, traceable = true;
+};
+
+struct BuildReplay {
+  BuildInputs inputs;
+  // The traced build key and the key of the shipped library it covers.
+  std::string key, checked;
 };
 } // namespace mettle::driver

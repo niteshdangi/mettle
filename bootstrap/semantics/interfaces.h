@@ -385,7 +385,13 @@ struct Database {
     std::size_t declaration = static_cast<std::size_t>(-1);
     std::vector<std::string> inherent;
     bool fallback = false;
-    bool operator==(const ImplementationHeader &) const = default;
+    std::uint32_t interfaceDeclaration = UINT32_MAX;
+    bool operator==(const ImplementationHeader &other) const {
+      return interfaceType == other.interfaceType &&
+             nominalTarget == other.nominalTarget && span == other.span &&
+             declaration == other.declaration && inherent == other.inherent &&
+             fallback == other.fallback;
+    }
   };
   std::shared_ptr<const std::vector<DefinitionHeader>> importedDefinitions;
   std::shared_ptr<const TypeRecords<ImplementationHeader, true>>

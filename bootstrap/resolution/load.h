@@ -77,6 +77,7 @@ struct Library {
   std::function<bool(const expansion::MacroLibrary &)> macroExports;
   expansion::MacroSourceIdentity identifyMacroSource;
   expansion::MacroEnvironmentProvider macroEnvironment;
+  std::function<void(const Source &)> included;
 };
 // An original source file and its external-module path. The driver uses these
 // inputs to discover and overlay doctests without changing package files.

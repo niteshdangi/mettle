@@ -359,9 +359,14 @@ void serve(const Endpoint &endpoint, Descriptor &ready, int log) {
     auto named = variables ? variables->asArray() : nullptr;
     auto mask = request.find("umask");
     auto permissions = mask ? mask->asInteger() : std::nullopt;
+    auto directory = request.find("directory");
     if (!values || !named || !permissions || *permissions < 0 ||
-        *permissions > 0777)
+        *permissions > 0777 || !directory)
       throw std::runtime_error("missing resident compilation context");
+    auto workingDirectory = decodeBytes(directory);
+    if (workingDirectory.find('\0') != std::string::npos ||
+        ::chdir(workingDirectory.c_str()))
+      throw std::runtime_error("cannot enter the client's working directory");
     ::umask(static_cast<mode_t>(*permissions));
     lsp::Json::Array decodedArguments;
     for (const auto &value : *values)
@@ -466,7 +471,7 @@ Descriptor start(const Endpoint &endpoint) {
     throw std::runtime_error("resident compiler exited during startup");
   return socket;
 }
-}
+} // namespace
 #endif
 
 std::optional<int> residentCompilation(const Options &options, int argc,
@@ -489,11 +494,14 @@ std::optional<int> residentCompilation(const Options &options, int argc,
       environment.push_back(lsp::Json::string(encodeBytes(*value)));
     auto permissions = ::umask(0);
     ::umask(permissions);
-    writeMessage(socket.get(),
-                 lsp::Json::object(
-                     {{"arguments", lsp::Json::array(std::move(arguments))},
-                      {"environment", lsp::Json::array(std::move(environment))},
-                      {"umask", lsp::Json::integer(permissions)}}));
+    writeMessage(
+        socket.get(),
+        lsp::Json::object(
+            {{"arguments", lsp::Json::array(std::move(arguments))},
+             {"environment", lsp::Json::array(std::move(environment))},
+             {"directory", lsp::Json::string(encodeBytes(
+                               std::filesystem::current_path().native()))},
+             {"umask", lsp::Json::integer(permissions)}}));
     auto response = readMessage(socket.get(), std::string{}.max_size());
     auto status = response.find("status");
     auto value = status ? status->asInteger() : std::nullopt;
@@ -548,4 +556,4 @@ int stopResidentCompilation(const Options &options) {
   return 0;
 #endif
 }
-}
+} // namespace mettle::driver

@@ -220,6 +220,32 @@ llvm::Error instrumentModule(llvm::Module &module, bool sanitizeAddress,
   return llvm::Error::success();
 }
 
+static void foldX86InductionOffsets(llvm::Module &module) {
+  for (auto &function : module) {
+    if (function.hasOptNone())
+      continue;
+    for (auto &block : function)
+      for (auto &instruction : llvm::make_early_inc_range(block)) {
+        auto *offset = llvm::dyn_cast<llvm::PossiblyDisjointInst>(&instruction);
+        if (!offset || !offset->isDisjoint() || !offset->hasOneUse() ||
+            !offset->getType()->isIntegerTy(32))
+          continue;
+        auto *index = llvm::dyn_cast<llvm::PHINode>(offset->getOperand(0));
+        auto *one = llvm::dyn_cast<llvm::ConstantInt>(offset->getOperand(1));
+        if (!index || !one || !one->isOne() ||
+            !llvm::isa<llvm::SIToFPInst, llvm::UIToFPInst>(
+                *offset->user_begin()))
+          continue;
+        auto *sum = llvm::BinaryOperator::CreateNUWAdd(index, one, "",
+                                                       offset->getIterator());
+        sum->takeName(offset);
+        sum->setDebugLoc(offset->getDebugLoc());
+        offset->replaceAllUsesWith(sum);
+        offset->eraseFromParent();
+      }
+  }
+}
+
 static void versionIndexedStores(llvm::Function &function) {
   const auto &layout = function.getDataLayout();
   if (function.hasOptNone() || layout.getPointerSizeInBits() != 64 ||
@@ -449,6 +475,8 @@ static llvm::Error prepareObject(llvm::Module &module,
         for (auto &function : module)
           if (!function.isDeclaration())
             versionIndexedStores(function);
+      if (targetTriple.getArch() == llvm::Triple::x86_64)
+        foldX86InductionOffsets(module);
     } else {
       pipeline.addPass(llvm::GlobalDCEPass());
       pipeline.run(module, modules);

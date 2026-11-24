@@ -390,13 +390,13 @@ std::optional<std::size_t> Checker::receiverCandidate(
     for (std::size_t position = 0, count = interfaceCandidates.size();
          position < count; ++position) {
       auto index = interfaceCandidates[position];
-      const auto interfaceType =
+      const auto declaration =
           database.importedImplementations &&
                   index < database.importedImplementations->size() &&
                   !database.implementations.isMaterialized(index)
-              ? (*database.importedImplementations)[index].interfaceType
-              : database.implementations[index].interfaceType;
-      const auto declaration = checked.types->erasedDeclaration(interfaceType);
+              ? (*database.importedImplementations)[index].interfaceDeclaration
+              : checked.types->erasedDeclaration(
+                    database.implementations[index].interfaceType);
       const auto &definition = database.definitions[declaration];
       auto [cachedVisibility, inserted] = visibility.try_emplace(declaration);
       if (inserted)

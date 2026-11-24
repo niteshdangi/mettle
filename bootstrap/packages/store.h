@@ -84,6 +84,7 @@ public:
   // store on a miss; the shipped store is never written, touched or pruned.
   void useShipped(std::filesystem::path root);
   Data data(const std::string &key, std::uint64_t maximumBytes);
+  Data shippedData(const std::string &key, std::uint64_t maximumBytes);
   // A read-only view of an artifact's bytes that owns its file mapping.
   class Mapping {
   public:
@@ -107,6 +108,8 @@ public:
   using Verifier = std::function<bool(const std::shared_ptr<const Mapping> &)>;
   Mapped mapped(const std::string &key, std::uint64_t maximumBytes,
                 const Verifier &verify = {});
+  Mapped shippedMapped(const std::string &key, std::uint64_t maximumBytes,
+                       const Verifier &verify);
   bool putData(const std::string &key, std::string_view bytes);
   // Copies the blob of `key` to `destination` (a fresh, privately owned
   // file; the shared blob is never exposed) and refreshes the entry's age.
@@ -147,6 +150,7 @@ private:
                           const std::filesystem::path &destination);
   std::optional<std::string> localText(const std::string &key);
   std::unique_ptr<Store> shipped;
+  bool readOnly = false;
   struct Record {
     std::string key, blob;
     std::uint64_t size = 0;

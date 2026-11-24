@@ -535,9 +535,8 @@ bool Solver::coherent() {
         !database.implementations.isMaterialized(i)) {
       const auto &header = (*database.importedImplementations)[i];
       bool relevant = false;
-      if (types.isErased(header.interfaceType)) {
-        auto key = InterfaceKey{types.erasedDeclaration(header.interfaceType),
-                                header.fallback};
+      if (header.interfaceDeclaration != UINT32_MAX) {
+        auto key = InterfaceKey{header.interfaceDeclaration, header.fallback};
         auto found = interfaces[1].find(key);
         relevant = found != interfaces[1].end() && !found->second.empty();
         if (!relevant)
