@@ -1312,12 +1312,44 @@ std::vector<std::string> Store::commitProject(const std::string &project,
     return {};
   const auto now = fs::file_time_type::clock::now();
   index.setProject(id, Accounting::Project{path, now, std::move(current)});
+  std::map<fs::path, std::size_t> siblings;
+  for (const auto &[otherId, other] : index.projects)
+    if (otherId != id && other.source.has_filename())
+      ++siblings[other.source.parent_path()];
+  std::map<fs::path, std::optional<std::map<fs::path, bool>>> listings;
+  auto exists = [&](const fs::path &source) {
+    std::error_code error;
+    auto parent = source.parent_path();
+    auto shared = siblings.find(parent);
+    if (!source.has_filename() || !source.has_parent_path() ||
+        shared == siblings.end() || shared->second < 2)
+      return fs::exists(source, error);
+    auto [listing, fresh] = listings.try_emplace(parent);
+    if (fresh) {
+      std::map<fs::path, bool> names;
+      fs::directory_iterator it(parent, error), end;
+      for (; !error && it != end; it.increment(error)) {
+        std::error_code kind;
+        names[it->path().filename()] = it->is_symlink(kind) || kind;
+      }
+      if (!error)
+        listing->second = std::move(names);
+      else if (error == std::errc::no_such_file_or_directory ||
+               error == std::errc::not_a_directory)
+        listing->second.emplace();
+    }
+    if (!listing->second)
+      return fs::exists(source, error);
+    auto found = listing->second->find(source.filename());
+    if (found == listing->second->end())
+      return false;
+    return !found->second || fs::exists(source, error);
+  };
   std::vector<std::string> dead;
   for (const auto &[otherId, other] : index.projects) {
     if (otherId == id)
       continue;
-    std::error_code gone;
-    if (!fs::exists(other.source, gone) ||
+    if (!exists(other.source) ||
         (bounds.maxAgeDays &&
          now - other.used >
              std::chrono::hours(24 * static_cast<long>(bounds.maxAgeDays))))

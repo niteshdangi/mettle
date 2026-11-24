@@ -146,6 +146,10 @@ inconclusive result does not count as a pass.
 
 #### 5.1.1. Build-cache storage design
 
+Rust comparisons use Rust's installed sysroot, so the measured toolchain must
+build `mettle-shipped-store` after every compiler build; otherwise each clean
+build and check recompiles `core` and `alloc`.
+
 The user build cache is built to retain less than Cargo's `target/` directory:
 
 - **One store for all projects.** Artifacts live in one user-level directory

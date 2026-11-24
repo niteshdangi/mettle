@@ -5173,6 +5173,21 @@ std::shared_ptr<const ImportedDeclarations> retainQueryDeclarations(
     result->functions.insert_or_assign(static_cast<std::uint32_t>(index),
                                        std::move(projected));
   }
+  auto &store = *projection.store();
+  std::vector<Type> retainedProducts;
+  for (std::size_t i = native ? native->nativeTypeCounts[0] : 0;
+       i < result->products.size(); ++i) {
+    auto type = result->products[i]->type;
+    if (!store.isProduct(type))
+      continue;
+    auto layout = store.product(type).layout;
+    layout.unpin = -1;
+    layout.unpinConditions = {};
+    layout.conditionalUnpin = false;
+    store.setProductLayout(type, std::move(layout));
+    retainedProducts.push_back(type);
+  }
+  store.refreshProductInstances(retainedProducts);
   result->indexTypes();
   return result;
 }

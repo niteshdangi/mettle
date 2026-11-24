@@ -307,43 +307,78 @@ bool outputOverwritesSource(const Options &options, const Source &source,
   auto formats = options.emits;
   if (formats.empty())
     formats.push_back(options.emit);
+  auto within = [](const fs::path &path, const fs::path &root) {
+    auto relative = path.lexically_relative(root);
+    return !relative.empty() && *relative.begin() != "..";
+  };
+  std::error_code error;
+  fs::path library;
+  if (!options.libraryDirectory.empty())
+    library = fs::weakly_canonical(options.libraryDirectory, error);
+  if (error)
+    library.clear();
+  struct Destination {
+    fs::path path, canonical;
+    bool resolved = false, librarySeparate = false;
+  };
+  std::vector<Destination> destinations;
+  auto add = [&](fs::path path) {
+    Destination destination;
+    destination.path = std::move(path);
+    std::error_code error;
+    destination.canonical = fs::weakly_canonical(destination.path, error);
+    destination.resolved = !error;
+    if (destination.resolved && !library.empty()) {
+      auto links = fs::hard_link_count(destination.canonical, error);
+      destination.librarySeparate = (error || links <= 1) &&
+                                    !within(destination.canonical, library) &&
+                                    !within(library, destination.canonical);
+    }
+    destinations.push_back(std::move(destination));
+  };
   for (const auto &format : formats) {
     fs::path destination = options.output;
     if (formats.size() > 1)
       destination += artifactSuffix(format, target);
-    auto aliases = [](const std::string &input, const fs::path &destination) {
-      std::error_code error;
-      if (fs::equivalent(input, destination, error))
-        return true;
-      error.clear();
-      auto canonical = fs::weakly_canonical(input, error);
-      if (error)
-        return false;
-      auto output = fs::weakly_canonical(destination, error);
-      if (error)
-        return false;
-      if (canonical == output)
-        return true;
-      if (fs::is_directory(canonical, error)) {
-        auto relative = output.lexically_relative(canonical);
-        if (!relative.empty() && *relative.begin() != "..")
-          return true;
-      }
-      auto relative = canonical.lexically_relative(output);
-      return !relative.empty() && *relative.begin() != "..";
-    };
-    auto conflict = [&](const std::string &input) {
-      return aliases(input, destination) ||
-             (options.debugInfo && target.isOSDarwin() &&
-              (format == "executable" || format == "shared") &&
-              aliases(input, destination.string() + ".dSYM"));
-    };
-    if (conflict(source.path))
-      return true;
-    for (const auto &input : diagnostics.registeredSources())
-      if (!input.path.empty() && conflict(input.path))
-        return true;
+    add(destination);
+    if (options.debugInfo && target.isOSDarwin() &&
+        (format == "executable" || format == "shared"))
+      add(destination.string() + ".dSYM");
   }
+  auto aliases = [&](const std::string &input, const Destination &destination) {
+    if (destination.librarySeparate) {
+      fs::path path(input);
+      if (path.is_absolute() && path == path.lexically_normal() &&
+          within(path, library))
+        return false;
+    }
+    std::error_code error;
+    if (fs::equivalent(input, destination.path, error))
+      return true;
+    if (!destination.resolved)
+      return false;
+    error.clear();
+    auto canonical = fs::weakly_canonical(input, error);
+    if (error)
+      return false;
+    if (canonical == destination.canonical)
+      return true;
+    if (fs::is_directory(canonical, error) &&
+        within(destination.canonical, canonical))
+      return true;
+    return within(canonical, destination.canonical);
+  };
+  auto conflict = [&](const std::string &input) {
+    return std::any_of(destinations.begin(), destinations.end(),
+                       [&](const Destination &destination) {
+                         return aliases(input, destination);
+                       });
+  };
+  if (conflict(source.path))
+    return true;
+  for (const auto &input : diagnostics.registeredSources())
+    if (!input.path.empty() && conflict(input.path))
+      return true;
   return false;
 }
 

@@ -95,6 +95,16 @@ def cache_files(kind):
             if path.is_file()]
 
 
+def program_cache_files(kind):
+    entries = [path for path in cache_files("entries")
+               if not path.name.startswith("unit-")]
+    if kind == "entries":
+        return entries
+    digests = {line.split()[1] for path in entries
+               for line in path.read_text().splitlines() if line.startswith("file ")}
+    return [path for path in cache_files("blobs") if path.name in digests]
+
+
 def cache_bytes():
     return sum(path.stat().st_size
                for kind in ("entries", "blobs") for path in cache_files(kind))
@@ -675,7 +685,8 @@ def git_concurrent_output():
     env = {**os.environ, "PATH": f"{root}{os.pathsep}{os.environ['PATH']}",
            "REAL_GIT": git, "GIT_BARRIER": str(barrier),
            "METTLE_CACHE_DIR": str(root / "cache")}
-    commands = [subprocess.Popen([str(mettle), "check", str(app)], env=env,
+    commands = [subprocess.Popen([str(mettle), "check", str(app), "--standalone"],
+                                 env=env,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                  text=True) for app in apps]
     try:
@@ -842,7 +853,7 @@ def checked_core_reuse():
                       "    let _ = core.reuse_associated<core.ReusableValue>()\n"
                       "    core.reuse_value(VALUE) - 42\n"
                       "}\n")
-    arguments = ["--library-dir", library]
+    arguments = ["--standalone", "--library-dir", library]
     cold, program = explained(first, *arguments)
     assert exit_code(program) == 0
     assert "checked library interface cache stored core " in cold, cold
@@ -967,10 +978,12 @@ def checked_alloc_std_reuse(profile="debug"):
             module.write_text(module.read_text() +
                               "pub async fn reuse_async(value: i32): i32 { value + 1 }\n")
         first, second = directory / f"{root}-first.mt", directory / f"{root}-second.mt"
-        first.write_text(f"const VALUE: i32 = {root}.reuse_constant(20)\n"
-                         f"fn main(): i32 {{ {root}.reuse_generic({root}.reuse_value(VALUE)) - 22 }}\n")
         async_check = ("    if std.task.block_on(std.reuse_async(41)) != 42 { return 2 }\n"
                        if root == "std" else "")
+        first.write_text(f"const VALUE: i32 = {root}.reuse_constant(20)\n"
+                         f"fn main(): i32 {{\n{async_check}"
+                         f"    {root}.reuse_generic({root}.reuse_value(VALUE)) - 22\n"
+                         "}\n")
         second.write_text("fn consumer_only(value: i32): i32 { value }\n"
                           f"const VALUE: i32 = {root}.reuse_constant(40)\n"
                           f"fn main(): i32 {{\n"
@@ -982,17 +995,25 @@ def checked_alloc_std_reuse(profile="debug"):
         arguments = ["--library-dir", library, "--profile", profile]
         cold, program = explained(first, *arguments)
         assert exit_code(program) == 0
-        assert f"checked library interface cache stored {root} " in cold, cold
-        if root == "std":
-            assert "library object cache hit alloc " in cold, cold
+        stored = re.search(
+            rf"checked library interface cache stored {root} ([0-9a-f]+)", cold)
+        assert stored, cold
+        native_roots = ("core", "alloc", "std") if root == "std" else ("core", "alloc")
+        object_keys = {}
+        for native in native_roots:
+            emitted = re.search(
+                rf"library object cache stored {native} ([0-9a-f]+)", cold)
+            assert emitted, cold
+            object_keys[native] = emitted[1]
         warm, program = explained(second, *arguments)
         assert exit_code(program) == 0
         assert "cache miss" in last_cache_event(warm), warm
-        assert f"checked library interface cache hit {root} " in warm, warm
-        assert f"library object cache hit {root} " in warm, warm
-        assert "library object cache hit core " in warm, warm
-        if root == "std":
-            assert "library object cache hit alloc " in warm, warm
+        cached = re.search(
+            rf"checked library (?:interface cache|archive query) hit {root} ([0-9a-f]+)",
+            warm)
+        assert cached and cached[1] == stored[1], warm
+        for native, key in object_keys.items():
+            assert f"library object cache hit {native} {key}\n" in warm, warm
         if profile == "debug":
             edit(core, "value + 1", "value + 2")
             changed, program = explained(second, *arguments)
@@ -1044,7 +1065,8 @@ def checked_native_macro_reuse():
     warm, program = explained(second, *arguments)
     assert exit_code(program) == 0
     assert "cache miss" in last_cache_event(warm), warm
-    assert "checked library interface cache hit std " in warm, warm
+    assert re.search(r"checked library (?:interface cache|archive query) hit std ",
+                     warm), warm
     assert "library object cache hit std " in warm, warm
 
 
@@ -1460,9 +1482,9 @@ def cache_dedup_and_bound():
     explained(app)
     explained(app, "--features", "extra")
     # Different keys that produce the same bytes share one stored blob.
-    assert len(cache_files("entries")) == 2, cache_files("entries")
-    assert len(cache_files("blobs")) == 1, cache_files("blobs")
-    blob = cache_files("blobs")[0].stat().st_size
+    assert len(program_cache_files("entries")) == 2, cache_files("entries")
+    assert len(program_cache_files("blobs")) == 1, cache_files("blobs")
+    blob = program_cache_files("blobs")[0].stat().st_size
     # With a budget that holds one artifact, the least recently used goes.
     edit(app / "src/math.mt", "pub fn answer(): i32 { 42 }",
          "pub fn answer(): i32 { 42 }\npub fn zero(): i32 { 0 }")
@@ -1472,7 +1494,7 @@ def cache_dedup_and_bound():
     assert "evicted" in text and "least recently used" in text, text
     assert cache_bytes() <= limit * 1024, (cache_bytes(), limit)
     assert exit_code(built) == 0
-    assert len(cache_files("blobs")) == 1, cache_files("blobs")
+    assert len(program_cache_files("blobs")) == 1, cache_files("blobs")
     # A budget below a single artifact keeps nothing, yet builds still work.
     edit(app / "src/main.mt", "math.zero() }", "math.zero() + 0 }")
     text, built = explained(app, "--cache-limit-kib", 1)
@@ -1526,7 +1548,7 @@ def cache_project_budget():
 def cache_corruption_and_clean():
     app = packages("incremental/app")
     explained(app)
-    blob = cache_files("blobs")[0]
+    blob = program_cache_files("blobs")[0]
     blob.chmod(0o644)
     blob.write_bytes(b"corrupted")
     # Scratch and entry files that vanish while the store prunes have no age.
@@ -1542,9 +1564,10 @@ def cache_corruption_and_clean():
     text, _ = explained(app)
     assert "cache hit" in text, text
     # `clean` reports, then empties, only a directory that is a store.
-    text = invoke(["clean", "--dry-run"], contains="would remove 1 entries")
+    stored = len(cache_files("entries"))
+    text = invoke(["clean", "--dry-run"], contains=f"would remove {stored} entries")
     assert cache.exists()
-    invoke(["clean"], contains="removed 1 entries")
+    invoke(["clean"], contains=f"removed {stored} entries")
     assert not cache.exists()
     text, _ = explained(app)
     assert "cache miss" in text, text
@@ -1658,7 +1681,7 @@ def cache_compiler_identity():
         stream.write(b"A")
     environment = {**os.environ, "METTLE_CACHE_DIR": str(evidence / "cache")}
     arguments = [str(compiler), "build", str(packages("incremental/app")),
-                 "-o", str(evidence / "identity.bin"), "--explain"]
+                 "-o", str(evidence / "identity.bin"), "--explain", "--standalone"]
 
     def build():
         result = processes.run(arguments, text=True, capture_output=True, env=environment)
@@ -3109,6 +3132,19 @@ def driver_output_preserves_imports():
         invoke(["build", main, "--emit", "object", "-o", helper, *flags], 1,
                ["error[io]", "output would overwrite the source"])
         assert helper.read_bytes() == original
+    library = evidence / "output-library"
+    shutil.copytree(Path(__file__).resolve().parents[1] / "library" / "core",
+                    library / "core")
+    program = evidence / "library-output.mt"
+    program.write_text('fn main(): i32 { "x".len() as i32 - 1 }\n')
+    core = library / "core" / "module.mt"
+    kept = core.read_bytes()
+    core_link = evidence / "core-link"
+    os.link(core, core_link)
+    for output in (core, core_link):
+        invoke(["build", program, "--standalone", "--library-dir", library,
+                "-o", output], 1, ["error[io]", "output would overwrite the source"])
+    assert core.read_bytes() == kept
     linked, ir = directory / "helper.o", directory / "helper.ll"
     os.link(helper, linked)
     ir.write_bytes(b"preserved IR output\n")

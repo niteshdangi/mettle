@@ -2000,6 +2000,20 @@ For 16,384 `"a\nb"` writes, the same outcome lowering reduced the loop from
 10.894 to 7.430 ms (3.438 ms paired saving over 100 trials).
 I14 qualification and runtime parity are not claimed.
 
+P03 compile lag had three causes: a toolchain without `mettle-shipped-store`,
+output-overlap checks that canonicalized every library source, and a sibling
+project existence probe per root. The output check now canonicalizes the
+library once and skips lexically contained sources when the destination is a
+single link outside the library; sibling probes share one listing per parent.
+Retained function-query declarations drop implementation-derived `Unpin`
+layout so a warm resident check re-derives it instead of reporting overlap.
+Three-pair P03 medians, Mettle before -> after (Rust after), in seconds: clean
+build 13.10 -> 1.08 (0.15), noop build 1.05 -> 0.10 (0.014), comment edit
+1.08 -> 0.11 (0.11), semantic edit 2.00 -> 0.97 (0.11), check 11.74 -> 0.19
+(0.089), application build 2.10 -> 1.08 (0.097), application check 0.66 ->
+0.19 (0.022); compiler peak RSS fell from 1.34 GB to 245 MB. Evidence:
+`~/w/anal/p03-lag/h1` and `h2`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
