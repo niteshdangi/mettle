@@ -2,6 +2,7 @@
 #include "support/limits.h"
 #include <algorithm>
 #include <bit>
+#include <cstring>
 #include <exception>
 #include <limits>
 #include <map>
@@ -276,7 +277,9 @@ struct Writer : Fields<Writer> {
       return;
     if (bytes.size() > limits::sourceBytes - encoded.size())
       reject("type graph exceeds source byte limit");
-    bytes.insert(bytes.end(), encoded.begin(), encoded.end());
+    auto at = bytes.size();
+    bytes.resize(at + encoded.size());
+    std::memcpy(bytes.data() + at, encoded.data(), encoded.size());
   }
   void u32(std::uint32_t n) { integer(n); }
   void u64(std::uint64_t n) { integer(n); }
@@ -623,6 +626,7 @@ using CompactDefinitionView =
 
 class CompactArena {
 public:
+  CompactArena() {}
   ~CompactArena() { reset(); }
   void reset() {
     for (auto &destroy : destructors)
@@ -2924,6 +2928,7 @@ bool writeLookupKey(Sink &writer, const ImportedTypeQuery &query,
 std::optional<std::vector<std::uint8_t>>
 lookupKey(const ImportedTypeQuery &query, const LookupReferences &references) {
   Writer writer;
+  writer.bytes.reserve(64);
   if (!writeLookupKey(writer, query, references))
     return {};
   return std::move(writer.bytes);

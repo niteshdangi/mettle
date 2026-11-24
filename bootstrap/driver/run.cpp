@@ -627,7 +627,7 @@ int clean(const Options &options) {
   namespace fs = std::filesystem;
   Options selected = options;
   selected.noCache = false;
-  auto store = openStore(selected);
+  auto store = openStore(selected, false);
   if (!store) {
     std::cerr << "mettle: error[io]: no cache directory (use --cache-dir or "
                  "METTLE_CACHE_DIR)\n";

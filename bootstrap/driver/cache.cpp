@@ -10,6 +10,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <mutex>
 
@@ -19,9 +20,26 @@ namespace fs = std::filesystem;
 std::optional<std::string> runtimeIdentity;
 std::mutex identityMutex;
 
-std::string fileStamp(const fs::path &path) {
+std::string fileStamp(const fs::path &path, packages::Store *store) {
+  auto started = std::time(nullptr);
+  auto stamp = store ? entryStamp(path, started) : std::nullopt;
+  std::string key;
+  if (stamp) {
+    packages::Sha256 selector;
+    selector.update("mettle-runtime-digest-1\n");
+    selector.update(path.generic_string());
+    selector.update("\n");
+    selector.update(*stamp);
+    key = "runtime-" + selector.finish();
+    auto entry = store->data(key, 64);
+    if (entry.status == packages::Store::Lookup::Hit &&
+        entry.bytes.size() == 64)
+      return path.generic_string() + ":" + entry.bytes;
+  }
   std::uint64_t size = 0;
   auto hash = packages::hashFile(path, size);
+  if (hash && stamp && entryStamp(path, started) == stamp)
+    store->putData(key, *hash);
   return path.generic_string() + ":" + hash.value_or("unreadable");
 }
 
@@ -84,9 +102,11 @@ std::string tokenDigest(const Source &source) {
   }
   return "tokens:" + hash.finish();
 }
+std::string identity(packages::Store *store);
 } // namespace
 
-std::optional<packages::Store> openStore(const Options &options) {
+std::optional<packages::Store> openStore(const Options &options,
+                                         bool primeIdentity) {
   if (options.noCache)
     return std::nullopt;
   fs::path root;
@@ -123,27 +143,33 @@ std::optional<packages::Store> openStore(const Options &options) {
   shipped = fs::weakly_canonical(shipped, ignored);
   if (fs::is_directory(shipped, ignored) && shipped != root)
     store.useShipped(shipped);
+  if (primeIdentity)
+    identity(&store);
   return store;
 }
 
-std::string compilerIdentity() {
+namespace {
+std::string identity(packages::Store *store) {
   static const std::string image = [] {
     std::string text = std::string("mettle ") + METTLE_VERSION + " " +
                        METTLE_RUNTIME_TARGET +
                        " sanitized=" + std::to_string(METTLE_RUNTIME_SANITIZED);
     auto self = llvm::sys::fs::getMainExecutable(
-        "mettle", reinterpret_cast<void *>(
-                      reinterpret_cast<std::intptr_t>(&compilerIdentity)));
+        "mettle",
+        reinterpret_cast<void *>(reinterpret_cast<std::intptr_t>(&openStore)));
     text += "\n" + compilerStamp(self);
     return text;
   }();
   std::lock_guard lock(identityMutex);
   if (!runtimeIdentity)
-    runtimeIdentity = image + "\n" + fileStamp(METTLE_RUNTIME_PATH) + "\n" +
-                      fileStamp(METTLE_RUNTIME_ASAN_PATH) + "\n" +
-                      fileStamp(METTLE_RUNTIME_TSAN_PATH);
+    runtimeIdentity = image + "\n" + fileStamp(METTLE_RUNTIME_PATH, store) +
+                      "\n" + fileStamp(METTLE_RUNTIME_ASAN_PATH, store) + "\n" +
+                      fileStamp(METTLE_RUNTIME_TSAN_PATH, store);
   return *runtimeIdentity;
 }
+} // namespace
+
+std::string compilerIdentity() { return identity(nullptr); }
 
 void resetRuntimeIdentity() {
   std::lock_guard lock(identityMutex);

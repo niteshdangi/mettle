@@ -1162,9 +1162,13 @@ Solver::implementation(Type self, Type interfaceType, Span span, bool report) {
   std::vector<RegionBinding> selectedRegions;
   const auto wanted = types.erased(interfaceType);
   const auto targetOrigin = types.nominalOrigin(self);
+  const auto selfHead = targetOrigin != Type::Unknown     ? targetOrigin
+                        : self.index() < builtinTypeCount ? self
+                                                          : Type::Unknown;
   for (auto position : database.implementationsFor(types, wanted.declaration)) {
-    auto origin = database.implementationOrigin(types, position);
-    if (origin != Type::Unknown && origin != targetOrigin)
+    auto head = database.implementationHead(types, position);
+    if ((head.type != Type::Unknown && head.type != selfHead) ||
+        (head.structural && selfHead != Type::Unknown))
       continue;
     const auto &candidate = database.implementations[position];
     {

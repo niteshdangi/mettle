@@ -99,7 +99,7 @@ def cache_files(kind):
 
 def program_cache_files(kind):
     entries = [path for path in cache_files("entries")
-               if not path.name.startswith(("unit-", "trace-"))]
+               if not path.name.startswith(("unit-", "trace-", "runtime-"))]
     if kind == "entries":
         return entries
     digests = {line.split()[1] for path in entries

@@ -378,24 +378,40 @@ struct Database {
     std::vector<std::uint32_t> parents;
     std::size_t associated = 0;
   };
+  struct TargetHead {
+    Type type = Type::Unknown;
+    bool structural = false;
+    bool operator==(const TargetHead &) const = default;
+  };
+  static TargetHead targetHead(const TypeStore &types, Type target) {
+    if (auto origin = types.nominalOrigin(target); origin != Type::Unknown)
+      return {origin};
+    if (target.index() < builtinTypeCount)
+      return {target};
+    return {Type::Unknown,
+            !types.isParameter(target) &&
+                (types.isView(target) || types.isPointer(target) ||
+                 types.isSlice(target) || types.isCallable(target) ||
+                 types.isErased(target) || types.isProduct(target))};
+  }
   struct ImplementationHeader {
     Type interfaceType = Type::Unknown;
-    Type nominalTarget = Type::Unknown;
+    TargetHead head;
     Span span;
     std::size_t declaration = static_cast<std::size_t>(-1);
     std::vector<std::string> inherent;
     bool fallback = false;
     std::uint32_t interfaceDeclaration = UINT32_MAX;
     bool operator==(const ImplementationHeader &other) const {
-      return interfaceType == other.interfaceType &&
-             nominalTarget == other.nominalTarget && span == other.span &&
-             declaration == other.declaration && inherent == other.inherent &&
-             fallback == other.fallback;
+      return interfaceType == other.interfaceType && head == other.head &&
+             span == other.span && declaration == other.declaration &&
+             inherent == other.inherent && fallback == other.fallback;
     }
   };
   std::shared_ptr<const std::vector<DefinitionHeader>> importedDefinitions;
   std::shared_ptr<const TypeRecords<ImplementationHeader, true>>
       importedImplementations;
+  std::shared_ptr<const TypeRecords<TargetHead, true>> importedHeads;
   std::shared_ptr<const std::vector<std::uint32_t>> importedInterfaceOwners;
   DatabaseRecords<Definition> definitions;
   DatabaseRecords<Implementation> implementations;
@@ -434,11 +450,21 @@ struct Database {
                ? (*importedImplementations)[index].declaration
                : implementations[index].declaration;
   }
+  TargetHead implementationHead(const TypeStore &types,
+                                std::size_t index) const {
+    if (!importedImplementations || index >= importedImplementations->size() ||
+        implementations.isMaterialized(index))
+      return targetHead(types, implementations[index].target);
+    return importedHeads && !importedImplementations->isMaterialized(index)
+               ? (*importedHeads)[index]
+               : (*importedImplementations)[index].head;
+  }
   Type implementationOrigin(const TypeStore &types, std::size_t index) const {
-    return importedImplementations && index < importedImplementations->size() &&
-                   !implementations.isMaterialized(index)
-               ? (*importedImplementations)[index].nominalTarget
-               : types.nominalOrigin(implementations[index].target);
+    if (!importedImplementations || index >= importedImplementations->size() ||
+        implementations.isMaterialized(index))
+      return types.nominalOrigin(implementations[index].target);
+    auto head = implementationHead(types, index).type;
+    return head.index() < builtinTypeCount ? Type::Unknown : head;
   }
   // Lazily maintained index of `implementations` by interface declaration;
   // implementations are append-only, so only the new tail is indexed.

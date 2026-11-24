@@ -1313,7 +1313,7 @@ fn main(): i32 {
          "header mounting rejects trailing bytes");
   auto oversized = declarations.contracts;
   const auto inventoryOffset =
-      1 + std::string_view("mettle.checked-contracts.22").size();
+      1 + std::string_view("mettle.checked-contracts.23").size();
   oversized[inventoryOffset] = 0xff;
   oversized.insert(oversized.begin() + inventoryOffset + 1, 8, 0xff);
   oversized.insert(oversized.begin() + inventoryOffset + 9, 0x01);

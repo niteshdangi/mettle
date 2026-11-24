@@ -1,6 +1,7 @@
 #pragma once
 
 #include "source/source.h"
+#include <ctime>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -35,6 +36,8 @@ librarySnapshotSelector(const std::filesystem::path &directory,
                         const LibraryCacheConfiguration &configuration);
 
 std::optional<LibraryInputs> restoreLibraryInputs(std::string_view record);
+std::optional<std::string> entryStamp(const std::filesystem::path &path,
+                                      std::time_t before);
 
 class LibraryInputSnapshots {
 public:

@@ -2,6 +2,7 @@
 #include "support/limits.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <bit>
 #include <limits>
 #include <map>
@@ -853,56 +854,69 @@ summarySegments(std::span<const std::uint8_t> body) {
           body.subspan(reader.position + length)};
 }
 
-FunctionSegments functionSegments(std::span<const std::uint8_t> bytes) {
-  const metadata::DecodeReferences references;
-  Reader reader(bytes, references);
-  const auto headerLength = reader.unsignedInteger(4);
-  const auto bodyLength = reader.unsignedInteger(4);
-  const auto remaining = bytes.size() - reader.position;
-  if (headerLength > remaining || bodyLength != remaining - headerLength)
-    reject("invalid IR function header or body extent");
-  return {reader.position, static_cast<std::size_t>(headerLength),
-          reader.position + static_cast<std::size_t>(headerLength),
-          static_cast<std::size_t>(bodyLength)};
+FunctionSegments functionSegments(const FunctionRecordExtent &extent) {
+  const auto headerLength = extent.recordLength - extent.bodyLength;
+  return {0, headerLength, headerLength, extent.bodyLength};
 }
 
 void programVersion(Reader &reader) {
   if (reader.unsignedInteger(4) != 0x5249544d ||
-      reader.unsignedInteger(4) != 16)
+      reader.unsignedInteger(4) != 17)
     reject("unsupported IR archive format or version");
 }
 
 template <class Visit> void readFunctionRecords(Reader &reader, Visit &&visit) {
+  struct Entry {
+    std::string_view name, package;
+    std::span<const std::uint8_t> index;
+    FunctionRecordExtent extent;
+  };
   const auto count = reader.count(limits::functions);
+  std::vector<Entry> entries;
+  entries.reserve(count);
+  std::size_t payload = 0;
   for (std::uint32_t i = 0; i < count; ++i) {
-    const auto name = reader.text();
-    const auto package = reader.text();
+    auto &entry = entries.emplace_back();
+    entry.name = reader.text();
+    entry.package = reader.text();
     const auto indexLength = reader.unsignedInteger(4);
     if (!indexLength || indexLength > reader.bytes.size() - reader.position)
       reject("invalid IR function index extent");
-    const auto index = reader.bytes.subspan(reader.position, indexLength);
+    entry.index = reader.bytes.subspan(reader.position, indexLength);
     reader.position += indexLength;
-    const auto length = reader.unsignedInteger(4);
-    if (length > reader.bytes.size() - reader.position)
+    const auto headerLength = reader.unsignedInteger(4);
+    const auto bodyLength = reader.unsignedInteger(4);
+    if (headerLength > reader.bytes.size() ||
+        bodyLength > reader.bytes.size() - headerLength ||
+        headerLength + bodyLength > reader.bytes.size() - payload)
       reject("truncated IR record");
-    const auto offset = reader.position;
-    const auto segments =
-        functionSegments(reader.bytes.subspan(offset, length));
-    visit(i, name, package, offset, static_cast<std::size_t>(length), segments,
-          index);
-    reader.position += length;
+    entry.extent = {payload,
+                    static_cast<std::size_t>(headerLength + bodyLength),
+                    static_cast<std::size_t>(bodyLength)};
+    payload += entry.extent.recordLength;
   }
+  if (payload > reader.bytes.size() - reader.position)
+    reject("truncated IR record");
+  const auto base = reader.position;
+  for (std::uint32_t i = 0; i < count; ++i) {
+    auto &entry = entries[i];
+    entry.extent.recordOffset += base;
+    visit(i, entry.name, entry.package, entry.extent.recordOffset,
+          entry.extent.recordLength, functionSegments(entry.extent),
+          entry.index);
+  }
+  reader.position += payload;
 }
 
 void checkFunctionHeader(const Function &function);
 
-void decodeFunctionHeaders(
-    TypeRecords<Function, true> &functions,
-    const std::vector<std::pair<std::size_t, std::size_t>> &extents,
-    std::span<const std::uint8_t> bytes,
-    const metadata::DecodeReferences &references, Symbols &symbols,
-    std::vector<FunctionRecordExtent> &bodyRecords,
-    std::vector<FunctionIndex> *indices = nullptr) {
+void decodeFunctionHeaders(TypeRecords<Function, true> &functions,
+                           const std::vector<FunctionRecordExtent> &extents,
+                           std::span<const std::uint8_t> bytes,
+                           const metadata::DecodeReferences &references,
+                           Symbols &symbols,
+                           std::vector<FunctionRecordExtent> &bodyRecords,
+                           std::vector<FunctionIndex> *indices = nullptr) {
   const std::size_t count = extents.size();
   std::vector<std::string> failures(count);
   std::vector<Symbols> bound(count);
@@ -911,8 +925,9 @@ void decodeFunctionHeaders(
     indices->resize(count);
   auto decode = [&](std::size_t i) {
     try {
-      auto recordBytes = bytes.subspan(extents[i].first, extents[i].second);
-      const auto segments = functionSegments(recordBytes);
+      auto recordBytes =
+          bytes.subspan(extents[i].recordOffset, extents[i].recordLength);
+      const auto segments = functionSegments(extents[i]);
       auto headerBytes =
           recordBytes.subspan(segments.headerOffset, segments.headerLength);
       Reader header(headerBytes, references, true);
@@ -931,8 +946,7 @@ void decodeFunctionHeaders(
           reject("trailing data in IR function header");
         checkFunctionHeader(function);
       }
-      bodyRecords[i] = {extents[i].first, extents[i].second,
-                        segments.bodyLength};
+      bodyRecords[i] = extents[i];
       bound[i] = std::move(header.symbols);
     } catch (const InvalidArchive &error) {
       failures[i] = error.message;
@@ -1153,29 +1167,35 @@ struct LazyFunctionBodies::State {
   std::span<const std::uint8_t> bytes;
   std::shared_ptr<const void> backing;
   std::vector<FunctionRecordExtent> records;
+  std::unique_ptr<std::atomic<bool>[]> verified;
   Symbols symbols;
   TargetFacts target;
   FunctionBodyVerifier verifyBody;
   mutable std::mutex mutex;
+
+  std::span<const std::uint8_t> body(std::size_t recordIndex) const {
+    if (recordIndex >= records.size())
+      reject("IR function body index is out of range");
+    const auto &extent = records[recordIndex];
+    const auto segments = functionSegments(extent);
+    auto bodyBytes = bytes.subspan(extent.recordOffset + segments.bodyOffset,
+                                   segments.bodyLength);
+    if (verifyBody && !verified[recordIndex].load(std::memory_order_acquire)) {
+      if (!verifyBody(recordIndex, bodyBytes))
+        reject("IR function body checksum mismatch");
+      verified[recordIndex].store(true, std::memory_order_release);
+    }
+    return bodyBytes;
+  }
 };
 
 FunctionDecodeResult
 LazyFunctionBodies::load(std::size_t recordIndex, const Function &header,
                          const metadata::DecodeReferences &references) const {
   try {
-    if (!state || recordIndex >= state->records.size())
+    if (!state)
       reject("IR function body index is out of range");
-    const auto &extent = state->records[recordIndex];
-    auto recordBytes =
-        state->bytes.subspan(extent.recordOffset, extent.recordLength);
-    const auto segments = functionSegments(recordBytes);
-    if (segments.bodyLength != extent.bodyLength)
-      reject("invalid IR function body extent");
-    auto bodyBytes =
-        recordBytes.subspan(segments.bodyOffset, segments.bodyLength);
-    if (state->verifyBody && !state->verifyBody(recordIndex, bodyBytes))
-      reject("IR function body checksum mismatch");
-    bodyBytes = summarySegments(bodyBytes).second;
+    auto bodyBytes = summarySegments(state->body(recordIndex)).second;
     Reader body(bodyBytes, references, true);
     Function function = header;
     functionBody(body, function);
@@ -1197,17 +1217,9 @@ LazyFunctionBodies::load(std::size_t recordIndex, const Function &header,
 std::span<const std::uint8_t>
 LazyFunctionBodies::summary(std::size_t recordIndex, std::string &error) const {
   try {
-    if (!state || recordIndex >= state->records.size())
+    if (!state)
       reject("IR function body index is out of range");
-    const auto &extent = state->records[recordIndex];
-    auto recordBytes =
-        state->bytes.subspan(extent.recordOffset, extent.recordLength);
-    const auto segments = functionSegments(recordBytes);
-    auto bodyBytes =
-        recordBytes.subspan(segments.bodyOffset, segments.bodyLength);
-    if (state->verifyBody && !state->verifyBody(recordIndex, bodyBytes))
-      reject("IR function body checksum mismatch");
-    return summarySegments(bodyBytes).first;
+    return summarySegments(state->body(recordIndex)).first;
   } catch (const InvalidArchive &failure) {
     error = failure.message;
     return {};
@@ -1222,23 +1234,16 @@ encodeProgram(const Program &program,
   try {
     Writer writer(references);
     writer.unsignedInteger(0x5249544d, 4);
-    writer.unsignedInteger(16, 4);
+    writer.unsignedInteger(17, 4);
     if ((!program.functionPackages.empty() &&
          program.functionPackages.size() != program.functions.size()) ||
         (!program.staticPackages.empty() &&
          program.staticPackages.size() != program.statics.size()))
       reject("misaligned IR package ownership");
     auto functionRecords = [&](const auto &items, const auto &packages) {
-      auto integerSize = [](std::uint64_t value) {
-        std::size_t size = 1;
-        while (value >= 0x80) {
-          value >>= 7;
-          ++size;
-        }
-        return size;
-      };
       writer.count(items.size(), limits::functions);
       std::set<std::string> identities;
+      std::vector<std::uint8_t> payloads;
       for (std::size_t i = 0; i < items.size(); ++i) {
         auto name = writer.identity(SymbolKind::Function,
                                     static_cast<std::uint32_t>(i));
@@ -1284,25 +1289,18 @@ encodeProgram(const Program &program,
         body.bytes.insert(body.bytes.end(), code.begin(), code.end());
         const auto headerSize = header.size();
         const auto bodySize = body.bytes.size();
-        const auto lengthsSize =
-            integerSize(headerSize) + integerSize(bodySize);
-        if (headerSize > limits::sourceBytes - lengthsSize ||
-            bodySize > limits::sourceBytes - lengthsSize - headerSize)
-          reject("IR record exceeds compiler file size limit");
-        const auto payloadSize = lengthsSize + headerSize + bodySize;
-        const auto recordSize = integerSize(payloadSize);
-        if (writer.bytes.size() > limits::sourceBytes - recordSize ||
-            payloadSize >
-                limits::sourceBytes - recordSize - writer.bytes.size())
+        if (headerSize > limits::sourceBytes - payloads.size() ||
+            bodySize > limits::sourceBytes - payloads.size() - headerSize)
           reject("IR archive exceeds compiler file size limit");
-        writer.unsignedInteger(payloadSize, 4);
         writer.unsignedInteger(headerSize, 4);
         writer.unsignedInteger(bodySize, 4);
-        writer.bytes.insert(writer.bytes.end(), header.begin(), header.end());
-        writer.bytes.insert(writer.bytes.end(), body.bytes.begin(),
-                            body.bytes.end());
+        payloads.insert(payloads.end(), header.begin(), header.end());
+        payloads.insert(payloads.end(), body.bytes.begin(), body.bytes.end());
         context.clear();
       }
+      if (payloads.size() > limits::sourceBytes - writer.bytes.size())
+        reject("IR archive exceeds compiler file size limit");
+      writer.bytes.insert(writer.bytes.end(), payloads.begin(), payloads.end());
     };
     auto records = [&](const auto &items, const auto &packages,
                        SymbolKind kind) {
@@ -1379,7 +1377,7 @@ DecodeResult decodeProgramLazy(
     std::vector<FunctionRecordExtent> functionRecords;
     auto functions = [&](auto &items, auto &packages, auto &names,
                          auto &destinations) {
-      std::vector<std::pair<std::size_t, std::size_t>> extents;
+      std::vector<FunctionRecordExtent> extents;
       std::vector<std::span<const std::uint8_t>> indexRecords;
       std::vector<FunctionIndex> indices;
       readFunctionRecords(
@@ -1396,7 +1394,7 @@ DecodeResult decodeProgramLazy(
             names.emplace_back(name);
             destinations.push_back(destination);
             packages.emplace_back(package);
-            extents.emplace_back(offset, length);
+            extents.push_back({offset, length, segments.bodyLength});
             indexRecords.push_back(indexBytes);
             Reader index(indexBytes, references);
             index.value(indices.emplace_back());
@@ -1518,6 +1516,8 @@ DecodeResult decodeProgramLazy(
     for (const auto &record : functionRecords)
       result.functionBodySizes.push_back(record.bodyLength);
     state->records = std::move(functionRecords);
+    state->verified =
+        std::make_unique<std::atomic<bool>[]>(state->records.size());
     state->symbols = std::move(reader.symbols);
     state->target = program.target;
     result.lazyFunctions = std::shared_ptr<LazyFunctionBodies>(

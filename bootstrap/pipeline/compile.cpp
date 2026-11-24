@@ -515,9 +515,9 @@ public:
            ++i) {
         auto source =
             native && native->catalog && checked->syntax().functions.native(i)
-                ? native->catalog->symbol(metadata::SymbolKind::Function, i)
+                ? native->catalog->symbolSpan(metadata::SymbolKind::Function, i)
                       .value()
-                      .span.source
+                      .source
                 : checked->syntax().functions.header(i).span.source;
         if (auto owner = packageOwners.find(source);
             owner != packageOwners.end())

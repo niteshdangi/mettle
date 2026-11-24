@@ -346,6 +346,8 @@ class LibraryDeclarationIndex : public NativeDeclarationIndex {
 public:
   virtual std::optional<DeclarationSymbolIdentity>
   symbol(metadata::SymbolKind kind, std::uint32_t index) const = 0;
+  virtual std::optional<Span> symbolSpan(metadata::SymbolKind kind,
+                                         std::uint32_t index) const = 0;
   virtual std::optional<std::uint32_t>
   symbol(metadata::SymbolKind kind, std::string_view identity) const = 0;
   virtual std::size_t symbolCount(metadata::SymbolKind kind) const = 0;

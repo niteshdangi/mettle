@@ -282,6 +282,8 @@ private:
   std::string reason;
 };
 
+} // namespace
+
 std::optional<std::string> entryStamp(const std::filesystem::path &path,
                                       std::time_t before) {
   struct stat status{};
@@ -301,6 +303,7 @@ std::optional<std::string> entryStamp(const std::filesystem::path &path,
   return text.str();
 }
 
+namespace {
 void putField(std::string &record, std::string_view value) {
   record += std::to_string(value.size());
   record += ':';

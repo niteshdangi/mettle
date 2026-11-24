@@ -14,7 +14,8 @@
 namespace mettle::driver {
 // The store the options select (`--cache-dir`, METTLE_CACHE_DIR, the user
 // cache directory), or none when caching is off or no directory is known.
-std::optional<packages::Store> openStore(const Options &options);
+std::optional<packages::Store> openStore(const Options &options,
+                                         bool primeIdentity = true);
 
 // Linker identity (or content hash) of the compiler and runtime content hashes.
 std::string compilerIdentity();

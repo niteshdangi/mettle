@@ -741,8 +741,9 @@ private:
     int helper = -1;
     for (std::size_t i = 0; i < source.functions.size(); ++i) {
       auto index = source.deferredFunctionIndex(i);
-      if (displayPath(index ? index->name : source.functions[i].name) ==
-          "core.slice.drop_values") {
+      if ((index ? std::string_view(index->name)
+                 : std::string_view(source.functions[i].name)) ==
+          "core::slice::drop_values") {
         helper = static_cast<int>(i);
         break;
       }
