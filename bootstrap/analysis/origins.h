@@ -1,8 +1,13 @@
 #pragma once
 
 #include "ir/ir.h"
+#include "metadata/references.h"
+#include <cstdint>
+#include <functional>
 #include <map>
+#include <optional>
 #include <set>
+#include <span>
 
 namespace mettle::analysis {
 using Origins = std::set<int>;
@@ -27,8 +32,15 @@ struct FunctionEffects {
 };
 // Per-function effect summaries. Reads are optionally recorded so the fixpoint
 // can re-analyze only the functions that consulted a changed summary.
+std::optional<std::vector<std::uint8_t>>
+encodeEffects(const FunctionEffects &effects,
+              const metadata::EncodeReferences &references);
+std::optional<FunctionEffects>
+decodeEffects(std::span<const std::uint8_t> bytes,
+              const metadata::DecodeReferences &references);
 class EffectSummaries {
 public:
+  using Loader = std::function<std::optional<FunctionEffects>(std::size_t)>;
   explicit EffectSummaries(std::size_t count) : items(count) {}
   const FunctionEffects &operator[](std::size_t index) const {
     return read(index, items[index]);
@@ -38,6 +50,28 @@ public:
   }
   FunctionEffects &slot(std::size_t index) { return items[index]; }
   void record(std::set<std::size_t> *sink) const { reads = sink; }
+  // Summaries a loader supplies are final: their functions are never analysed.
+  void persisted(Loader load) {
+    loader = std::move(load);
+    attempted.assign(items.size(), false);
+    stored.assign(items.size(), false);
+  }
+  bool load(std::size_t index) const {
+    if (loader && !attempted[index]) {
+      attempted[index] = true;
+      if (auto effects = loader(index)) {
+        items[index] = std::move(*effects);
+        stored[index] = true;
+        if (bodies.size() <= index)
+          bodies.resize(items.size());
+        bodies[index] = true;
+      }
+    }
+    return supplied(index);
+  }
+  bool supplied(std::size_t index) const {
+    return index < stored.size() && stored[index];
+  }
   // The summary was computed from a CFG the program record does not hold.
   bool bodied(std::size_t index) const {
     return index < bodies.size() && bodies[index];
@@ -49,14 +83,16 @@ public:
   }
 
 private:
-  std::vector<bool> bodies;
+  mutable std::vector<bool> bodies, attempted, stored;
+  Loader loader;
   const FunctionEffects &read(std::size_t index,
                               const FunctionEffects &value) const {
     if (reads)
       reads->insert(index);
+    load(index);
     return value;
   }
-  std::vector<FunctionEffects> items;
+  mutable std::vector<FunctionEffects> items;
   mutable std::set<std::size_t> *reads = nullptr;
 };
 struct Target {

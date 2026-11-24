@@ -1,4 +1,5 @@
 #include "driver/checked_library.h"
+#include "analysis/origins.h"
 #include "driver/cache.h"
 #include "ir/codec.h"
 #include "lowering/scalar.h"
@@ -478,7 +479,15 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
     symbols.emplace(
         Symbol{metadata::SymbolKind::Function, static_cast<std::uint32_t>(i)},
         prefix + std::to_string(i - supportBase));
-  auto bodies = ir::encodeProgram(program, references);
+  const auto &loans = prepared->loanResults();
+  std::vector<std::vector<std::uint8_t>> summaries(program.functions.size());
+  for (std::size_t i = 0; i < summaries.size() && i < loans.analyzed.size() &&
+                          i < loans.effects.size();
+       ++i)
+    if (loans.analyzed[i])
+      if (auto encoded = analysis::encodeEffects(loans.effects[i], references))
+        summaries[i] = std::move(*encoded);
+  auto bodies = ir::encodeProgram(program, references, summaries);
   if (!bodies) {
     error =
         bodies.error + (referenceError.empty() ? "" : ": " + referenceError);
@@ -1193,6 +1202,11 @@ CheckedLibrary::import(const Module &module,
     return fail("compiled IR function body loader is absent");
   bodies->functionBodySizes = std::move(decoded.functionBodySizes);
   auto lazyFunctions = decoded.lazyFunctions;
+  bodies->summaryReferences = references;
+  bodies->loadSummary = [lazyFunctions](std::size_t record,
+                                        std::string &error) {
+    return lazyFunctions->summary(record, error);
+  };
   auto bodyReferences = references;
   bodies->loadFunction =
       [lazyFunctions, bodyReferences = std::move(bodyReferences),

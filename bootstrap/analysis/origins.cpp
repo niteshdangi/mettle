@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <ranges>
 #include <set>
@@ -2585,5 +2586,196 @@ OriginInfo origins(const ir::Function &function, const ir::Program &program,
       });
   retainWithin(function, types, result.effects);
   return result;
+}
+namespace {
+struct EffectWriter {
+  const metadata::EncodeReferences &references;
+  std::vector<std::uint8_t> bytes;
+  bool failed = false;
+  void number(std::uint64_t value) {
+    while (value >= 0x80) {
+      bytes.push_back(static_cast<std::uint8_t>(value | 0x80));
+      value >>= 7;
+    }
+    bytes.push_back(static_cast<std::uint8_t>(value));
+  }
+  void path(const ViewPath &fields) {
+    number(fields.size());
+    for (const auto &field : fields) {
+      auto type = references.type ? references.type(field.type) : std::nullopt;
+      failed |= !type;
+      number(static_cast<std::uint64_t>(field.kind));
+      number(field.index);
+      number(field.count);
+      number(type.value_or(0));
+    }
+  }
+  void place(const Place &value, bool global) {
+    if (global) {
+      auto name =
+          value.root >= 0 && references.symbol
+              ? references.symbol(metadata::SymbolKind::Static,
+                                  static_cast<std::uint32_t>(value.root))
+              : std::nullopt;
+      failed |= !name;
+      number(name ? name->size() : 0);
+      if (name)
+        bytes.insert(bytes.end(), name->begin(), name->end());
+    } else
+      number(static_cast<std::uint32_t>(value.root) << 1 ^
+             static_cast<std::uint32_t>(value.root >> 31));
+    path(value.fields);
+  }
+  void places(const std::set<Place> &values, bool global = false) {
+    number(values.size());
+    for (const auto &value : values)
+      place(value, global);
+  }
+  void views(const ViewEffects &values) {
+    number(values.size());
+    for (const auto &[key, value] : values) {
+      place(key, false);
+      places(value);
+    }
+  }
+  void paths(const std::map<ViewPath, std::set<Place>> &values,
+             bool global = false) {
+    number(values.size());
+    for (const auto &[key, value] : values) {
+      path(key);
+      places(value, global);
+    }
+  }
+};
+struct EffectReader {
+  const metadata::DecodeReferences &references;
+  std::span<const std::uint8_t> bytes;
+  std::size_t position = 0;
+  struct Invalid {};
+  std::uint64_t number() {
+    std::uint64_t value = 0;
+    for (unsigned shift = 0;; shift += 7) {
+      if (position >= bytes.size() || shift > 63)
+        throw Invalid{};
+      auto byte = bytes[position++];
+      value |= std::uint64_t{byte & 0x7fu} << shift;
+      if (!(byte & 0x80))
+        return value;
+    }
+  }
+  std::size_t count() {
+    auto value = number();
+    if (value > bytes.size() - position)
+      throw Invalid{};
+    return static_cast<std::size_t>(value);
+  }
+  std::uint32_t narrow() {
+    auto value = number();
+    if (value > std::numeric_limits<std::uint32_t>::max())
+      throw Invalid{};
+    return static_cast<std::uint32_t>(value);
+  }
+  ViewPath path() {
+    ViewPath fields(count());
+    for (auto &field : fields) {
+      auto kind = number();
+      if (kind > static_cast<std::uint64_t>(Projection::Kind::Opaque))
+        throw Invalid{};
+      field.kind = static_cast<Projection::Kind>(kind);
+      field.index = narrow();
+      field.count = narrow();
+      auto type = references.type ? references.type(narrow()) : std::nullopt;
+      if (!type)
+        throw Invalid{};
+      field.type = *type;
+    }
+    return fields;
+  }
+  Place place(bool global) {
+    Place result;
+    if (global) {
+      auto size = count();
+      std::string_view name(
+          reinterpret_cast<const char *>(bytes.data() + position), size);
+      position += size;
+      auto index = references.symbol
+                       ? references.symbol(metadata::SymbolKind::Static, name)
+                       : std::nullopt;
+      if (name.empty() || !index ||
+          *index > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
+        throw Invalid{};
+      result.root = static_cast<int>(*index);
+    } else {
+      auto value = narrow();
+      result.root = static_cast<int>(value >> 1 ^ (0u - (value & 1)));
+    }
+    result.fields = path();
+    return result;
+  }
+  std::set<Place> places(bool global = false) {
+    std::set<Place> result;
+    for (auto n = count(); n; --n)
+      result.insert(place(global));
+    return result;
+  }
+  ViewEffects views() {
+    ViewEffects result;
+    for (auto n = count(); n; --n) {
+      auto key = place(false);
+      result[std::move(key)] = places();
+    }
+    return result;
+  }
+  std::map<ViewPath, std::set<Place>> paths(bool global = false) {
+    std::map<ViewPath, std::set<Place>> result;
+    for (auto n = count(); n; --n) {
+      auto key = path();
+      result[std::move(key)] = places(global);
+    }
+    return result;
+  }
+};
+} // namespace
+std::optional<std::vector<std::uint8_t>>
+encodeEffects(const FunctionEffects &effects,
+              const metadata::EncodeReferences &references) {
+  EffectWriter writer{references, {}};
+  writer.views(effects.writes);
+  writer.views(effects.wildWrites);
+  writer.views(effects.retained);
+  writer.views(effects.writeDependencies);
+  writer.places(effects.overwrites);
+  writer.paths(effects.returns);
+  writer.number(effects.absentReturns.size());
+  for (const auto &path : effects.absentReturns)
+    writer.path(path);
+  writer.paths(effects.disjointWrites);
+  writer.paths(effects.staticReturns, true);
+  if (writer.failed)
+    return std::nullopt;
+  return std::move(writer.bytes);
+}
+std::optional<FunctionEffects>
+decodeEffects(std::span<const std::uint8_t> bytes,
+              const metadata::DecodeReferences &references) {
+  EffectReader reader{references, bytes};
+  try {
+    FunctionEffects effects;
+    effects.writes = reader.views();
+    effects.wildWrites = reader.views();
+    effects.retained = reader.views();
+    effects.writeDependencies = reader.views();
+    effects.overwrites = reader.places();
+    effects.returns = reader.paths();
+    for (auto n = reader.count(); n; --n)
+      effects.absentReturns.insert(reader.path());
+    effects.disjointWrites = reader.paths();
+    effects.staticReturns = reader.paths(true);
+    if (reader.position != bytes.size())
+      return std::nullopt;
+    return effects;
+  } catch (const EffectReader::Invalid &) {
+    return std::nullopt;
+  }
 }
 } // namespace mettle::analysis

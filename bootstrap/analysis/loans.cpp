@@ -659,7 +659,8 @@ loans(const ir::Program &program, Diagnostics &diagnostics,
       const ir::Program *prepared, const LoanResults *previous,
       const std::vector<bool> *trusted,
       const std::function<std::optional<ir::Function>(std::size_t)> &loadBody,
-      const std::vector<std::size_t> *seeds) {
+      const std::vector<std::size_t> *seeds,
+      const EffectSummaries::Loader &loadEffects) {
   LoanResults result;
   try {
     auto isTrusted = [&](std::size_t f) {
@@ -733,9 +734,15 @@ loans(const ir::Program &program, Diagnostics &diagnostics,
     const auto rank = calleeFirstRank(program);
     std::set<std::pair<std::size_t, std::size_t>> pending;
     std::vector<bool> scheduled(program.functions.size(), false);
+    if (loadEffects)
+      summaries.persisted([&](std::size_t f) -> std::optional<FunctionEffects> {
+        if (!isTrusted(f) || reusable[f] || scheduled[f])
+          return std::nullopt;
+        return loadEffects(f);
+      });
     if (seeds) {
       for (auto f : *seeds)
-        if (!reusable[f] && !scheduled[f]) {
+        if (!reusable[f] && !scheduled[f] && !summaries.load(f)) {
           pending.emplace(rank[f], f);
           scheduled[f] = true;
         }
@@ -769,7 +776,8 @@ loans(const ir::Program &program, Diagnostics &diagnostics,
       summaries.record(nullptr);
       for (auto callee : reads) {
         dependents[callee].insert(f);
-        if (!scheduled[callee] && !reusable[callee]) {
+        if (!scheduled[callee] && !reusable[callee] &&
+            !summaries.supplied(callee)) {
           scheduled[callee] = true;
           pending.emplace(rank[callee], callee);
         }
@@ -792,7 +800,8 @@ loans(const ir::Program &program, Diagnostics &diagnostics,
     if (diagnostics.empty()) {
       result.analyzed.assign(program.functions.size(), true);
       for (std::size_t f = 0; f < program.functions.size(); ++f)
-        result.analyzed[f] = reusable[f] || scheduled[f] || !isTrusted(f);
+        result.analyzed[f] = reusable[f] || scheduled[f] || !isTrusted(f) ||
+                             summaries.supplied(f);
       result.effects.reserve(program.functions.size());
       for (std::size_t f = 0; f < program.functions.size(); ++f)
         result.effects.push_back(std::move(summaries.slot(f)));

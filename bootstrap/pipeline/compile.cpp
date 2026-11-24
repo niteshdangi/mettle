@@ -43,6 +43,31 @@ bodyLoader(const ir::Program &program, const lowering::ImportedBodies *bodies,
     return body;
   };
 }
+analysis::EffectSummaries::Loader
+effectsLoader(const ir::Program &program,
+              const lowering::ImportedBodies *bodies,
+              Diagnostics &diagnostics) {
+  if (!bodies || !bodies->loadSummary)
+    return {};
+  return [&program, bodies, &diagnostics](
+             std::size_t f) -> std::optional<analysis::FunctionEffects> {
+    if (f >= program.lazyFunctionRecords.size() ||
+        !program.lazyFunctionRecords[f])
+      return std::nullopt;
+    std::string error;
+    auto bytes = bodies->loadSummary(*program.lazyFunctionRecords[f], error);
+    if (bytes.empty()) {
+      if (!error.empty())
+        diagnostics.error("metadata", program.functions[f].span, error);
+      return std::nullopt;
+    }
+    auto effects = analysis::decodeEffects(bytes, bodies->summaryReferences);
+    if (!effects)
+      diagnostics.error("metadata", program.functions[f].span,
+                        "compiled library effect summary is invalid");
+    return effects;
+  };
+}
 class Compiler {
 public:
   static bool mergeImportedMetadata(ir::Program &program,
@@ -601,7 +626,10 @@ public:
     auto loans = analysis::loans(
         program, diagnostics, nullptr, nullptr, &analyzed,
         bodyLoader(program, library ? library->bodies.get() : nullptr,
-                   diagnostics));
+                   diagnostics),
+        nullptr,
+        effectsLoader(program, library ? library->bodies.get() : nullptr,
+                      diagnostics));
     if (!diagnostics.empty())
       return std::nullopt;
     auto instanceQueries = nextQueries ? nextQueries->instances : nullptr;
@@ -821,7 +849,8 @@ public:
       extended = analysis::loans(
           program, diagnostics, nullptr, &prepared.loans, &trusted,
           bodyLoader(program, prepared.importedBodies.get(), diagnostics),
-          &unanalyzed);
+          &unanalyzed,
+          effectsLoader(program, prepared.importedBodies.get(), diagnostics));
       if (!diagnostics.empty())
         return std::nullopt;
     }

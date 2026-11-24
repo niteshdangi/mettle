@@ -67,6 +67,7 @@ public:
   const interfaces::Database &interfaceDatabase() const {
     return *interfaceData;
   }
+  const analysis::LoanResults &loanResults() const { return loans; }
 
 private:
   friend class Compiler;

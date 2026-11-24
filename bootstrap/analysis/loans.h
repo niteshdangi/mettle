@@ -24,5 +24,7 @@ LoanResults loans(const ir::Program &program, Diagnostics &diagnostics,
                   // deferred, so its summary reflects the body.
                   const std::function<std::optional<ir::Function>(std::size_t)>
                       &loadBody = {},
-                  const std::vector<std::size_t> *seeds = nullptr);
+                  const std::vector<std::size_t> *seeds = nullptr,
+                  // Final summaries persisted for trusted functions.
+                  const EffectSummaries::Loader &loadEffects = {});
 } // namespace mettle::analysis

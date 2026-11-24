@@ -2,9 +2,11 @@
 
 #include "diagnostics/diagnostics.h"
 #include "ir/ir.h"
+#include "metadata/references.h"
 #include "semantics/checked.h"
 #include <functional>
 #include <map>
+#include <span>
 #include <string>
 
 namespace mettle::lowering {
@@ -23,6 +25,9 @@ struct ImportedBodies {
   std::function<std::optional<ir::Function>(std::size_t, const ir::Function &,
                                             std::string &)>
       loadFunction;
+  std::function<std::span<const std::uint8_t>(std::size_t, std::string &)>
+      loadSummary;
+  metadata::DecodeReferences summaryReferences;
 };
 // Imported headers remain immutable; concrete bodies are loaded on demand.
 ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,

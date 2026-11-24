@@ -842,6 +842,17 @@ struct FunctionSegments {
   std::size_t bodyOffset = 0, bodyLength = 0;
 };
 
+std::pair<std::span<const std::uint8_t>, std::span<const std::uint8_t>>
+summarySegments(std::span<const std::uint8_t> body) {
+  const metadata::DecodeReferences references;
+  Reader reader(body, references);
+  const auto length = reader.unsignedInteger(4);
+  if (length > body.size() - reader.position)
+    reject("invalid IR function summary extent");
+  return {body.subspan(reader.position, length),
+          body.subspan(reader.position + length)};
+}
+
 FunctionSegments functionSegments(std::span<const std::uint8_t> bytes) {
   const metadata::DecodeReferences references;
   Reader reader(bytes, references);
@@ -857,7 +868,7 @@ FunctionSegments functionSegments(std::span<const std::uint8_t> bytes) {
 
 void programVersion(Reader &reader) {
   if (reader.unsignedInteger(4) != 0x5249544d ||
-      reader.unsignedInteger(4) != 15)
+      reader.unsignedInteger(4) != 16)
     reject("unsupported IR archive format or version");
 }
 
@@ -1164,6 +1175,7 @@ LazyFunctionBodies::load(std::size_t recordIndex, const Function &header,
         recordBytes.subspan(segments.bodyOffset, segments.bodyLength);
     if (state->verifyBody && !state->verifyBody(recordIndex, bodyBytes))
       reject("IR function body checksum mismatch");
+    bodyBytes = summarySegments(bodyBytes).second;
     Reader body(bodyBytes, references, true);
     Function function = header;
     functionBody(body, function);
@@ -1182,13 +1194,35 @@ LazyFunctionBodies::load(std::size_t recordIndex, const Function &header,
   }
 }
 
-EncodeResult encodeProgram(const Program &program,
-                           const metadata::EncodeReferences &references) {
+std::span<const std::uint8_t>
+LazyFunctionBodies::summary(std::size_t recordIndex, std::string &error) const {
+  try {
+    if (!state || recordIndex >= state->records.size())
+      reject("IR function body index is out of range");
+    const auto &extent = state->records[recordIndex];
+    auto recordBytes =
+        state->bytes.subspan(extent.recordOffset, extent.recordLength);
+    const auto segments = functionSegments(recordBytes);
+    auto bodyBytes =
+        recordBytes.subspan(segments.bodyOffset, segments.bodyLength);
+    if (state->verifyBody && !state->verifyBody(recordIndex, bodyBytes))
+      reject("IR function body checksum mismatch");
+    return summarySegments(bodyBytes).first;
+  } catch (const InvalidArchive &failure) {
+    error = failure.message;
+    return {};
+  }
+}
+
+EncodeResult
+encodeProgram(const Program &program,
+              const metadata::EncodeReferences &references,
+              std::span<const std::vector<std::uint8_t>> summaries) {
   std::string context;
   try {
     Writer writer(references);
     writer.unsignedInteger(0x5249544d, 4);
-    writer.unsignedInteger(15, 4);
+    writer.unsignedInteger(16, 4);
     if ((!program.functionPackages.empty() &&
          program.functionPackages.size() != program.functions.size()) ||
         (!program.staticPackages.empty() &&
@@ -1237,11 +1271,19 @@ EncodeResult encodeProgram(const Program &program,
         auto header = section([](auto &archive, const auto &function) {
           functionHeader(archive, function);
         });
-        auto body = section([](auto &archive, const auto &function) {
+        auto code = section([](auto &archive, const auto &function) {
           functionBody(archive, function);
         });
+        Writer body(references);
+        const auto *summary = i < summaries.size() ? &summaries[i] : nullptr;
+        body.unsignedInteger(summary ? summary->size() : 0, 4);
+        if (summary)
+          body.bytes.insert(body.bytes.end(), summary->begin(), summary->end());
+        if (code.size() > limits::sourceBytes - body.bytes.size())
+          reject("IR record exceeds compiler file size limit");
+        body.bytes.insert(body.bytes.end(), code.begin(), code.end());
         const auto headerSize = header.size();
-        const auto bodySize = body.size();
+        const auto bodySize = body.bytes.size();
         const auto lengthsSize =
             integerSize(headerSize) + integerSize(bodySize);
         if (headerSize > limits::sourceBytes - lengthsSize ||
@@ -1257,7 +1299,8 @@ EncodeResult encodeProgram(const Program &program,
         writer.unsignedInteger(headerSize, 4);
         writer.unsignedInteger(bodySize, 4);
         writer.bytes.insert(writer.bytes.end(), header.begin(), header.end());
-        writer.bytes.insert(writer.bytes.end(), body.begin(), body.end());
+        writer.bytes.insert(writer.bytes.end(), body.bytes.begin(),
+                            body.bytes.end());
         context.clear();
       }
     };

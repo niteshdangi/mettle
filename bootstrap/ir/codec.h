@@ -51,6 +51,9 @@ class LazyFunctionBodies {
 public:
   FunctionDecodeResult load(std::size_t record, const Function &header,
                             const metadata::DecodeReferences &references) const;
+  // The authenticated analysis summary stored with the body; empty if absent.
+  std::span<const std::uint8_t> summary(std::size_t record,
+                                        std::string &error) const;
 
 private:
   struct State;
@@ -65,8 +68,10 @@ private:
                     metadata::ValidationMode);
 };
 
-EncodeResult encodeProgram(const Program &program,
-                           const metadata::EncodeReferences &references);
+EncodeResult
+encodeProgram(const Program &program,
+              const metadata::EncodeReferences &references,
+              std::span<const std::vector<std::uint8_t>> summaries = {});
 // Raw records require global-table assembly and pipeline validation before use.
 DecodeResult decodeProgram(std::span<const std::uint8_t> bytes,
                            const metadata::DecodeReferences &references);
