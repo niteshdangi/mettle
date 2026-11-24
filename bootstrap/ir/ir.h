@@ -254,7 +254,8 @@ struct Program {
     Type type;
     bool mutableBinding = false, foreignDeclaration = false;
     Span span{};
-    std::optional<StaticConstant> initializer{};
+    std::shared_ptr<const StaticConstant> initializer{};
+    bool trustedInitializer = false;
   };
   TypeRecords<Function, true> functions;
   std::vector<FunctionIndex> functionIndex{};

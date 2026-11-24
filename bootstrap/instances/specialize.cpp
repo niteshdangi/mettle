@@ -245,12 +245,33 @@ public:
             for (auto &field : value.fields)
               constant(field);
           };
+      auto callable = [](const StaticConstant &root) {
+        std::vector<const StaticConstant *> pending{&root};
+        while (!pending.empty()) {
+          const auto *value = pending.back();
+          pending.pop_back();
+          if (value->kind == StaticConstant::Kind::Function)
+            return true;
+          for (const auto &field : value->fields)
+            if (field.kind == StaticConstant::Kind::Function)
+              return true;
+            else if (!field.fields.empty())
+              pending.push_back(&field);
+        }
+        return false;
+      };
       for (std::size_t i = 0; i < result.statics.size(); ++i)
         if (auto &storage = result.statics[i];
             storage.initializer &&
             (!library || packageOwned(source.staticPackages, i))) {
           destructor(storage.type, storage.span);
-          constant(*storage.initializer);
+          if (callable(*storage.initializer)) {
+            auto specialized =
+                std::make_shared<StaticConstant>(*storage.initializer);
+            constant(*specialized);
+            storage.initializer = std::move(specialized);
+            storage.trustedInitializer = false;
+          }
         }
       result.globalAssembly = source.globalAssembly;
       for (auto &assembly : result.globalAssembly)

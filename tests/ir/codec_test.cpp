@@ -204,9 +204,30 @@ Fixture encodeFixture(bool addressOnly = false) {
   function.kind = StaticConstant::Kind::Function;
   function.type = pointer;
   function.symbol = 2;
-  p.statics = {{"COUNTER", {}, {}, scalar.type, false, false, {}, scalar},
-               {"COUNTER_PTR", {}, {}, address.type, false, false, {}, address},
-               {"HELPER_PTR", {}, {}, pointer, false, false, {}, function}};
+  p.statics = {{"COUNTER",
+                {},
+                {},
+                scalar.type,
+                false,
+                false,
+                {},
+                std::make_shared<const StaticConstant>(scalar)},
+               {"COUNTER_PTR",
+                {},
+                {},
+                address.type,
+                false,
+                false,
+                {},
+                std::make_shared<const StaticConstant>(address)},
+               {"HELPER_PTR",
+                {},
+                {},
+                pointer,
+                false,
+                false,
+                {},
+                std::make_shared<const StaticConstant>(function)}};
   p.staticPackages.assign(p.statics.size(), "core@revision");
   Assembly global;
   global.variant = AssemblyVariant::Global;
@@ -355,11 +376,14 @@ void verifiedRemapping() {
             "remapped generic IR failed real structural/type verification");
   }
   auto malformed = assembled;
-  malformed.statics[0].initializer->byteOffset = 2;
+  auto interior =
+      std::make_shared<StaticConstant>(*malformed.statics[0].initializer);
+  malformed.statics[0].initializer = interior;
+  interior->byteOffset = 2;
   Diagnostics misaligned;
   require(!verify(malformed, misaligned),
           "misaligned static interior relocation was accepted");
-  malformed.statics[0].initializer->byteOffset = 8;
+  interior->byteOffset = 8;
   Diagnostics outOfBounds;
   require(!verify(malformed, outOfBounds),
           "out-of-bounds static interior relocation was accepted");
@@ -678,7 +702,14 @@ void literalBacking() {
   Program program;
   program.types = types;
   program.requireEntry = false;
-  program.statics = {{"LITERAL", {}, {}, bytes, false, false, {}, literal}};
+  program.statics = {{"LITERAL",
+                      {},
+                      {},
+                      bytes,
+                      false,
+                      false,
+                      {},
+                      std::make_shared<const StaticConstant>(literal)}};
   metadata::EncodeReferences encode;
   encode.type = [&](Type type) -> std::optional<std::uint32_t> {
     if (type == bytes)
@@ -717,7 +748,10 @@ void literalBacking() {
   auto decoded = decodeProgram(encoded.bytes, decode);
   require(bool(decoded), decoded.error.c_str());
   decoded.program.types = types;
-  auto &value = *decoded.program.statics[0].initializer;
+  auto initializer =
+      std::make_shared<StaticConstant>(*decoded.program.statics[0].initializer);
+  decoded.program.statics[0].initializer = initializer;
+  auto &value = *initializer;
   require(value.text == literal.text && value.byteOffset == 2 &&
               value.fields.size() == 1 &&
               value.fields[0].scalar == extent.scalar,
@@ -831,8 +865,14 @@ void rawFieldCoverage() {
   constant.projections = {0, 1};
   constant.selection = 2;
   constant.text = std::string("bytes\0tail", 10);
-  p.statics = {
-      {"bits", "BITS", "native", Type::F64, true, false, {9, 10, 7}, constant}};
+  p.statics = {{"bits",
+                "BITS",
+                "native",
+                Type::F64,
+                true,
+                false,
+                {9, 10, 7},
+                std::make_shared<const StaticConstant>(constant)}};
   metadata::EncodeReferences encode;
   encode.type = [](Type type) { return std::optional{type.index() + 100}; };
   encode.source = [](Span s) {
@@ -1004,7 +1044,9 @@ void rawFieldCoverage() {
   require(!encodeProgram(malformed, encode),
           "invalid negative local scope accepted");
   malformed = p;
-  malformed.statics[0].initializer->fields[0].scalar.magnitude[0] = 1;
+  auto conflicting = std::make_shared<StaticConstant>(constant);
+  conflicting->fields[0].scalar.magnitude[0] = 1;
+  malformed.statics[0].initializer = conflicting;
   require(!encodeProgram(malformed, encode), "conflicting exact bits exported");
   Program empty;
   auto minimal = encodeProgram(empty, encode);

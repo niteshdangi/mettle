@@ -1725,8 +1725,8 @@ bool verify(const Program &program, Diagnostics &diagnostics,
     type(storage.type);
     if (!program.types->isSized(storage.type) ||
         program.types->uninhabited(storage.type) ||
-        storage.foreignDeclaration == storage.initializer.has_value() ||
-        (storage.initializer &&
+        storage.foreignDeclaration == (storage.initializer != nullptr) ||
+        (storage.initializer && !storage.trustedInitializer &&
          !constant(*storage.initializer, storage.type))) {
       diagnostics.error("internal", storage.span,
                         "invalid typed static initializer or storage contract");

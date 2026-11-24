@@ -177,32 +177,32 @@ void append(Place &place, const ViewPath &path) {
 std::vector<std::pair<ViewPath, Type>> viewPaths(Type type,
                                                  const TypeStore &types) {
   std::vector<std::pair<ViewPath, Type>> result;
-  std::set<Type> active;
-  std::function<void(Type, ViewPath)> visit = [&](Type current, ViewPath path) {
-    if (!active.insert(current).second)
+  std::vector<Type> active;
+  ViewPath path;
+  auto visit = [&](auto &visit, Type current) -> void {
+    if (std::ranges::find(active, current) != active.end())
       return;
+    active.push_back(current);
     struct ActiveType {
-      std::set<Type> &active;
-      Type type;
-      ~ActiveType() { active.erase(type); }
-    } activeType{active, current};
-    if (types.isView(current)) {
+      std::vector<Type> &active;
+      ~ActiveType() { active.pop_back(); }
+    } activeType{active};
+    // The hidden contents of an erased type retain loans even after region
+    // erasure.
+    if (types.isView(current) || types.isErased(current)) {
       if (result.size() >= limits::activeLoans)
         throw std::length_error("view projection limit exceeded");
-      result.emplace_back(std::move(path), current);
+      result.emplace_back(path, current);
       return;
     }
-    if (types.isErased(current)) {
-      if (result.size() >= limits::activeLoans)
-        throw std::length_error("view projection limit exceeded");
-      // The hidden contents retain loans even after region erasure.
-      result.emplace_back(std::move(path), current);
-      return;
-    }
+    auto nested = [&](Projection projection, Type next) {
+      path.push_back(projection);
+      visit(visit, next);
+      path.pop_back();
+    };
     if (types.isSlice(current)) {
       auto element = types.slice(current).element;
-      path.push_back(Projection::opaque(element));
-      visit(element, std::move(path));
+      nested(Projection::opaque(element), element);
       return;
     }
     if (!types.isProduct(current))
@@ -210,34 +210,30 @@ std::vector<std::pair<ViewPath, Type>> viewPaths(Type type,
     const auto &aggregate = types.product(current);
     if (aggregate.kind == AggregateKind::Array &&
         aggregate.arrayCount != Type::Unknown) {
-      path.push_back(Projection::opaque(aggregate.components[0]));
-      visit(aggregate.components[0], std::move(path));
+      nested(Projection::opaque(aggregate.components[0]),
+             aggregate.components[0]);
       return;
     }
     if (aggregate.kind == AggregateKind::Coroutine) {
-      path.push_back(Projection::opaque(aggregate.components[1]));
-      visit(aggregate.components[1], std::move(path));
+      nested(Projection::opaque(aggregate.components[1]),
+             aggregate.components[1]);
       return;
     }
     if (owningHandle(current, types) && !aggregate.genericArguments.empty()) {
-      visit(aggregate.genericArguments.front(), path);
+      visit(visit, aggregate.genericArguments.front());
       return;
     }
-    const auto &fields = types.product(current).fields;
     const auto prior = result.size();
-    for (std::size_t i = 0; i < fields.size(); ++i) {
-      auto child = path;
-      // Payload fields retain their type even inside opaque generic storage.
-      child.push_back(
-          Projection::element(static_cast<std::uint32_t>(i), fields[i].type));
-      visit(fields[i].type, std::move(child));
-    }
+    // Payload fields retain their type even inside opaque generic storage.
+    for (std::size_t i = 0; i < aggregate.fields.size(); ++i)
+      nested(Projection::element(static_cast<std::uint32_t>(i),
+                                 aggregate.fields[i].type),
+             aggregate.fields[i].type);
     if (result.size() == prior && aggregate.genericOrigin != Type::Unknown)
-      for (auto argument : aggregate.genericArguments) {
-        visit(argument, path);
-      }
+      for (auto argument : aggregate.genericArguments)
+        visit(visit, argument);
   };
-  visit(type, {});
+  visit(visit, type);
   return result;
 }
 ViewPath logicalViewPath(ViewPath path) {

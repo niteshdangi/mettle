@@ -301,15 +301,19 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
   if (imported &&
       imported->statics.size() == module.syntax().statics.nativeSize()) {
     result.statics = imported->statics;
+    for (auto &storage : result.statics)
+      storage.trustedInitializer = true;
     staticBegin = imported->statics.size();
   }
   for (std::size_t i = staticBegin; i < module.statics().size(); ++i) {
     const auto &facts = module.statics()[i];
     const auto &source = module.syntax().statics.header(i);
-    result.statics.push_back({facts.name, facts.externalName, facts.library,
-                              facts.type, source.mutableBinding,
-                              source.foreignDeclaration, source.span,
-                              facts.initializer});
+    result.statics.push_back(
+        {facts.name, facts.externalName, facts.library, facts.type,
+         source.mutableBinding, source.foreignDeclaration, source.span,
+         facts.initializer
+             ? std::make_shared<const StaticConstant>(*facts.initializer)
+             : nullptr});
     if (!source.item.checkedImport && !facts.library.empty())
       result.libraries.push_back(facts.library);
   }

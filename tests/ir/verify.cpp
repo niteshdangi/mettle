@@ -488,9 +488,9 @@ void functionAddressCases() {
   mettle::CallableType signature;
   signature.result = signature.abiResult = Type::I32;
   signature.parameters.push_back({Type::I32});
-  mettle::StaticConstant initializer;
-  initializer.kind = mettle::StaticConstant::Kind::Function;
-  initializer.symbol = 1;
+  auto initializer = std::make_shared<mettle::StaticConstant>();
+  initializer->kind = mettle::StaticConstant::Kind::Function;
+  initializer->symbol = 1;
   program.statics.push_back(
       {"callback", "", "", Type::Unknown, false, false, {}, initializer});
   Instruction address;
@@ -502,7 +502,7 @@ void functionAddressCases() {
   auto pointer = [&](const mettle::CallableType &contract) {
     auto type = types->callableType(contract);
     program.statics[0].type = type;
-    program.statics[0].initializer->type = type;
+    initializer->type = type;
     program.functions.edit(0).blocks[0].instructions[1].result.type = type;
   };
   auto accepted = [&] {
@@ -624,14 +624,14 @@ void floatingCarrierCases() {
   rejected(program, "instruction");
 
   program = simple();
-  mettle::StaticConstant initializer;
-  initializer.type = Type::Bool;
-  initializer.scalar.floatingBits = 0;
+  auto initializer = std::make_shared<mettle::StaticConstant>();
+  initializer->type = Type::Bool;
+  initializer->scalar.floatingBits = 0;
   program.statics.push_back(
       {"bad", "", "", Type::Bool, false, false, {}, initializer});
   rejected(program, "static initializer");
   program.statics[0].type = Type::Char;
-  program.statics[0].initializer->type = Type::Char;
+  initializer->type = Type::Char;
   rejected(program, "static initializer");
 
   program = simple();

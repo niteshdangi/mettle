@@ -164,15 +164,21 @@ public:
       ir::verify(program, diagnostics);
       return std::nullopt;
     }
+    std::map<Type, bool> symbolicTypes;
+    auto symbolic = [&](Type type) {
+      auto [found, inserted] = symbolicTypes.try_emplace(type);
+      if (inserted)
+        found->second = program.types->isSymbolic(type);
+      return found->second;
+    };
     for (const auto &function : program.functions) {
       bool concrete = function.genericParameters.empty() &&
-                      !function.declarationOnly &&
-                      !program.types->isSymbolic(function.result);
+                      !function.declarationOnly && !symbolic(function.result);
       for (const auto &local : function.locals)
-        concrete &= !program.types->isSymbolic(local.type);
+        concrete &= !symbolic(local.type);
       for (const auto &block : function.blocks)
         for (const auto &instruction : block.instructions) {
-          concrete &= !program.types->isSymbolic(instruction.result.type);
+          concrete &= !symbolic(instruction.result.type);
           if (instruction.op == ir::Op::ArrayRepeat)
             concrete &= program.types->compactArray(instruction.result.type);
           if (instruction.op == ir::Op::ArrayTake &&

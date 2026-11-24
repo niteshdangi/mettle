@@ -3479,6 +3479,17 @@ std::string bindingKey(std::string_view module, std::string_view name,
 std::string symbolKey(char prefix, metadata::SymbolKind kind) {
   return std::string{prefix, ':'} + static_cast<char>(kind);
 }
+bool isSymbolRowKey(std::string_view key, metadata::SymbolKind kind,
+                    std::uint64_t ordinal) {
+  if (key.size() != 3 + sizeof(ordinal) || key[0] != 'S' || key[1] != ':' ||
+      key[2] != static_cast<char>(kind))
+    return false;
+  for (std::size_t i = 0; i < sizeof(ordinal); ++i)
+    if (static_cast<unsigned char>(key[3 + i]) !=
+        static_cast<unsigned char>(ordinal >> ((sizeof(ordinal) - i - 1) * 8)))
+      return false;
+  return true;
+}
 class DeclarationDirectoryBuilder {
 public:
   explicit DeclarationDirectoryBuilder(Archive &archive) : archive(archive) {}
@@ -3676,9 +3687,9 @@ public:
                              sizeof(std::uint64_t));
         if (row != UINT64_MAX &&
             (row >= size() ||
-             keyAt(row) !=
-                 symbolKey('S', static_cast<metadata::SymbolKind>(kind)) +
-                     ordinalKey(ordinal))) {
+             !isSymbolRowKey(keyAt(row),
+                             static_cast<metadata::SymbolKind>(kind),
+                             ordinal))) {
           archive.fail("invalid declaration symbol reference");
           return;
         }
@@ -3719,9 +3730,8 @@ public:
       bool valid = true;
       if (key.starts_with("S:")) {
         auto identity = symbolView(i);
-        valid =
-            key == symbolKey('S', identity.kind) + ordinalKey(identity.index) &&
-            symbolRow(identity.kind, identity.index) == i;
+        valid = isSymbolRowKey(key, identity.kind, identity.index) &&
+                symbolRow(identity.kind, identity.index) == i;
         ++symbolCounts[static_cast<std::size_t>(identity.kind)];
       } else if (key.starts_with("s:")) {
         valid = key.size() >= 3;
@@ -3932,9 +3942,8 @@ public:
     if (row == UINT64_MAX)
       return std::nullopt;
     auto identity = symbolView(row);
-    if (queryValidation &&
-        (identity.kind != kind || identity.index != index ||
-         keyAt(row) != symbolKey('S', kind) + ordinalKey(index)))
+    if (queryValidation && (identity.kind != kind || identity.index != index ||
+                            !isSymbolRowKey(keyAt(row), kind, index)))
       throw metadata::InvalidMetadata("invalid declaration lookup");
     return identity.span;
   }
@@ -4158,7 +4167,7 @@ private:
                          ordinalKey(coordinates->first) +
                          ordinalKey(UINT64_MAX - coordinates->second);
     } else if constexpr (std::is_same_v<T, DeclarationSymbolIdentity>) {
-      valid = key == symbolKey('S', result.kind) + ordinalKey(result.index) &&
+      valid = isSymbolRowKey(key, result.kind, result.index) &&
               symbolRow(result.kind, result.index) == index &&
               rawOne<std::uint32_t>(symbolKey('s', result.kind) +
                                     result.definition) == result.index;
@@ -4182,7 +4191,7 @@ private:
         if (row != UINT64_MAX) {
           auto identity = symbolView(row);
           valid = identity.kind == kind && identity.index == result &&
-                  keyAt(row) == symbolKey('S', kind) + ordinalKey(result) &&
+                  isSymbolRowKey(keyAt(row), kind, result) &&
                   identity.definition == key.substr(3);
         }
       } else if (key.starts_with("f:"))
