@@ -220,6 +220,17 @@ fn main(): i32 {
             i += 1
         }
         if map.get(HashKey(7, pointer)).is_present() { return 28 }
+        state.panic_deallocate = true
+        match take catch_panic(fn(): Unit { map.reserve(100usize) }) {
+            CatchResult.Panicked(_) => {},
+            CatchResult.Returned(_) => { return 29 }
+        }
+        if map.capacity() <= capacity || map.len() != 7usize || state.live != live || state.drops != 13 { return 30 }
+        i = 0
+        while i < 7 {
+            if map.get(HashKey(i, pointer)).or_panic().number != i * 10 { return 31 }
+            i += 1
+        }
     }
     if state.live != 0 || state.drops != 20 { return 20 }
     0

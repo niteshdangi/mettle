@@ -36,13 +36,92 @@ fn rebuild_layouts(bucket: Layout, capacity: usize, count: usize): (Layout, Layo
     (payload, control, hashes)
 }
 
-@inline(never)
-fn allocate_rebuild_block<A: Allocator>(mut allocator: A, layout: Layout, dangling: ptr<mut u8>): ptr<mut u8> throws TryReserveError {
-    if layout.size() == 0usize { return dangling }
-    match capture allocator.allocate(layout) {
-        success(p) => p,
+copy type RebuildAllocator {
+    context: ptr<mut u8>
+    allocate: unsafe fn(ptr<mut u8>, Layout): Outcome<ptr<mut u8>, AllocError>
+    deallocate: unsafe fn(ptr<mut u8>, ptr<mut u8>, Layout): Unit
+}
+
+type RebuildBlock {
+    ptr: ptr<mut u8>
+    layout: Layout
+    allocator: RebuildAllocator
+    drop {
+        if self.layout.size() != 0usize {
+            unsafe { (self.allocator.deallocate)(self.allocator.context, self.ptr, self.layout) }
+        }
+    }
+}
+
+unsafe fn allocate_rebuild_block(allocator: RebuildAllocator, layout: Layout): RebuildBlock throws TryReserveError {
+    if layout.size() == 0usize { return RebuildBlock(layout.dangling_ptr().as_ptr(), layout, allocator) }
+    match unsafe { (allocator.allocate)(allocator.context, layout) } {
+        success(p) => RebuildBlock(p, layout, allocator),
         failure(_) => throw TryReserveError.allocation_error(layout)
     }
+}
+
+unsafe fn rebuild_allocate<A: Allocator>(a: ptr<mut u8>, layout: Layout): Outcome<ptr<mut u8>, AllocError> {
+    unsafe { capture (*a.cast<A>()).allocate(layout) }
+}
+
+unsafe fn rebuild_deallocate<A: Allocator>(a: ptr<mut u8>, p: ptr<mut u8>, layout: Layout): Unit {
+    unsafe { (*a.cast<A>()).deallocate(p, layout) }
+}
+
+copy type RebuildTable {
+    payload: ptr<mut u8>
+    controls: ptr<mut u8>
+    cap: usize
+}
+
+@inline(never)
+unsafe fn rebuild_table(
+    old: RebuildTable, ncap: usize, count: usize, bucket: Layout,
+    allocator: RebuildAllocator, map: ptr<mut u8>,
+    finish: unsafe fn(ptr<mut u8>, RebuildTable, ptr<mut u64>): Unit
+): Unit throws TryReserveError {
+    let (payload, control, hashes) = try rebuild_layouts(bucket, ncap, count)
+    let new_payload = unsafe { try allocate_rebuild_block(allocator, payload) }
+    let new_controls = unsafe { try allocate_rebuild_block(allocator, control) }
+    let scratch = unsafe { try allocate_rebuild_block(allocator, hashes) }
+    if control.size() != 0usize {
+        unsafe { core.ptr.write_bytes(new_controls.ptr, 128u8, control.size()) }
+    }
+    let old_payload = unsafe { layout_unchecked(old.cap * bucket.size(), bucket.align()) }
+    let old_controls = unsafe { layout_unchecked(if old.cap == 0usize { 0usize } else { old.cap + 16usize }, 1usize) }
+    unsafe { finish(map, RebuildTable(new_payload.ptr, new_controls.ptr, ncap), scratch.ptr.cast<u64>()) }
+    core.mem.forget(take new_controls)
+    core.mem.forget(take new_payload)
+    let _free_controls = RebuildBlock(old.controls, old_controls, allocator)
+    let _free_payload = RebuildBlock(old.payload, old_payload, allocator)
+}
+
+unsafe fn finish_rebuild<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher>(
+    map: ptr<mut u8>, next: RebuildTable, hashes: ptr<mut u64>
+): Unit {
+    let table = unsafe { mut *map.cast<Map<K, V, A, S>>() }
+    let old = table.entries.ptr
+    let controls = table.entries.controls
+    let cap = table.entries.cap
+    var ordinal = 0usize
+    var i = 0usize
+    while i < cap {
+        if unsafe { *controls.add(i) < 128u8 } {
+            let hash = table.builder.hash_one(unsafe { read (*old.add(i)).key })
+            unsafe { core.ptr.write(hashes.add(ordinal), hash) }
+            ordinal += 1usize
+        }
+        i += 1usize
+    }
+    unsafe {
+        move_rebuild_entries(old.cast<u8>().cast_const(), controls.cast_const(), cap,
+            next.payload, next.controls, next.cap, hashes.cast_const(), core.mem.size_of<Bucket<K, V>>())
+    }
+    table.entries.ptr = next.payload.cast<Bucket<K, V>>()
+    table.entries.controls = next.controls
+    table.entries.cap = next.cap
+    table.entries.deleted = 0usize
 }
 
 fn set_control(controls: ptr<mut u8>, cap: usize, index: usize, tag: u8): Unit {
@@ -483,46 +562,14 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
 
     @inline(never)
     mut fn rebuild(ncap: usize): Unit throws TryReserveError {
-        let (payload, control, hashes) = try rebuild_layouts(layout_of<Bucket<K, V>>(), ncap, self.entries.count)
-        let a = core.ptr.from_mut(self.entries.a)
-        let np = (try allocate_rebuild_block(self.entries.a, payload, dangling_for<Bucket<K, V>>().cast<u8>())).cast<Bucket<K, V>>()
-        let payload_guard = unsafe { free_block(np.cast<u8>(), payload, a) }
-        let nc = try allocate_rebuild_block(self.entries.a, control, dangling_for<u8>())
-        let control_guard = unsafe { free_block(nc, control, a) }
-        let nh = (try allocate_rebuild_block(self.entries.a, hashes, dangling_for<u64>().cast<u8>())).cast<u64>()
-        let _hash_guard = unsafe { free_block(nh.cast<u8>(), hashes, a) }
-        if control.size() != 0usize {
-            unsafe { core.ptr.write_bytes(nc, 128u8, control.size()) }
-        }
-        let old_cap = self.entries.cap
-        let old_ptr = self.entries.ptr
-        let old_controls = self.entries.controls
-        // Finish every fallible allocation and hash callback before moving any owned payload.
-        var ordinal = 0usize
-        var i = 0usize
-        while i < old_cap {
-            if unsafe { *old_controls.add(i) < 128u8 } {
-                let hash = self.builder.hash_one(unsafe { read (*old_ptr.add(i)).key })
-                unsafe { core.ptr.write(nh.add(ordinal), hash) }
-                ordinal += 1usize
-            }
-            i += 1usize
-        }
-        let bucket_size = core.mem.size_of<Bucket<K, V>>()
+        let old = RebuildTable(self.entries.ptr.cast<u8>(), self.entries.controls, self.entries.cap)
+        let count = self.entries.count
+        let allocator = RebuildAllocator(core.ptr.from_mut(self.entries.a).cast<u8>(),
+            rebuild_allocate<A>, rebuild_deallocate<A>)
         unsafe {
-            move_rebuild_entries(old_ptr.cast<u8>().cast_const(), old_controls.cast_const(), old_cap,
-                np.cast<u8>(), nc, ncap, nh.cast_const(), bucket_size)
+            try rebuild_table(old, ncap, count, layout_of<Bucket<K, V>>(), allocator,
+                core.ptr.from_mut(self).cast<u8>(), finish_rebuild<K, V, A, S>)
         }
-        let old_payload = unsafe { layout_unchecked(old_cap * bucket_size, core.mem.align_of<Bucket<K, V>>()) }
-        let old_control = unsafe { layout_unchecked(if old_cap == 0usize { 0usize } else { old_cap + 16usize }, 1usize) }
-        let _free_controls = unsafe { free_block(old_controls, old_control, a) }
-        let _free_payload = unsafe { free_block(old_ptr.cast<u8>(), old_payload, a) }
-        self.entries.ptr = np
-        self.entries.controls = nc
-        self.entries.cap = ncap
-        self.entries.deleted = 0usize
-        core.mem.forget(take control_guard)
-        core.mem.forget(take payload_guard)
     }
 
     @inline(never)

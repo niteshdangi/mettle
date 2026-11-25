@@ -635,6 +635,11 @@ hash-callback panic. Relocation copies occupied buckets between disjoint
 allocations, using the checked layout to bound each slot's byte range. For
 zero-sized buckets only the control bytes move logical ownership. The new
 table assumes ownership before old storage is freed without dropping entries.
+The shared rebuild routine calls the typed map code once: that callback
+finishes hashing before moving anything, then publishes the new table
+without calling user code. Allocator calls and exclusive typed map access
+do not overlap. If freeing old storage panics, the published table still owns
+the entries and the remaining storage guards run during unwinding.
 `drain` empties entries while preserving allocation and yields owned pairs;
 dropping the drain destroys unyielded entries.
 Hash/equality callback counts are not stable API guarantees. Set union yields

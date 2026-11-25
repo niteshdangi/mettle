@@ -2509,6 +2509,15 @@ optimizer gain. Removing two SCC InstCombine runs saved 6% in optimizer
 replay, not enough to justify a fork of LLVM's O2 pipeline. Receipts:
 `direct-init/{native-relocation.TOxXaB/phases,rebuild-storage.GypAAVll/ab.json,erased-rebuild-storage.5JKnwJtX/ab.json}`.
 
+The full rebuild transaction now runs in the native alloc archive. One
+typed callback per resize hashes the old entries, relocates them, and
+publishes the new table before the old storage is retired. In 40 matched
+ext4 pairs, first build fell from 149.02 to 129.12 ms (0.865, 95% interval
+0.845–0.885) with no measurable runtime change (1.000, 0.985–1.015).
+The unchanged Rust harness matched both outputs: first build 131.14/103.48 ms
+(1.227×), runtime 29.85/37.72 ms (0.791×). First-build parity remains open.
+Receipts: `direct-init/native-rebuild.pBccwofs/{ab.json,rust/results.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
