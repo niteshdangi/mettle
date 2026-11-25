@@ -2490,6 +2490,13 @@ change (1.003, 0.985–1.021). The unchanged Rust harness matched both
 outputs: first build 144.07/104.46 ms (1.394×), runtime 30.13/38.13 ms
 (0.787×). Receipts: `direct-init/adjacent-materialization.Zjci0D/{ab.json,rust/results.json}`.
 
+Sharing the post-hash relocation loop across HashMap specializations reduced
+first build from 157.85 to 150.25 ms in 32 matched ext4 pairs (0.957,
+95% interval 0.928–0.987). Runtime showed no clear change (1.004,
+0.987–1.023). The unchanged Rust harness matched both outputs: first build
+144.75/102.06 ms (1.425×), runtime 29.96/37.98 ms (0.786×). First-build
+parity remains open. Receipts: `direct-init/native-relocation.TOxXaB/{ab.json,rust/results.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

@@ -73,6 +73,30 @@ fn vacant_slot(controls: ptr<mut u8>, cap: usize, hash: u64): usize {
     0usize
 }
 
+@inline(never)
+unsafe fn move_rebuild_entries(
+    old_payload: ptr<read u8>, old_controls: ptr<read u8>, old_cap: usize,
+    new_payload: ptr<mut u8>, new_controls: ptr<mut u8>, new_cap: usize,
+    hashes: ptr<read u64>, size: usize
+): Unit {
+    var ordinal = 0usize
+    var i = 0usize
+    while i < old_cap {
+        if unsafe { *old_controls.add(i) < 128u8 } {
+            let hash = unsafe { *hashes.add(ordinal) }
+            let index = vacant_slot(new_controls, new_cap, hash)
+            if size != 0usize {
+                unsafe {
+                    core.ptr.copy_nonoverlapping(old_payload.add(i * size), new_payload.add(index * size), size)
+                }
+            }
+            set_control(new_controls, new_cap, index, (hash >> 57u64) as u8)
+            ordinal += 1usize
+        }
+        i += 1usize
+    }
+}
+
 copy type Slots<region r, K, V> {
     items: read [core.mem.MaybeUninit<Bucket<K, V>>] from r
     controls: read [u8] from r
@@ -484,19 +508,12 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
             }
             i += 1usize
         }
-        ordinal = 0usize
-        i = 0usize
-        while i < old_cap {
-            if unsafe { *old_controls.add(i) < 128u8 } {
-                let hash = unsafe { *nh.add(ordinal) }
-                let index = vacant_slot(nc, ncap, hash)
-                unsafe { core.ptr.write(np.add(index), core.ptr.`read`(old_ptr.add(i))) }
-                set_control(nc, ncap, index, (hash >> 57u64) as u8)
-                ordinal += 1usize
-            }
-            i += 1usize
+        let bucket_size = core.mem.size_of<Bucket<K, V>>()
+        unsafe {
+            move_rebuild_entries(old_ptr.cast<u8>().cast_const(), old_controls.cast_const(), old_cap,
+                np.cast<u8>(), nc, ncap, nh.cast_const(), bucket_size)
         }
-        let old_payload = unsafe { layout_unchecked(old_cap * core.mem.size_of<Bucket<K, V>>(), core.mem.align_of<Bucket<K, V>>()) }
+        let old_payload = unsafe { layout_unchecked(old_cap * bucket_size, core.mem.align_of<Bucket<K, V>>()) }
         let old_control = unsafe { layout_unchecked(if old_cap == 0usize { 0usize } else { old_cap + 16usize }, 1usize) }
         let _free_controls = unsafe { free_block(old_controls, old_control, a) }
         let _free_payload = unsafe { free_block(old_ptr.cast<u8>(), old_payload, a) }

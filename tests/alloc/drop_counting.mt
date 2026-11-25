@@ -10,6 +10,9 @@ import alloc.boxed.Heap
 type D { c: ptr<mut i32>; id: i32
     drop { unsafe { *self.c += self.id } } }
 
+static mut ZERO_DROPS: usize = 0usize
+type ZeroDrop { drop { unsafe { ZERO_DROPS += 1usize } } }
+
 fn main(): i32 {
     var n = 0
     let c = core.ptr.from_mut(n)
@@ -29,10 +32,20 @@ fn main(): i32 {
         while i < 100 { let r = m.insert(i + 0, D(c, 1)); i += 1 }
         let r = m.insert(5, D(c, 1000))
         match r { present(_) => {}, none => { return 3 } }
-        if n != 0 { return 4 }
+        m.reserve(1024usize)
+        m.shrink_to_fit()
+        if n != 0 || m.get(5).or_panic().id != 1000 { return 4 }
         let gone = m.remove(7)
     }
     if n != 1100 { return 9 }
+    {
+        var zero = alloc.hash_map.new<Unit, ZeroDrop>()
+        zero.insert((), ZeroDrop())
+        zero.reserve(32usize)
+        zero.shrink_to_fit()
+        if !zero.get(()).is_present() || unsafe { ZERO_DROPS != 0usize } { return 11 }
+    }
+    if unsafe { ZERO_DROPS != 1usize } { return 12 }
     n = 0
     {
         var d = alloc.vec_deque.new<D>()

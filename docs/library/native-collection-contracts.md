@@ -631,7 +631,10 @@ Map and Set do not expose a contiguous bucket slice or stored full hashes.
 Borrowed map entries expose keys and values only; physical slots may contain
 holes. Resizing may rehash keys, but completes allocations and hash callbacks
 before moving payloads, preserving the original map on allocation failure or
-hash-callback panic.
+hash-callback panic. Relocation copies occupied buckets between disjoint
+allocations, using the checked layout to bound each slot's byte range. For
+zero-sized buckets only the control bytes move logical ownership. The new
+table assumes ownership before old storage is freed without dropping entries.
 `drain` empties entries while preserving allocation and yields owned pairs;
 dropping the drain destroys unyielded entries.
 Hash/equality callback counts are not stable API guarantees. Set union yields
