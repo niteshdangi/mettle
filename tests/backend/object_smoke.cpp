@@ -102,7 +102,8 @@ int main(int argc, char **argv) {
     std::vector<std::string> paths;
     auto error = mettle::backend::emitObjectUnits(
         module, triple, "smoke", true,
-        [&](llvm::StringRef, bool) -> llvm::Expected<std::string> {
+        [&](llvm::StringRef,
+            mettle::backend::ObjectUnitKind) -> llvm::Expected<std::string> {
           paths.push_back(std::string(argv[1]) + "." +
                           std::to_string(paths.size()) + ".o");
           return paths.back();

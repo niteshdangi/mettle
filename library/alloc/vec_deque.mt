@@ -5,7 +5,7 @@ import core.cmp.{Eq, Ord, Ordering, PartialEq, PartialOrd}
 import core.hash.{Hash, Hasher}
 import core.fmt
 
-import super.alloc.{Allocator, Global, PushError, layout_unchecked, dangling_for, free_block}
+import super.alloc.{Allocator, Global, PushError, layout_of, layout_unchecked, dangling_for, free_block}
 import super.collections.TryReserveError
 
 copy type RawSlice<T> { data: ptr<read T>; len: usize }
@@ -221,7 +221,7 @@ extend<T, A: Allocator> Deque<T, A> {
 
     // Moves the elements to the front of a larger block; failure changes nothing.
     mut fn grow_to(need: usize, exact: bool): Unit throws TryReserveError {
-        let ncap = try super.vec.growth_target<T>(self.cap, need, exact)
+        let ncap = try super.vec.growth_target(layout_of<T>(), self.cap, need, exact)
         if ncap == self.cap { return () }
         let size = core.mem.size_of<T>()
         let align = core.mem.align_of<T>()

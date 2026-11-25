@@ -509,10 +509,11 @@ static llvm::Error optimizeObject(llvm::Module &module,
 }
 
 static std::unique_ptr<llvm::Module>
-splitEntryOptimization(llvm::Module &module, llvm::StringRef symbolNamespace) {
-  if (!module.getFunction("main") || !module.getModuleInlineAsm().empty() ||
-      !module.alias_empty() || !module.ifunc_empty() ||
-      module.getNamedMetadata("llvm.dbg.cu") ||
+splitEntryOptimization(llvm::Module &module, llvm::StringRef symbolNamespace,
+                       bool primary) {
+  if ((primary && !module.getFunction("main")) ||
+      !module.getModuleInlineAsm().empty() || !module.alias_empty() ||
+      !module.ifunc_empty() || module.getNamedMetadata("llvm.dbg.cu") ||
       llvm::any_of(module.globals(), [](const llvm::GlobalVariable &value) {
         return !value.isDeclaration() || value.hasExternalWeakLinkage() ||
                value.getName().starts_with("llvm.");
@@ -523,6 +524,13 @@ splitEntryOptimization(llvm::Module &module, llvm::StringRef symbolNamespace) {
       edges;
   llvm::SmallVector<llvm::Function *, 8> entries;
   Functions barriers;
+  llvm::SmallPtrSet<llvm::MDNode *, 8> entryFamilies;
+  if (!primary)
+    for (auto &function : module)
+      if (!function.isDeclaration() && !function.hasLocalLinkage() &&
+          !function.hasAvailableExternallyLinkage())
+        if (auto *family = function.getMetadata("mettle.codegen.family"))
+          entryFamilies.insert(family);
   for (auto &function : module) {
     if (function.hasExternalWeakLinkage() || function.hasPrefixData() ||
         function.hasPrologueData() ||
@@ -535,7 +543,8 @@ splitEntryOptimization(llvm::Module &module, llvm::StringRef symbolNamespace) {
         family && family->getNumOperands() == 1
             ? llvm::dyn_cast<llvm::MDString>(family->getOperand(0))
             : nullptr;
-    if (familyName && familyName->getString() == "main")
+    if (familyName && (primary ? familyName->getString() == "main"
+                               : entryFamilies.contains(family)))
       entries.push_back(&function);
     else if (function.hasLocalLinkage() &&
              function.hasFnAttribute(llvm::Attribute::NoInline))
@@ -587,7 +596,7 @@ splitEntryOptimization(llvm::Module &module, llvm::StringRef symbolNamespace) {
                 !callee->hasFnAttribute(llvm::Attribute::AlwaysInline))
               barriers.insert(callee);
   }
-  if (!hasLoop || barriers.empty())
+  if ((primary && !hasLoop) || barriers.empty())
     return nullptr;
   llvm::SmallVector<llvm::Function *, 32> pending;
   for (auto &[function, references] : edges)
@@ -608,7 +617,7 @@ splitEntryOptimization(llvm::Module &module, llvm::StringRef symbolNamespace) {
     if (!hot.contains(function) && cold.insert(function).second)
       pending.append(edges[function].begin(), edges[function].end());
   }
-  if (cold.size() * 4 < hot.size() || hot.size() * 4 < cold.size())
+  if (cold.empty() || hot.empty())
     return nullptr;
   llvm::DenseMap<const llvm::Comdat *, bool> comdats;
   Functions exports;
@@ -704,17 +713,13 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
     return machine.takeError();
   if (auto error = verifyObject(module, targetTriple, **machine))
     return error;
-  llvm::LLVMContext isolatedContext;
-  std::unique_ptr<llvm::Module> isolated;
-  auto optimizeRoot = [&] {
-    return optimizeObject(module, targetTriple, **machine, optimize, false,
-                          false);
-  };
-  if (optimize && targetTriple.isOSLinux() && llvm::llvm_is_multithreaded())
-    isolated = splitEntryOptimization(module, symbolNamespace);
+  std::vector<std::unique_ptr<llvm::Module>> isolated;
+  const auto threads = llvm::hardware_concurrency().compute_thread_count();
+  bool unoptimized = false;
   struct Job {
     llvm::SmallVector<char, 0> bitcode;
     std::string output;
+    bool optimize = false;
   };
   auto run = [&](const Job &job,
                  std::unique_ptr<llvm::TargetMachine> &worker) -> std::string {
@@ -731,6 +736,13 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
         return llvm::toString(target.takeError());
       worker = std::move(*target);
     }
+    if (job.optimize) {
+      if (auto error = verifyObject(**unit, targetTriple, *worker))
+        return llvm::toString(std::move(error));
+      if (auto error =
+              optimizeObject(**unit, targetTriple, *worker, true, false, false))
+        return llvm::toString(std::move(error));
+    }
     if (auto error = writeObject(**unit, *worker, job.output))
       return llvm::toString(std::move(error));
     return {};
@@ -740,30 +752,38 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
   std::unique_ptr<llvm::DefaultThreadPool> pool;
   std::unique_ptr<llvm::Module> localOwner;
   llvm::Module *local = nullptr;
-  std::string localOutput;
+  Job localJob;
   auto collect = [&](llvm::Module &unit,
                      std::unique_ptr<llvm::Module> owner) -> llvm::Error {
     Job job;
+    job.optimize = unoptimized;
+    if (unoptimized)
+      if (auto error = verifyObject(unit, targetTriple, **machine))
+        return error;
     llvm::raw_svector_ostream stream(job.bitcode);
     llvm::WriteBitcodeToFile(unit, stream);
     auto output =
         consume(llvm::StringRef(job.bitcode.data(), job.bitcode.size()),
-                &unit == &module || &unit == isolated.get());
+                unoptimized        ? ObjectUnitKind::Unoptimized
+                : &unit == &module ? ObjectUnitKind::Retained
+                                   : ObjectUnitKind::Optimized);
     if (!output)
       return output.takeError();
     if (output->empty())
       return llvm::Error::success();
-    if (!local && &unit.getContext() == &module.getContext()) {
+    job.output = std::move(*output);
+    if (&unit.getContext() == &module.getContext() &&
+        (!local || unit.getInstructionCount() > local->getInstructionCount())) {
       local = &unit;
       localOwner = std::move(owner);
-      localOutput = std::move(*output);
-      return llvm::Error::success();
+      std::swap(job, localJob);
+      if (job.output.empty())
+        return llvm::Error::success();
     }
-    job.output = std::move(*output);
-    if (llvm::llvm_is_multithreaded()) {
+    if (llvm::llvm_is_multithreaded() && threads > 1) {
       if (!pool)
         pool = std::make_unique<llvm::DefaultThreadPool>(
-            llvm::hardware_concurrency());
+            llvm::hardware_concurrency(threads - 1));
       parallel.push_back(pool->async([&run, job = std::move(job)] {
         thread_local std::unique_ptr<llvm::TargetMachine> worker;
         return run(job, worker);
@@ -773,56 +793,47 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
     }
     return llvm::Error::success();
   };
-  if (isolated) {
-    llvm::ModuleAnalysisManager analyses;
-    llvm::StripDeadPrototypesPass{}.run(*isolated, analyses);
-    llvm::SmallVector<char, 0> bitcode;
-    llvm::raw_svector_ostream stream(bitcode);
-    llvm::WriteBitcodeToFile(*isolated, stream);
-    isolated.reset();
-    pool =
-        std::make_unique<llvm::DefaultThreadPool>(llvm::hardware_concurrency());
-    auto root = pool->async([&]() -> std::string {
-      if (auto error = verifyObject(module, targetTriple, **machine))
-        return llvm::toString(std::move(error));
-      return llvm::toString(optimizeRoot());
-    });
-    auto prepareIsolated = [&]() -> llvm::Error {
-      auto part = llvm::parseBitcodeFile(
-          llvm::MemoryBufferRef(llvm::StringRef(bitcode.data(), bitcode.size()),
-                                ""),
-          isolatedContext);
+  auto *current = &module;
+  std::string currentNamespace = symbolNamespace.str();
+  if (optimize && targetTriple.isOSLinux()) {
+    while (isolated.size() + 1 < 16) {
+      auto part =
+          splitEntryOptimization(*current, currentNamespace, isolated.empty());
       if (!part)
-        return part.takeError();
-      isolated = std::move(*part);
-      auto target = createMachine(targetTriple, true);
-      if (!target)
-        return target.takeError();
-      if (auto error = verifyObject(*isolated, targetTriple, **target))
+        break;
+      const bool splitCold =
+          part->getInstructionCount() > current->getInstructionCount();
+      llvm::ModuleAnalysisManager analyses;
+      llvm::StripDeadPrototypesPass{}.run(*current, analyses);
+      llvm::StripDeadPrototypesPass{}.run(*part, analyses);
+      unoptimized = true;
+      if (auto error = collect(*current, nullptr))
         return error;
-      if (auto error = optimizeObject(*isolated, targetTriple, **target, true,
+      current = part.get();
+      currentNamespace += ".split";
+      isolated.push_back(std::move(part));
+      if (!splitCold)
+        break;
+    }
+  }
+  if (unoptimized) {
+    if (auto error = collect(*current, nullptr))
+      return error;
+  } else {
+    if (auto error = optimizeObject(module, targetTriple, **machine, optimize,
+                                    false, false))
+      return error;
+    if (auto error = partitionObjectModule(module, symbolNamespace, collect))
+      return error;
+  }
+  if (local) {
+    if (localJob.optimize)
+      if (auto error = optimizeObject(*local, targetTriple, **machine, true,
                                       false, false))
         return error;
-      return partitionObjectModule(*isolated,
-                                   (symbolNamespace + ".split").str(), collect);
-    };
-    auto isolatedError = prepareIsolated();
-    const auto &rootDiagnostic = root.get();
-    if (auto error = llvm::joinErrors(
-            rootDiagnostic.empty()
-                ? llvm::Error::success()
-                : llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                          rootDiagnostic),
-            std::move(isolatedError)))
+    if (auto error = writeObject(*local, **machine, localJob.output))
       return error;
-  } else if (auto error = optimizeRoot()) {
-    return error;
   }
-  if (auto error = partitionObjectModule(module, symbolNamespace, collect))
-    return error;
-  if (local)
-    if (auto error = writeObject(*local, **machine, localOutput))
-      return error;
   std::unique_ptr<llvm::TargetMachine> serialMachine;
   for (const auto &job : serial)
     if (auto error = run(job, serialMachine); !error.empty())

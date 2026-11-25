@@ -1200,8 +1200,8 @@ int build(const Options &requested,
   if (procedural)
     library.procedures = &procedural->procedures();
   auto cacheable = [&] {
-    return options.command == "build" && !options.debugInfo &&
-           options.emits.size() <= 1 &&
+    return options.command == "build" && !options.prepareShippedLibrary &&
+           !options.debugInfo && options.emits.size() <= 1 &&
            (options.emit == "executable" || options.emit == "object");
   };
   auto consumerKey = [](std::string key, const std::string &checked) {
@@ -1455,8 +1455,11 @@ int build(const Options &requested,
                                        "native object demand is unavailable");
               libraryProgram.emplace(std::nullopt);
             } else
-              libraryProgram.emplace(pipeline::compileLibrary(
-                  *prepared, libraryDiagnostics, *nativeConsumer));
+              libraryProgram.emplace(
+                  options.prepareShippedLibrary
+                      ? pipeline::compileLibrary(*prepared, libraryDiagnostics)
+                      : pipeline::compileLibrary(*prepared, libraryDiagnostics,
+                                                 *nativeConsumer));
             libraryDiagnostics.print(source, std::cerr);
           }
           return *libraryProgram ? &**libraryProgram : nullptr;

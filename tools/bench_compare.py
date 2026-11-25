@@ -50,7 +50,7 @@ class Failure(Exception):
 
 
 class Runner:
-    """Runs commands, recording wall time and child peak RSS (wait4)."""
+    """Runs commands, recording wall time and command peak RSS."""
 
     def __init__(self, logs):
         self.logs = Path(logs)
@@ -62,16 +62,28 @@ class Runner:
         out = self.logs / f"{self.count:05d}.out"
         err = self.logs / f"{self.count:05d}.err"
         command = [str(part) for part in command]
+        measured = command
+        rss = self.logs / f"{self.count:05d}.rss"
+        if sys.platform.startswith("linux"):
+            measured = ["/usr/bin/time", "-q", "-f", "%M", "-o", str(rss.absolute()),
+                        "--", *command]
         with open(out, "wb") as stdout, open(err, "wb") as stderr:
             start = time.perf_counter()
-            process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout,
+            process = subprocess.Popen(measured, cwd=cwd, env=env, stdout=stdout,
                                        stderr=stderr, stdin=subprocess.DEVNULL)
             _, status, usage = os.wait4(process.pid, 0)
             elapsed = time.perf_counter() - start
         process.returncode = os.waitstatus_to_exitcode(status)
         scale = 1 if sys.platform == "darwin" else 1024
+        peak_rss = usage.ru_maxrss * scale
+        if sys.platform.startswith("linux"):
+            value = rss.read_text().strip() if rss.exists() else ""
+            if not value.isdecimal():
+                raise Failure(f"GNU time did not report peak RSS for {command}: "
+                              f"{err.read_text(errors='replace')}")
+            peak_rss = int(value) * 1024
         return {"command": command, "seconds": elapsed, "returncode": process.returncode,
-                "peak_rss_bytes": usage.ru_maxrss * scale,
+                "peak_rss_bytes": peak_rss,
                 "stdout": out.read_bytes(), "stderr": err.read_text(errors="replace")}
 
     def must(self, command, **options):
@@ -737,6 +749,9 @@ def measure(args, parser):
                 "runs": args.runs, "warmup": args.warmup, "endpoints": endpoints,
                 "host": platform.platform(), "machine": platform.machine(),
                 "compiler_sha256": sha256(compiler), "workloads": []}
+    if sys.platform.startswith("linux"):
+        evidence["rss_helper"] = {"path": "/usr/bin/time",
+                                  "sha256": sha256("/usr/bin/time")}
     try:
         evidence["mettle_version"] = runner.must([compiler, "--version"])["stdout"].decode().strip()
         evidence["rustc"] = runner.must(["rustc", "-vV"])["stdout"].decode().strip()

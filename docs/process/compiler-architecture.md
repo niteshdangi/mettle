@@ -983,8 +983,9 @@ has not changed them; imported IR still undergoes structural/type verification,
 initialization and loan analysis before sealing consumer preparation. No
 serialized analysis result is accepted as an executable-admission proof.
 Native object keys include the actual lowered partition and its symbol
-references; differing consumer generic instances remain consumer-owned. Native partition verification
-failures stop compilation rather than silently switching emission paths.
+references; differing consumer generic instances remain consumer-owned. Native
+partition verification failures stop compilation rather than silently switching
+emission paths.
 Coroutine frames use logical body identities. In split emission their body and
 unwind callbacks have hidden external linkage, and only the partition owning
 the coroutine body emits those definitions; layout-only users emit declarations.
@@ -997,22 +998,39 @@ extracts required units rather than reading every native function's object
 sections. Retention-sensitive assembly, initializers and other unsupported
 partition shapes preserve the monolithic path and explicit force-loading.
 
-Root cache misses still lower and optimize all root code. Exact
-optimized unit IR, declarations, layout, attributes and compiler/target/profile/
-overflow/sanitizer identities govern machine-code reuse; this skips unchanged
-unit emission, not O2. Native archive hits bypass native lowering,
-optimization and emission. The existing bounded Store retains aggregate unit
+Root cache misses still check and lower root code. Eligible Linux release roots
+isolate loop-entry families from cold call closures, up to 16 optimization units,
+matching Rust's release codegen-unit budget. Splitting stops when the cold
+closure no longer dominates; the partition plan is independent of CPU count.
+Exact unoptimized bitcode and compiler/target/profile/overflow identities allow
+unchanged isolated units to skip both O2 and machine emission. Other units retain
+whole-module O2 followed by exact optimized-unit reuse. Only the coordinator
+mutates the original LLVM context or queries the unit cache. Workers parse owned
+bitcode into private contexts; their pool leaves a CPU for the coordinator and
+joins before module owners are destroyed.
+Native archive hits bypass native lowering, optimization and emission. The
+existing bounded Store retains aggregate unit
 buckets with current membership, validates object digests and rebuilds malformed
 archives. Cache-only native archives may use a size-framed zstd encoding when
-it is smaller; larger or uncompressible archives stay raw. The driver restores
-decoded bytes in the build's private scratch directory before LLVM reads them.
+it is smaller; larger or uncompressible archives stay raw. The driver reads
+authenticated mappings and writes decoded bytes directly to private scratch,
+without first copying compressed blobs there. Raw archives also remain private
+copies; neither path exposes writable shared blobs to the linker.
 Invalid compressed entries are cache misses that successful builds replace.
 Family batching avoids a target-machine/codegen setup for every small
 native function; cold unit generation and warm selective linking remain separate
 performance endpoints.
-Native code misses specialize only the consumer's requested nongeneric native
-declarations and their transitive calls, generic instances, drop helpers and
-static initializer support, not every nongeneric declaration in the archive.
+Shipped-store preparation emits complete native package archives, rooting every
+nongeneric package definition and its transitive specializations and statics.
+These archives use the package's complete source/configuration identity without
+an application-demand suffix. Consumers first try that complete archive, so a
+fresh application does not recompile native definitions absent from the
+toolchain's preparation program. Normal digest admission and private scratch
+restoration still apply.
+Without a complete archive, native code misses specialize only the consumer's
+requested nongeneric native declarations and their transitive calls, generic
+instances, drop helpers and static initializer support, not every nongeneric
+declaration in the archive.
 Explicit exported definitions remain roots even when referenced only through
 foreign aliases or assembly symbol names; their dependencies are instantiated
 normally. The exported-definition index supplies this inventory without
@@ -1026,9 +1044,8 @@ symbols as well as the package's complete source/configuration identity.
 An expanded demand selects a distinct fragment; unchanged demand reuses it
 across consumer bodies. Whole-module O2 runs on that complete demanded native
 closure. Function-address identity, static storage and cleanup retain the
-existing cross-object contracts. Complete native static inventories and root
-optimization remain separate opportunities; this boundary does not claim
-fully demand-driven metadata admission.
+existing cross-object contracts. This boundary does not claim fully
+demand-driven metadata admission.
 Cold source failures retain their original phase, source spans, related notes
 and generated-source provenance when forwarded into consumer diagnostics.
 

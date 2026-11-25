@@ -10,6 +10,10 @@
 #include "clang/Driver/Driver.h"
 #include "llvm/Support/VirtualFileSystem.h"
 #endif
+#ifdef METTLE_LLD_LINKER
+#include "lld/Common/Driver.h"
+#include "lld/Common/ErrorHandler.h"
+#endif
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Verifier.h"
@@ -32,6 +36,7 @@
 #include <future>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -39,6 +44,10 @@
 #include <unordered_map>
 #ifdef __linux__
 #include <sched.h>
+#endif
+
+#ifdef METTLE_LLD_LINKER
+LLD_HAS_DRIVER(elf)
 #endif
 
 namespace mettle::driver {
@@ -188,6 +197,29 @@ planNativeLink(llvm::StringRef target, llvm::StringRef lld,
 }
 #endif
 
+#ifdef METTLE_LLD_LINKER
+int linkInProcess(llvm::ArrayRef<std::string> arguments) {
+  static std::mutex mutex;
+  std::lock_guard lock(mutex);
+  std::vector<const char *> refs;
+  for (const auto &argument : arguments)
+    refs.push_back(argument.c_str());
+  std::string output, diagnostic;
+  llvm::raw_string_ostream out(output), error(diagnostic);
+  const lld::DriverDef drivers[] = {{lld::Gnu, &lld::elf::link}};
+  const auto result = lld::lldMain(refs, out, error, drivers);
+  std::cout << output;
+  std::cerr << diagnostic;
+  if (!result.canRunAgain) {
+    std::cerr << "mettle: error[link]: embedded linker cannot recover\n";
+    std::cout.flush();
+    std::cerr.flush();
+    lld::exitLld(result.retCode ? result.retCode : 1);
+  }
+  return result.retCode;
+}
+#endif
+
 int ioFailure(const std::string &action, const std::error_code &error) {
   std::cerr << "mettle: error[io]: " << action << ": " << error.message()
             << '\n';
@@ -211,43 +243,41 @@ constexpr auto compressedArchiveHeaderSize =
 llvm::Expected<packages::Store::Lookup>
 restoreUnitArchive(packages::Store &store, const std::string &key,
                    const std::filesystem::path &path) {
-  auto found = store.materialize(key, path);
-  if (found != packages::Store::Lookup::Hit)
-    return found;
-  auto buffer = llvm::MemoryBuffer::getFile(path.string(), false, false);
-  if (!buffer)
-    return llvm::createStringError(buffer.getError(),
-                                   "cannot read cached object archive");
-  auto bytes = (*buffer)->getBuffer();
-  if (!bytes.consume_front(compressedArchiveMagic))
-    return found;
-  if (bytes.size() < sizeof(std::uint64_t) ||
-      !llvm::compression::zstd::isAvailable())
-    return packages::Store::Lookup::Corrupt;
-  auto size = llvm::support::endian::read64le(bytes.data());
-  if (size <= compressedArchiveHeaderSize || size > limits::sourceBytes)
-    return packages::Store::Lookup::Corrupt;
-  auto payload = bytes.drop_front(sizeof(size));
-  auto expanded = llvm::WritableMemoryBuffer::getNewUninitMemBuffer(size);
-  if (!expanded)
-    return llvm::createStringError(
-        std::make_error_code(std::errc::not_enough_memory),
-        "cannot allocate cached object archive");
-  std::size_t decoded = size;
-  if (auto error = llvm::compression::zstd::decompress(
-          llvm::arrayRefFromStringRef(payload),
-          reinterpret_cast<std::uint8_t *>(expanded->getBufferStart()),
-          decoded)) {
-    llvm::consumeError(std::move(error));
-    return packages::Store::Lookup::Corrupt;
+  auto found = store.mapped(key, std::string().max_size());
+  if (found.status != packages::Store::Lookup::Hit)
+    return found.status;
+  auto mapped = found.mapping->bytes();
+  llvm::StringRef bytes(mapped.data(), mapped.size());
+  std::unique_ptr<llvm::WritableMemoryBuffer> expanded;
+  if (bytes.consume_front(compressedArchiveMagic)) {
+    if (bytes.size() < sizeof(std::uint64_t) ||
+        !llvm::compression::zstd::isAvailable())
+      return packages::Store::Lookup::Corrupt;
+    auto size = llvm::support::endian::read64le(bytes.data());
+    if (size <= compressedArchiveHeaderSize || size > limits::sourceBytes)
+      return packages::Store::Lookup::Corrupt;
+    auto payload = bytes.drop_front(sizeof(size));
+    expanded = llvm::WritableMemoryBuffer::getNewUninitMemBuffer(size);
+    if (!expanded)
+      return llvm::createStringError(
+          std::make_error_code(std::errc::not_enough_memory),
+          "cannot allocate cached object archive");
+    std::size_t decoded = size;
+    if (auto error = llvm::compression::zstd::decompress(
+            llvm::arrayRefFromStringRef(payload),
+            reinterpret_cast<std::uint8_t *>(expanded->getBufferStart()),
+            decoded)) {
+      llvm::consumeError(std::move(error));
+      return packages::Store::Lookup::Corrupt;
+    }
+    if (decoded != size)
+      return packages::Store::Lookup::Corrupt;
+    bytes = {expanded->getBufferStart(), decoded};
   }
-  if (decoded != size)
-    return packages::Store::Lookup::Corrupt;
-  buffer->reset();
   std::error_code error;
   llvm::raw_fd_ostream out(path.string(), error, llvm::sys::fs::OF_None);
   if (!error) {
-    out.write(expanded->getBufferStart(), decoded);
+    out << bytes;
     out.close();
     error = out.error();
     out.clear_error();
@@ -255,7 +285,7 @@ restoreUnitArchive(packages::Store &store, const std::string &key,
   if (error)
     return llvm::createStringError(error,
                                    "cannot restore cached object archive");
-  return found;
+  return found.status;
 }
 
 bool storeObjectArtifacts(packages::Store &store,
@@ -365,13 +395,18 @@ llvm::Error emitUnitArchive(llvm::Module &module, const Options &options,
   std::size_t reused = 0, generated = 0;
   if (auto error = mettle::backend::emitObjectUnits(
           module, options.target, symbolNamespace, options.profile == "release",
-          [&](llvm::StringRef bitcode,
-              bool retained) -> llvm::Expected<std::string> {
+          [&](llvm::StringRef bitcode, mettle::backend::ObjectUnitKind kind)
+              -> llvm::Expected<std::string> {
             packages::Sha256 hash;
             hash.update(bucketKey);
+            if (kind == mettle::backend::ObjectUnitKind::Unoptimized)
+              hash.update("mettle-unoptimized-object-unit-1");
             hash.update(bitcode);
-            memberNames.push_back((retained ? "retained-" : "") +
-                                  hash.finish() + ".o");
+            memberNames.push_back(
+                (kind != mettle::backend::ObjectUnitKind::Optimized
+                     ? "retained-"
+                     : "") +
+                hash.finish() + ".o");
             if (auto found = previous.find(memberNames.back());
                 found != previous.end()) {
               reusedMembers.push_back(std::move(found->second));
@@ -827,7 +862,7 @@ static int emitOne(const Options &options, const Source &source,
         const auto &package = packageObjects[i];
         const bool native = package.identity.starts_with("native:");
         std::string packageKey = package.key;
-        if (native) {
+        if (native && !options.prepareShippedLibrary) {
           if (!nativeDemand) {
             auto &demand = nativeDemand.emplace();
             const auto &consumer = program.program();
@@ -858,10 +893,21 @@ static int emitOne(const Options &options, const Source &source,
                                .string();
         bool reused = false;
         if (store) {
-          auto found = native
-                           ? restoreUnitArchive(*store, packageKey, packagePath)
-                           : llvm::Expected<packages::Store::Lookup>(
-                                 store->materialize(packageKey, packagePath));
+          auto found =
+              native ? restoreUnitArchive(*store, package.key, packagePath)
+                     : llvm::Expected<packages::Store::Lookup>(
+                           store->materialize(packageKey, packagePath));
+          if (found && packageKey != package.key) {
+            if (*found == packages::Store::Lookup::Hit)
+              packageKey = package.key;
+            else {
+              if (*found == packages::Store::Lookup::Corrupt && options.explain)
+                std::cerr << "mettle: " << cacheLabel
+                          << "entry corrupt, rebuilding " << cacheIdentity
+                          << '\n';
+              found = restoreUnitArchive(*store, packageKey, packagePath);
+            }
+          }
           if (!found) {
             std::cerr << "mettle: error[cache]: "
                       << llvm::toString(found.takeError()) << '\n';
@@ -1162,19 +1208,25 @@ static int emitOne(const Options &options, const Source &source,
           if (auto plan = planNativeLink(options.target, bundledLld, arguments))
             arguments = std::move(*plan);
 #endif
-        std::vector<llvm::StringRef> refs(arguments.begin(), arguments.end());
-        // The linker's diagnostics go through the driver's own stream so a
-        // caller that captures diagnostics (doctests) sees them.
-        const auto linkLog = linked + ".link.log";
-        const std::optional<llvm::StringRef> redirects[] = {
-            std::nullopt, std::nullopt, llvm::StringRef(linkLog)};
-        const int linkStatus = llvm::sys::ExecuteAndWait(
-            refs.front(), refs, std::nullopt, redirects);
-        if (std::ifstream log(linkLog); log)
-          if (std::ostringstream text; text << log.rdbuf())
-            std::cerr << text.str();
-        std::error_code ignored;
-        std::filesystem::remove(linkLog, ignored);
+        int linkStatus;
+#ifdef METTLE_LLD_LINKER
+        if (!bundledLld.empty() && arguments.front() == bundledLld)
+          linkStatus = linkInProcess(arguments);
+        else
+#endif
+        {
+          std::vector<llvm::StringRef> refs(arguments.begin(), arguments.end());
+          const auto linkLog = linked + ".link.log";
+          const std::optional<llvm::StringRef> redirects[] = {
+              std::nullopt, std::nullopt, llvm::StringRef(linkLog)};
+          linkStatus = llvm::sys::ExecuteAndWait(refs.front(), refs,
+                                                 std::nullopt, redirects);
+          if (std::ifstream log(linkLog); log)
+            if (std::ostringstream text; text << log.rdbuf())
+              std::cerr << text.str();
+          std::error_code ignored;
+          std::filesystem::remove(linkLog, ignored);
+        }
         if (linkStatus != 0) {
           std::cerr << "mettle: error[link]: native link failed\n";
           return 1;

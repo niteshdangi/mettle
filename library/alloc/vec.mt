@@ -88,8 +88,10 @@ pub type List<T, A: Allocator = Global> {
         self.len = 0usize
         let layout = unsafe { layout_unchecked(self.cap * core.mem.size_of<T>(), core.mem.align_of<T>()) }
         let _free = unsafe { free_block(self.ptr.cast<u8>(), layout, core.ptr.from_mut(self.a)) }
-        var run = DropRun(self.ptr, n)
-        run.run()
+        if core.mem.needs_drop<T>() {
+            var run = DropRun(self.ptr, n)
+            run.run()
+        }
     }
 }
 
@@ -140,22 +142,19 @@ pub fn with_capacity_in<T, A: Allocator>(n: usize, take a: A): List<T, A> {
 }
 pub fn with_capacity<T>(n: usize): List<T> { with_capacity_in(n, Global()) }
 
-pub parent fn growth_target<T>(capacity: usize, need: usize, exact: bool): usize throws TryReserveError {
-    if core.mem.size_of<T>() == 0usize || need <= capacity { return capacity }
+@inline(never)
+pub parent fn growth_target(element: Layout, capacity: usize, need: usize, exact: bool): usize throws TryReserveError {
+    if element.size() == 0usize || need <= capacity { return capacity }
     var ncap = need
     if !exact {
         let doubled = capacity.saturating_mul(2usize)
         if doubled > ncap { ncap = doubled }
         if ncap < 4usize { ncap = 4usize }
     }
-    match capture layout_array<T>(ncap) {
-        success(_) => { return ncap },
-        failure(_) => {}
-    }
-    match capture layout_array<T>(need) {
-        success(_) => need,
-        failure(_) => throw TryReserveError.capacity_overflow()
-    }
+    let limit = (isize.MAX as usize - (element.align() - 1usize)) / element.size()
+    if ncap <= limit { return ncap }
+    if need <= limit { return need }
+    throw TryReserveError.capacity_overflow()
 }
 
 extend<T> List<T> {
@@ -194,11 +193,12 @@ extend<T, A: Allocator> List<T, A> {
             present(n) => n,
             none => throw TryReserveError.capacity_overflow()
         }
-        let _target = try growth_target<T>(self.cap, need, exact)
+        let _target = try growth_target(layout_of<T>(), self.cap, need, exact)
     }
     // Grows to at least `need` slots; failure leaves the vector unchanged.
+    @inline(never)
     mut fn grow_to(need: usize, exact: bool): Unit throws TryReserveError {
-        let ncap = try growth_target<T>(self.cap, need, exact)
+        let ncap = try growth_target(layout_of<T>(), self.cap, need, exact)
         if ncap == self.cap { return () }
         let size = core.mem.size_of<T>()
         let align = core.mem.align_of<T>()
@@ -228,6 +228,7 @@ extend<T, A: Allocator> List<T, A> {
             none => throw TryReserveError.capacity_overflow()
         }
     }
+    @inline(never)
     pub mut fn reserve(extra: usize): Unit {
         match capture self.try_reserve(extra) {
             success(_) => (),

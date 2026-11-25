@@ -1288,6 +1288,17 @@ def native_demand_selection():
         assert program.read_bytes() == accepted
         edit(module, "{ true }", "{ 99 }")
         second.write_text("fn main(): i32 { core.second() - 42 }\n")
+        prepared = invoke_result(
+            ["build", first, *arguments, "--prepare-shipped-library",
+             "-o", program, "--explain"])
+        assert prepared.returncode == 0, prepared.stderr
+        assert "library object cache stored core " in prepared.stderr, prepared.stderr
+        third = directory / "third.mt"
+        third.write_text("fn main(): i32 { core.unused() - 99 }\n")
+        complete, program = explained(third, *arguments)
+        assert exit_code(program) == 0
+        assert "library object cache hit core " in complete, complete
+        assert "native code demand " not in complete, complete
 
     module.write_text(module.read_text() +
                       '@export_name("native_demand_export")\n'
@@ -3837,6 +3848,17 @@ def driver_resident_commands():
         output = directory / "program"
         changed = invoke(["build", main, *flags, "-o", output])
         assert "resident compiler queryHits=0" in changed, changed
+        assert exit_code(output) == 0
+        expected = output.read_bytes()
+        accepted = main.read_text()
+        main.write_text('extern "C" { unsafe fn missing_resident_native(): i32; }\n'
+                        'fn main(): i32 { unsafe { missing_resident_native() } }\n')
+        invoke(["build", main, *flags, "-o", output], 1,
+               ["error[link]", "undefined symbol: missing_resident_native"])
+        assert output.read_bytes() == expected
+        main.write_text(accepted.replace("core.value() - 22",
+                                         "helper(core.value()) - 23"))
+        invoke(["build", main, *flags, "-o", output])
         assert exit_code(output) == 0
         expected = output.read_bytes()
         invoke(["build", main, *flags, "--standalone", "-o", output])

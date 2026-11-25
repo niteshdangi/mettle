@@ -116,13 +116,21 @@ binary/debug-info size, retained build-cache bytes and bootstrap stages.
 Compiler time and produced-program runtime are separate metrics; self-hosting or
 backend ownership implies no speedup.
 
+On Linux, the comparison harness uses GNU time for command peak RSS rather than
+Python's `wait4` RSS, which can include the parent's pre-exec high-water mark.
+Elapsed time includes the same measurement helper on both sides.
+
 Linux native links through the pinned default Clang select its sibling `ld.lld`
 by absolute path when available, retaining `-fuse-ld=lld` for linker flavor.
 This avoids repeated target-prefixed linker searches across the host `PATH`.
 Custom `--cc` drivers and installations without a sibling LLD retain Clang's
 existing linker search. When built with the matching Clang driver library, a
-native Linux executable link can plan a single `ld.lld` job in process and run
-it directly. Both paths use Clang's target, startup objects, and library
+native Linux executable link can plan a single `ld.lld` job in process. When
+that installation also supplies LLD's libraries, the driver runs the planned
+ELF link through LLD's reentrant API instead of starting another process.
+Embedded links are serialized, preserve diagnostics, and terminate the compiler
+if LLD reports that recovery is unsafe. Without those libraries the planned
+link runs externally. Both paths use Clang's target, startup objects, and library
 selection. Custom drivers, Clang configuration or diagnostic overrides,
 sysroot overrides, sanitizer and shared-library links, and unsupported plans
 retain the external driver.
@@ -151,7 +159,11 @@ inconclusive result does not count as a pass.
 #### 5.1.1. Build-cache storage design
 
 The `mettle-shipped-store` target publishes selectors for the prebuilt
-standard-library archives. The default library can select an archive without
+standard-library archives and complete native package objects for each prepared
+profile. Native production roots the package's nongeneric definitions, not the
+preparation application's demand. Consumers prefer those complete objects and
+retain demand-keyed production as the fallback when they are unavailable.
+The default library can select an archive without
 walking the source tree when the compiler, library location, build
 configuration, and dependency archive identities match. The archive still
 undergoes normal admission. Missing or unusable entries fall back to source
