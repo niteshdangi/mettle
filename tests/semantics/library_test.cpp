@@ -620,7 +620,7 @@ fn main(): i32 {
                               indexedLibrary.compiledSourcePackages);
       auto indexedContracts = importLibraryDeclarations(
           *contractsBytes, types, *retainedReferences, &*indexedModule,
-          contractsBytes, retainedReferences, metadata::ValidationMode::OnUse,
+          contractsBytes, retainedReferences, metadata::ValidationMode::Trusted,
           {}, {}, indexedHeader.index);
       expect(bool(indexedContracts),
              "indexed contracts admit complete implementation catalogs");

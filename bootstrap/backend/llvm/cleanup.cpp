@@ -436,10 +436,45 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
       bodyFunction->setMetadata("mettle.codegen.family", family);
       cleanupFunction->setMetadata("mettle.codegen.family", family);
     }
-  // Cleanup can outlive the body stack, so only nonescaping, unowned locals
-  // move.
   std::vector<bool> bodyOnly(source.locals.size(), false);
   if (!source.coroutine) {
+    std::unordered_map<int, std::vector<bool>> readParameters;
+    auto readsArgument = [&](int callee, std::size_t parameter) {
+      if (callee < 0)
+        return false;
+      auto found = readParameters.find(callee);
+      if (found == readParameters.end()) {
+        const auto &function = lowering.program.functions[callee];
+        std::vector<bool> reads(function.parameters, false);
+        if (!function.coroutine && !function.blocks.empty())
+          for (std::size_t p = 0; p < function.parameters; ++p)
+            reads[p] = function.locals[p].mode == ParameterMode::Read &&
+                       !lowering.indirect(function.locals[p].type);
+        for (const auto &block : function.blocks)
+          for (const auto &instruction : block.instructions)
+            if (instruction.place.root >= 0 &&
+                static_cast<std::size_t>(instruction.place.root) <
+                    reads.size() &&
+                (instruction.op != ir::Op::Load ||
+                 instruction.result.access != ir::Access::Owned ||
+                 lowering.indirect(instruction.result.type)))
+              reads[instruction.place.root] = false;
+        found = readParameters.emplace(callee, std::move(reads)).first;
+      }
+      return parameter < found->second.size() && found->second[parameter];
+    };
+    llvm::DenseSet<int> escapingValues;
+    for (const auto &block : source.blocks) {
+      escapingValues.insert(block.exit.value.id);
+      for (const auto &instruction : block.instructions) {
+        escapingValues.insert(instruction.target.id);
+        for (std::size_t p = 0; p < instruction.operands.size(); ++p)
+          if (instruction.op != ir::Op::Activate &&
+              (instruction.op != ir::Op::Call ||
+               !readsArgument(instruction.callee, p)))
+            escapingValues.insert(instruction.operands[p].id);
+      }
+    }
     bodyLocals.resize(source.locals.size());
     for (std::size_t i = source.parameters; i < source.locals.size(); ++i) {
       const auto &local = source.locals[i];
@@ -462,10 +497,9 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
         case ir::Op::Store:
         case ir::Op::Move:
         case ir::Op::VariantTest:
-          if (std::all_of(instruction.place.fields.begin(),
-                          instruction.place.fields.end(), [](auto projection) {
-                            return projection.kind == Projection::Kind::Field;
-                          }))
+          continue;
+        case ir::Op::BorrowRead:
+          if (!escapingValues.contains(instruction.result.id))
             continue;
           break;
         default:

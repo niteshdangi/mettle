@@ -2553,6 +2553,32 @@ and are not a matched before/after comparison. The measured check interval is
 below parity but still misses I14's precision target. Receipt:
 `direct-init/entry-parallel/direct-link/exact/region-check.FYFhck/rust-confirm/results.json`.
 
+P04 checked-contract imports now propagate authenticated trust to declaration
+framing and reserve authenticated record inventories. Demanded records retain
+their validation; unauthenticated admission is unchanged. The backend keeps
+unowned projected locals and provably nonescaping read arguments off the
+persistent cleanup frame. P04's checksum loop no longer stores its index and
+element view on every iteration: two million stack stores are removed and the
+main frame is 16 bytes smaller. Escaping addresses, cleanup roots and coroutine
+state remain persistent. Original and semantic-edited results still match Rust
+(64 and 83).
+
+Against `efe84666`, both compiler variants used identical current library sources
+on WSL ext4 and authenticated stores, without `--library-dir`. In 64 randomized
+CPU-pinned pairs with fresh application caches, P04 check medians were
+18.91/18.93 ms before/after, versus Rust's 17.42 ms. The paired after/before
+ratio was 0.962 (descriptive 95% interval 0.910–1.017); import-only medians were
+14.46/14.28 ms. In 32 runtime pairs, medians were 272.57/264.50 ms versus Rust's
+265.58 ms, with after/before 0.984 (0.948–1.020). Neither end-to-end speedup nor
+Rust parity is established at this precision. Focused cleanup and archive
+regressions, pinned static analysis, changed-translation-unit ASan/UBSan and an
+emitted-program ASan unwind probe passed; this is not full-compiler sanitizer or
+I14 release qualification. The earlier mixed-library-root timings are invalid
+as a matched comparison. Receipt:
+`/home/nites/w/anal/p04-issues-20261125/fixed-results.json`
+(compiler SHA-256 prefixes: baseline `b9284686dfeb`, fixed `52341517c68c`).
+Whole-I14 source freeze and consolidated release qualification remain open.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

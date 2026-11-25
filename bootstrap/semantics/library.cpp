@@ -2286,6 +2286,10 @@ public:
       archive.fail("interface inventory exceeds the compiler representation");
       return;
     }
+    if (archive.trusted) {
+      definitions->reserve(count);
+      definitionRecords.blocks->reserve(count);
+    }
     std::set<std::uint32_t> seen;
     for (std::size_t i = 0; i < count && archive.good(); ++i) {
       auto index = std::uint32_t{0};
@@ -2319,6 +2323,8 @@ public:
     (*implementationRecords.phases)[0] = {checking.importedDefinitions,
                                           checking.importedImplementations,
                                           nullptr};
+    if (archive.trusted)
+      implementationRecords.blocks->reserve(count);
     std::size_t selected = 0;
     for (std::size_t i = 0; i < count && archive.good(); ++i)
       record<interfaces::Implementation>(
@@ -2765,7 +2771,7 @@ private:
                                : revisions);
             reader.implementationIndices = indices.get();
             reader.declarationIndex = catalog;
-            T value;
+            T value{};
             reader(value);
             reader.finish();
             if (!reader.good())
@@ -2872,6 +2878,8 @@ private:
       archive.fail("checked phase changes exceed their inventory");
       return;
     }
+    if (archive.trusted)
+      records.blocks->reserve(records.blocks->size() + count);
     finalized.resize(static_cast<std::size_t>(size));
     std::vector<bool> seen(static_cast<std::size_t>(size));
     constexpr auto bulk = std::is_same_v<T, interfaces::Implementation>;
@@ -5544,6 +5552,7 @@ LibraryDeclarationImport importLibraryDeclarations(
   const auto &admission = retained ? references : record;
   Archive archive(bytes, admission, types.get());
   archive.validateUnused = validation < metadata::ValidationMode::OnUse;
+  archive.trusted = validation == metadata::ValidationMode::Trusted;
   std::map<std::tuple<SourceId, std::uint32_t, std::uint32_t>, std::size_t>
       implementationIndices;
   if (module && !catalog)

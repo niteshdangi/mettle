@@ -968,6 +968,9 @@ string tables are not hashed at admission. Demand hashes only the selected paylo
 no whole-archive payload digest is repeated. The blob store delegates
 these authenticated deferred checks to the native importer instead of adding
 an eager full-blob hash.
+Checked-contract admission propagates that trust to indexed declaration
+framing, avoiding an unused-record rescan. Queried records still validate their
+frames and directory identities; unauthenticated admission keeps its scans.
 Mounting archives checks their registered physical source paths against loaded
 sources; later source reads also reject an already-mounted path with the same
 module-identity diagnostic. Generated-source provenance is not a physical module
@@ -1669,8 +1672,13 @@ retain their panic guard.
 
 Generated wrapper frames keep owned storage alive while body callbacks unwind;
 cleanup never follows addresses into an already-unwound callback frame. The native
-runtime re-enters flag-clearing glue after the first destructor panic, restores a
-pending replacement, and aborts on a second panic before installation. Borrowed
+backend keeps unowned, nonescaping locals in the body frame. Projected loads and
+stores do not expose the local slot; a read borrow is eligible only when all its
+uses are direct calls whose available IR only loads that parameter by value.
+Retained borrows, raw addresses, indirect aggregates and coroutine state remain
+in the wrapper frame. The native runtime re-enters flag-clearing glue after the
+first destructor panic, restores a pending replacement, and aborts on a second
+panic before installation. Borrowed
 referents are not scope-owned cleanup roots. Physical entry-block storage does not
 extend a source lifetime: only eligible direct borrowed initializers extend their
 temporary to the binding block. Generic instances preserve these declared

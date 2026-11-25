@@ -1,6 +1,7 @@
 #include "backend/llvm/cleanup.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
+#include <algorithm>
 #include <functional>
 #include <utility>
 
@@ -41,6 +42,9 @@ llvm::Function *
 build(LoweringContext &lowering, ir::Function source,
       const std::function<void(CleanupFrame &, const ir::Function &)> &emit) {
   auto saved = lowering.builder.saveIP();
+  for (const auto &block : source.blocks)
+    for (const auto &instruction : block.instructions)
+      source.values = std::max(source.values, instruction.result.id + 1);
   std::vector<llvm::Type *> parameters;
   if (source.parameters)
     parameters.push_back(lowering.builder.getPtrTy());
@@ -148,6 +152,73 @@ int main(int argc, char **) {
               });
     run(doublePanic, 9);
   } else {
+    ir::Function reader{};
+    reader.name = "read_index";
+    reader.result = Type::I32;
+    reader.parameters = 1;
+    reader.locals = {{"index", Type::I32, false, {}, ParameterMode::Read}};
+    reader.blocks.resize(1);
+    reader.blocks[0].instructions = {
+        {ir::Op::Load, {0, Type::I32}, {}, {}, "", {0, {}}, -1, 0, {}}};
+    reader.blocks[0].exit = {ir::Exit::Return, {0, Type::I32}};
+    reader.values = 1;
+    auto reading = static_cast<int>(program.functions.size());
+    program.functions.push_back(reader);
+    reader.name = "retain_index";
+    reader.blocks[0].instructions[0].op = ir::Op::BorrowRead;
+    reader.blocks[0].instructions[0].result.access = ir::Access::Read;
+    auto retaining = static_cast<int>(program.functions.size());
+    program.functions.push_back(std::move(reader));
+    auto borrowedIndex = ir::Value{0, Type::I32, ir::Access::Read};
+    auto retainedIndex = ir::Value{2, Type::I32, ir::Access::Read};
+    ir::Function storage{};
+    storage.name = "local_storage";
+    storage.result = Type::Unit;
+    storage.parameters = 0;
+    storage.locals = {
+        {"index", Type::I32, false, {}},
+        {"view", types->viewType(Type::I32, ParameterMode::Read), false, {}},
+        {"retained", Type::I32, false, {}}};
+    storage.blocks.resize(1);
+    storage.blocks[0].instructions = {
+        {ir::Op::BorrowRead, borrowedIndex, {}, {}, "", {0, {}}, -1, 0, {}},
+        {ir::Op::Call,
+         {1, Type::I32},
+         {borrowedIndex},
+         {},
+         "",
+         {},
+         reading,
+         0,
+         {}},
+        {ir::Op::Load,
+         {4, Type::I32},
+         {},
+         {},
+         "",
+         {1, {Projection::dereference()}},
+         -1,
+         0,
+         {}},
+        {ir::Op::BorrowRead, retainedIndex, {}, {}, "", {2, {}}, -1, 0, {}},
+        {ir::Op::Call,
+         {3, Type::I32},
+         {retainedIndex},
+         {},
+         "",
+         {},
+         retaining,
+         0,
+         {}}};
+    storage.values = 5;
+    bool storageFailed = false;
+    build(lowering, storage, [&](CleanupFrame &frame, const ir::Function &) {
+      storageFailed = !llvm::isa<llvm::AllocaInst>(frame.localStorage(0)) ||
+                      !llvm::isa<llvm::AllocaInst>(frame.localStorage(1)) ||
+                      llvm::isa<llvm::AllocaInst>(frame.localStorage(2));
+    });
+    failed = builder.CreateOr(
+        failed, llvm::ConstantInt::get(builder.getInt1Ty(), storageFailed));
     auto normal = source("normal");
     normal.locals.push_back(
         {"last", leafType, false, {}, ParameterMode::Value, 0, 1});
