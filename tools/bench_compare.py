@@ -386,11 +386,13 @@ class Side:
             shutil.copy2(built, self.executable)
         return result
 
+    def mettle_check(self, entry, cache):
+        return [self.compiler, "check", entry, "--profile", "release",
+                "--overflow-checks", "off", "--cache-dir", cache, "--standalone"]
+
     def check(self):
         if self.language == "mettle":
-            return self.runner.must([self.compiler, "check", self.entry,
-                                     "--profile", "release", "--overflow-checks", "off",
-                                     "--cache-dir", self.check_target, "--standalone"])
+            return self.runner.must(self.mettle_check(self.entry, self.check_target))
         env = clean_environment(self.cargo_home, self.check_target)
         return self.runner.must(["cargo", "check", "--release", "--offline", "--quiet",
                                  "--manifest-path", self.tree / "Cargo.toml"], env=env)
@@ -422,24 +424,10 @@ class Side:
             tree = directory / "source"
             shutil.copytree(self.tree, tree)
             entry = tree / self.entry.relative_to(self.tree)
-            imports = sorted({line for source in tree.rglob("*.mt")
-                              for line in source.read_text().splitlines()
-                              if line.startswith(("import alloc.", "import core.", "import std."))})
-            prime = directory / "prime.mt"
-            write(prime, "\n".join([*imports, "fn main(): i32 { 0 }", ""]))
-            cache = directory / "cache"
-            options = ["--profile", "release", "--overflow-checks", "off", "--standalone",
-                       "--cache-dir"]
-            self.runner.must([self.compiler, "build", prime, "-o", directory / "prime",
-                              *options, cache])
-            check_cache = directory / "check-cache"
-            shutil.copytree(cache, check_cache)
-            check_entry = entry
-            if entry.is_dir():
-                check_entry = directory / "check-source"
-                shutil.copytree(tree, check_entry)
-            check = [self.compiler, "check", check_entry, *options, check_cache]
-            build = [self.compiler, "build", entry, "-o", binary, *options, cache]
+            check = self.mettle_check(entry, directory / "check-cache")
+            build = [self.compiler, "build", entry, "-o", binary, "--profile", "release",
+                     "--overflow-checks", "off", "--standalone", "--cache-dir",
+                     directory / "cache"]
         check_time = self.runner.must(check, env=env)["seconds"]
         build_time = self.runner.must(build, env=env)["seconds"]
         result = self.runner.program(binary)
@@ -514,6 +502,19 @@ def run_workload(label, prepare, args, runner, compiler, endpoints, rng, base):
     entry["runtime_orders"] = runtime_orders
     try:
         template_m, template_r, template_entry = prepare(work / "input")
+        probe = Side("mettle", runner, compiler, template_m, template_entry,
+                     work / "shipped-probe", cargo_home)
+        command = [*probe.mettle_check(template_entry, probe.cache), "--explain"]
+        result = runner.run(command)
+        if result["returncode"]:
+            entry.update(status="mettle_build_failed", error=tail(result["stderr"]))
+            return entry
+        if any(f"checked library interface cache {state}" in result["stderr"]
+               for state in ("stored", "corrupt", "ineligible")):
+            entry.update(status="shipped_library_unavailable",
+                         error="Build mettle-shipped-store for the compiler under test "
+                         f"before measuring {label}.\n{tail(result['stderr'])}")
+            return entry
         entry["source_sha256"] = {
             side: {path.relative_to(tree).as_posix(): sha256(path)
                    for path in sorted(tree.rglob("*")) if path.is_file()}
@@ -772,7 +773,7 @@ def measure(args, parser):
             "randomized order (pair-level interleaving), not per command.",
             "Mettle retained bytes = cache directory + package-local target/mettle + the "
             "output executable; Cargo retained bytes = the whole target directory.",
-            "Clean builds include fresh Mettle library caches and use Rust's installed sysroot.",
+            "Fresh project caches exclude the shipped Mettle store and Rust's installed sysroot.",
             "Rust toolchain matches the frozen pin." if frozen_toolchain(evidence) else
             "Rust toolchain differs from (or is unknown versus) the frozen 1.99.1 pin; "
             "qualification is forbidden.",

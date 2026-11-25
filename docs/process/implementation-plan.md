@@ -2100,6 +2100,24 @@ Application check 0.059 (0.024) and noop build 0.022 (0.012) remain open;
 optimizing units separately removed whole-module inlining and doubled runtime.
 Evidence: `~/w/anal/p03-lag/h6`.
 
+P05 continuation (2026-11-25): native toolchain builds can provision the
+shipped store without CTest. Newly published large shipped archives carry a
+file-identity seal shared by fresh project caches; changed or copied files
+still go through verification. The comparison harness requires the shipped
+store and no longer clones a project cache to approximate one.
+Nine P05 pairs on WSL measured Mettle/Rust medians of 23.30/65.03 ms for
+fresh check, 25.58/18.70 ms for application check, 444.26/309.88 ms for clean
+build, 432.68/271.33 ms for application build, 418.36/267.30 ms for semantic
+edit, and 33.30/38.41 ms for runtime. Outputs matched for both source revisions.
+First-pair retained bytes after clean build were 688,128/507,904, excluding
+the shipped stores. Archive admission and corruption fallback passed focused
+regressions. Evidence: `~/w/anal/p05-final-bench.ZWcPuQ/results.json`, compiler
+SHA-256 `6584a0bec51180ca278d0ca573bc9b352d9c6b907b5c9889588acc1754f814c1`.
+This is engineering evidence, not parity or source freeze. The next build
+target is repeated root optimization: the main thread dominated the build
+profile even with authenticated archives, and the native object key still
+depends on the application's full native demand.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

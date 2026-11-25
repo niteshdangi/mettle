@@ -202,7 +202,8 @@ bool CheckedLibrary::loadArchive(std::string &error, bool shipped) {
                                              archive);
     if (options.explain)
       std::cerr << "mettle: checked library interface cache hit " << root << " "
-                << archiveKey.substr(0, 12) << '\n';
+                << archiveKey.substr(0, 12)
+                << (archive.trusted ? " (authenticated)" : "") << '\n';
     return true;
   }
   if (stored.status == packages::Store::Lookup::Corrupt && options.explain)
@@ -519,15 +520,15 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
   auto encoded = encodeLibraryArchive(candidate, error);
   if (!encoded)
     return false;
-  archiveContent = encoded->substr(encoded->size() - 64);
-  if (!store.putData(archiveKey, *encoded)) {
-    error = "cannot publish checked " + root + " interface";
-    return false;
-  }
   auto snapshot = std::make_shared<const std::string>(std::move(*encoded));
   auto admitted = decodeLibraryArchive(*snapshot, archiveKey, error, snapshot);
   if (!admitted)
     return false;
+  if (!store.putData(archiveKey, *snapshot, options.prepareShippedLibrary)) {
+    error = "cannot publish checked " + root + " interface";
+    return false;
+  }
+  archiveContent = snapshot->substr(snapshot->size() - 64);
   archive = std::move(*admitted);
   if (options.libraryQueries)
     options.libraryQueries->publishArchive(root, archiveKey, archiveContent,

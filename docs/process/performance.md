@@ -152,9 +152,14 @@ walking the source tree when the compiler, library location, build
 configuration, and dependency archive identities match. The archive still
 undergoes normal admission. Missing or unusable entries fall back to source
 snapshots; an explicit `--library-dir` always uses content-based invalidation.
-Rust comparisons use Rust's installed sysroot, so the measured toolchain must
-build `mettle-shipped-store` after every compiler build; otherwise each clean
-build and check recompiles `core` and `alloc`.
+Rust comparisons use Rust's installed sysroot. For a native build, run
+`cmake --build <build-dir> --target mettle-shipped-store` after changing the
+compiler or bundled library, even when `BUILD_TESTING=OFF`. This places the
+store where that compiler looks for it. The producer seals each newly
+published large archive against its file identity. Consumers reuse that
+verification across project caches; copying or modifying the archive
+invalidates the seal and requires normal verification. The comparison harness rejects
+native-library source fallback instead of timing it as application compilation.
 
 The user build cache is built to retain less than Cargo's `target/` directory:
 
@@ -263,11 +268,12 @@ languages for the clean and the semantically edited build.
 Check-only measurements use a separate fresh cache/target directory on both
 sides, with release profile and overflow checks off. Mettle runs standalone so
 child-process wall time and RSS include the compiler and no resident endpoint
-survives a sample. Fresh Mettle caches include native-library production.
+survives a sample. Fresh Mettle project caches use the separately provisioned
+shipped library, not a copy of another project's cache.
 `application_check` and `application_build` compare fresh standalone Mettle
-processes with direct rustc metadata and executable emission. An independent, minimal Mettle program
-imports the workload’s standard-library modules before timing. Check and build
-start from separate copies of that cache. Every pair compares both application
+processes with direct rustc metadata and executable emission. Application check
+and build start from separate empty project caches and share only the shipped
+toolchain store. Every pair compares both application
 executables with the clean build outputs and checks the semantic edit. Unchanged
 output makes the semantic-edit timing inconclusive. Source hashes and the build
 and runtime orders are recorded for each workload.

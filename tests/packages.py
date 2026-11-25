@@ -837,6 +837,8 @@ def shipped_library_selector():
     consumer = invoke_result(arguments, environment)
     assert consumer.returncode == 0, consumer.stderr
     assert "shipped library selector hit core" in consumer.stderr, consumer.stderr
+    assert re.search(r"checked library interface cache hit core [0-9a-f]+ "
+                     r"\(authenticated\)", consumer.stderr), consumer.stderr
     assert all(path.stat().st_mtime_ns == stamp for path, stamp in before.items())
     archive = max((path for path in (shipped / "blobs").rglob("*") if path.is_file()),
                   key=lambda path: path.stat().st_size)

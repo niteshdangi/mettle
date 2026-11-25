@@ -33,13 +33,13 @@ std::optional<std::string> readText(const fs::path &path) {
   return text.str();
 }
 
-std::string fileStamp(const struct stat &status) {
+std::string fileStamp(const struct stat &status, bool allowRecent = false) {
 #ifdef __APPLE__
   const auto &modified = status.st_mtimespec, &changed = status.st_ctimespec;
 #else
   const auto &modified = status.st_mtim, &changed = status.st_ctim;
 #endif
-  if (changed.tv_sec + 2 > std::time(nullptr))
+  if (!allowRecent && changed.tv_sec + 2 > std::time(nullptr))
     return {};
   std::ostringstream text;
   text << status.st_dev << ' ' << status.st_ino << ' ' << status.st_size << ' '
@@ -48,7 +48,7 @@ std::string fileStamp(const struct stat &status) {
   return text.str();
 }
 
-void recordStamp(const fs::path &path, const std::string &stamp) {
+bool recordStamp(const fs::path &path, const std::string &stamp) {
   static std::atomic<unsigned> counter{0};
   std::error_code error;
   fs::create_directories(path.parent_path(), error);
@@ -62,8 +62,10 @@ void recordStamp(const fs::path &path, const std::string &stamp) {
   }
   if (written)
     fs::rename(temporary, path, error);
-  if (!written || error)
-    fs::remove(temporary, error);
+  if (written && !error)
+    return true;
+  fs::remove(temporary, error);
+  return false;
 }
 
 struct Entry {
@@ -849,6 +851,7 @@ fs::path Store::stampPath(const std::string &blob) const {
 void Store::removeBlob(const std::string &blob, std::error_code &error) const {
   std::error_code ignored;
   fs::remove(stampPath(blob), ignored);
+  fs::remove(directory / "sealed" / blob.substr(0, 2) / blob, ignored);
   fs::remove(blobPath(blob), error);
 }
 
@@ -924,8 +927,8 @@ bool Store::put(const std::string &key, const fs::path &file, bool executable) {
   return !file.empty() && putMany({{key, file, executable}});
 }
 
-bool Store::putData(const std::string &key, std::string_view bytes) {
-  return putMany({{key, {}, false, bytes}});
+bool Store::putData(const std::string &key, std::string_view bytes, bool seal) {
+  return putMany({{key, {}, false, bytes, seal}});
 }
 
 void Store::useShipped(fs::path root) {
@@ -1041,9 +1044,9 @@ Store::Mapped Store::localMapped(const std::string &key,
   if (descriptor < 0)
     return corrupt();
   struct stat status{};
-  auto stamp = size < (std::uintmax_t{1} << 20) || fstat(descriptor, &status)
-                   ? std::string()
-                   : fileStamp(status);
+  const bool stampable =
+      size >= (std::uintmax_t{1} << 20) && !fstat(descriptor, &status);
+  auto stamp = stampable ? fileStamp(status) : std::string();
   const void *address = size ? mmap(nullptr, static_cast<std::size_t>(size),
                                     PROT_READ, MAP_PRIVATE, descriptor, 0)
                              : nullptr;
@@ -1053,7 +1056,11 @@ Store::Mapped Store::localMapped(const std::string &key,
   auto mapping =
       std::make_shared<const Mapping>(address, static_cast<std::size_t>(size));
   auto stampFile = stampPath(entry->blob);
-  bool authenticated = !stamp.empty() && readText(stampFile) == stamp;
+  bool authenticated =
+      (stampable && readOnly &&
+       readText(directory / "sealed" / entry->blob.substr(0, 2) /
+                entry->blob) == fileStamp(status, true)) ||
+      (!stamp.empty() && readText(stampFile) == stamp);
   if (verify) {
     if (!verify(mapping, authenticated))
       return corrupt();
@@ -1152,9 +1159,25 @@ bool Store::putMany(const std::vector<Artifact> &artifacts) {
     std::error_code error;
     auto blob = blobPath(item.blob);
     fs::create_directories(blob.parent_path(), error);
+    const bool seal = item.artifact->seal && item.size >= (1u << 20);
+    int verified = seal ? open(item.temporary.c_str(), O_RDONLY) : -1;
+    if (seal && verified < 0) {
+      discardTemporaries();
+      return false;
+    }
     if (!error)
       fs::rename(item.temporary, blob, error);
-    if (error) {
+    bool sealed = !seal;
+    if (verified >= 0) {
+      struct stat status{};
+      const bool stamped = !error && !fstat(verified, &status);
+      close(verified);
+      if (stamped)
+        sealed = recordStamp(directory / "sealed" / item.blob.substr(0, 2) /
+                                 item.blob,
+                             fileStamp(status, true));
+    }
+    if (error || !sealed) {
       discardTemporaries();
       return false;
     }
@@ -1546,7 +1569,7 @@ std::optional<StoreUsage> Store::clear(bool dryRun, std::string &error) {
     return std::nullopt;
   }
   for (const char *name :
-       {"entries", "blobs", "tmp", "leases", "roots", "verified",
+       {"entries", "blobs", "tmp", "leases", "roots", "verified", "sealed",
         "verified-shipped", "accounting", "accounting.dirty"}) {
     fs::remove_all(directory / name, code);
     if (code) {

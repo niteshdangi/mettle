@@ -50,6 +50,7 @@ public:
     std::filesystem::path file;
     bool executable = false;
     std::string_view bytes = {};
+    bool seal = false;
   };
 
   class Lease {
@@ -116,7 +117,8 @@ public:
                 const Verifier &verify = {});
   Mapped shippedMapped(const std::string &key, std::uint64_t maximumBytes,
                        const Verifier &verify);
-  bool putData(const std::string &key, std::string_view bytes);
+  bool putData(const std::string &key, std::string_view bytes,
+               bool seal = false);
   // Copies the blob of `key` to `destination` (a fresh, privately owned
   // file; the shared blob is never exposed) and refreshes the entry's age.
   Lookup materialize(const std::string &key,
