@@ -176,13 +176,9 @@ void resetRuntimeIdentity() {
   runtimeIdentity.reset();
 }
 
-BuildInputs::BuildInputs(const std::string &libraryDirectory) {
-  if (libraryDirectory.empty())
-    return;
-  std::error_code error;
-  auto canonical = fs::weakly_canonical(libraryDirectory, error);
-  libraryPrefix =
-      (error ? fs::path(libraryDirectory) : canonical).generic_string() + "/";
+BuildInputs::BuildInputs(const fs::path &libraryDirectory) {
+  if (!libraryDirectory.empty())
+    libraryPrefix = libraryDirectory.generic_string() + "/";
 }
 
 void BuildInputs::record(const Source &source, const std::string &requested) {

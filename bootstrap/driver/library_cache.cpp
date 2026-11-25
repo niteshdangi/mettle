@@ -490,13 +490,8 @@ collectInputs(const std::filesystem::path &directory,
   return inputs;
 }
 
-std::string selector(std::string_view tag,
-                     const std::filesystem::path &directory,
+std::string selector(std::string_view tag, const std::filesystem::path &root,
                      const LibraryCacheConfiguration &configuration) {
-  std::error_code error;
-  auto root = std::filesystem::weakly_canonical(directory, error);
-  if (error)
-    return {};
   packages::Sha256 hash;
   hashField(hash, tag);
   hashConfiguration(hash, root, configuration);
@@ -506,16 +501,31 @@ std::string selector(std::string_view tag,
 
 std::string
 shippedLibrarySelector(const std::filesystem::path &directory,
-                       const LibraryCacheConfiguration &configuration) {
-  return selector("mettle-shipped-library-selector-1", directory,
-                  configuration);
+                       const LibraryCacheConfiguration &configuration,
+                       const std::filesystem::path &canonicalLibraryPath) {
+  namespace fs = std::filesystem;
+  std::error_code error;
+  fs::path root;
+  if (canonicalLibraryPath.is_absolute()) {
+    auto child = canonicalLibraryPath / directory.filename();
+    if (fs::is_directory(fs::symlink_status(child, error)))
+      root = std::move(child);
+  }
+  if (root.empty())
+    root = fs::weakly_canonical(directory, error);
+  return error ? std::string()
+               : selector("mettle-shipped-library-selector-1", root,
+                          configuration);
 }
 
 std::string
 librarySnapshotSelector(const std::filesystem::path &directory,
                         const LibraryCacheConfiguration &configuration) {
-  return selector("mettle-library-snapshot-selector-1", directory,
-                  configuration);
+  std::error_code error;
+  auto root = std::filesystem::weakly_canonical(directory, error);
+  return error ? std::string()
+               : selector("mettle-library-snapshot-selector-1", root,
+                          configuration);
 }
 
 std::optional<LibraryInputs> restoreLibraryInputs(std::string_view record) {

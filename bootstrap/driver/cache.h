@@ -4,6 +4,7 @@
 #include "packages/store.h"
 #include "resolution/load.h"
 #include "source/source.h"
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <optional>
@@ -32,7 +33,7 @@ struct LibraryInputs;
 struct BuildReplay;
 class BuildInputs {
 public:
-  explicit BuildInputs(const std::string &libraryDirectory);
+  explicit BuildInputs(const std::filesystem::path &libraryDirectory);
   // `requested` is the path the source was resolved from, when it differs.
   void record(const Source &source, const std::string &requested = {});
   void record(const LibraryInputs &snapshot);

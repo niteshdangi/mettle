@@ -217,7 +217,7 @@ bool CheckedLibrary::publishShippedSelector(std::string &error) {
     return true;
   auto selector = shippedLibrarySelector(
       std::filesystem::path(options.libraryDirectory) / root,
-      cacheConfiguration);
+      cacheConfiguration, libraryPath);
   if (!selector.empty() && store.putData(selector, archiveKey))
     return true;
   error = "cannot publish shipped " + root + " library selector";
@@ -555,7 +555,8 @@ bool CheckedLibrary::prepareInputs(std::string &error) {
   }
   auto directory = std::filesystem::path(options.libraryDirectory) / root;
   if (!options.editableLibrary && !options.prepareShippedLibrary) {
-    auto selector = shippedLibrarySelector(directory, cacheConfiguration);
+    auto selector =
+        shippedLibrarySelector(directory, cacheConfiguration, libraryPath);
     if (!selector.empty()) {
       auto entry = store.shippedData(selector, 64);
       if (entry.status == packages::Store::Lookup::Hit &&
@@ -1336,7 +1337,8 @@ CheckedLibrary::import(const Module &module,
 
 std::unique_ptr<CheckedLibraries> CheckedLibraries::create(
     const Options &options, const expansion::Configuration &configuration,
-    packages::Store &store, TargetFacts target, NumericEvaluator numeric) {
+    packages::Store &store, TargetFacts target, NumericEvaluator numeric,
+    const std::filesystem::path &libraryPath) {
   auto result = std::make_unique<CheckedLibraries>();
   auto nativeConfiguration = configuration;
   nativeConfiguration.features.clear();
@@ -1359,6 +1361,7 @@ std::unique_ptr<CheckedLibraries> CheckedLibraries::create(
     auto unit = std::unique_ptr<CheckedLibrary>(
         new CheckedLibrary(options, store, nativeConfiguration, target));
     unit->root = root;
+    unit->libraryPath = libraryPath;
     unit->numeric = numeric;
     unit->cacheConfiguration = identity;
     if (!result->units.empty())
@@ -1461,7 +1464,7 @@ void CheckedLibraries::readShippedKeys(
     configuration.dependencies = keys;
     auto selector = shippedLibrarySelector(
         std::filesystem::path(unit->options.libraryDirectory) / unit->root,
-        configuration);
+        configuration, unit->libraryPath);
     if (selector.empty())
       break;
     auto entry = unit->store.shippedData(selector, 64);

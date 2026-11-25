@@ -828,8 +828,16 @@ def shipped_library_selector():
     source.write_text('fn main(): i32 { "x".len() as i32 - 1 }\n')
     shipped = evidence / "shipped-store"
     environment = {"METTLE_SHIPPED_STORE": str(shipped)}
+    library = Path(__file__).resolve().parents[1] / "library"
+    producer_library = []
+    if os.name == "posix":
+        alias = evidence / "library-alias"
+        alias.mkdir()
+        (alias / "core").symlink_to(library / "core", target_is_directory=True)
+        producer_library = ["--library-dir", alias]
     producer = invoke_result(["check", source, "--prepare-shipped-library",
-                              "--cache-dir", shipped, "--explain"], environment)
+                              "--cache-dir", shipped, "--explain",
+                              *producer_library], environment)
     assert producer.returncode == 0, producer.stderr
     before = {path: path.stat().st_mtime_ns
               for path in (shipped / "entries").rglob("*") if path.is_file()}
@@ -849,7 +857,6 @@ def shipped_library_selector():
     recovered = invoke_result(arguments, environment)
     assert recovered.returncode == 0, recovered.stderr
     assert "checked library interface cache corrupt core" in recovered.stderr, recovered.stderr
-    library = Path(__file__).resolve().parents[1] / "library"
     editable = invoke_result([*arguments, "--library-dir", library], environment)
     assert editable.returncode == 0, editable.stderr
     assert "shipped library selector hit" not in editable.stderr, editable.stderr

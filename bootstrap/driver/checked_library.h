@@ -96,6 +96,7 @@ private:
   std::future<ImportedTypes> pendingTypes;
   std::string archiveKey;
   std::string archiveContent;
+  std::filesystem::path libraryPath;
   std::shared_ptr<const LibraryInputs> sourceInputs;
   LibraryCacheConfiguration cacheConfiguration;
   CheckedLibrary *dependency = nullptr;
@@ -123,7 +124,8 @@ class CheckedLibraries {
 public:
   static std::unique_ptr<CheckedLibraries>
   create(const Options &options, const expansion::Configuration &configuration,
-         packages::Store &store, TargetFacts target, NumericEvaluator numeric);
+         packages::Store &store, TargetFacts target, NumericEvaluator numeric,
+         const std::filesystem::path &libraryPath);
   bool mount(resolution::Library &library, Diagnostics &diagnostics,
              const expansion::SourceAllocator &allocate, std::string &error);
   pipeline::LibraryImporter importer();

@@ -226,7 +226,9 @@ remain pending for reclamation after the lease ends.
 On an unchanged build, input-trace replay reads only the shipped selectors
 needed by that trace and their dependencies. It restores cached output only
 after the destination passes the source-alias check and is confirmed separate
-from the library tree, whose sources may not appear in the trace.
+from the library tree, whose sources may not appear in the trace. Shipped
+selector lookup shares the resolved library parent within a request and
+resolves a symlinked library root before hashing its path.
 
 For eligible debug executable builds, dependency objects contain only
 non-generic, owner-unambiguous package functions and statics. Generic instances,

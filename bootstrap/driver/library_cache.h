@@ -24,7 +24,8 @@ struct LibraryInputs {
 
 std::string
 shippedLibrarySelector(const std::filesystem::path &directory,
-                       const LibraryCacheConfiguration &configuration);
+                       const LibraryCacheConfiguration &configuration,
+                       const std::filesystem::path &canonicalLibraryPath);
 
 std::optional<LibraryInputs>
 collectLibraryInputs(const std::filesystem::path &directory,

@@ -2150,6 +2150,16 @@ bytes were unchanged. The next target is first-application check: measure
 shipped-library admission and root checking separately before changing either.
 Evidence: `~/w/anal/p05-trace.VadIVD/{noop-ab.json,bench/results.json}`.
 
+P05 first-check profiling measured about 7 ms in source loading/resolution
+and 10 ms in preparation, including about 3 ms importing the checked archive.
+Reusing the resolved library parent for shipped selectors cut first check
+from 24.2 to 20.4 ms in 31 matched WSL pairs. The nine-pair pinned-Rust run
+measured application check at 23.8/18.2 ms, application build at 297/259 ms,
+and no-op build at 9.1/10.6 ms (Mettle/Rust). Outputs and retained bytes were
+unchanged. Application build and check remain open; profile root LLVM work
+and archive import separately before expanding either change.
+Evidence: `~/w/anal/p05-admission.1795601303/{phases.log,check-ab.json,bench/results.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

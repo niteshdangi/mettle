@@ -1108,7 +1108,13 @@ int build(const Options &requested,
     diagnostics.print(source, std::cerr);
     return 1;
   }
-  BuildInputs inputs(options.libraryDirectory);
+  std::error_code libraryPathError;
+  auto libraryPath =
+      options.libraryDirectory.empty()
+          ? fs::path{}
+          : fs::weakly_canonical(options.libraryDirectory, libraryPathError);
+  BuildInputs inputs(libraryPathError ? fs::path(options.libraryDirectory)
+                                      : libraryPath);
   std::optional<ProcedureHost> procedural;
   if (!macros.empty()) {
     inputs.record(source);
@@ -1230,8 +1236,9 @@ int build(const Options &requested,
     std::map<std::string, std::string> shippedKeys;
     auto shipped = [&](const std::string &root) -> std::optional<std::string> {
       if (!shippedLibraries)
-        shippedLibraries = CheckedLibraries::create(
-            options, configuration, *store, facts, backend::evaluateNumeric);
+        shippedLibraries =
+            CheckedLibraries::create(options, configuration, *store, facts,
+                                     backend::evaluateNumeric, libraryPath);
       shippedLibraries->readShippedKeys(root, shippedKeys);
       auto found = shippedKeys.find(root);
       if (found == shippedKeys.end())
@@ -1293,8 +1300,9 @@ int build(const Options &requested,
       store = openStore(options);
     if (store) {
       std::string error;
-      checkedCore = CheckedLibraries::create(options, configuration, *store,
-                                             facts, backend::evaluateNumeric);
+      checkedCore =
+          CheckedLibraries::create(options, configuration, *store, facts,
+                                   backend::evaluateNumeric, libraryPath);
       if (!checkedCore->mount(
               library, diagnostics,
               [&]() -> SourceId {
