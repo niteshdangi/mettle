@@ -158,6 +158,16 @@ fn main(): i32 {
         present(value) => { if *value != 3 { return 7 } },
         none => { return 8 }
     }
+    let capacity = map.capacity()
+    let _set = panic_hash.get().store(1usize, core.sync.atomic.Ordering.SeqCst)
+    match take std.panic.catch_panic(fn(): Unit { map.reserve(capacity + 1usize) }) {
+        CatchResult.Panicked(_) => {},
+        CatchResult.Returned(_) => { return 80 }
+    }
+    let _set = panic_hash.get().store(0usize, core.sync.atomic.Ordering.SeqCst)
+    if map.len() != 1usize || map.capacity() != capacity { return 81 }
+    if *map.get(make_key(1, panic_hash.retain(), panic_eq.retain(),
+                         panic_cmp.retain())).or_panic() != 3 { return 82 }
 
     var tree = btree.new<Key, i32>()
     var value = 0
