@@ -942,6 +942,12 @@ semantic checking. It uses retained archive storage and symbol references,
 not the mutable root type store. The pipeline joins and validates the IR
 inventory before lowering; resident and unauthenticated imports finish IR
 admission before semantic checking.
+Authenticated standalone imports decode the macro section only on the first
+macro lookup. Producer validation and archive authentication cover unused
+macro bytes; a lookup still validates the macro records and their source
+bindings before expansion. Native macro revisions use the canonical snapshot
+path, so a mount through a symlinked native root binds the same revision as a
+direct mount. Unauthenticated and resident mounts still decode macros eagerly.
 First admission retains the Store's read-only mapping without copying or
 explicitly reading unused payload bytes. Store writers atomically publish new
 read-only blob inodes; replacement and pruning cannot modify a live mapping.

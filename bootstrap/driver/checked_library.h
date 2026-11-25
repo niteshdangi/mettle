@@ -83,6 +83,7 @@ private:
   std::optional<resolution::BuiltinMethodIndex> builtinMethodIndex();
   const Source *input(const std::string &path);
   bool ensureMounted(std::string &error);
+  bool finishMacros(std::string &error);
   std::optional<pipeline::ImportedProgram>
   import(const Module &module, const resolution::Resolution &resolution,
          Diagnostics &diagnostics);
@@ -94,6 +95,8 @@ private:
   ImportedTypes importTypes() const;
   LibraryArchive archive;
   std::future<ImportedTypes> pendingTypes;
+  std::future<std::pair<std::optional<expansion::MacroLibrary>, std::string>>
+      pendingMacros;
   std::string archiveKey;
   std::string archiveContent;
   std::filesystem::path libraryPath;

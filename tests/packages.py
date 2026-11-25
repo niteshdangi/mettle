@@ -848,6 +848,11 @@ def shipped_library_selector():
     assert re.search(r"checked library interface cache hit core [0-9a-f]+ "
                      r"\(authenticated\)", consumer.stderr), consumer.stderr
     assert all(path.stat().st_mtime_ns == stamp for path, stamp in before.items())
+    macro = evidence / "shipped-macro.mt"
+    macro.write_text("fn main(): i32 { core.assert_matches!(1i32, 1i32); 0 }\n")
+    expanded = invoke_result(["check", macro, "--standalone", "--explain"],
+                             environment)
+    assert expanded.returncode == 0 and "(authenticated)" in expanded.stderr, expanded.stderr
     output = evidence / "shipped-program"
     built = invoke_result(["build", source, "--standalone", "--explain",
                            "-o", output], environment)

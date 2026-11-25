@@ -34,19 +34,10 @@ constexpr std::array<std::string_view, 3> nativeRoots{"core", "alloc", "std"};
 #include "mettle_builtin_method_index.inc"
 #endif
 
-std::string macroRevision(const Source &source, const std::string &directory) {
-  std::error_code error;
-  auto root = std::filesystem::absolute(directory, error).lexically_normal();
-  if (error)
-    return {};
-  auto path = std::filesystem::path(source.path)
-                  .lexically_relative(root)
-                  .generic_string();
-  if (path.empty())
-    return {};
+std::string macroRevision(const Source &source) {
   packages::Sha256 hash;
-  for (std::string_view part :
-       {nativePackage, std::string_view(path), std::string_view(source.text)}) {
+  for (std::string_view part : {nativePackage, std::string_view(source.path),
+                                std::string_view(source.text)}) {
     std::array<char, 4> size;
     for (unsigned i = 0; i < size.size(); ++i)
       size[i] = static_cast<char>(part.size() >> (8 * i));
@@ -58,11 +49,11 @@ std::string macroRevision(const Source &source, const std::string &directory) {
 
 const Source *macroSnapshot(const LibrarySources &sources,
                             const expansion::MacroSource &reference,
-                            const std::string *directory) {
+                            bool verifyRevision = true) {
   for (const auto &source : sources.snapshots())
     if (source.path == reference.path &&
         source.text.size() == reference.bytes &&
-        (!directory || macroRevision(source, *directory) == reference.identity))
+        (!verifyRevision || macroRevision(source) == reference.identity))
       return &source;
   return nullptr;
 }
@@ -246,13 +237,12 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
   library.configuration = configuration;
   library.identifyMacroSource = [&](const Source &source) {
     auto revision = candidate.sources.record(source, error);
-    return revision ? macroRevision(source, options.libraryDirectory) : "";
+    return revision ? macroRevision(source) : "";
   };
   library.macroExports = [&](const expansion::MacroLibrary &source) {
     auto remap = [&](const expansion::MacroSource &reference)
         -> std::optional<SourceId> {
-      auto snapshot = macroSnapshot(candidate.sources, reference,
-                                    &options.libraryDirectory);
+      auto snapshot = macroSnapshot(candidate.sources, reference);
       if (!snapshot)
         return std::nullopt;
       return snapshot->id;
@@ -850,7 +840,7 @@ bool CheckedLibrary::mount(resolution::Library &library,
 std::optional<expansion::MacroModuleSource>
 CheckedLibrary::macroSource(const std::vector<std::string> &path) {
   std::string error;
-  if (!ensureMounted(error)) {
+  if (!ensureMounted(error) || !finishMacros(error)) {
     if (!error.empty())
       receiverDiagnostics->error("metadata", {}, error);
     return std::nullopt;
@@ -875,12 +865,34 @@ CheckedLibrary::macroSource(const std::vector<std::string> &path) {
       [this](const expansion::MacroSource &source) -> std::optional<SourceId> {
     auto [entry, inserted] = macroSources.try_emplace(source.identity);
     if (inserted)
-      if (auto snapshot =
-              macroSnapshot(archive.sources, source, &options.libraryDirectory))
+      if (auto snapshot = macroSnapshot(archive.sources, source))
         entry->second = snapshot->id;
     return entry->second;
   };
   return source;
+}
+
+bool CheckedLibrary::finishMacros(std::string &error) {
+  if (macros)
+    return true;
+  if (!pendingMacros.valid()) {
+    error = "compiled macro library is unavailable";
+    return false;
+  }
+  auto [rules, macroError] = pendingMacros.get();
+  if (!rules) {
+    error = std::move(macroError);
+    return false;
+  }
+  for (const auto &source : rules->sources) {
+    if (!macroSnapshot(archive.sources, source, false)) {
+      error =
+          "compiled macro source revision does not match the library archive";
+      return false;
+    }
+  }
+  macros = std::make_shared<const expansion::MacroLibrary>(std::move(*rules));
+  return true;
 }
 
 bool CheckedLibrary::ensureMounted(std::string &error) {
@@ -894,17 +906,19 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
     unavailable = true;
     return false;
   }
-  auto decodingMacros = std::async(std::launch::async, [this] {
-    Diagnostics diagnostics;
-    auto rules = expansion::decodeMacros(archive.macros, diagnostics);
-    std::string error;
-    if (!rules) {
-      std::ostringstream text;
-      diagnostics.print({}, text);
-      error = text.str();
-    }
-    return std::pair{std::move(rules), std::move(error)};
-  });
+  const bool deferMacros = archive.trusted && !options.libraryQueries;
+  auto decodingMacros = std::async(
+      deferMacros ? std::launch::deferred : std::launch::async, [this] {
+        Diagnostics diagnostics;
+        auto rules = expansion::decodeMacros(archive.macros, diagnostics);
+        std::string error;
+        if (!rules) {
+          std::ostringstream text;
+          diagnostics.print({}, text);
+          error = text.str();
+        }
+        return std::pair{std::move(rules), std::move(error)};
+      });
   pendingTypes = std::async(options.libraryQueries ? std::launch::deferred
                                                    : std::launch::async,
                             [this] { return importTypes(); });
@@ -963,23 +977,15 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
                                           std::move(sourceIds), retained);
     decoded = copyLibraryHeader(*retained);
   }
-  auto [rules, macroError] = decodingMacros.get();
-  if (!rules) {
-    error = std::move(macroError);
-    return false;
-  }
-  for (const auto &source : rules->sources) {
-    if (!macroSnapshot(archive.sources, source, nullptr)) {
-      error =
-          "compiled macro source revision does not match the library archive";
+  if (!deferMacros) {
+    pendingMacros = std::move(decodingMacros);
+    if (!finishMacros(error))
       return false;
-    }
   }
   header = std::move(decoded);
   functions = header.module->functions.size();
   statics = header.module->statics.size();
   interfaces = header.module->interfaces.size();
-  macros = std::make_shared<const expansion::MacroLibrary>(std::move(*rules));
   registration.published = true;
   for (const auto &[revision, path] : archive.sourceModules) {
     auto source = archive.sources.source(revision);
@@ -990,6 +996,8 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
     library.compiledSourcePackages[source->id] = std::string(nativePackage);
     library.compiledSourceModules[source->id] = path;
   }
+  if (deferMacros)
+    pendingMacros = std::move(decodingMacros);
   mounted = true;
   return true;
 }

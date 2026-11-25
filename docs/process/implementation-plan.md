@@ -2218,6 +2218,18 @@ body demand and finalization next. Evidence: `~/w/anal/p05-wslfs.UxroBVgQ`
 (`overlap-ab.json`, `overlap-bench/results.json`, `overlap-tsan.log`,
 `semantic-probe.log`).
 
+On top of IR overlap, deferring authenticated standalone macro decoding
+reduced direct first check from 23.94 to 22.83 ms in 61 interleaved ext4
+pairs (Rust: 24.68 ms; paired candidate/baseline median ratio: 0.938).
+The new macro lookup regression exposed that producing an archive through a
+symlinked native root encoded a different macro revision than a direct
+consumer computed. Both now key the canonical source snapshot path and
+content. The final nine-pair run matched original and edited outputs;
+first application check measured 23.55/23.07 ms, first application build
+346.94/406.20 ms (Mettle/Rust). First application check remains
+inconclusive. Evidence: `~/w/anal/p05-wslfs.UxroBVgQ`
+(`macro-demand-ab.json`, `macro-fixed-bench/results.json`).
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
