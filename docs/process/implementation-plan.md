@@ -2400,6 +2400,15 @@ harness matched both outputs: first build 190.85/104.58 ms (1.741×),
 runtime 30.32/38.49 ms (0.786×). Receipts:
 `direct-init/probe-masks/{ab.json,rust/results.json}`.
 
+SipHasher now writes a 32-bit value directly when it fits in the current
+word. Writes that cross a word or approach the length limit still use the
+original byte-stream path. The streaming regression checks both paths at
+every tail length. In 48 matched ext4 pairs, first build fell from 196.94 to
+181.38 ms (paired ratio 0.920, 95% interval 0.907–0.934), with no measurable
+runtime change (0.999, 0.990–1.007). The unchanged Rust harness matched both
+outputs: first build 181.82/104.19 ms (1.742×), runtime 30.46/38.43 ms (0.791×).
+Receipts: `direct-init/sip-short-write/{ab.json,rust/results.json}`.
+
 Hosted main's unwind wrapper is optimized separately from its body before
 LLVM inlines the body. Neither forcing it to stay outlined nor inlining it
 early preserved P05 runtime: first-build ratios were 0.938 and 0.951, but

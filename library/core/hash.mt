@@ -155,6 +155,11 @@ fn sip_absorb(mut hasher: SipHasher, word: u64): Unit {
     while round < hasher.compression { sip_round(mut hasher); round += 1u32 }
     hasher.v0 = hasher.v0 ^ word
 }
+@inline(never)
+fn sip_write_u32_bytes(mut hasher: SipHasher, value: u32): Unit {
+    let bytes = [value as u8, (value >> 8u32) as u8, (value >> 16u32) as u8, (value >> 24u32) as u8]
+    hasher.write(read bytes)
+}
 extend SipHasher implements Hasher {
     mut fn write(read bytes: [u8]): Unit {
         var i = 0usize
@@ -170,6 +175,15 @@ extend SipHasher implements Hasher {
             }
             i += 1usize
         }
+    }
+    mut fn write_u32(value: u32): Unit {
+        if self.tail_length >= 4usize || self.length > usize.MAX - 4usize {
+            sip_write_u32_bytes(mut self, value)
+            return ()
+        }
+        self.tail = self.tail | ((value as u64) << ((self.tail_length * 8usize) as u64))
+        self.tail_length += 4usize
+        self.length += 4usize
     }
     // Finalizes a scratch copy of the state, so more input can follow.
     @inline(always)

@@ -46,6 +46,24 @@ fn main(): i32 {
     if h.finish() != 0x726fdb47dd0e0e31u64 { return 11 }
     h.write_u8(0u8)
     if h.finish() != 0x74f839c593dc67fdu64 { return 12 }
+    var tail = 0usize
+    while tail < 8usize {
+        var typed = hash.sip13(11u64, 23u64)
+        var bytes = hash.sip13(11u64, 23u64)
+        var i = 0usize
+        while i < tail {
+            typed.write_u8(i as u8)
+            bytes.write_u8(i as u8)
+            i += 1usize
+        }
+        typed.write_u32(0xfe812f1du32)
+        bytes.write(read [29u8, 47u8, 129u8, 254u8])
+        if typed.finish() != bytes.finish() { return 25 }
+        typed.write_u32(0x90605020u32)
+        bytes.write(read [32u8, 80u8, 96u8, 144u8])
+        if typed.finish() != bytes.finish() { return 26 }
+        tail += 1usize
+    }
     var f = hash.fnv1a()
     f.write("a".as_bytes())
     if f.finish() != 0xaf63dc4c8601ec8cu64 { return 13 }
