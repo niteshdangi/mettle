@@ -2497,6 +2497,18 @@ first build from 157.85 to 150.25 ms in 32 matched ext4 pairs (0.957,
 144.75/102.06 ms (1.425×), runtime 29.96/37.98 ms (0.786×). First-build
 parity remains open. Receipts: `direct-init/native-relocation.TOxXaB/{ab.json,rust/results.json}`.
 
+At `ae452ad4`, authenticated first builds spent a median of 65.02 ms in
+root O2 and 17.68 ms in machine emission. The root declares, rather than
+defines, the relocation helper. Grouping the rebuild guards in a generic
+owner regressed first build by 18.4% in matched pairs. Moving that owner
+into the native archive through allocator callbacks saved only 2.4%
+(0.976, 95% interval 0.957–0.997); neither variant was retained.
+In LLVM replay, fusing plain wrappers saved 11% of optimizer time but
+regressed runtime by 15%; fusing only already-outlined wrappers showed no
+optimizer gain. Removing two SCC InstCombine runs saved 6% in optimizer
+replay, not enough to justify a fork of LLVM's O2 pipeline. Receipts:
+`direct-init/{native-relocation.TOxXaB/phases,rebuild-storage.GypAAVll/ab.json,erased-rebuild-storage.5JKnwJtX/ab.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
