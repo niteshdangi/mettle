@@ -104,14 +104,7 @@ type Table<K, V, A: Allocator> {
     }
 }
 const fn table_in<K, V, A: Allocator>(take a: A): Table<K, V, A> {
-    let result: Table<K, V, A>
-    result.ptr = dangling_for<Bucket<K, V>>()
-    result.controls = dangling_for<u8>()
-    result.cap = 0usize
-    result.count = 0usize
-    result.deleted = 0usize
-    result.a = take a
-    result
+    Table(dangling_for<Bucket<K, V>>(), dangling_for<u8>(), 0usize, 0usize, 0usize, take a)
 }
 extend<K, V, A: Allocator> Table<K, V, A> {
     fn occupied(index: usize): bool {

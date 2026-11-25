@@ -2409,6 +2409,15 @@ runtime change (0.999, 0.990–1.007). The unchanged Rust harness matched both
 outputs: first build 181.82/104.19 ms (1.742×), runtime 30.46/38.43 ms (0.791×).
 Receipts: `direct-init/sip-short-write/{ab.json,rust/results.json}`.
 
+The empty table is initialized as one aggregate rather than six field
+assignments. In 48 matched ext4 pairs, first build fell from 187.90 to
+178.34 ms (paired ratio 0.959, 95% interval 0.945–0.973), with runtime
+unchanged (1.002, 0.992–1.013). Bypassing the allocator-taking constructor
+for `new()` was not retained: it measured a 0.8% runtime regression in
+52 pairs. The unchanged Rust harness matched both outputs: first build
+179.08/106.87 ms (1.643×), runtime 30.45/38.32 ms (0.792×).
+Receipts: `direct-init/{direct-map-new/ab.json,direct-table-init/ab.json,direct-table-init/rust/results.json}`.
+
 Hosted main's unwind wrapper is optimized separately from its body before
 LLVM inlines the body. Neither forcing it to stay outlined nor inlining it
 early preserved P05 runtime: first-build ratios were 0.938 and 0.951, but
