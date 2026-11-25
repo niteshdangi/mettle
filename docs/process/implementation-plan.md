@@ -2317,6 +2317,17 @@ Parallel scoped ASan/UBSan coverage passed. P05 build parity remains open.
 Receipts: `direct-init/reprofile-cff5f9ce/phases.json` and
 `direct-init/shared-scope/{ab.json,rust/results.json,san.log}`.
 
+Packing cleanup flags into contiguous ranges cut unoptimized IR from
+1,208,929 to 1,045,836 bytes, but regressed first build by 4.3% and runtime
+by 25.1% across 28 matched pairs. The change was discarded; smaller IR alone
+is not a performance target. An expanded probe of `22862445` measured a
+201 ms first-build median over 12 native ext4 samples with both package
+archive hits: 110 ms root optimization, 26 ms machine emission, 26 ms
+before emission, 20 ms native link, 8 ms publication, 5 ms partitioning,
+3 ms LLVM lowering and under 1 ms for native archive restore. Root
+optimization remains the largest target, followed by machine emission and
+pre-emission work. Receipts: `direct-init/{flag-ranges/ab.json,full-phases/phases.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
