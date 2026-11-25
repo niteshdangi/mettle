@@ -1192,9 +1192,22 @@ def native_core_object_reuse():
         assert exit_code(program) == 0
         assert "cache miss" in last_cache_event(warm), warm
         assert "library object cache hit core " in warm, warm
+        if profile == "release":
+            prefix = re.search(r"library object cache hit core ([0-9a-f]+)",
+                               warm)[1]
+            entry = next(path for path in cache_files("entries")
+                         if path.name.startswith("pkg-" + prefix))
+            malformed = b"mettle-ar-zstd" + struct.pack("<Q", 4096) + b"invalid"
+            digest = hashlib.sha256(malformed).hexdigest()
+            blob = evidence / "cache" / "blobs" / digest[:2] / digest
+            blob.parent.mkdir(exist_ok=True)
+            blob.write_bytes(malformed)
+            entry.write_text(f"file {digest} {len(malformed)} -\n")
         edit(second, "- 82", "- 81")
         changed_root, program = explained(second, *arguments)
         assert exit_code(program) == 1
+        if profile == "release":
+            assert "library object cache entry corrupt, rebuilding core " in changed_root
         event = re.search(
             r"machine unit cache root reused ([0-9]+) generated ([0-9]+)",
             changed_root)

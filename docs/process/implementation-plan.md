@@ -2128,6 +2128,19 @@ before and after edits, and 12 focused source/profile cases passed.
 First application check, no-op build and retained bytes remain behind Rust.
 Evidence: `~/w/anal/p05-out-of-line.KZCEFY/{comparison.json,bench/results.json}`.
 
+Compressing cached machine-unit archives with zstd reduced P05 retained
+allocated bytes from 741,376 to 409,600 after a clean build and to 405,504
+after edits, versus Rust's 507,904 in both cases. Nine WSL pairs matched
+outputs and measured 323/341 ms clean build, 293/285 ms semantic edit,
+322/290 ms first application build, 25.2/19.6 ms first application check,
+17.6/10.5 ms no-op build and 40.3/44.8 ms runtime (Mettle/Rust).
+In a direct 12-pair raw/compressed comparison, clean builds took 297/291 ms
+and semantic rebuilds took 252/259 ms. No-op builds bypass archive decoding.
+Retained bytes are no longer the P05 bottleneck in this engineering run;
+application build/check and no-op build still trail Rust. Profile those
+paths before the next change. Source freeze and qualification remain open.
+Evidence: `~/w/anal/p05-compressed.Ckkmuq/{final/results.json,compression-ab.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

@@ -982,7 +982,11 @@ overflow/sanitizer identities govern machine-code reuse; this skips unchanged
 unit emission, not whole-module O2. Native archive hits bypass native lowering,
 optimization and emission. The existing bounded Store retains aggregate unit
 buckets with current membership, validates object digests and rebuilds malformed
-archives. Family batching avoids a target-machine/codegen setup for every small
+archives. Cache-only native archives may use a size-framed zstd encoding when
+it is smaller; larger or uncompressible archives stay raw. The driver restores
+decoded bytes in the build's private scratch directory before LLVM reads them.
+Invalid compressed entries are cache misses that successful builds replace.
+Family batching avoids a target-machine/codegen setup for every small
 native function; cold unit generation and warm selective linking remain separate
 performance endpoints.
 Native code misses specialize only the consumer's requested nongeneric native

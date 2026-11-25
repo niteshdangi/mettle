@@ -3,12 +3,16 @@
 #include "backend/llvm/object.h"
 #include "driver/cache.h"
 #include "packages/sha256.h"
+#include "support/limits.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Object/Archive.h"
 #include "llvm/Object/ArchiveWriter.h"
+#include "llvm/Support/Compression.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/Threading.h"
 #include "llvm/Support/raw_ostream.h"
@@ -20,9 +24,11 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <map>
 #include <optional>
 #include <set>
 #include <sstream>
+#include <system_error>
 #include <unordered_map>
 #ifdef __linux__
 #include <sched.h>
@@ -140,6 +146,100 @@ std::string artifactSuffix(const std::string &format,
                               : "";
 }
 
+constexpr llvm::StringLiteral compressedArchiveMagic("mettle-ar-zstd");
+constexpr auto compressedArchiveHeaderSize =
+    compressedArchiveMagic.size() + sizeof(std::uint64_t);
+
+llvm::Expected<packages::Store::Lookup>
+restoreUnitArchive(packages::Store &store, const std::string &key,
+                   const std::filesystem::path &path) {
+  auto found = store.materialize(key, path);
+  if (found != packages::Store::Lookup::Hit)
+    return found;
+  auto buffer = llvm::MemoryBuffer::getFile(path.string(), false, false);
+  if (!buffer)
+    return llvm::createStringError(buffer.getError(),
+                                   "cannot read cached object archive");
+  auto bytes = (*buffer)->getBuffer();
+  if (!bytes.consume_front(compressedArchiveMagic))
+    return found;
+  if (bytes.size() < sizeof(std::uint64_t) ||
+      !llvm::compression::zstd::isAvailable())
+    return packages::Store::Lookup::Corrupt;
+  auto size = llvm::support::endian::read64le(bytes.data());
+  if (size <= compressedArchiveHeaderSize || size > limits::sourceBytes)
+    return packages::Store::Lookup::Corrupt;
+  auto payload = bytes.drop_front(sizeof(size));
+  auto expanded = llvm::WritableMemoryBuffer::getNewUninitMemBuffer(size);
+  if (!expanded)
+    return llvm::createStringError(
+        std::make_error_code(std::errc::not_enough_memory),
+        "cannot allocate cached object archive");
+  std::size_t decoded = size;
+  if (auto error = llvm::compression::zstd::decompress(
+          llvm::arrayRefFromStringRef(payload),
+          reinterpret_cast<std::uint8_t *>(expanded->getBufferStart()),
+          decoded)) {
+    llvm::consumeError(std::move(error));
+    return packages::Store::Lookup::Corrupt;
+  }
+  if (decoded != size)
+    return packages::Store::Lookup::Corrupt;
+  buffer->reset();
+  std::error_code error;
+  llvm::raw_fd_ostream out(path.string(), error, llvm::sys::fs::OF_None);
+  if (!error) {
+    out.write(expanded->getBufferStart(), decoded);
+    out.close();
+    error = out.error();
+    out.clear_error();
+  }
+  if (error)
+    return llvm::createStringError(error,
+                                   "cannot restore cached object archive");
+  return found;
+}
+
+bool storeObjectArtifacts(packages::Store &store,
+                          std::vector<packages::Store::Artifact> artifacts) {
+  if (!llvm::compression::zstd::isAvailable())
+    return store.putMany(artifacts);
+  std::map<std::filesystem::path, llvm::SmallVector<std::uint8_t, 0>>
+      compressed;
+  for (auto &artifact : artifacts) {
+    if (artifact.file.extension() != ".a")
+      continue;
+    auto [entry, fresh] = compressed.try_emplace(artifact.file);
+    auto &bytes = entry->second;
+    if (fresh) {
+      auto buffer =
+          llvm::MemoryBuffer::getFile(artifact.file.string(), false, false);
+      if (!buffer)
+        return false;
+      const auto archive = (*buffer)->getBuffer();
+      if (archive.size() <= limits::sourceBytes) {
+        llvm::compression::zstd::compress(
+            llvm::arrayRefFromStringRef(archive), bytes,
+            llvm::compression::zstd::BestSpeedCompression);
+        if (compressedArchiveHeaderSize + bytes.size() < archive.size()) {
+          bytes.insert(bytes.begin(), compressedArchiveHeaderSize, 0);
+          std::copy(compressedArchiveMagic.begin(),
+                    compressedArchiveMagic.end(), bytes.begin());
+          llvm::support::endian::write64le(
+              bytes.data() + compressedArchiveMagic.size(), archive.size());
+        } else
+          bytes.clear();
+      }
+    }
+    if (!bytes.empty()) {
+      artifact.bytes = {reinterpret_cast<const char *>(bytes.data()),
+                        bytes.size()};
+      artifact.file.clear();
+    }
+  }
+  return store.putMany(artifacts);
+}
+
 llvm::Error emitUnitArchive(llvm::Module &module, const Options &options,
                             llvm::StringRef output,
                             const std::filesystem::path &directory,
@@ -166,8 +266,15 @@ llvm::Error emitUnitArchive(llvm::Module &module, const Options &options,
   std::unique_ptr<llvm::MemoryBuffer> previousBuffer;
   std::unique_ptr<llvm::object::Archive> previousArchive;
   std::unordered_map<std::string, llvm::NewArchiveMember> previous;
-  if (store && store->materialize(bucketKey, previousPath) ==
-                   packages::Store::Lookup::Hit) {
+  auto found = store ? restoreUnitArchive(*store, bucketKey, previousPath)
+                     : llvm::Expected<packages::Store::Lookup>(
+                           packages::Store::Lookup::Miss);
+  if (!found)
+    return found.takeError();
+  if (*found == packages::Store::Lookup::Corrupt && options.explain)
+    explain << "mettle: machine unit cache " << identity
+            << " entry corrupt, rebuilding\n";
+  if (*found == packages::Store::Lookup::Hit) {
     auto buffer = llvm::MemoryBuffer::getFile(previousPath.string());
     if (!buffer)
       return llvm::createStringError(buffer.getError(),
@@ -637,15 +744,23 @@ static int emitOne(const Options &options, const Source &source,
                                .string();
         bool reused = false;
         if (store) {
-          auto found = store->materialize(packageKey, packagePath);
-          if (found == packages::Store::Lookup::Hit) {
+          auto found = native
+                           ? restoreUnitArchive(*store, packageKey, packagePath)
+                           : llvm::Expected<packages::Store::Lookup>(
+                                 store->materialize(packageKey, packagePath));
+          if (!found) {
+            std::cerr << "mettle: error[cache]: "
+                      << llvm::toString(found.takeError()) << '\n';
+            return 1;
+          }
+          if (*found == packages::Store::Lookup::Hit) {
             reused = true;
             if (options.explain)
               std::cerr << "mettle: " << cacheLabel << "hit " << cacheIdentity
                         << " " << packageKey.substr(4, 12) << '\n';
           } else if (options.explain) {
             std::cerr << "mettle: " << cacheLabel
-                      << (found == packages::Store::Lookup::Corrupt
+                      << (*found == packages::Store::Lookup::Corrupt
                               ? "entry corrupt, rebuilding "
                               : "miss ")
                       << cacheIdentity << " " << packageKey.substr(4, 12)
@@ -985,7 +1100,7 @@ static int emitOne(const Options &options, const Source &source,
           return ioFailure("cannot move linked output", error);
       }
       if (store && !packageArtifacts.empty()) {
-        bool stored = store->putMany(packageArtifacts);
+        bool stored = storeObjectArtifacts(*store, std::move(packageArtifacts));
         if (options.explain)
           for (const auto &[package, key] : packagesToStore)
             std::cerr << "mettle: "
