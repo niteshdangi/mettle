@@ -378,39 +378,6 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
 
     @cfg(target_arch = "x86_64")
     @inline(always)
-    fn control_matches(start: usize, needle: u128): (u32, u128) {
-        // Sixteen initialized mirrors make every group load valid, including capacity eight.
-        let lanes = unsafe { self.entries.controls.add(start).cast<u128>().read_unaligned() }
-        var matching = lanes
-        var mask = 0u32
-        unsafe {
-            asm!("pcmpeqb {matching:x}, {needle:x}",
-                 "pmovmskb {mask:e}, {matching:x}",
-                 matching = inout(xmm_reg) matching, needle = in(xmm_reg) needle,
-                 mask = lateout(reg) mask, options(pure,nomem,nostack,preserves_flags))
-        }
-        (mask, lanes)
-    }
-
-    @cfg(target_arch = "x86_64")
-    @inline(always)
-    fn control_available(lanes: u128): (u32, u32) {
-        var empty = 0x80808080808080808080808080808080u128
-        var available = 0u32
-        var vacant = 0u32
-        unsafe {
-            asm!("pmovmskb {available:e}, {lanes:x}",
-                 "pcmpeqb {empty:x}, {lanes:x}",
-                 "pmovmskb {vacant:e}, {empty:x}",
-                 lanes = in(xmm_reg) lanes, empty = inout(xmm_reg) empty,
-                 available = lateout(reg) available, vacant = lateout(reg) vacant,
-                 options(pure,nomem,nostack,preserves_flags))
-        }
-        (available, vacant)
-    }
-
-    @cfg(target_arch = "x86_64")
-    @inline(always)
     fn find_pos<Q: PartialEq + unsized>(hash: u64, read key: Q): (usize, usize?) where K: KeyView<Q> {
         if self.entries.cap == 0usize { return (0usize, none) }
         let mask = self.entries.cap - 1usize
@@ -420,8 +387,16 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         var step = 0usize
         var available = usize.MAX
         while true {
-            let group = self.control_matches(start, needle)
-            var matches = group.0
+            // Sixteen initialized mirrors make every group load valid, including capacity eight.
+            let lanes = unsafe { self.entries.controls.add(start).cast<u128>().read_unaligned() }
+            var matching = lanes
+            var matches = 0u32
+            unsafe {
+                asm!("pcmpeqb {matching:x}, {needle:x}",
+                     "pmovmskb {matches:e}, {matching:x}",
+                     matching = inout(xmm_reg) matching, needle = in(xmm_reg) needle,
+                     matches = lateout(reg) matches, options(pure,nomem,nostack,preserves_flags))
+            }
             while matches != 0u32 {
                 let index = (start + matches.trailing_zeros() as usize) & mask
                 let entry = unsafe { read *self.entries.as_ptr().add(index) }
@@ -430,11 +405,21 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
                 }
                 matches = matches & matches.wrapping_sub(1u32)
             }
-            let space = self.control_available(group.1)
-            if available == usize.MAX && space.0 != 0u32 {
-                available = (start + space.0.trailing_zeros() as usize) & mask
+            var empty = 0x80808080808080808080808080808080u128
+            var space = 0u32
+            var vacant = 0u32
+            unsafe {
+                asm!("pmovmskb {space:e}, {lanes:x}",
+                     "pcmpeqb {empty:x}, {lanes:x}",
+                     "pmovmskb {vacant:e}, {empty:x}",
+                     lanes = in(xmm_reg) lanes, empty = inout(xmm_reg) empty,
+                     space = lateout(reg) space, vacant = lateout(reg) vacant,
+                     options(pure,nomem,nostack,preserves_flags))
             }
-            if space.1 != 0u32 { return (available, none) }
+            if available == usize.MAX && space != 0u32 {
+                available = (start + space.trailing_zeros() as usize) & mask
+            }
+            if vacant != 0u32 { return (available, none) }
             step += 16usize
             start = (start + step) & mask
         }

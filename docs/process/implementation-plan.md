@@ -2391,6 +2391,15 @@ ratio 0.960, 95% interval 0.942–0.979) and runtime from 34.23 to 31.50 ms
 first build 196.33/105.47 ms (1.793×), runtime 29.81/37.80 ms (0.787×).
 Receipts: `direct-init/tag-splat/{ab.json,rust/results.json}`.
 
+The two single-use SIMD mask helpers now run in the probe loop, eliminating
+their aggregate returns and generic wrappers without changing the mask
+instructions or probe order. In 54 matched ext4 pairs, first build fell
+from 197.70 to 190.40 ms (paired ratio 0.957, 95% interval 0.942–0.971),
+with no measurable runtime change (0.996, 0.985–1.007). The unchanged Rust
+harness matched both outputs: first build 190.85/104.58 ms (1.741×),
+runtime 30.32/38.49 ms (0.786×). Receipts:
+`direct-init/probe-masks/{ab.json,rust/results.json}`.
+
 Hosted main's unwind wrapper is optimized separately from its body before
 LLVM inlines the body. Neither forcing it to stay outlined nor inlining it
 early preserved P05 runtime: first-build ratios were 0.938 and 0.951, but
