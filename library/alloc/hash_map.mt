@@ -470,12 +470,15 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         if control.size() != 0usize {
             unsafe { core.ptr.write_bytes(nc, 128u8, control.size()) }
         }
+        let old_cap = self.entries.cap
+        let old_ptr = self.entries.ptr
+        let old_controls = self.entries.controls
         // Finish every fallible allocation and hash callback before moving any owned payload.
         var ordinal = 0usize
         var i = 0usize
-        while i < self.entries.cap {
-            if self.entries.occupied(i) {
-                let hash = self.builder.hash_one(unsafe { read (*self.entries.ptr.add(i)).key })
+        while i < old_cap {
+            if unsafe { *old_controls.add(i) < 128u8 } {
+                let hash = self.builder.hash_one(unsafe { read (*old_ptr.add(i)).key })
                 unsafe { core.ptr.write(nh.add(ordinal), hash) }
                 ordinal += 1usize
             }
@@ -483,20 +486,20 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         }
         ordinal = 0usize
         i = 0usize
-        while i < self.entries.cap {
-            if self.entries.occupied(i) {
+        while i < old_cap {
+            if unsafe { *old_controls.add(i) < 128u8 } {
                 let hash = unsafe { *nh.add(ordinal) }
                 let index = vacant_slot(nc, ncap, hash)
-                unsafe { core.ptr.write(np.add(index), core.ptr.`read`(self.entries.ptr.add(i))) }
+                unsafe { core.ptr.write(np.add(index), core.ptr.`read`(old_ptr.add(i))) }
                 set_control(nc, ncap, index, (hash >> 57u64) as u8)
                 ordinal += 1usize
             }
             i += 1usize
         }
-        let old_payload = unsafe { layout_unchecked(self.entries.cap * core.mem.size_of<Bucket<K, V>>(), core.mem.align_of<Bucket<K, V>>()) }
-        let old_control = unsafe { layout_unchecked(if self.entries.cap == 0usize { 0usize } else { self.entries.cap + 16usize }, 1usize) }
-        let _free_controls = unsafe { free_block(self.entries.controls, old_control, a) }
-        let _free_payload = unsafe { free_block(self.entries.ptr.cast<u8>(), old_payload, a) }
+        let old_payload = unsafe { layout_unchecked(old_cap * core.mem.size_of<Bucket<K, V>>(), core.mem.align_of<Bucket<K, V>>()) }
+        let old_control = unsafe { layout_unchecked(if old_cap == 0usize { 0usize } else { old_cap + 16usize }, 1usize) }
+        let _free_controls = unsafe { free_block(old_controls, old_control, a) }
+        let _free_payload = unsafe { free_block(old_ptr.cast<u8>(), old_payload, a) }
         self.entries.ptr = np
         self.entries.controls = nc
         self.entries.cap = ncap

@@ -2425,6 +2425,15 @@ with no measurable runtime change. The unchanged Rust harness matched both
 outputs: first build 178.82/108.44 ms (1.604×), runtime 30.06/38.17 ms
 (0.790×). Receipts: `direct-init/insert-direct-deleted/{ab.json,rust/results.json}`.
 
+Rebuild snapshots the old table's pointers and capacity once. Both scans use
+their loop bound to establish valid control-byte access, and neither changes
+the old table before all hash callbacks finish. In 48 matched ext4 pairs,
+first build fell from 188.21 to 180.15 ms (paired ratio 0.959, 95% interval
+0.944–0.974), with no measurable runtime change. The unchanged Rust harness
+matched both outputs: first build 180.31/105.39 ms (1.716×), runtime
+30.22/38.35 ms (0.797×). Receipts:
+`direct-init/rebuild-old-slots/{ab.json,rust/results.json}`.
+
 A replay of the four current link inputs measured 18.70 ms through Clang and
 12.85 ms via its exact LLD command; one LLD worker took 11.94 ms. Replacing
 the driver for this saving would take on CRT, libc, target and sysroot
