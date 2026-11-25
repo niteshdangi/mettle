@@ -28,6 +28,15 @@ fn array_layout<T>(count: usize): Layout throws TryReserveError {
     unsafe { layout_unchecked(bytes, core.mem.align_of<T>()) }
 }
 
+@inline(never)
+fn allocate_rebuild_block<A: Allocator>(mut allocator: A, layout: Layout, dangling: ptr<mut u8>): ptr<mut u8> throws TryReserveError {
+    if layout.size() == 0usize { return dangling }
+    match capture allocator.allocate(layout) {
+        success(p) => p,
+        failure(_) => throw TryReserveError.allocation_error(layout)
+    }
+}
+
 fn set_control(controls: ptr<mut u8>, cap: usize, index: usize, tag: u8): Unit {
     unsafe {
         *controls.add(index) = tag
@@ -471,26 +480,11 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         let control = try array_layout<u8>(if ncap == 0usize { 0usize } else { ncap + 16usize })
         let hashes = try array_layout<u64>(self.entries.count)
         let a = core.ptr.from_mut(self.entries.a)
-        let np = if payload.size() == 0usize { dangling_for<Bucket<K, V>>() } else {
-            match capture self.entries.a.allocate(payload) {
-                success(p) => p.cast<Bucket<K, V>>(),
-                failure(_) => throw TryReserveError.allocation_error(payload)
-            }
-        }
+        let np = (try allocate_rebuild_block(self.entries.a, payload, dangling_for<Bucket<K, V>>().cast<u8>())).cast<Bucket<K, V>>()
         let payload_guard = unsafe { free_block(np.cast<u8>(), payload, a) }
-        let nc = if control.size() == 0usize { dangling_for<u8>() } else {
-            match capture self.entries.a.allocate(control) {
-                success(p) => p,
-                failure(_) => throw TryReserveError.allocation_error(control)
-            }
-        }
+        let nc = try allocate_rebuild_block(self.entries.a, control, dangling_for<u8>())
         let control_guard = unsafe { free_block(nc, control, a) }
-        let nh = if hashes.size() == 0usize { dangling_for<u64>() } else {
-            match capture self.entries.a.allocate(hashes) {
-                success(p) => p.cast<u64>(),
-                failure(_) => throw TryReserveError.allocation_error(hashes)
-            }
-        }
+        let nh = (try allocate_rebuild_block(self.entries.a, hashes, dangling_for<u64>().cast<u8>())).cast<u64>()
         let _hash_guard = unsafe { free_block(nh.cast<u8>(), hashes, a) }
         var i = 0usize
         while i < control.size() {

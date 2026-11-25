@@ -2340,6 +2340,21 @@ matched original and edited outputs and put first build at 211/106 ms
 (paired ratio 1.90). Scoped parallel ASan/UBSan passed. Receipts:
 `direct-init/{full-phases/trace-by-function.json,empty-unwind/ab.json,empty-unwind/rust/results.json,empty-unwind/san.log}`.
 
+HashMap rebuild shares the allocation and error path for payload, controls,
+and hash scratch storage, without moving its cleanup guards or changing when
+the allocator runs. In 48 matched ext4 pairs, first build fell from 208.74 to
+205.08 ms (paired ratio 0.971, 95% interval 0.954–0.987); runtime was unchanged
+within measurement error (1.001, 0.991–1.010). The unchanged Rust harness
+matched original and edited outputs: first build was 207.27/107.00 ms
+(1.868× Rust), runtime 33.04/38.08 ms (0.871× Rust). Receipts:
+`direct-init/rebuild-allocation/{ab-48.json,rust/results.json}`.
+
+An offline replay isolated 22.47 ms of root optimization in the concrete
+rebuild family. Its standalone archive linked with both workload revisions;
+the dependency-closed IR matched after removing module identity. This is not
+compiler reuse: a fresh consumer cannot assume an archive exists for its
+concrete arguments and witnesses. The first-build gate remains open.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

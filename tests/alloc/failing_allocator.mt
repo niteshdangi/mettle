@@ -212,6 +212,16 @@ fn main(): i32 {
             map.len() != 1usize || reserve_live != live_before {
             return 75
         }
+        reserve_budget = 2
+        match capture map.try_reserve(10usize) {
+            success(_) => { return 80 },
+            failure(error) => { if error == overflow { return 81 } }
+        }
+        if reserve_budget != 0 || map.capacity() != capacity ||
+            core.ptr.from_ref(*map.get(1).or_panic()) != entries ||
+            map.len() != 1usize || reserve_live != live_before {
+            return 82
+        }
         match map.get(1) {
             present(value) => { if *value != 2 { return 76 } },
             none => { return 77 }
