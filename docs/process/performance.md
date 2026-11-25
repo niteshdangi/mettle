@@ -223,6 +223,11 @@ The driver leases its active whole-build key; pruning preserves leased entries
 and `clean` refuses live leases. Retired project references protected by a lease
 remain pending for reclamation after the lease ends.
 
+On an unchanged build, input-trace replay reads only the shipped selectors
+needed by that trace and their dependencies. It restores cached output only
+after the destination passes the source-alias check and is confirmed separate
+from the library tree, whose sources may not appear in the trace.
+
 For eligible debug executable builds, dependency objects contain only
 non-generic, owner-unambiguous package functions and statics. Generic instances,
 synthesized helpers, ambiguous ownership and the executable wrapper stay in the

@@ -3207,6 +3207,23 @@ def driver_output_preserves_imports():
         invoke(["build", main, "--emit", "object", "-o", helper, *flags], 1,
                ["error[io]", "output would overwrite the source"])
         assert helper.read_bytes() == original
+    standalone = ["build", main, "--standalone", "--emit", "object", "-o"]
+    warm_dir = evidence / "warm-output"
+    warm_dir.mkdir()
+    warm_output = warm_dir / helper.name
+    invoke([*standalone, warm_output])
+    warm_output.unlink()
+    invoke([*standalone, warm_output, "--explain"],
+           contains="compile and link skipped")
+    warm_output.unlink()
+    os.link(helper, warm_output)
+    invoke([*standalone, warm_output], 1, "output would overwrite the source")
+    assert os.path.samefile(warm_output, helper) and helper.read_bytes() == original
+    if os.name == "posix":
+        warm_output.unlink()
+        warm_output.symlink_to(helper)
+        invoke([*standalone, warm_output], 1, "output would overwrite the source")
+        assert warm_output.is_symlink() and helper.read_bytes() == original
     library = evidence / "output-library"
     shutil.copytree(Path(__file__).resolve().parents[1] / "library" / "core",
                     library / "core")

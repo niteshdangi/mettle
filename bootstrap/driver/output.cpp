@@ -443,7 +443,8 @@ std::vector<PackageObject> libraryObjects(
 }
 
 bool outputOverwritesSource(const Options &options, const Source &source,
-                            const Diagnostics &diagnostics) {
+                            const Diagnostics &diagnostics,
+                            bool requireSeparateLibrary) {
   namespace fs = std::filesystem;
   const llvm::Triple target(options.target);
   auto formats = options.emits;
@@ -472,9 +473,12 @@ bool outputOverwritesSource(const Options &options, const Source &source,
     destination.resolved = !error;
     if (destination.resolved && !library.empty()) {
       auto links = fs::hard_link_count(destination.canonical, error);
-      destination.librarySeparate = (error || links <= 1) &&
-                                    !within(destination.canonical, library) &&
-                                    !within(library, destination.canonical);
+      destination.librarySeparate =
+          (!error ? links <= 1
+                  : !requireSeparateLibrary ||
+                        error == std::errc::no_such_file_or_directory) &&
+          !within(destination.canonical, library) &&
+          !within(library, destination.canonical);
     }
     destinations.push_back(std::move(destination));
   };
@@ -487,6 +491,12 @@ bool outputOverwritesSource(const Options &options, const Source &source,
         (format == "executable" || format == "shared"))
       add(destination.string() + ".dSYM");
   }
+  if (requireSeparateLibrary &&
+      std::any_of(destinations.begin(), destinations.end(),
+                  [](const Destination &destination) {
+                    return !destination.librarySeparate;
+                  }))
+    return true;
   auto aliases = [&](const std::string &input, const Destination &destination) {
     if (destination.librarySeparate) {
       fs::path path(input);
@@ -519,7 +529,7 @@ bool outputOverwritesSource(const Options &options, const Source &source,
   if (conflict(source.path))
     return true;
   for (const auto &input : diagnostics.registeredSources())
-    if (!input.path.empty() && conflict(input.path))
+    if (!input.path.empty() && input.path != source.path && conflict(input.path))
       return true;
   return false;
 }

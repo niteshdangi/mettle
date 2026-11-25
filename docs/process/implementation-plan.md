@@ -2141,6 +2141,15 @@ application build/check and no-op build still trail Rust. Profile those
 paths before the next change. Source freeze and qualification remain open.
 Evidence: `~/w/anal/p05-compressed.Ckkmuq/{final/results.json,compression-ab.json}`.
 
+Build-trace replay now resolves only the demanded shipped-library selectors
+and reuses the destination alias check. In 31 matched WSL pairs, P05 no-op
+builds fell from 15.1 to 10.4 ms. Nine pinned-Rust comparison pairs measured
+11.9/10.6 ms for no-op build, 292/258 ms for first application build and
+29.4/17.6 ms for first application check (Mettle/Rust). Outputs and retained
+bytes were unchanged. The next target is first-application check: measure
+shipped-library admission and root checking separately before changing either.
+Evidence: `~/w/anal/p05-trace.VadIVD/{noop-ab.json,bench/results.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

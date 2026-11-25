@@ -286,9 +286,9 @@ BuildInputs::trace(const std::string &checked) const {
 }
 
 std::optional<BuildReplay> BuildInputs::replay(
-    const std::string &libraryDirectory, std::string_view trace,
+    std::string_view trace,
     const std::function<std::optional<std::string>(const std::string &)>
-        &shipped) {
+        &shipped) const {
   auto next = [&]() -> std::optional<std::string> {
     auto end = trace.find('\0');
     if (end == std::string_view::npos)
@@ -301,7 +301,8 @@ std::optional<BuildReplay> BuildInputs::replay(
   auto checked = next();
   if (!version || *version != "mettle-build-trace-2" || !checked)
     return std::nullopt;
-  BuildReplay result{BuildInputs(libraryDirectory), {}};
+  BuildReplay result{BuildInputs(), {}};
+  result.inputs.libraryPrefix = libraryPrefix;
   if (!checked->empty()) {
     auto current = shipped(*checked);
     if (!current)

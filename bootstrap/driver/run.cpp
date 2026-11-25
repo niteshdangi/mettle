@@ -1109,9 +1109,9 @@ int build(const Options &requested,
     return 1;
   }
   BuildInputs inputs(options.libraryDirectory);
-  inputs.record(source);
   std::optional<ProcedureHost> procedural;
   if (!macros.empty()) {
+    inputs.record(source);
     if (!store)
       store = openStore(options);
     procedural.emplace(options, std::move(macros), std::move(hostPackages),
@@ -1220,23 +1220,21 @@ int build(const Options &requested,
     if (store) {
       packages::Sha256 hash;
       hash.update("mettle-build-trace-key-1");
-      hash.update(BuildInputs(options.libraryDirectory)
-                      .key(options, mounts, configuration.features));
+      hash.update(inputs.key(options, mounts, configuration.features));
       hash.update(source.path);
       traceKey = "trace-" + hash.finish();
     }
   }
   if (traceKey) {
     std::unique_ptr<CheckedLibraries> shippedLibraries;
-    std::optional<std::map<std::string, std::string>> shippedKeys;
+    std::map<std::string, std::string> shippedKeys;
     auto shipped = [&](const std::string &root) -> std::optional<std::string> {
-      if (!shippedKeys) {
+      if (!shippedLibraries)
         shippedLibraries = CheckedLibraries::create(
             options, configuration, *store, facts, backend::evaluateNumeric);
-        shippedKeys = shippedLibraries->shippedKeys();
-      }
-      auto found = shippedKeys->find(root);
-      if (found == shippedKeys->end())
+      shippedLibraries->readShippedKeys(root, shippedKeys);
+      auto found = shippedKeys.find(root);
+      if (found == shippedKeys.end())
         return std::nullopt;
       return found->second;
     };
@@ -1244,29 +1242,18 @@ int build(const Options &requested,
     std::optional<BuildReplay> replayed;
     if (trace.status == packages::Store::Lookup::Hit) {
       recordedTrace = trace.bytes;
-      replayed =
-          BuildInputs::replay(options.libraryDirectory, trace.bytes, shipped);
+      replayed = inputs.replay(trace.bytes, shipped);
     }
     if (replayed) {
       auto key = consumerKey(
           replayed->inputs.key(options, mounts, configuration.features),
           replayed->checked);
-      std::error_code error;
-      auto output = std::filesystem::weakly_canonical(options.output, error);
-      auto library =
-          std::filesystem::weakly_canonical(options.libraryDirectory, error);
-      bool separate = !error && !beneath(output, library) &&
-                      !beneath(library, output) && output != library &&
-                      output != std::filesystem::path(source.path);
-      if (separate && std::filesystem::exists(output, error))
-        separate =
-            std::filesystem::hard_link_count(output, error) <= 1 && !error;
       Diagnostics traced;
       SourceId id = 0;
       for (const auto &path : replayed->inputs.paths())
         traced.registerSource(
             std::make_shared<const Source>(Source{path, "", ++id}));
-      if (separate && !outputOverwritesSource(options, source, traced) &&
+      if (!outputOverwritesSource(options, source, traced, true) &&
           !workCopies.protects(options, traced)) {
         auto lease = store->acquireLease(key);
         auto found = lease ? store->materialize(key, options.output)
@@ -1286,6 +1273,8 @@ int build(const Options &requested,
       }
     }
   }
+  if (!procedural)
+    inputs.record(source);
   auto traceUpdate = [&](const std::string &checked) {
     std::optional<std::string> trace;
     if (traceKey && (trace = inputs.trace(checked)) && trace == recordedTrace)

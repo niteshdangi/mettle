@@ -24,7 +24,8 @@ std::vector<PackageObject> libraryObjects(
     const std::map<std::string, std::string> &packageKeys,
     const std::function<const ir::VerifiedProgram *()> &library);
 bool outputOverwritesSource(const Options &options, const Source &source,
-                            const Diagnostics &diagnostics);
+                            const Diagnostics &diagnostics,
+                            bool requireSeparateLibrary = false);
 // Diagnostics supplies source texts/provenance for debug and panic locations.
 int emit(const Options &options, const Source &source,
          const ir::VerifiedProgram &program, const Diagnostics &diagnostics,

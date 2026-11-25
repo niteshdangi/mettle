@@ -134,7 +134,8 @@ public:
   void recordInputs(BuildInputs &inputs) const;
   // The archive keys the shipped selectors name for the native roots, without
   // loading the archives.
-  std::map<std::string, std::string> shippedKeys() const;
+  void readShippedKeys(const std::string &root,
+                       std::map<std::string, std::string> &keys) const;
   pipeline::PackageOwners packageOwners() const;
   std::map<std::string, std::vector<std::string>> packageSources() const;
   std::map<std::string, std::string> packageKeys() const;

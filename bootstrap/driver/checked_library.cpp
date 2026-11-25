@@ -1448,9 +1448,13 @@ void CheckedLibraries::recordInputs(BuildInputs &inputs) const {
         record(*unit);
 }
 
-std::map<std::string, std::string> CheckedLibraries::shippedKeys() const {
-  std::map<std::string, std::string> keys;
+void CheckedLibraries::readShippedKeys(
+    const std::string &root, std::map<std::string, std::string> &keys) const {
+  if (keys.contains(root))
+    return;
   for (const auto &unit : units) {
+    if (keys.contains(unit->root))
+      continue;
     if (unit->options.editableLibrary || unit->options.prepareShippedLibrary)
       break;
     auto configuration = unit->cacheConfiguration;
@@ -1466,8 +1470,9 @@ std::map<std::string, std::string> CheckedLibraries::shippedKeys() const {
         entry.bytes.find_first_not_of("0123456789abcdef") != std::string::npos)
       break;
     keys.emplace(unit->root, std::move(entry.bytes));
+    if (unit->root == root)
+      return;
   }
-  return keys;
 }
 
 pipeline::PackageOwners CheckedLibraries::packageOwners() const {

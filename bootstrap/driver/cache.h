@@ -57,10 +57,10 @@ public:
   // Repeats a trace's probes against the current files and environment;
   // `shipped` yields a shipped library's current key. Fails when a probe
   // resolves differently.
-  static std::optional<BuildReplay>
-  replay(const std::string &libraryDirectory, std::string_view trace,
+  std::optional<BuildReplay>
+  replay(std::string_view trace,
          const std::function<std::optional<std::string>(const std::string &)>
-             &shipped);
+             &shipped) const;
   std::vector<std::string> paths() const;
   // A package object key excludes root sources but includes exact package and
   // library source bytes plus the package's resolved dependency object keys.
@@ -71,6 +71,7 @@ public:
   bool packageObjectsSafe() const { return packageInputsSafe; }
 
 private:
+  BuildInputs() = default;
   void recordDigest(const Source &source, std::string contentDigest);
   std::string libraryPrefix;
   std::map<std::string, std::string> inputs;
