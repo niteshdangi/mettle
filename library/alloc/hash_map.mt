@@ -486,14 +486,12 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         let control_guard = unsafe { free_block(nc, control, a) }
         let nh = (try allocate_rebuild_block(self.entries.a, hashes, dangling_for<u64>().cast<u8>())).cast<u64>()
         let _hash_guard = unsafe { free_block(nh.cast<u8>(), hashes, a) }
-        var i = 0usize
-        while i < control.size() {
-            unsafe { *nc.add(i) = 128u8 }
-            i += 1usize
+        if control.size() != 0usize {
+            unsafe { core.ptr.write_bytes(nc, 128u8, control.size()) }
         }
         // Finish every fallible allocation and hash callback before moving any owned payload.
         var ordinal = 0usize
-        i = 0usize
+        var i = 0usize
         while i < self.entries.cap {
             if self.entries.occupied(i) {
                 let hash = self.builder.hash_one(unsafe { read (*self.entries.ptr.add(i)).key })

@@ -2349,6 +2349,14 @@ matched original and edited outputs: first build was 207.27/107.00 ms
 (1.868× Rust), runtime 33.04/38.08 ms (0.871× Rust). Receipts:
 `direct-init/rebuild-allocation/{ab-48.json,rust/results.json}`.
 
+Writing the new control array with the existing byte-fill intrinsic removes
+its element-wise initialization loop before LLVM optimization. In 32 matched
+ext4 pairs, first build fell from 203.63 to 199.23 ms (paired ratio 0.977,
+95% interval 0.960–0.994), with no measurable runtime change. The unchanged
+Rust harness matched both outputs: first build 203.83/105.38 ms (1.866×),
+runtime 33.27/38.57 ms (0.862×). Receipts:
+`direct-init/rebuild-control-fill/{ab.json,rust/results.json}`.
+
 An offline replay isolated 22.47 ms of root optimization in the concrete
 rebuild family. Its standalone archive linked with both workload revisions;
 the dependency-closed IR matched after removing module identity. This is not
