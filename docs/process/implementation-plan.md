@@ -2383,6 +2383,14 @@ The unchanged Rust harness matched both outputs: first build 195.51/107.87 ms
 passed in debug and with AddressSanitizer. Receipts:
 `direct-init/control-mirror/{ab.json,rust/results.json}`.
 
+The x86-64 tag broadcast now multiplies the seven-bit tag by a repeated
+byte-one constant instead of building and reloading a 16-element aggregate.
+In 44 matched ext4 pairs, first build fell from 199.80 to 190.29 ms (paired
+ratio 0.960, 95% interval 0.942–0.979) and runtime from 34.23 to 31.50 ms
+(0.910, 0.899–0.921). The unchanged Rust harness matched both outputs:
+first build 196.33/105.47 ms (1.793×), runtime 29.81/37.80 ms (0.787×).
+Receipts: `direct-init/tag-splat/{ab.json,rust/results.json}`.
+
 Hosted main's unwind wrapper is optimized separately from its body before
 LLVM inlines the body. Neither forcing it to stay outlined nor inlining it
 early preserved P05 runtime: first-build ratios were 0.938 and 0.951, but

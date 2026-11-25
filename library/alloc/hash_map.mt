@@ -414,11 +414,8 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
     fn find_pos<Q: PartialEq + unsized>(hash: u64, read key: Q): (usize, usize?) where K: KeyView<Q> {
         if self.entries.cap == 0usize { return (0usize, none) }
         let mask = self.entries.cap - 1usize
-        let tag = (hash >> 57u64) as u8
-        let needle = unsafe { core.mem.transmute<u128>([
-            tag, tag, tag, tag, tag, tag, tag, tag,
-            tag, tag, tag, tag, tag, tag, tag, tag
-        ]) }
+        let tag = (hash >> 57u64) as u128
+        let needle = tag * 0x01010101010101010101010101010101u128
         var start = (hash as usize) & mask
         var step = 0usize
         var available = usize.MAX
