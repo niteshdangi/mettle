@@ -2185,6 +2185,25 @@ filesystem before redesigning selectors.
 Evidence: `~/w/anal/p05-prepare.y1ya23wf/prepare.log` and
 `~/w/anal/p05-front.bj9yua4y/{detail.log,macro-ab.json,baseline-bench/results.json}`.
 
+Repeating on WSL ext4 with the source snapshot, library, shipped store and
+benchmark output off `/mnt/d` reduced native selector resolution to 0.009 ms.
+Nine fixed-affinity pairs with Rust 1.99.1 matched original and edited
+outputs; Mettle led seven of eight timing medians, including first
+application build at 326.68/404.64 ms. First application check remained
+27.27/21.03 ms (Mettle/Rust) and inconclusive. Retained clean and edited
+bytes were 421,888 and 417,792 versus 507,904 for Rust in both cases.
+In 61 direct interleaved checks, lazy macro loading moved 22.07 ms to
+21.39 ms against Rust's 21.06 ms; the full harness still measured
+25.28/21.44 ms, so the compiler change remains unshipped. Avoiding runtime
+stamp publication also regressed direct checks (21.61 to 22.33 ms).
+Profiling the full harness's first application check measured 25.04 ms,
+including 4.76 ms mounting declarations, 4.42 ms importing the archive and
+6.05 ms in root semantics. Next: trace demand materialization in semantic
+checking and whether IR import can overlap it without delaying metadata
+diagnostics or weakening verification. WSL timing does not qualify I14.
+Evidence: `~/w/anal/p05-wslfs.UxroBVgQ` (`profile.log`, `full-profile.log`,
+`check-ab.json`, `stamp-ab.json`, `*-fixed-bench/results.json`).
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
