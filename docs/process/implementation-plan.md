@@ -2528,6 +2528,19 @@ The unchanged Rust harness matched both outputs: first build 127.75/104.27 ms
 (1.189×), runtime 29.95/38.05 ms (0.786×). First-build parity remains open.
 Receipts: `direct-init/provenance-dangling.AxCgzUWL/{ab.json,optimized.ll,rust/results.json}`.
 
+P05 shares HashMap destruction, splits independent root O2 work across separate
+LLVM contexts, overlaps machine emission with native archive restoration, and
+executes eligible Linux `ld.lld` jobs directly using Clang's link plan. In 160
+paired WSL ext4 runs with authenticated dependency hits and no root machine-unit
+hits, first application build measured 101.90/104.27 ms against Rust 1.99.1
+(paired 0.964, multiplicity-adjusted interval 0.939–0.989). Runtime measured
+30.58/38.44 ms (0.790, 0.781–0.798). The original and semantic-edited outputs
+matched Rust; direct and external links and one- and four-logical-CPU builds
+produced identical Mettle binaries. This closes the measured P05 first-build
+gap in this engineering run, not the I14 release qualification: interval
+precision missed the 0.5-percent target. Receipts:
+`direct-init/entry-parallel/direct-link/exact/{auth-rust/results.json,direct.log,forced.log,single.log}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

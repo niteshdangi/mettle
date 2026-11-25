@@ -1398,16 +1398,29 @@ def bundled_native_linker():
                       f"os.execvp({cxx!r}, [{cxx!r}, *sys.argv[1:]])\n")
     custom.chmod(0o700)
     previous = os.environ.get("PATH")
+    override = os.environ.pop("CCC_OVERRIDE_OPTIONS", None)
     os.environ["PATH"] = os.pathsep.join(filter(None, (str(directory), previous)))
     try:
-        flags = ["--library-dir", library.parent, "--standalone"]
+        flags = ["--library-dir", library.parent, "--standalone", "--no-cache"]
         build_and_run(source, *flags)
         output = evidence / "out.bin"
         original = output.read_bytes()
+        os.environ["CCC_OVERRIDE_OPTIONS"] = ""
+        build_and_run(source, *flags)
+        assert output.read_bytes() == original
+        os.environ["CCC_OVERRIDE_OPTIONS"] = "+-Wl,--mettle-invalid-link-option"
+        invoke(["build", source, "-o", output, *flags], 1,
+               ["--mettle-invalid-link-option", "error[link]"])
+        assert output.read_bytes() == original
+        del os.environ["CCC_OVERRIDE_OPTIONS"]
         invoke(["build", source, "-o", output, *flags, "--cc", custom], 1,
                ["unexpected-ambient-linker", "error[link]"])
         assert output.read_bytes() == original
     finally:
+        if override is None:
+            os.environ.pop("CCC_OVERRIDE_OPTIONS", None)
+        else:
+            os.environ["CCC_OVERRIDE_OPTIONS"] = override
         if previous is None:
             os.environ.pop("PATH", None)
         else:

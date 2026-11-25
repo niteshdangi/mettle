@@ -4,6 +4,12 @@
 #include "driver/cache.h"
 #include "packages/sha256.h"
 #include "support/limits.h"
+#ifdef METTLE_CLANG_LINK_PLANNER
+#include "clang/Basic/Diagnostic.h"
+#include "clang/Driver/Compilation.h"
+#include "clang/Driver/Driver.h"
+#include "llvm/Support/VirtualFileSystem.h"
+#endif
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/Verifier.h"
@@ -19,6 +25,7 @@
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #include <algorithm>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -129,6 +136,57 @@ std::optional<std::string> linkUnavailable(const Options &options,
   compiler = *found;
   return std::nullopt;
 }
+
+#ifdef METTLE_CLANG_LINK_PLANNER
+std::optional<std::vector<std::string>>
+planNativeLink(llvm::StringRef target, llvm::StringRef lld,
+               llvm::ArrayRef<std::string> arguments) {
+  for (const char *name :
+       {"CCC_OVERRIDE_OPTIONS", "CC_PRINT_OPTIONS", "CC_PRINT_HEADERS",
+        "CC_PRINT_HEADERS_FORMAT", "CC_LOG_DIAGNOSTICS", "CC_PRINT_PROC_STAT",
+        "CC_PRINT_INTERNAL_STAT", "FORCE_CLANG_DIAGNOSTICS_CRASH"})
+    if (std::getenv(name))
+      return std::nullopt;
+  llvm::SmallString<256> canonical;
+  if (llvm::sys::fs::real_path(arguments.front(), canonical) ||
+      llvm::sys::path::parent_path(canonical) !=
+          llvm::sys::path::parent_path(arguments.front()))
+    return std::nullopt;
+  clang::DiagnosticConsumer messages;
+  clang::DiagnosticOptions diagnosticOptions;
+  clang::DiagnosticsEngine diagnostics(clang::DiagnosticIDs::create(),
+                                       diagnosticOptions, &messages, false);
+  clang::driver::Driver driver(canonical, target, diagnostics);
+  auto mode = clang::driver::ToolChain::getTargetAndModeFromProgramName(
+      arguments.front());
+  if (!mode.DriverMode ||
+      llvm::StringRef(mode.DriverMode) != "--driver-mode=g++")
+    return std::nullopt;
+  driver.setTargetAndMode(mode);
+  llvm::SmallVector<const char *, 24> argv{arguments.front().c_str(),
+                                           mode.DriverMode};
+  for (const auto &argument : arguments.drop_front())
+    argv.push_back(argument.c_str());
+  std::unique_ptr<clang::driver::Compilation> plan(
+      driver.BuildCompilation(argv));
+  if (!plan || plan->containsError() || messages.getNumWarnings() ||
+      messages.getNumErrors() || !driver.getConfigFiles().empty() ||
+      plan->getJobs().size() != 1)
+    return std::nullopt;
+  const auto &job = *plan->getJobs().begin();
+  if (job.getExecutable() != lld)
+    return std::nullopt;
+  std::vector<std::string> result{job.getExecutable()};
+  for (const char *argument : job.getArguments())
+    result.emplace_back(argument);
+  llvm::SmallVector<llvm::StringRef, 24> refs;
+  for (const auto &argument : result)
+    refs.push_back(argument);
+  if (!llvm::sys::commandLineFitsWithinSystemLimits(lld, refs))
+    return std::nullopt;
+  return result;
+}
+#endif
 
 int ioFailure(const std::string &action, const std::error_code &error) {
   std::cerr << "mettle: error[io]: " << action << ": " << error.message()
@@ -542,7 +600,8 @@ bool outputOverwritesSource(const Options &options, const Source &source,
   if (conflict(source.path))
     return true;
   for (const auto &input : diagnostics.registeredSources())
-    if (!input.path.empty() && input.path != source.path && conflict(input.path))
+    if (!input.path.empty() && input.path != source.path &&
+        conflict(input.path))
       return true;
   return false;
 }
@@ -732,6 +791,38 @@ static int emitOne(const Options &options, const Source &source,
           nativeDemand;
       if (rootUnits)
         objectPath = (directory / "main.a").string();
+      const bool reusedObject = !backend.object.path.empty();
+      std::vector<packages::Store::Artifact> rootArtifacts;
+      std::ostringstream rootLog;
+      auto emitRoot = [&]() -> llvm::Error {
+        if (reusedObject)
+          return llvm::Error::success();
+        if (options.explain)
+          rootLog << "mettle: backend object " << options.target << '\n';
+        auto generated = sharedBackend ? llvm::CloneModule(*module) : nullptr;
+        auto &lowered = generated ? *generated : *module;
+        if (rootUnits)
+          return emitUnitArchive(lowered, options, objectPath, directory,
+                                 "root", store, rootArtifacts, rootLog);
+        return mettle::backend::emitObject(
+            lowered, options.target,
+            sharedBackend ? backend.object.path.str()
+                          : llvm::StringRef(objectPath),
+            release, options.sanitizers.contains("address"),
+            options.sanitizers.contains("thread"));
+      };
+      std::future<std::string> rootEmission;
+      if (release && rootUnits && store && !sharedBackend &&
+          !packageObjects.empty() &&
+          llvm::all_of(packageObjects,
+                       [](const PackageObject &package) {
+                         return package.identity.starts_with("native:");
+                       }) &&
+          canOverlapNativeEmission()) {
+        overlapNative = true;
+        rootEmission = std::async(std::launch::async,
+                                  [&] { return llvm::toString(emitRoot()); });
+      }
       for (std::size_t i = 0; i < packageObjects.size(); ++i) {
         const auto &package = packageObjects[i];
         const bool native = package.identity.starts_with("native:");
@@ -851,7 +942,6 @@ static int emitOne(const Options &options, const Source &source,
         }
         packagePaths.push_back(std::move(packagePath));
       }
-      const bool reusedObject = !backend.object.path.empty();
       if (!reusedObject && sharedBackend)
         if (auto error =
                 backend.object.create(options.output + ".mettle-object-%%%%%%"))
@@ -891,27 +981,11 @@ static int emitOne(const Options &options, const Source &source,
           }
           return 0;
         });
-      std::optional<std::string> rootError;
-      std::ostringstream rootLog;
-      if (!reusedObject) {
-        if (options.explain)
-          rootLog << "mettle: backend object " << options.target << '\n';
-        auto generated = sharedBackend ? llvm::CloneModule(*module) : nullptr;
-        auto emitRoot = [&]() {
-          auto &lowered = generated ? *generated : *module;
-          if (rootUnits)
-            return emitUnitArchive(lowered, options, objectPath, directory,
-                                   "root", store, packageArtifacts, rootLog);
-          return mettle::backend::emitObject(
-              lowered, options.target,
-              sharedBackend ? backend.object.path.str()
-                            : llvm::StringRef(objectPath),
-              release, options.sanitizers.contains("address"),
-              options.sanitizers.contains("thread"));
-        };
-        if (auto error = emitRoot())
-          rootError = llvm::toString(std::move(error));
-      }
+      auto rootError = rootEmission.valid() ? rootEmission.get()
+                                            : llvm::toString(emitRoot());
+      packageArtifacts.insert(packageArtifacts.end(),
+                              std::make_move_iterator(rootArtifacts.begin()),
+                              std::make_move_iterator(rootArtifacts.end()));
       if (nativeEmission.valid()) {
         const auto status = nativeEmission.get();
         std::cerr << nativeLog.str();
@@ -928,8 +1002,8 @@ static int emitOne(const Options &options, const Source &source,
       }
       if (options.explain)
         std::cerr << rootLog.str();
-      if (rootError) {
-        std::cerr << "mettle: error[backend]: " << *rootError << '\n';
+      if (!rootError.empty()) {
+        std::cerr << "mettle: error[backend]: " << rootError << '\n';
         return 1;
       }
       if (backend.failed) {
@@ -999,6 +1073,7 @@ static int emitOne(const Options &options, const Source &source,
       } else if (nativeLink) {
         std::vector<std::string> arguments{linker,
                                            "--target=" + options.target};
+        std::string bundledLld;
         if (options.emit == "shared")
           arguments.push_back(target.isOSDarwin() ? "-dynamiclib" : "-shared");
         if (options.emit == "shared" && target.isOSDarwin())
@@ -1052,8 +1127,11 @@ static int emitOne(const Options &options, const Source &source,
           if (options.cc == METTLE_CXX_PATH) {
             auto directory =
                 std::filesystem::path(linker).parent_path().string();
-            if (auto lld = llvm::sys::findProgramByName("ld.lld", {directory}))
-              arguments.push_back("--ld-path=" + *lld);
+            if (auto lld =
+                    llvm::sys::findProgramByName("ld.lld", {directory})) {
+              bundledLld = *lld;
+              arguments.push_back("--ld-path=" + bundledLld);
+            }
           }
           arguments.push_back("-pthread");
         }
@@ -1078,14 +1156,20 @@ static int emitOne(const Options &options, const Source &source,
           arguments.push_back("-fno-sanitize-recover=all");
         }
 #endif
+#ifdef METTLE_CLANG_LINK_PLANNER
+        if (!bundledLld.empty() && options.emit == "executable" &&
+            options.sysroot.empty() && options.sanitizers.empty())
+          if (auto plan = planNativeLink(options.target, bundledLld, arguments))
+            arguments = std::move(*plan);
+#endif
         std::vector<llvm::StringRef> refs(arguments.begin(), arguments.end());
         // The linker's diagnostics go through the driver's own stream so a
         // caller that captures diagnostics (doctests) sees them.
         const auto linkLog = linked + ".link.log";
         const std::optional<llvm::StringRef> redirects[] = {
             std::nullopt, std::nullopt, llvm::StringRef(linkLog)};
-        const int linkStatus =
-            llvm::sys::ExecuteAndWait(linker, refs, std::nullopt, redirects);
+        const int linkStatus = llvm::sys::ExecuteAndWait(
+            refs.front(), refs, std::nullopt, redirects);
         if (std::ifstream log(linkLog); log)
           if (std::ostringstream text; text << log.rdbuf())
             std::cerr << text.str();

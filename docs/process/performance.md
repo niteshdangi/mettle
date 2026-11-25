@@ -120,8 +120,12 @@ Linux native links through the pinned default Clang select its sibling `ld.lld`
 by absolute path when available, retaining `-fuse-ld=lld` for linker flavor.
 This avoids repeated target-prefixed linker searches across the host `PATH`.
 Custom `--cc` drivers and installations without a sibling LLD retain Clang's
-existing linker search. Optimization, runtime libraries and link policy do not
-change; benefits depend on the host search-path cost.
+existing linker search. When built with the matching Clang driver library, a
+native Linux executable link can plan a single `ld.lld` job in process and run
+it directly. Both paths use Clang's target, startup objects, and library
+selection. Custom drivers, Clang configuration or diagnostic overrides,
+sysroot overrides, sanitizer and shared-library links, and unsupported plans
+retain the external driver.
 
 ### 5.1. Compile-time and build-storage gate
 

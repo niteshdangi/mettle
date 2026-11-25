@@ -640,6 +640,9 @@ finishes hashing before moving anything, then publishes the new table
 without calling user code. Allocator calls and exclusive typed map access
 do not overlap. If freeing old storage panics, the published table still owns
 the entries and the remaining storage guards run during unwinding.
+On destruction, the shared storage guards stay live across the typed
+entry-drop callback. A panic in that callback or in the first deallocation
+runs the remaining guards during unwinding. Trivial entries need no callback.
 `drain` empties entries while preserving allocation and yields owned pairs;
 dropping the drain destroys unyielded entries.
 Hash/equality callback counts are not stable API guarantees. Set union yields

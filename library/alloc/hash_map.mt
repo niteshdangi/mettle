@@ -3,7 +3,7 @@ import core.clone.Clone
 import core.default.Default
 import core.cmp.Eq
 import core.fmt
-import super.alloc.{Allocator, Global, AllocError, Layout, layout_unchecked, free_block, handle_alloc_error, layout_of, dangling_for}
+import super.alloc.{Allocator, Global, AllocError, Layout, layout_unchecked, handle_alloc_error, layout_of, dangling_for}
 import super.collections.TryReserveError
 import core.hash.{BuildHasher, Hash, Hasher, SipHasher, sip13}
 import core.cmp.PartialEq
@@ -45,18 +45,21 @@ copy type RebuildAllocator {
 type RebuildBlock {
     ptr: ptr<mut u8>
     layout: Layout
-    allocator: RebuildAllocator
+    context: ptr<mut u8>
+    deallocate: unsafe fn(ptr<mut u8>, ptr<mut u8>, Layout): Unit
     drop {
         if self.layout.size() != 0usize {
-            unsafe { (self.allocator.deallocate)(self.allocator.context, self.ptr, self.layout) }
+            unsafe { (self.deallocate)(self.context, self.ptr, self.layout) }
         }
     }
 }
 
 unsafe fn allocate_rebuild_block(allocator: RebuildAllocator, layout: Layout): RebuildBlock throws TryReserveError {
-    if layout.size() == 0usize { return RebuildBlock(layout.dangling_ptr().as_ptr(), layout, allocator) }
+    if layout.size() == 0usize {
+        return RebuildBlock(layout.dangling_ptr().as_ptr(), layout, allocator.context, allocator.deallocate)
+    }
     match unsafe { (allocator.allocate)(allocator.context, layout) } {
-        success(p) => RebuildBlock(p, layout, allocator),
+        success(p) => RebuildBlock(p, layout, allocator.context, allocator.deallocate),
         failure(_) => throw TryReserveError.allocation_error(layout)
     }
 }
@@ -93,8 +96,8 @@ unsafe fn rebuild_table(
     unsafe { finish(map, RebuildTable(new_payload.ptr, new_controls.ptr, ncap), scratch.ptr.cast<u64>()) }
     core.mem.forget(take new_controls)
     core.mem.forget(take new_payload)
-    let _free_controls = RebuildBlock(old.controls, old_controls, allocator)
-    let _free_payload = RebuildBlock(old.payload, old_payload, allocator)
+    let _free_controls = RebuildBlock(old.controls, old_controls, allocator.context, allocator.deallocate)
+    let _free_payload = RebuildBlock(old.payload, old_payload, allocator.context, allocator.deallocate)
 }
 
 unsafe fn finish_rebuild<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher>(
@@ -187,6 +190,29 @@ extend<region r, K, V> Slots<region r, K, V> {
     }
 }
 
+@inline(never)
+unsafe fn destroy_table(
+    old: RebuildTable, bucket: Layout, table: ptr<mut u8>,
+    deallocate: unsafe fn(ptr<mut u8>, ptr<mut u8>, Layout): Unit,
+    drop_entries: (unsafe fn(ptr<mut u8>): Unit)?
+): Unit {
+    let payload = unsafe { layout_unchecked(old.cap * bucket.size(), bucket.align()) }
+    let control = unsafe { layout_unchecked(if old.cap == 0usize { 0usize } else { old.cap + 16usize }, 1usize) }
+    let _free_controls = RebuildBlock(old.controls, control, table, deallocate)
+    let _free_payload = RebuildBlock(old.payload, payload, table, deallocate)
+    if let present(drop_all) = drop_entries { unsafe { drop_all(table) } }
+}
+
+unsafe fn destroy_entries<K, V, A: Allocator>(table: ptr<mut u8>): Unit {
+    let items = unsafe { mut *table.cast<Table<K, V, A>>() }
+    let count = items.compact()
+    unsafe { super.vec.drop_run(items.ptr, count) }
+}
+
+unsafe fn destroy_deallocate<K, V, A: Allocator>(table: ptr<mut u8>, p: ptr<mut u8>, layout: Layout): Unit {
+    unsafe { (*table.cast<Table<K, V, A>>()).a.deallocate(p, layout) }
+}
+
 // A control below 128 owns exactly one initialized bucket; all other payload slots are uninitialized.
 type Table<K, V, A: Allocator> {
     ptr: ptr<mut Bucket<K, V>>
@@ -196,13 +222,11 @@ type Table<K, V, A: Allocator> {
     deleted: usize
     a: A
     drop {
-        let payload = unsafe { layout_unchecked(self.cap * core.mem.size_of<Bucket<K, V>>(), core.mem.align_of<Bucket<K, V>>()) }
-        let control = unsafe { layout_unchecked(if self.cap == 0usize { 0usize } else { self.cap + 16usize }, 1usize) }
-        let _free_controls = unsafe { free_block(self.controls, control, core.ptr.from_mut(self.a)) }
-        let _free_payload = unsafe { free_block(self.ptr.cast<u8>(), payload, core.ptr.from_mut(self.a)) }
-        if core.mem.needs_drop<Bucket<K, V>>() {
-            let n = self.compact()
-            unsafe { super.vec.drop_run(self.ptr, n) }
+        let old = RebuildTable(self.ptr.cast<u8>(), self.controls, self.cap)
+        let drop_entries = if core.mem.needs_drop<Bucket<K, V>>() { present(destroy_entries<K, V, A>) } else { none }
+        unsafe {
+            destroy_table(old, layout_of<Bucket<K, V>>(), core.ptr.from_mut(self).cast<u8>(),
+                destroy_deallocate<K, V, A>, drop_entries)
         }
     }
 }
@@ -412,7 +436,7 @@ extend<region r, K: Hash + PartialEq, V, A: Allocator, S: BuildHasher, F: mut fn
 pub fn new_in<K, V, A: Allocator>(take a: A): Map<K, V, A> {
     Map<K, V, A>(allocator: take a)
 }
-pub fn new<K, V>(): Map<K, V> { new_in(Global()) }
+pub fn new<K, V>(): Map<K, V> { Map<K, V>() }
 pub fn with_capacity_in<K: Hash + PartialEq, V, A: Allocator>(capacity: usize, take a: A): Map<K, V, A> {
     var map = new_in<K, V, A>(take a)
     map.reserve(capacity)

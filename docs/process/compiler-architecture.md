@@ -324,6 +324,12 @@ do not create a file/cache entry per function. Normal builds support independent
 objects in both profiles. Cross-package optimization is explicit and optional;
 its additional dependency edges participate in invalidation. The future native
 backend consumes the same verified concrete IR through the pipeline boundary.
+Eligible Linux release executables optimize the entry and outlined code with
+the same LLVM O2 pipeline in separate contexts. A local definition referenced
+across that boundary keeps a single body and receives a stable hidden symbol.
+Modules whose linkage or metadata cannot be split remain whole. Machine-unit
+cache keys still cover the optimized unit's bitcode; archive assembly starts
+only once all required objects have been generated or restored.
 
 **Storage.** Use one content-addressed, deduplicated store with an
 unbounded default cache size, an age limit and an optional byte limit. Interface/query/object data
@@ -979,18 +985,19 @@ failures stop compilation rather than silently switching emission paths.
 Coroutine frames use logical body identities. In split emission their body and
 unwind callbacks have hidden external linkage, and only the partition owning
 the coroutine body emits those definitions; layout-only users emit declarations.
-Whole-module O2 remains the optimization boundary. Optimized IR is partitioned
-into independently linkable machine units grouped by operation family and data
+O2 runs over the whole module unless an eligible Linux release entry split
+allows independent O2 pipelines. Optimized IR is partitioned into
+independently linkable machine units grouped by operation family and data
 dependencies; cleanup/drop callbacks inherit their owner's family. Native
 archive representation v3 replaces monolithic native object inputs. The linker
 extracts required units rather than reading every native function's object
 sections. Retention-sensitive assembly, initializers and other unsupported
 partition shapes preserve the monolithic path and explicit force-loading.
 
-Root cache misses still lower and optimize the complete root module. Exact
+Root cache misses still lower and optimize all root code. Exact
 optimized unit IR, declarations, layout, attributes and compiler/target/profile/
 overflow/sanitizer identities govern machine-code reuse; this skips unchanged
-unit emission, not whole-module O2. Native archive hits bypass native lowering,
+unit emission, not O2. Native archive hits bypass native lowering,
 optimization and emission. The existing bounded Store retains aggregate unit
 buckets with current membership, validates object digests and rebuilds malformed
 archives. Cache-only native archives may use a size-framed zstd encoding when

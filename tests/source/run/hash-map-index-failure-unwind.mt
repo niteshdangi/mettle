@@ -233,5 +233,15 @@ fn main(): i32 {
         }
     }
     if state.live != 0 || state.drops != 20 { return 20 }
+    match take catch_panic(fn(): Unit {
+        var doomed = hash_map.new_in<i32, Value, FailingAllocator>(FailingAllocator(pointer))
+        doomed.insert(1, Value(10, pointer))
+        doomed.insert(2, Value(20, pointer))
+        unsafe { (*pointer).panic_deallocate = true }
+    }) {
+        CatchResult.Panicked(_) => {},
+        CatchResult.Returned(_) => { return 32 }
+    }
+    if state.live != 0 || state.drops != 22 { return 33 }
     0
 }

@@ -1,7 +1,10 @@
 #include "backend/llvm/object.h"
 
 #include "types/layout.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
@@ -10,6 +13,7 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -27,14 +31,15 @@
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/IPO/GlobalDCE.h"
+#include "llvm/Transforms/IPO/StripDeadPrototypes.h"
 #include "llvm/Transforms/Instrumentation/AddressSanitizer.h"
 #include "llvm/Transforms/Instrumentation/ThreadSanitizer.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 
+#include <future>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
 #include <vector>
 
@@ -503,6 +508,154 @@ static llvm::Error optimizeObject(llvm::Module &module,
   return llvm::Error::success();
 }
 
+static std::unique_ptr<llvm::Module>
+splitEntryOptimization(llvm::Module &module, llvm::StringRef symbolNamespace) {
+  if (!module.getFunction("main") || !module.getModuleInlineAsm().empty() ||
+      !module.alias_empty() || !module.ifunc_empty() ||
+      module.getNamedMetadata("llvm.dbg.cu") ||
+      llvm::any_of(module.globals(), [](const llvm::GlobalVariable &value) {
+        return !value.isDeclaration() || value.hasExternalWeakLinkage() ||
+               value.getName().starts_with("llvm.");
+      }))
+    return nullptr;
+  using Functions = llvm::SmallPtrSet<llvm::Function *, 32>;
+  llvm::DenseMap<llvm::Function *, llvm::SmallVector<llvm::Function *, 8>>
+      edges;
+  llvm::SmallVector<llvm::Function *, 8> entries;
+  Functions barriers;
+  for (auto &function : module) {
+    if (function.hasExternalWeakLinkage() || function.hasPrefixData() ||
+        function.hasPrologueData() ||
+        function.getMetadata(llvm::LLVMContext::MD_associated))
+      return nullptr;
+    if (function.isDeclaration())
+      continue;
+    auto *family = function.getMetadata("mettle.codegen.family");
+    auto *familyName =
+        family && family->getNumOperands() == 1
+            ? llvm::dyn_cast<llvm::MDString>(family->getOperand(0))
+            : nullptr;
+    if (familyName && familyName->getString() == "main")
+      entries.push_back(&function);
+    else if (function.hasLocalLinkage() &&
+             function.hasFnAttribute(llvm::Attribute::NoInline))
+      barriers.insert(&function);
+    auto &references = edges[&function];
+    llvm::SmallPtrSet<llvm::Value *, 32> seen;
+    llvm::SmallVector<llvm::Value *, 16> pending;
+    for (auto &block : function) {
+      if (block.hasAddressTaken())
+        return nullptr;
+      for (auto &instruction : block)
+        for (auto &use : instruction.operands())
+          pending.push_back(use.get());
+    }
+    while (!pending.empty()) {
+      auto *value = pending.pop_back_val();
+      if (!seen.insert(value).second)
+        continue;
+      if (auto *callee = llvm::dyn_cast<llvm::Function>(value)) {
+        if (!callee->isDeclaration())
+          references.push_back(callee);
+      } else if (auto *assembly = llvm::dyn_cast<llvm::InlineAsm>(value)) {
+        auto text = llvm::StringRef(assembly->getAsmString());
+        if (assembly->hasSideEffects() || text.contains('.') ||
+            llvm::any_of(module, [&](const llvm::Function &candidate) {
+              return candidate.hasName() && text.contains(candidate.getName());
+            }))
+          return nullptr;
+      } else if (auto *constant = llvm::dyn_cast<llvm::Constant>(value)) {
+        for (auto &use : constant->operands())
+          pending.push_back(use.get());
+      }
+    }
+  }
+  if (entries.empty())
+    return nullptr;
+  bool hasLoop = false;
+  for (auto *entry : entries) {
+    llvm::DominatorTree dominance(*entry);
+    llvm::LoopInfo loops(dominance);
+    hasLoop |= !loops.empty();
+    for (auto &block : *entry)
+      if (!loops.getLoopFor(&block))
+        for (auto &instruction : block)
+          if (auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction))
+            if (auto *callee = call->getCalledFunction();
+                callee && callee->hasLocalLinkage() && callee->size() > 1 &&
+                !llvm::is_contained(entries, callee) &&
+                !callee->hasFnAttribute(llvm::Attribute::AlwaysInline))
+              barriers.insert(callee);
+  }
+  if (!hasLoop || barriers.empty())
+    return nullptr;
+  llvm::SmallVector<llvm::Function *, 32> pending;
+  for (auto &[function, references] : edges)
+    if (!function->hasLocalLinkage() &&
+        !function->hasAvailableExternallyLinkage() &&
+        !(function->hasLinkOnceODRLinkage() && function->hasHiddenVisibility()))
+      pending.push_back(function);
+  Functions hot;
+  while (!pending.empty()) {
+    auto *function = pending.pop_back_val();
+    if (!barriers.contains(function) && hot.insert(function).second)
+      pending.append(edges[function].begin(), edges[function].end());
+  }
+  pending.append(barriers.begin(), barriers.end());
+  Functions cold;
+  while (!pending.empty()) {
+    auto *function = pending.pop_back_val();
+    if (!hot.contains(function) && cold.insert(function).second)
+      pending.append(edges[function].begin(), edges[function].end());
+  }
+  if (cold.size() * 4 < hot.size() || hot.size() * 4 < cold.size())
+    return nullptr;
+  llvm::DenseMap<const llvm::Comdat *, bool> comdats;
+  Functions exports;
+  for (auto &[function, references] : edges)
+    if (auto *comdat = function->getComdat()) {
+      bool isolated = cold.contains(function);
+      auto [found, inserted] = comdats.try_emplace(comdat, isolated);
+      if ((!inserted && found->second != isolated) ||
+          comdat->getSelectionKind() != llvm::Comdat::Any)
+        return nullptr;
+    }
+  for (auto &[function, references] : edges)
+    for (auto *reference : references)
+      if (cold.contains(function) != cold.contains(reference)) {
+        if ((reference->hasLinkOnceLinkage() &&
+             !reference->hasLinkOnceODRLinkage()) ||
+            (!cold.contains(function) &&
+             reference->hasFnAttribute(llvm::Attribute::AlwaysInline)))
+          return nullptr;
+        exports.insert(reference);
+      }
+  for (auto &reference : module)
+    if (exports.contains(&reference)) {
+      if (reference.hasLocalLinkage()) {
+        reference.setName("mettle.split." + symbolNamespace + "." +
+                          reference.getName());
+        reference.setLinkage(llvm::GlobalValue::ExternalLinkage);
+        reference.setVisibility(llvm::GlobalValue::HiddenVisibility);
+        reference.setDSOLocal(true);
+      } else if (reference.hasLinkOnceODRLinkage()) {
+        reference.setLinkage(llvm::GlobalValue::WeakODRLinkage);
+      }
+    }
+  llvm::ValueToValueMapTy mapping;
+  auto isolated =
+      llvm::CloneModule(module, mapping, [&](const llvm::GlobalValue *value) {
+        auto *function = llvm::dyn_cast<llvm::Function>(value);
+        return function &&
+               cold.contains(const_cast<llvm::Function *>(function));
+      });
+  for (auto *function : cold) {
+    function->deleteBody();
+    function->setComdat(nullptr);
+  }
+  return isolated;
+}
+
 static llvm::Error writeObject(llvm::Module &module,
                                llvm::TargetMachine &machine,
                                llvm::StringRef output) {
@@ -551,83 +704,132 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
     return machine.takeError();
   if (auto error = verifyObject(module, targetTriple, **machine))
     return error;
-  if (auto error = optimizeObject(module, targetTriple, **machine, optimize,
-                                  false, false))
-    return error;
+  llvm::LLVMContext isolatedContext;
+  std::unique_ptr<llvm::Module> isolated;
+  auto optimizeRoot = [&] {
+    return optimizeObject(module, targetTriple, **machine, optimize, false,
+                          false);
+  };
+  if (optimize && targetTriple.isOSLinux() && llvm::llvm_is_multithreaded())
+    isolated = splitEntryOptimization(module, symbolNamespace);
   struct Job {
     llvm::SmallVector<char, 0> bitcode;
     std::string output;
   };
-  std::vector<Job> jobs;
-  std::unique_ptr<llvm::Module> localOwner;
-  llvm::Module *local = nullptr;
-  std::string localOutput;
-  if (auto error = partitionObjectModule(
-          module, symbolNamespace,
-          [&](llvm::Module &unit,
-              std::unique_ptr<llvm::Module> owner) -> llvm::Error {
-            Job job;
-            llvm::raw_svector_ostream stream(job.bitcode);
-            llvm::WriteBitcodeToFile(unit, stream);
-            auto output =
-                consume(llvm::StringRef(job.bitcode.data(), job.bitcode.size()),
-                        &unit == &module);
-            if (!output)
-              return output.takeError();
-            if (output->empty())
-              return llvm::Error::success();
-            if (!local) {
-              local = &unit;
-              localOwner = std::move(owner);
-              localOutput = std::move(*output);
-              return llvm::Error::success();
-            }
-            job.output = std::move(*output);
-            jobs.push_back(std::move(job));
-            return llvm::Error::success();
-          }))
-    return error;
-  std::vector<std::string> failures(jobs.size());
-  auto run = [&](std::size_t index) {
-    auto &job = jobs[index];
+  auto run = [&](const Job &job,
+                 std::unique_ptr<llvm::TargetMachine> &worker) -> std::string {
     llvm::LLVMContext context;
     auto unit = llvm::parseBitcodeFile(
         llvm::MemoryBufferRef(
             llvm::StringRef(job.bitcode.data(), job.bitcode.size()), ""),
         context);
-    if (!unit) {
-      failures[index] = llvm::toString(unit.takeError());
-      return;
-    }
-    auto worker = createMachine(targetTriple, optimize);
+    if (!unit)
+      return llvm::toString(unit.takeError());
     if (!worker) {
-      failures[index] = llvm::toString(worker.takeError());
-      return;
+      auto target = createMachine(targetTriple, optimize);
+      if (!target)
+        return llvm::toString(target.takeError());
+      worker = std::move(*target);
     }
-    if (auto error = writeObject(**unit, **worker, job.output))
-      failures[index] = llvm::toString(std::move(error));
+    if (auto error = writeObject(**unit, *worker, job.output))
+      return llvm::toString(std::move(error));
+    return {};
   };
-  auto runLocal = [&] {
-    return local ? writeObject(*local, **machine, localOutput)
-                 : llvm::Error::success();
+  std::vector<Job> serial;
+  std::vector<std::shared_future<std::string>> parallel;
+  std::unique_ptr<llvm::DefaultThreadPool> pool;
+  std::unique_ptr<llvm::Module> localOwner;
+  llvm::Module *local = nullptr;
+  std::string localOutput;
+  auto collect = [&](llvm::Module &unit,
+                     std::unique_ptr<llvm::Module> owner) -> llvm::Error {
+    Job job;
+    llvm::raw_svector_ostream stream(job.bitcode);
+    llvm::WriteBitcodeToFile(unit, stream);
+    auto output =
+        consume(llvm::StringRef(job.bitcode.data(), job.bitcode.size()),
+                &unit == &module || &unit == isolated.get());
+    if (!output)
+      return output.takeError();
+    if (output->empty())
+      return llvm::Error::success();
+    if (!local && &unit.getContext() == &module.getContext()) {
+      local = &unit;
+      localOwner = std::move(owner);
+      localOutput = std::move(*output);
+      return llvm::Error::success();
+    }
+    job.output = std::move(*output);
+    if (llvm::llvm_is_multithreaded()) {
+      if (!pool)
+        pool = std::make_unique<llvm::DefaultThreadPool>(
+            llvm::hardware_concurrency());
+      parallel.push_back(pool->async([&run, job = std::move(job)] {
+        thread_local std::unique_ptr<llvm::TargetMachine> worker;
+        return run(job, worker);
+      }));
+    } else {
+      serial.push_back(std::move(job));
+    }
+    return llvm::Error::success();
   };
-  llvm::Error localError = llvm::Error::success();
-  if (!jobs.empty() && llvm::llvm_is_multithreaded()) {
-    llvm::DefaultThreadPool pool(llvm::hardware_concurrency());
-    for (std::size_t index = 0; index < jobs.size(); ++index)
-      pool.async(run, index);
-    localError = runLocal();
-    pool.wait();
-  } else {
-    localError = runLocal();
-    for (std::size_t index = 0; index < jobs.size(); ++index)
-      run(index);
+  if (isolated) {
+    llvm::ModuleAnalysisManager analyses;
+    llvm::StripDeadPrototypesPass{}.run(*isolated, analyses);
+    llvm::SmallVector<char, 0> bitcode;
+    llvm::raw_svector_ostream stream(bitcode);
+    llvm::WriteBitcodeToFile(*isolated, stream);
+    isolated.reset();
+    pool =
+        std::make_unique<llvm::DefaultThreadPool>(llvm::hardware_concurrency());
+    auto root = pool->async([&]() -> std::string {
+      if (auto error = verifyObject(module, targetTriple, **machine))
+        return llvm::toString(std::move(error));
+      return llvm::toString(optimizeRoot());
+    });
+    auto prepareIsolated = [&]() -> llvm::Error {
+      auto part = llvm::parseBitcodeFile(
+          llvm::MemoryBufferRef(llvm::StringRef(bitcode.data(), bitcode.size()),
+                                ""),
+          isolatedContext);
+      if (!part)
+        return part.takeError();
+      isolated = std::move(*part);
+      auto target = createMachine(targetTriple, true);
+      if (!target)
+        return target.takeError();
+      if (auto error = verifyObject(*isolated, targetTriple, **target))
+        return error;
+      if (auto error = optimizeObject(*isolated, targetTriple, **target, true,
+                                      false, false))
+        return error;
+      return partitionObjectModule(*isolated,
+                                   (symbolNamespace + ".split").str(), collect);
+    };
+    auto isolatedError = prepareIsolated();
+    const auto &rootDiagnostic = root.get();
+    if (auto error = llvm::joinErrors(
+            rootDiagnostic.empty()
+                ? llvm::Error::success()
+                : llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                          rootDiagnostic),
+            std::move(isolatedError)))
+      return error;
+  } else if (auto error = optimizeRoot()) {
+    return error;
   }
-  if (localError)
-    return localError;
-  for (const auto &failure : failures)
-    if (!failure.empty())
-      return llvm::createStringError(llvm::inconvertibleErrorCode(), failure);
+  if (auto error = partitionObjectModule(module, symbolNamespace, collect))
+    return error;
+  if (local)
+    if (auto error = writeObject(*local, **machine, localOutput))
+      return error;
+  std::unique_ptr<llvm::TargetMachine> serialMachine;
+  for (const auto &job : serial)
+    if (auto error = run(job, serialMachine); !error.empty())
+      return llvm::createStringError(llvm::inconvertibleErrorCode(), error);
+  for (auto &result : parallel)
+    if (const auto &error = result.get(); !error.empty())
+      return llvm::createStringError(llvm::inconvertibleErrorCode(), error);
   return llvm::Error::success();
 }
 
