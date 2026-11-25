@@ -2172,6 +2172,19 @@ Nine pinned-Rust pairs measured 281/269 ms first application build and
 matched; retained clean bytes were 421,888/507,904.
 Evidence: `~/w/anal/p05-llvm.45uor24m/{phases.log,outline-ab.json,bench/results.json}`.
 
+P05 first-check profiling found 0.09 ms on the main thread assigning
+package owners, versus 3.0 ms importing the checked archive and 4.5 ms
+in semantic checking. Demand-loading authenticated macro metadata did not
+improve P05: 31 interleaved WSL pairs measured 32.31/33.01 ms
+(baseline/candidate), so the change was discarded. The unchanged compiler's
+nine-pair rerun matched outputs and measured 36.87/23.76 ms application
+check and 415.23/450.84 ms application build (Mettle/Rust); both endpoints
+were inconclusive. Native root path resolution on the Windows-mounted
+checkout took several milliseconds. Repeat the phase probe on the Linux
+filesystem before redesigning selectors.
+Evidence: `~/w/anal/p05-prepare.y1ya23wf/prepare.log` and
+`~/w/anal/p05-front.bj9yua4y/{detail.log,macro-ab.json,baseline-bench/results.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
