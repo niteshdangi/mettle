@@ -1430,9 +1430,22 @@ int build(const Options &requested,
   const ir::Program *nativeConsumer = nullptr;
   std::vector<PackageObject> nativeObjects;
   const bool checking = options.command == "check" || options.command == "lint";
-  const bool nativeDeclarations =
-      checking && checkedCore && checkedCore->active();
-  if (prepared && checkedCore && checkedCore->active() && store && !checking) {
+  if (prepared && checking) {
+    if (options.command == "lint")
+      return reportFindings(findings, diagnostics, source,
+                            options.format == "json")
+                 ? 0
+                 : 1;
+    if (options.processExit) {
+      if (checkedCore)
+        checkedCore->releaseLeases();
+      static const void *retained[2];
+      retained[0] = checkedCore.release();
+      retained[1] = new auto(std::move(*prepared));
+    }
+    return 0;
+  }
+  if (prepared && checkedCore && checkedCore->active() && store) {
     auto packageSources = checkedCore->packageSources();
     auto packageKeys = checkedCore->packageKeys();
     nativeObjects = libraryObjects(
@@ -1452,12 +1465,12 @@ int build(const Options &requested,
           return *libraryProgram ? &**libraryProgram : nullptr;
         });
   }
-  auto program = prepared ? nativeDeclarations || !nativeObjects.empty()
-                                ? pipeline::compileWithLibraryObjects(
-                                      *prepared, diagnostics,
-                                      !checking && options.profile == "release")
-                                : pipeline::compile(*prepared, diagnostics)
-                          : std::nullopt;
+  auto program =
+      prepared ? !nativeObjects.empty()
+                     ? pipeline::compileWithLibraryObjects(
+                           *prepared, diagnostics, options.profile == "release")
+                     : pipeline::compile(*prepared, diagnostics)
+               : std::nullopt;
   if (!program) {
     if (failurePhases)
       for (const auto &diagnostic : diagnostics.items)
@@ -1465,22 +1478,6 @@ int build(const Options &requested,
           failurePhases->insert(diagnostic.phase);
     diagnostics.print(source, std::cerr);
     return 1;
-  }
-  if (options.command == "lint")
-    return reportFindings(findings, diagnostics, source,
-                          options.format == "json")
-               ? 0
-               : 1;
-  if (options.command == "check") {
-    if (options.processExit) {
-      if (checkedCore)
-        checkedCore->releaseLeases();
-      static const void *retained[3];
-      retained[0] = checkedCore.release();
-      retained[1] = new auto(std::move(*prepared));
-      retained[2] = new auto(std::move(*program));
-    }
-    return 0;
   }
   nativeConsumer = &program->program();
   std::vector<PackageObject> packageObjects;

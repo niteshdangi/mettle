@@ -520,7 +520,7 @@ generic bounds, macro results or ABI layout.
 
 | Command | Contract |
 | --- | --- |
-| mettle check | Resolve and check selected targets; no executable-generation claim |
+| mettle check | Resolve and check selected targets through ownership analysis of generic bodies; no specialization, so instantiation-only errors are reported by `build` |
 | mettle build | Check and emit selected artifacts with target/profile/lock metadata |
 | mettle run | Build one selected executable, then pass program arguments after `--` |
 | mettle test | Build and run selected tests/doctests with filtering and machine-readable results |
