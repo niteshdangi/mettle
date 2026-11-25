@@ -2251,6 +2251,20 @@ Evidence: `~/w/anal/p05-wslfs.UxroBVgQ` (`macro-fixed-bench-61/results.json`,
 `facts-ab.json`, `facts-bench/results.json`). P05 parity and qualified
 I14 evidence remain open.
 
+Five phase-probed first builds put 181 ms (median) in root LLVM
+optimization, 55 ms in root machine emission and 9 ms in root partitioning.
+The root optimizer alone exceeds the native-only Rust executable-build
+median. The unoptimized P05 IR's largest function is the HashMap rebuild
+cleanup body. Outlining its three allocation branches changed paired build
+and runtime ratios to 0.984 and 0.975 (24 pairs), but both intervals crossed
+1. Leaving lookup inlining to LLVM slowed runtime by 32% in paired
+measurements; O1 and disabling loop unrolling were slower still. None of
+these changes shipped. Next, trace the root O2 passes on the exact split
+module and target the largest cost without removing hot-loop optimization.
+Evidence: `~/w/anal/p05-wslfs.UxroBVgQ` (`facts-codegen-probe/sample*.log`,
+`outline-rebuild/results.json`, `get-inline-experiment/results.json`,
+`facts-pipeline-probe/results.json`).
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
