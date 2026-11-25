@@ -2230,6 +2230,27 @@ first application check measured 23.55/23.07 ms, first application build
 inconclusive. Evidence: `~/w/anal/p05-wslfs.UxroBVgQ`
 (`macro-demand-ab.json`, `macro-fixed-bench/results.json`).
 
+Use a Linux-only `PATH` for WSL measurements. With the same pinned `rustc`,
+changing only `PATH` from inherited (including Windows mounts) to
+`/usr/bin:/bin` reduced direct Rust executable builds from 407.56 to 150.05 ms
+in eight interleaved pairs. The earlier WSL executable-build comparisons
+therefore do not establish parity. With a native-only `PATH`, the 61-pair
+`00832afc` run measured first application check at 25.81/25.60 ms and
+first application build at 343.69/155.41 ms (Mettle/Rust).
+
+Semantic finalization now reuses each node's resolved-fact and inference
+lookup. In 81 interleaved triples, direct first check measured 23.68 ms
+before and 21.98 ms after (Rust: 25.33 ms). The 15-pair full run matched
+original and edited outputs: first application check 23.26/25.65 ms,
+first application build 341.26/156.72 ms, clean build 334.42/217.00 ms,
+and semantic edit 282.70/163.96 ms. These are engineering medians, not
+gate passes. Next, profile the split native/root code-generation critical
+path on the native filesystem. Retained allocation was lower in the
+61-pair run but varied by more than the gate's 1% stability threshold.
+Evidence: `~/w/anal/p05-wslfs.UxroBVgQ` (`macro-fixed-bench-61/results.json`,
+`facts-ab.json`, `facts-bench/results.json`). P05 parity and qualified
+I14 evidence remain open.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

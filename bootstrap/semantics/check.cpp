@@ -966,38 +966,39 @@ std::optional<CheckedModule> Checker::run() {
         for (auto &child : n.children)
           resolve(*child);
       }
-      if (nodeVariables.contains(&n))
-        facts(n).type = inference.value(nodeVariables[&n]);
-      if (facts(n).rebuiltType != Type::Unknown)
-        facts(n).type = facts(n).rebuiltType;
-      if (n.kind == Kind::Name && facts(n).slot >= 0) {
-        facts(n).place = Place{facts(n).slot, {}};
-        if (facts(f).locals[facts(n).slot].patternView)
-          facts(n).place->fields.push_back(Projection::dereference());
+      auto &resolved = facts(n);
+      if (auto variable = nodeVariables.find(&n);
+          variable != nodeVariables.end())
+        resolved.type = inference.value(variable->second);
+      if (resolved.rebuiltType != Type::Unknown)
+        resolved.type = resolved.rebuiltType;
+      if (n.kind == Kind::Name && resolved.slot >= 0) {
+        resolved.place = Place{resolved.slot, {}};
+        if (facts(f).locals[resolved.slot].patternView)
+          resolved.place->fields.push_back(Projection::dereference());
       } else if (n.kind == Kind::Group) {
         const auto &child = facts(*n.children[0]);
-        if (facts(n).rebuiltType != Type::Unknown || child.viewConversion ||
+        if (resolved.rebuiltType != Type::Unknown || child.viewConversion ||
             child.rebuiltType != Type::Unknown || !child.injections.empty())
-          facts(n).place.reset();
+          resolved.place.reset();
         else
-          facts(n).place = child.place;
+          resolved.place = child.place;
       } else if (n.kind == Kind::Unary && n.text == "*" &&
                  facts(*n.children[0]).place) {
-        facts(n).place = facts(*n.children[0]).place;
-        facts(n).place->fields.push_back(Projection::dereference());
+        resolved.place = facts(*n.children[0]).place;
+        resolved.place->fields.push_back(Projection::dereference());
       } else if ((n.kind == Kind::Field || n.kind == Kind::Index) &&
-                 !facts(n).optional && facts(n).field >= 0 &&
+                 !resolved.optional && resolved.field >= 0 &&
                  facts(*n.children[0]).place) {
-        facts(n).place = facts(*n.children[0]).place;
-        for (unsigned i = 0; i < facts(n).dereferences; ++i)
-          facts(n).place->fields.push_back(Projection::dereference());
-        facts(n).place->fields.push_back(
-            Projection::field(static_cast<std::uint32_t>(facts(n).field)));
+        resolved.place = facts(*n.children[0]).place;
+        for (unsigned i = 0; i < resolved.dereferences; ++i)
+          resolved.place->fields.push_back(Projection::dereference());
+        resolved.place->fields.push_back(
+            Projection::field(static_cast<std::uint32_t>(resolved.field)));
       }
     };
     if (f.body.get())
-      if (f.body.get())
-        resolve(*f.body);
+      resolve(*f.body);
     for (auto &parameter : f.parameters)
       if (parameter.defaultValue.get())
         resolve(*parameter.defaultValue);
