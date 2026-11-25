@@ -1,5 +1,8 @@
 #include "backend/llvm/cleanup.h"
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <algorithm>
@@ -534,14 +537,46 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
            source.locals[store.place.root].storage ==
                StorageDuration::Automatic;
   };
+  llvm::SmallPtrSet<const ir::Instruction *, 8> firstStores;
+  for (const auto &block : source.blocks) {
+    llvm::SmallDenseMap<int, llvm::SmallDenseSet<unsigned, 4>, 4> fresh;
+    for (const auto &instruction : block.instructions) {
+      const auto &place = instruction.place;
+      if (place.root < static_cast<int>(source.parameters))
+        continue;
+      const auto &local = source.locals[place.root];
+      if (instruction.op == ir::Op::Declare && place.fields.empty() &&
+          local.storage == StorageDuration::Automatic &&
+          lowering.program.types->needsDrop(local.type)) {
+        fresh[place.root].clear();
+        continue;
+      }
+      auto it = fresh.find(place.root);
+      if (it == fresh.end())
+        continue;
+      if (instruction.op == ir::Op::Store) {
+        if (place.fields.empty() && it->second.empty())
+          firstStores.insert(&instruction);
+        if (place.fields.size() == 1 &&
+            place.fields.front().kind == Projection::Kind::Field &&
+            !lowering.program.types->isSum(local.type)) {
+          if (it->second.insert(place.fields.front().index).second)
+            firstStores.insert(&instruction);
+          continue;
+        }
+      }
+      fresh.erase(it);
+    }
+  }
   std::vector<bool> unstaged(source.values);
   for (const auto &block : source.blocks) {
     const auto &instructions = block.instructions;
-    for (std::size_t i = 2; i < instructions.size(); ++i) {
+    for (std::size_t i = 1; i < instructions.size(); ++i) {
       const auto &store = instructions[i];
-      if (!isFreshStore(instructions[i - 1], store))
+      const bool adjacent = i >= 2 && isFreshStore(instructions[i - 1], store);
+      if (!adjacent && !firstStores.contains(&store))
         continue;
-      const auto value = instructions[i - 2].result;
+      const auto value = instructions[i - (adjacent ? 2 : 1)].result;
       if (value == store.operands[0] && value.access == ir::Access::Owned &&
           lowering.program.types->needsDrop(value.type))
         unstaged[value.id] = true;
@@ -594,7 +629,8 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
       previous = &instruction;
       if (instruction.op != ir::Op::Store)
         continue;
-      if (before && isFreshStore(*before, instruction))
+      if (firstStores.contains(&instruction) ||
+          (before && isFreshStore(*before, instruction)))
         continue;
       auto type = *projectedType(*lowering.program.types,
                                  source.locals[instruction.place.root].type,

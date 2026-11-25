@@ -2469,6 +2469,18 @@ discarded. The unchanged Rust harness still measures a 1.716× first-build
 ratio at `515bcff4`. Receipts:
 `direct-init/{p05-cumulative,direct-frame-early}/ab.json`.
 
+LLVM lowering now installs the first write to an unescaped automatic
+place directly when its declaration and write are in one block. A direct
+field write can initialize a distinct field without replacing a live one;
+other accesses end the proof. Unwind flags still track initialized fields,
+and writes that can replace a live value retain the panic-safe replacement
+path. In 32 matched ext4 pairs, first build fell from 182.00 to 150.72 ms
+(paired ratio 0.834, 95% interval 0.816–0.852), with no measurable runtime
+change (0.995, 0.978–1.011). The unchanged Rust harness matched original
+and edited outputs: first build 156.89/105.75 ms (1.442×), runtime
+31.54/40.04 ms (0.789×). First-build parity remains open. Receipts:
+`direct-init/first-store.SwmuLK/{ab.json,rust/results.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

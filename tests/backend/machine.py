@@ -1761,6 +1761,15 @@ type Guard {
     counter: ptr<mut i32>
     drop { unsafe { *self.counter += 1 } }
 }
+type Pair {
+    first: Guard
+    second: Guard
+    init(first: ptr<mut i32>, second: ptr<mut i32>) {
+        self.first = Guard(first)
+        self.second = Guard(second)
+        self.first = Guard(first)
+    }
+}
 fn run(value: i32): i32 {
     var count = value
     { let guard = Guard(core.ptr.from_mut(count)) }
@@ -1776,7 +1785,13 @@ fn main(): i32 {
     var count = 0
     repeated(core.ptr.from_mut(count), true)
     repeated(core.ptr.from_mut(count), false)
-    if run(1) == 2 && count == 2 { 0 } else { 1 }
+    var first = 0
+    var second = 0
+    {
+        let pair = Pair(core.ptr.from_mut(first), core.ptr.from_mut(second))
+        if first != 1 || second != 0 { return 2 }
+    }
+    if run(1) == 2 && count == 2 && first == 2 && second == 1 { 0 } else { 1 }
 }
 """
 VARIADIC_SOURCE = """
@@ -1876,13 +1891,16 @@ def check_ir_shape(run, args, directory, evidence):
     if bodies["@mettle.run.body"].count("call void @mettle_rt_replace(") > 1:
         raise AssertionError("Initializing the temporary guard uses replacement cleanup")
     unwind = bodies["@mettle.run.unwind"]
-    if unwind.count("call void @mettle_rt_cleanup(") != 3:
+    if unwind.count("call void @mettle_rt_cleanup(") != 2:
         raise AssertionError("The guard initializer has a separate unwind slot")
     repeated = bodies["@mettle.repeated.body"]
     if repeated.count("call void @mettle.repeated.scope(") != 2:
         raise AssertionError("Early return and fallthrough duplicate scope cleanup")
     if "landingpad " in bodies["@mettle.observe"] or "@mettle.observe.unwind" in bodies:
         raise AssertionError("Borrowed guard generated an empty unwind cleanup")
+    pair = bodies['@"mettle.Pair.init$init0.body"']
+    if pair.count("call void @mettle_rt_replace(") != 1:
+        raise AssertionError("Only the live constructor field needs replacement cleanup")
     obj = directory / "shape-cleanup-run"
     run([args.compiler, "build", directory / "shape-cleanup.mt",
          "-o", obj, "--profile", "release"])
