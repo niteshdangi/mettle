@@ -1768,8 +1768,10 @@ fn run(value: i32): i32 {
 }
 fn repeated(counter: ptr<mut i32>, early: bool): Unit {
     let guard = Guard(counter)
+    observe(guard)
     if early { return () }
 }
+fn observe(read guard: Guard): i32 { unsafe { *guard.counter } }
 fn main(): i32 {
     var count = 0
     repeated(core.ptr.from_mut(count), true)
@@ -1879,6 +1881,8 @@ def check_ir_shape(run, args, directory, evidence):
     repeated = bodies["@mettle.repeated.body"]
     if repeated.count("call void @mettle.repeated.scope(") != 2:
         raise AssertionError("Early return and fallthrough duplicate scope cleanup")
+    if "landingpad " in bodies["@mettle.observe"] or "@mettle.observe.unwind" in bodies:
+        raise AssertionError("Borrowed guard generated an empty unwind cleanup")
     obj = directory / "shape-cleanup-run"
     run([args.compiler, "build", directory / "shape-cleanup.mt",
          "-o", obj, "--profile", "release"])

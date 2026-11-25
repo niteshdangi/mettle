@@ -1656,6 +1656,9 @@ Hosted lexical scope exits skip runtime cleanup only when the root and every
 descendant have clear flags; a partially moved root can still own live fields.
 Repeated exits from the same hosted scope share one out-of-line check and drop
 sequence. It reads the frame at each exit and preserves the planned drop order.
+An ordinary native call frame without unwind obligations propagates panic
+directly, even if it tracks borrowed places. Foreign non-unwinding boundaries
+retain their panic guard.
 
 Generated wrapper frames keep owned storage alive while body callbacks unwind;
 cleanup never follows addresses into an already-unwound callback frame. The native

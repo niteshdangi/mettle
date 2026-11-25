@@ -1103,12 +1103,19 @@ void CleanupFrame::emitCallbacks() {
   auto saved = lowering.builder.saveIP();
   for (auto &replacement : replacements)
     emitReplacement(replacement);
-  frame = cleanupFunction->getArg(0);
-  lowering.builder.SetInsertPoint(
-      llvm::BasicBlock::Create(lowering.context, "entry", cleanupFunction));
-  for (auto root : cleanupOrder())
-    callDrop(roots[root].node, cleanupFunction->getArg(1));
-  lowering.builder.CreateRetVoid();
+  auto order = cleanupOrder();
+  if (order.empty() && !source.coroutine && source.abi != "C" &&
+      source.abi != "system") {
+    cleanupFunction->eraseFromParent();
+    cleanupFunction = nullptr;
+  } else {
+    frame = cleanupFunction->getArg(0);
+    lowering.builder.SetInsertPoint(
+        llvm::BasicBlock::Create(lowering.context, "entry", cleanupFunction));
+    for (auto root : order)
+      callDrop(roots[root].node, cleanupFunction->getArg(1));
+    lowering.builder.CreateRetVoid();
+  }
   frame = bodyFunction->getArg(0);
   lowering.builder.restoreIP(saved);
 }
@@ -1160,8 +1167,7 @@ llvm::Value *CleanupFrame::createWrapper() {
   }
   bindStatics();
   auto *outerFrame = frame;
-  if (lowering.freestanding ||
-      (nodes.empty() && source.abi != "C" && source.abi != "system"))
+  if (lowering.freestanding || !cleanupFunction)
     builder.CreateCall(bodyFunction, {frame});
   else if (source.abi == "C" || source.abi == "system")
     builder.CreateCall(lowering.runtime("mettle_rt_run_c", builder.getVoidTy(),

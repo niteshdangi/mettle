@@ -2328,6 +2328,18 @@ before emission, 20 ms native link, 8 ms publication, 5 ms partitioning,
 optimization remains the largest target, followed by machine emission and
 pre-emission work. Receipts: `direct-init/{flag-ranges/ab.json,full-phases/phases.json}`.
 
+Per-function O2 traces exposed empty unwind callbacks on borrowed HashMap
+lookup paths: their wrappers still emitted landing pads, which LLVM inlined
+into the application. Native wrappers now use the actual unwind cleanup
+order rather than the presence of tracked places; C and system panic
+boundaries and coroutine cleanup are unchanged. All 18 empty wrappers in
+P05's split root disappeared (19 in the combined module). In 32 matched ext4
+pairs, first-build ratio was 1.002 (95% interval 0.983–1.022) and runtime ratio
+0.997 (0.984–1.011), establishing no speedup. The unchanged Rust harness
+matched original and edited outputs and put first build at 211/106 ms
+(paired ratio 1.90). Scoped parallel ASan/UBSan passed. Receipts:
+`direct-init/{full-phases/trace-by-function.json,empty-unwind/ab.json,empty-unwind/rust/results.json,empty-unwind/san.log}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
