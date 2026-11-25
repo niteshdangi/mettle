@@ -2357,6 +2357,15 @@ Rust harness matched both outputs: first build 203.83/105.38 ms (1.866×),
 runtime 33.27/38.57 ms (0.862×). Receipts:
 `direct-init/rebuild-control-fill/{ab.json,rust/results.json}`.
 
+Rebuild layout checks now take an element layout instead of capturing the
+generic bucket type. The existing native alloc archive owns the non-generic
+routine, so fresh consumers with an archive hit skip its optimization. In 34
+matched ext4 pairs, first build fell from 208.86 to 200.46 ms (paired ratio
+0.957, 95% interval 0.938–0.977); runtime was unchanged (0.999, 0.987–1.011).
+The unchanged Rust harness matched both outputs: first build 195.57/100.52 ms
+(1.870×), runtime 32.42/37.62 ms (0.864×). Receipts:
+`direct-init/rebuild-layouts/{ab.json,rust/results.json}`.
+
 An offline replay isolated 22.47 ms of root optimization in the concrete
 rebuild family. Its standalone archive linked with both workload revisions;
 the dependency-closed IR matched after removing module identity. This is not

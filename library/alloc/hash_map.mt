@@ -17,15 +17,23 @@ pub type Bucket<K, V> {
 
 fn table_limit(cap: usize): usize { cap - cap / 8usize }
 
-fn array_layout<T>(count: usize): Layout throws TryReserveError {
-    let bytes = match count.checked_mul(core.mem.size_of<T>()) {
+fn array_layout(element: Layout, count: usize): Layout throws TryReserveError {
+    let bytes = match count.checked_mul(element.size()) {
         present(bytes) => bytes,
         none => throw TryReserveError.capacity_overflow()
     }
-    if bytes > isize.MAX as usize - (core.mem.align_of<T>() - 1usize) {
+    if bytes > isize.MAX as usize - (element.align() - 1usize) {
         throw TryReserveError.capacity_overflow()
     }
-    unsafe { layout_unchecked(bytes, core.mem.align_of<T>()) }
+    unsafe { layout_unchecked(bytes, element.align()) }
+}
+
+@inline(never)
+fn rebuild_layouts(bucket: Layout, capacity: usize, count: usize): (Layout, Layout, Layout) throws TryReserveError {
+    let payload = try array_layout(bucket, capacity)
+    let control = try array_layout(layout_of<u8>(), if capacity == 0usize { 0usize } else { capacity + 16usize })
+    let hashes = try array_layout(layout_of<u64>(), count)
+    (payload, control, hashes)
 }
 
 @inline(never)
@@ -476,9 +484,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
 
     @inline(never)
     mut fn rebuild(ncap: usize): Unit throws TryReserveError {
-        let payload = try array_layout<Bucket<K, V>>(ncap)
-        let control = try array_layout<u8>(if ncap == 0usize { 0usize } else { ncap + 16usize })
-        let hashes = try array_layout<u64>(self.entries.count)
+        let (payload, control, hashes) = try rebuild_layouts(layout_of<Bucket<K, V>>(), ncap, self.entries.count)
         let a = core.ptr.from_mut(self.entries.a)
         let np = (try allocate_rebuild_block(self.entries.a, payload, dangling_for<Bucket<K, V>>().cast<u8>())).cast<Bucket<K, V>>()
         let payload_guard = unsafe { free_block(np.cast<u8>(), payload, a) }
