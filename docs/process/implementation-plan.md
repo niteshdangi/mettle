@@ -2304,6 +2304,19 @@ parallel instrumented build and checksum passed; receipts are
 `direct-init/{unstaged-rust-bench/results.json,unstaged-san.log}`. The next
 target is root LLVM optimization; source freeze and P05 parity remain open.
 
+Reprofiling `cff5f9ce` with both native package archives present measured
+116 ms in root optimization, 35 ms in machine emission and 60 ms outside
+the root probe, on a 218 ms first build. InstCombine led the separate O2
+replay at 30 ms. Sharing repeated hosted scope exits reduced the HashMap
+rebuild body from 2,311 to 1,443 LLVM IR lines and first-build medians from
+220 to 203 ms across 28 matched ext4 pairs (ratio 0.924, 95% interval
+0.904–0.945). Runtime ratio was 1.009 (0.994–1.025). The unchanged 15-pair
+Rust comparison matched original and edited output; first build was
+215/111 ms (paired ratio 1.90), and runtime 33.4/38.5 ms (Mettle/Rust).
+Parallel scoped ASan/UBSan coverage passed. P05 build parity remains open.
+Receipts: `direct-init/reprofile-cff5f9ce/phases.json` and
+`direct-init/shared-scope/{ab.json,rust/results.json,san.log}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

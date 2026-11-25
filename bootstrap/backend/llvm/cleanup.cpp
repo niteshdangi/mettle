@@ -504,6 +504,28 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
                          lowering.alignment(source.result));
   if (source.trackCaller)
     callerField = addField(lowering.builder.getPtrTy(), 8);
+  if (!lowering.freestanding) {
+    std::vector<bool> seen(plan.scopes.size());
+    for (const auto &block : source.blocks)
+      for (const auto &instruction : block.instructions)
+        if (instruction.op == ir::Op::ScopeExit &&
+            !plan.scopes.at(instruction.number).empty()) {
+          const auto scope = instruction.number;
+          if (seen[scope]) {
+            if (sharedScopeExits.empty())
+              sharedScopeExits.resize(plan.scopes.size());
+            auto *&callback = sharedScopeExits[scope];
+            if (!callback) {
+              callback = lowering.callback(name + ".scope");
+              callback->addFnAttr(llvm::Attribute::NoInline);
+              if (auto *family =
+                      bodyFunction->getMetadata("mettle.codegen.family"))
+                callback->setMetadata("mettle.codegen.family", family);
+            }
+          }
+          seen[scope] = true;
+        }
+  }
   auto isFreshStore = [&](const ir::Instruction &declaration,
                           const ir::Instruction &store) {
     return declaration.op == ir::Op::Declare && store.op == ir::Op::Store &&
@@ -1327,6 +1349,27 @@ void CleanupFrame::store(const ir::Instruction &instruction,
 }
 
 void CleanupFrame::scopeExit(int scope) {
+  if (!sharedScopeExits.empty())
+    if (auto *callback = sharedScopeExits[scope]) {
+      auto &builder = lowering.builder;
+      if (callback->empty()) {
+        auto saved = builder.saveIP();
+        auto *savedFrame = frame;
+        frame = callback->getArg(0);
+        builder.SetInsertPoint(
+            llvm::BasicBlock::Create(lowering.context, "entry", callback));
+        emitScopeExit(scope);
+        builder.CreateRetVoid();
+        frame = savedFrame;
+        builder.restoreIP(saved);
+      }
+      builder.CreateCall(callback, {frame});
+      return;
+    }
+  emitScopeExit(scope);
+}
+
+void CleanupFrame::emitScopeExit(int scope) {
   auto &builder = lowering.builder;
   for (int node : plan.scopes.at(scope)) {
     auto place = planNodes[node];

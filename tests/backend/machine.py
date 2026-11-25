@@ -1766,7 +1766,16 @@ fn run(value: i32): i32 {
     { let guard = Guard(core.ptr.from_mut(count)) }
     count
 }
-fn main(): i32 { if run(1) == 2 { 0 } else { 1 } }
+fn repeated(counter: ptr<mut i32>, early: bool): Unit {
+    let guard = Guard(counter)
+    if early { return () }
+}
+fn main(): i32 {
+    var count = 0
+    repeated(core.ptr.from_mut(count), true)
+    repeated(core.ptr.from_mut(count), false)
+    if run(1) == 2 && count == 2 { 0 } else { 1 }
+}
 """
 VARIADIC_SOURCE = """
 unsafe extern "C" fn sum(count: i32, args: ...): i32 { args.arg<i32>() + count }
@@ -1861,12 +1870,15 @@ def check_ir_shape(run, args, directory, evidence):
                "mettle_rt_unwind_begin" in body
                for _, _, body in functions(cleanup)):
         raise AssertionError("A function with a destructor lost its cleanup frame")
-    if cleanup.count("call void @mettle_rt_replace(") > 1:
+    bodies = {name: body for name, _, body in functions(cleanup)}
+    if bodies["@mettle.run.body"].count("call void @mettle_rt_replace(") > 1:
         raise AssertionError("Initializing the temporary guard uses replacement cleanup")
-    unwind = next(body for name, _, body in functions(cleanup)
-                  if name == "@mettle.run.unwind")
+    unwind = bodies["@mettle.run.unwind"]
     if unwind.count("call void @mettle_rt_cleanup(") != 3:
         raise AssertionError("The guard initializer has a separate unwind slot")
+    repeated = bodies["@mettle.repeated.body"]
+    if repeated.count("call void @mettle.repeated.scope(") != 2:
+        raise AssertionError("Early return and fallthrough duplicate scope cleanup")
     obj = directory / "shape-cleanup-run"
     run([args.compiler, "build", directory / "shape-cleanup.mt",
          "-o", obj, "--profile", "release"])

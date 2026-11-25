@@ -166,6 +166,7 @@ private:
   std::vector<Replacement> replacements;
   std::unordered_map<const ir::Instruction *, unsigned> replacementIndices;
   std::unordered_map<unsigned, llvm::Function *> drops;
+  std::vector<llvm::Function *> sharedScopeExits;
 
   unsigned addField(llvm::Type *type, std::uint64_t alignment = 0);
   void clearFlags();
@@ -182,6 +183,7 @@ private:
   llvm::Value *hasLiveDrop(unsigned node);
   void drop(unsigned node);
   llvm::Function *dropCallback(unsigned node);
+  void emitScopeExit(int scope);
   void emitCallbacks();
   void emitReplacement(Replacement &replacement);
   void callDrop(unsigned node, llvm::Value *unwinding);
