@@ -2258,12 +2258,16 @@ median. The unoptimized P05 IR's largest function is the HashMap rebuild
 cleanup body. Outlining its three allocation branches changed paired build
 and runtime ratios to 0.984 and 0.975 (24 pairs), but both intervals crossed
 1. Leaving lookup inlining to LLVM slowed runtime by 32% in paired
-measurements; O1 and disabling loop unrolling were slower still. None of
-these changes shipped. Next, trace the root O2 passes on the exact split
-module and target the largest cost without removing hot-loop optimization.
+measurements; O1 and disabling loop unrolling were slower still. None shipped.
+Pinned `opt` on the exact split root module attributed 41 ms to
+InstCombine, 18 ms to SimplifyCFG and 16 ms to inlining. Early GlobalDCE,
+mem2reg/SimplifyCFG, and SROA/EarlyCSE/SimplifyCFG each made this offline
+O2 replay slower. The remaining target is reducing the IR work handed to
+LLVM without removing hot-loop optimization, not adding early passes.
 Evidence: `~/w/anal/p05-wslfs.UxroBVgQ` (`facts-codegen-probe/sample*.log`,
 `outline-rebuild/results.json`, `get-inline-experiment/results.json`,
-`facts-pipeline-probe/results.json`).
+`facts-pipeline-probe/results.json`, `facts-root-pass-probe/root-passes.txt`
+and `facts-root-pass-probe/prepasses.json`).
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
