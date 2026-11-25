@@ -206,6 +206,13 @@ public:
     return result;
   }
   std::string text() { return std::string(textView()); }
+  void skip(std::size_t size) {
+    if (!good() || size > remaining()) {
+      fail("truncated table");
+      return;
+    }
+    offset += size;
+  }
   std::span<const std::uint8_t> data() {
     auto size = integer();
     if (!good() || size > remaining()) {
@@ -957,15 +964,18 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
   auto readSeals = [&] {
     const auto count = in.count(68, limits::functions);
     std::vector<std::string_view> seals;
+    if (authenticated) {
+      in.skip(count * 68);
+      return seals;
+    }
     seals.reserve(count);
     for (std::size_t i = 0; in.good() && i < count; ++i) {
       auto seal = in.textView();
-      if (!authenticated &&
-          (seal.size() != 64 ||
-           std::any_of(seal.begin(), seal.end(), [](unsigned char byte) {
-             return !(byte >= '0' && byte <= '9') &&
-                    !(byte >= 'a' && byte <= 'f');
-           })))
+      if (seal.size() != 64 ||
+          std::any_of(seal.begin(), seal.end(), [](unsigned char byte) {
+            return !(byte >= '0' && byte <= '9') &&
+                   !(byte >= 'a' && byte <= 'f');
+          }))
         in.fail("invalid deferred payload seal");
       seals.push_back(seal);
     }

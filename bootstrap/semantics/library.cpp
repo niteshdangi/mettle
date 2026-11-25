@@ -696,29 +696,31 @@ public:
         return result;
       };
       auto base = position() - records.size();
-      Archive frames(records, *decode, types, sourceRevisions());
-      frames.headerSources = headerSources;
-      for (std::uint64_t i = 0; i < count && good(); ++i) {
-        if (recordOffset(i) != frames.position()) {
-          fail("invalid indexed declaration offset");
-          break;
+      if (!trusted) {
+        Archive frames(records, *decode, types, sourceRevisions());
+        frames.headerSources = headerSources;
+        for (std::uint64_t i = 0; i < count && good(); ++i) {
+          if (recordOffset(i) != frames.position()) {
+            fail("invalid indexed declaration offset");
+            break;
+          }
+          auto header = frames.readBlock();
+          frames.readBlock();
+          if (validateUnused) {
+            Archive scan(header, *decode, types, sourceRevisions());
+            scan.headerSources = headerSources;
+            scan.scanningProjection = true;
+            T discarded;
+            scan.projectHeader(discarded);
+            scan.finish();
+            if (!scan.good())
+              fail(std::move(scan.error));
+          }
         }
-        auto header = frames.readBlock();
-        frames.readBlock();
-        if (validateUnused) {
-          Archive scan(header, *decode, types, sourceRevisions());
-          scan.headerSources = headerSources;
-          scan.scanningProjection = true;
-          T discarded;
-          scan.projectHeader(discarded);
-          scan.finish();
-          if (!scan.good())
-            fail(std::move(scan.error));
-        }
+        frames.finish();
+        if (!frames.good())
+          fail(std::move(frames.error));
       }
-      frames.finish();
-      if (!frames.good())
-        fail(std::move(frames.error));
       if (!good())
         return;
       auto read = readSyntax;
@@ -816,7 +818,8 @@ public:
       return static_cast<std::size_t>(result);
     };
     Archive scan(records, *decode, types);
-    for (std::size_t i = 0; i < count && good() && scan.good(); ++i) {
+    for (std::size_t i = 0; !trusted && i < count && good() && scan.good();
+         ++i) {
       if (recordOffset(i) != scan.position()) {
         scan.fail("invalid checked type declaration offset");
         break;
@@ -849,7 +852,8 @@ public:
         }
       }
     }
-    scan.finish();
+    if (!trusted)
+      scan.finish();
     if (!scan.good()) {
       fail(std::move(scan.error));
       return;
