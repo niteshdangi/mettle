@@ -2118,6 +2118,16 @@ target is repeated root optimization: the main thread dominated the build
 profile even with authenticated archives, and the native object key still
 depends on the application's full native demand.
 
+Keeping `HashMap.rebuild` out of line stops LLVM from folding the growth
+and shrink path into P05's hot insertion loop. Twelve paired first builds
+improved from 435 to 300 ms and seed-edit builds from 415 to 252 ms. In 45
+fixed-core runtime pairs the medians were both 33.46 ms. The comparison
+harness measured 296/312 ms (Mettle/Rust) for clean build, 254/272 ms for
+semantic edit, and 304/263 ms for first application build. Outputs matched
+before and after edits, and 12 focused source/profile cases passed.
+First application check, no-op build and retained bytes remain behind Rust.
+Evidence: `~/w/anal/p05-out-of-line.KZCEFY/{comparison.json,bench/results.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

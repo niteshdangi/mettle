@@ -465,6 +465,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         self.find_pos(hash, key).1
     }
 
+    @inline(never)
     mut fn rebuild(ncap: usize): Unit throws TryReserveError {
         let payload = try array_layout<Bucket<K, V>>(ncap)
         let control = try array_layout<u8>(if ncap == 0usize { 0usize } else { ncap + 16usize })
