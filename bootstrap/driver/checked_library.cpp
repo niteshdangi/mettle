@@ -1185,6 +1185,7 @@ CheckedLibrary::import(const Module &module,
       return reused;
   const auto validation = archive.trusted ? metadata::ValidationMode::Trusted
                                           : metadata::ValidationMode::OnUse;
+  const bool overlapIR = archive.trusted && !options.libraryQueries;
   auto storage = std::make_shared<const ImportedStorage>(ImportedStorage{
       archive.sources, std::move(archive.ir), archive.declarations,
       archive.verifyIRBody, archive.verifyDeclarationPayload, archive.backing});
@@ -1206,8 +1207,9 @@ CheckedLibrary::import(const Module &module,
   };
   auto retainedReferences =
       std::make_shared<const metadata::DecodeReferences>(references);
-  auto pendingIR =
-      std::async(std::launch::async | std::launch::deferred,
+  auto pendingIR = std::make_shared<std::future<ir::DecodeResult>>(
+      std::async(overlapIR ? std::launch::async
+                           : std::launch::async | std::launch::deferred,
                  [storage, retainedReferences, validation] {
                    return ir::decodeProgramLazy(
                        storage->ir, *retainedReferences, true,
@@ -1215,7 +1217,7 @@ CheckedLibrary::import(const Module &module,
                        validation == metadata::ValidationMode::Trusted
                            ? validation
                            : metadata::ValidationMode::OnDemand);
-                 });
+                 }));
   auto declarations = importLibraryDeclarations(
       storage->declarations, types, *retainedReferences, &module, storage,
       retainedReferences, validation, {}, storage->verifyDeclarationPayload,
@@ -1224,112 +1226,129 @@ CheckedLibrary::import(const Module &module,
     return fail(declarations.error);
   if (declarations.declarations->closures.size() != closureCount)
     return fail("compiled closure declarations do not form the header prefix");
-  auto decoded = pendingIR.get();
-  if (!decoded)
-    return fail(decoded.error);
-  if (decoded.program.functions.size() < functions + nativeDefaults ||
-      decoded.program.statics.size() != statics)
-    return fail("compiled IR definitions do not match the declaration header");
-  auto supportCount =
-      decoded.program.functions.size() - functions - nativeDefaults;
-  supportLimit->store(supportCount);
-  if (largestSupportOrdinal->load() >= static_cast<std::int64_t>(supportCount))
-    return fail("compiled support identity exceeds its artifact-local table");
-  auto bodies = std::make_shared<lowering::ImportedBodies>();
-  bodies->functionRecords.resize(functions);
-  std::size_t sourceBodies = 0;
-  std::vector<std::optional<std::size_t>> supportRecords(supportCount);
-  auto headerIndex = std::const_pointer_cast<std::vector<ir::FunctionIndex>>(
-      std::move(decoded.program.functionIndex));
-  if (!headerIndex)
-    headerIndex = std::make_shared<std::vector<ir::FunctionIndex>>();
-  for (std::size_t i = 0; i < decoded.program.functions.size(); ++i) {
-    auto destination = decoded.functionDestinations[i];
-    if (destination < functions) {
-      if (bodies->functionRecords[destination])
-        return fail("duplicate compiled function destination");
-      bodies->functionRecords[destination] = i;
-      ++sourceBodies;
-    } else if (destination < supportBase) {
-      if (destination < module.functions.size() ||
-          destination - module.functions.size() >= nativeDefaults)
-        return fail("compiled body occupies a consumer default-helper slot");
-      (*headerIndex)[i].name = decoded.functionIdentities[i];
-      if (!bodies->defaultRecords
-               .emplace(
-                   catalog->defaultAt(destination - module.functions.size()), i)
-               .second)
-        return fail("duplicate compiled function destination");
-    } else if (destination - supportBase < supportCount) {
-      (*headerIndex)[i].name = decoded.functionIdentities[i];
-      if (supportRecords[destination - supportBase])
-        return fail("duplicate compiled function destination");
-      supportRecords[destination - supportBase] = i;
-    } else {
-      return fail("compiled body destination exceeds its support table");
-    }
-  }
-  if (sourceBodies != functions ||
-      bodies->defaultRecords.size() != nativeDefaults)
-    return fail("compiled IR is missing a source function or default helper");
-  for (auto record : supportRecords)
-    if (!record)
-      return fail("compiled support destinations contain a gap");
-  bodies->supportRecords = std::move(supportRecords);
-  bodies->headers = std::move(decoded.program.functions);
-  bodies->statics = std::move(decoded.program.statics);
-  bodies->headerIndex = std::move(headerIndex);
-  if (!decoded.lazyFunctions)
-    return fail("compiled IR function body loader is absent");
-  bodies->functionBodySizes = std::move(decoded.functionBodySizes);
-  auto lazyFunctions = decoded.lazyFunctions;
-  bodies->summaryReferences = references;
-  bodies->loadSummary = [lazyFunctions](std::size_t record,
-                                        std::string &error) {
-    return lazyFunctions->summary(record, error);
-  };
-  auto bodyReferences = references;
-  bodies->loadFunction =
-      [lazyFunctions, bodyReferences = std::move(bodyReferences),
-       largestSupportOrdinal, supportCount](
-          std::size_t record, const ir::Function &header,
-          std::string &error) mutable -> std::optional<ir::Function> {
-    auto decodedBody = lazyFunctions->load(record, header, bodyReferences);
-    if (!decodedBody) {
-      error = std::move(decodedBody.error);
-      return std::nullopt;
-    }
-    if (largestSupportOrdinal->load() >=
-        static_cast<std::int64_t>(supportCount)) {
-      error = "compiled support identity exceeds its artifact-local table";
-      return std::nullopt;
-    }
-    return std::move(decodedBody.function);
-  };
-  bodies->closureFunctions.assign(closureCount, -1);
-  for (auto [slot, function] : decoded.closureFunctions) {
-    if (slot >= closureCount || bodies->closureFunctions[slot] != -1)
-      return fail(
-          "compiled closure destinations conflict or exceed the header");
-    bodies->closureFunctions[slot] = function;
-  }
-  if (std::any_of(bodies->closureFunctions.begin(),
-                  bodies->closureFunctions.end(),
-                  [](auto function) { return function < 0; }))
-    return fail("compiled closure destinations contain a gap");
-  for (std::size_t i = 0; i < decoded.staticDestinations.size(); ++i)
-    if (decoded.staticDestinations[i] != i)
-      return fail("compiled static destination does not match its header");
-  decoded.program.functions.clear();
-  decoded.program.functionPackages.clear();
-  decoded.program.statics.clear();
-  decoded.program.staticPackages.clear();
   types->shareInterning();
-  decoded.program.types = types;
   pipeline::ImportedProgram imported;
   imported.declarations = std::move(declarations.declarations);
-  imported.bodies = std::move(bodies);
-  imported.metadata = std::move(decoded.program);
+  auto finishIR = [pendingIR = std::move(pendingIR), types,
+                   functions = functions, statics = statics,
+                   functionCount = module.functions.size(), nativeDefaults,
+                   supportBase, supportLimit, largestSupportOrdinal, references,
+                   catalog, closureCount](pipeline::ImportedProgram &imported,
+                                          Diagnostics &diagnostics) {
+    auto fail = [&](const std::string &message) {
+      diagnostics.error("metadata", {}, message);
+      return false;
+    };
+    auto decoded = pendingIR->get();
+    if (!decoded)
+      return fail(decoded.error);
+    if (decoded.program.functions.size() < functions + nativeDefaults ||
+        decoded.program.statics.size() != statics)
+      return fail(
+          "compiled IR definitions do not match the declaration header");
+    auto supportCount =
+        decoded.program.functions.size() - functions - nativeDefaults;
+    supportLimit->store(supportCount);
+    if (largestSupportOrdinal->load() >=
+        static_cast<std::int64_t>(supportCount))
+      return fail("compiled support identity exceeds its artifact-local table");
+    auto bodies = std::make_shared<lowering::ImportedBodies>();
+    bodies->functionRecords.resize(functions);
+    std::size_t sourceBodies = 0;
+    std::vector<std::optional<std::size_t>> supportRecords(supportCount);
+    auto headerIndex = std::const_pointer_cast<std::vector<ir::FunctionIndex>>(
+        std::move(decoded.program.functionIndex));
+    if (!headerIndex)
+      headerIndex = std::make_shared<std::vector<ir::FunctionIndex>>();
+    for (std::size_t i = 0; i < decoded.program.functions.size(); ++i) {
+      auto destination = decoded.functionDestinations[i];
+      if (destination < functions) {
+        if (bodies->functionRecords[destination])
+          return fail("duplicate compiled function destination");
+        bodies->functionRecords[destination] = i;
+        ++sourceBodies;
+      } else if (destination < supportBase) {
+        if (destination < functionCount ||
+            destination - functionCount >= nativeDefaults)
+          return fail("compiled body occupies a consumer default-helper slot");
+        (*headerIndex)[i].name = decoded.functionIdentities[i];
+        if (!bodies->defaultRecords
+                 .emplace(catalog->defaultAt(destination - functionCount), i)
+                 .second)
+          return fail("duplicate compiled function destination");
+      } else if (destination - supportBase < supportCount) {
+        (*headerIndex)[i].name = decoded.functionIdentities[i];
+        if (supportRecords[destination - supportBase])
+          return fail("duplicate compiled function destination");
+        supportRecords[destination - supportBase] = i;
+      } else {
+        return fail("compiled body destination exceeds its support table");
+      }
+    }
+    if (sourceBodies != functions ||
+        bodies->defaultRecords.size() != nativeDefaults)
+      return fail("compiled IR is missing a source function or default helper");
+    for (auto record : supportRecords)
+      if (!record)
+        return fail("compiled support destinations contain a gap");
+    bodies->supportRecords = std::move(supportRecords);
+    bodies->headers = std::move(decoded.program.functions);
+    bodies->statics = std::move(decoded.program.statics);
+    bodies->headerIndex = std::move(headerIndex);
+    if (!decoded.lazyFunctions)
+      return fail("compiled IR function body loader is absent");
+    bodies->functionBodySizes = std::move(decoded.functionBodySizes);
+    auto lazyFunctions = decoded.lazyFunctions;
+    bodies->summaryReferences = references;
+    bodies->loadSummary = [lazyFunctions](std::size_t record,
+                                          std::string &error) {
+      return lazyFunctions->summary(record, error);
+    };
+    auto bodyReferences = references;
+    bodies->loadFunction =
+        [lazyFunctions, bodyReferences = std::move(bodyReferences),
+         largestSupportOrdinal, supportCount](
+            std::size_t record, const ir::Function &header,
+            std::string &error) mutable -> std::optional<ir::Function> {
+      auto decodedBody = lazyFunctions->load(record, header, bodyReferences);
+      if (!decodedBody) {
+        error = std::move(decodedBody.error);
+        return std::nullopt;
+      }
+      if (largestSupportOrdinal->load() >=
+          static_cast<std::int64_t>(supportCount)) {
+        error = "compiled support identity exceeds its artifact-local table";
+        return std::nullopt;
+      }
+      return std::move(decodedBody.function);
+    };
+    bodies->closureFunctions.assign(closureCount, -1);
+    for (auto [slot, function] : decoded.closureFunctions) {
+      if (slot >= closureCount || bodies->closureFunctions[slot] != -1)
+        return fail(
+            "compiled closure destinations conflict or exceed the header");
+      bodies->closureFunctions[slot] = function;
+    }
+    if (std::any_of(bodies->closureFunctions.begin(),
+                    bodies->closureFunctions.end(),
+                    [](auto function) { return function < 0; }))
+      return fail("compiled closure destinations contain a gap");
+    for (std::size_t i = 0; i < decoded.staticDestinations.size(); ++i)
+      if (decoded.staticDestinations[i] != i)
+        return fail("compiled static destination does not match its header");
+    decoded.program.functions.clear();
+    decoded.program.functionPackages.clear();
+    decoded.program.statics.clear();
+    decoded.program.staticPackages.clear();
+    decoded.program.types = types;
+    imported.bodies = std::move(bodies);
+    imported.metadata = std::move(decoded.program);
+    return true;
+  };
+  if (overlapIR)
+    imported.finishIR = std::move(finishIR);
+  else if (!finishIR(imported, diagnostics))
+    return std::nullopt;
   if (options.libraryQueries)
     options.libraryQueries->publish(root, queryIdentity, imported);
   return imported;

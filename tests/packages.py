@@ -848,6 +848,17 @@ def shipped_library_selector():
     assert re.search(r"checked library interface cache hit core [0-9a-f]+ "
                      r"\(authenticated\)", consumer.stderr), consumer.stderr
     assert all(path.stat().st_mtime_ns == stamp for path, stamp in before.items())
+    output = evidence / "shipped-program"
+    built = invoke_result(["build", source, "--standalone", "--explain",
+                           "-o", output], environment)
+    assert built.returncode == 0 and exit_code(output) == 0, built.stderr
+    assert "(authenticated)" in built.stderr, built.stderr
+    invalid = evidence / "shipped-invalid.mt"
+    invalid.write_text('fn main(): bool { "x".len() }\n')
+    rejected = invoke_result(["check", invalid, "--standalone", "--explain"],
+                             environment)
+    assert rejected.returncode == 1, rejected.stderr
+    assert "(authenticated)" in rejected.stderr and "error[type]" in rejected.stderr, rejected.stderr
     archive = max((path for path in (shipped / "blobs").rglob("*") if path.is_file()),
                   key=lambda path: path.stat().st_size)
     corrupted = bytearray(archive.read_bytes())

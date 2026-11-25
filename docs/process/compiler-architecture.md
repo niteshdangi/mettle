@@ -937,6 +937,11 @@ The checked archive owner remains live through compilation. Library-object misse
 they emit, while object hits need not load bodies referenced as external
 declarations. The ordinary `decodeProgram` path remains eager and validates all
 bodies.
+For authenticated standalone imports, IR directory decoding can overlap root
+semantic checking. It uses retained archive storage and symbol references,
+not the mutable root type store. The pipeline joins and validates the IR
+inventory before lowering; resident and unauthenticated imports finish IR
+admission before semantic checking.
 First admission retains the Store's read-only mapping without copying or
 explicitly reading unused payload bytes. Store writers atomically publish new
 read-only blob inodes; replacement and pruning cannot modify a live mapping.

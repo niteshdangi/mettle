@@ -2198,11 +2198,25 @@ In 61 direct interleaved checks, lazy macro loading moved 22.07 ms to
 stamp publication also regressed direct checks (21.61 to 22.33 ms).
 Profiling the full harness's first application check measured 25.04 ms,
 including 4.76 ms mounting declarations, 4.42 ms importing the archive and
-6.05 ms in root semantics. Next: trace demand materialization in semantic
-checking and whether IR import can overlap it without delaying metadata
-diagnostics or weakening verification. WSL timing does not qualify I14.
+6.05 ms in root semantics. WSL timing does not qualify I14.
 Evidence: `~/w/anal/p05-wslfs.UxroBVgQ` (`profile.log`, `full-profile.log`,
 `check-ab.json`, `stamp-ab.json`, `*-fixed-bench/results.json`).
+
+Decoding authenticated IR directories alongside semantic checking reduced
+direct first check from 24.58 to 23.16 ms in 61 interleaved WSL ext4 pairs
+(Rust: 23.66 ms; paired candidate/baseline median ratio: 0.950). The full
+nine-pair workload matched outputs and measured 25.92/21.86 ms for first
+application check and 328.28/402.57 ms for first application build
+(Mettle/Rust). Focused package checks and a TSan probe instrumenting the
+overlapping compiler units passed for authenticated checks. The initial
+TSan attempt to build the priming binary reported in uninstrumented LLVM's
+`ManagedStatic` path; check-only priming exercised the changed path without
+code generation. This is not whole-compiler TSan evidence.
+First check still needs work. The semantic setup through initial
+implementation proofs took under 1 ms in a direct probe; profile function
+body demand and finalization next. Evidence: `~/w/anal/p05-wslfs.UxroBVgQ`
+(`overlap-ab.json`, `overlap-bench/results.json`, `overlap-tsan.log`,
+`semantic-probe.log`).
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 

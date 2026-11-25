@@ -366,6 +366,9 @@ public:
     auto checked =
         check(std::move(tree), diagnostics, std::move(resolved), requireEntry,
               std::move(target), numericEvaluator, std::move(imported));
+    if (library && library->finishIR &&
+        !library->finishIR(*library, diagnostics))
+      return std::nullopt;
     if (!checked)
       return std::nullopt;
     if (observe)

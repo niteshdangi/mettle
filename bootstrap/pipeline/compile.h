@@ -32,6 +32,7 @@ struct ImportedProgram {
   std::shared_ptr<const ImportedDeclarations> declarations;
   std::shared_ptr<const lowering::ImportedBodies> bodies;
   std::optional<ir::Program> metadata;
+  std::function<bool(ImportedProgram &, Diagnostics &)> finishIR;
 };
 using LibraryImporter = std::function<std::optional<ImportedProgram>(
     const Module &, const resolution::Resolution &, Diagnostics &)>;
