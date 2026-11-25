@@ -680,12 +680,11 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         var pos = vacant
         let reuses_deleted = self.entries.cap != 0usize &&
             unsafe { *self.entries.controls.add(pos) == 254u8 }
-        if !reuses_deleted && self.entries.count >= self.capacity() {
+        if reuses_deleted {
+            self.entries.deleted -= 1usize
+        } else if self.entries.count >= self.capacity() {
             try self.try_reserve(1usize)
             pos = vacant_slot(self.entries.controls, self.entries.cap, hash)
-        }
-        if unsafe { *self.entries.controls.add(pos) == 254u8 } {
-            self.entries.deleted -= 1usize
         }
         unsafe { core.ptr.write(self.entries.ptr.add(pos), Bucket(key, value)) }
         set_control(self.entries.controls, self.entries.cap, pos, (hash >> 57u64) as u8)

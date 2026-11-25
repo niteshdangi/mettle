@@ -2418,6 +2418,19 @@ for `new()` was not retained: it measured a 0.8% runtime regression in
 179.08/106.87 ms (1.643×), runtime 30.45/38.32 ms (0.792×).
 Receipts: `direct-init/{direct-map-new/ab.json,direct-table-init/ab.json,direct-table-init/rust/results.json}`.
 
+Insertion consumes the saved tombstone decision without rereading the
+control byte; a successful rebuild leaves no tombstones. In 44 matched ext4
+pairs, first build improved by 1.7% (0.984, 95% interval 0.968–0.999),
+with no measurable runtime change. The unchanged Rust harness matched both
+outputs: first build 178.82/108.44 ms (1.604×), runtime 30.06/38.17 ms
+(0.790×). Receipts: `direct-init/insert-direct-deleted/{ab.json,rust/results.json}`.
+
+A replay of the four current link inputs measured 18.70 ms through Clang and
+12.85 ms via its exact LLD command; one LLD worker took 11.94 ms. Replacing
+the driver for this saving would take on CRT, libc, target and sysroot
+discovery. It cannot close the first-build gap. Receipts:
+`direct-init/link-profile/{lld.json,replay.json}`.
+
 Hosted main's unwind wrapper is optimized separately from its body before
 LLVM inlines the body. Neither forcing it to stay outlined nor inlining it
 early preserved P05 runtime: first-build ratios were 0.938 and 0.951, but
