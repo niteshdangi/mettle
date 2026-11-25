@@ -7,9 +7,25 @@
 #include <limits>
 #include <thread>
 #include <unordered_set>
+#ifdef __linux__
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace mettle::driver {
 namespace {
+void populate(const void *data, std::size_t size) {
+#if defined(__linux__) && defined(MADV_POPULATE_READ)
+  const auto page = static_cast<std::uintptr_t>(::sysconf(_SC_PAGESIZE));
+  const auto begin = reinterpret_cast<std::uintptr_t>(data) & ~(page - 1);
+  const auto end = reinterpret_cast<std::uintptr_t>(data) + size;
+  ::madvise(reinterpret_cast<void *>(begin), end - begin, MADV_POPULATE_READ);
+#else
+  (void)data;
+  (void)size;
+#endif
+}
+
 template <class HashBlock>
 std::string blockDigest(std::size_t size, HashBlock hashBlock) {
   constexpr std::size_t block = std::size_t{1} << 20;
@@ -930,12 +946,15 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
              .second)
       in.fail("invalid or duplicate source-module reference");
   }
+  const auto eager = in.position();
   archive.macros = in.text();
   auto section = [&](Section &target) { target.borrow(in.data(), backing); };
   section(archive.header);
   section(archive.types);
   const auto declarationsOffset = in.position() + 4;
   section(archive.declarations);
+  if (in.good())
+    populate(bytes.data() + eager, in.position() - eager);
   auto readSeals = [&] {
     const auto count = in.count(68, limits::functions);
     std::vector<std::string_view> seals;
