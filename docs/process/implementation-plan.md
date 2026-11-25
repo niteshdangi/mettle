@@ -2374,6 +2374,21 @@ ratio 0.959, 95% interval 0.943–0.976); runtime ratio was 1.008
 193.59/102.96 ms (1.804×), runtime 33.32/38.53 ms (0.870×). Receipts:
 `direct-init/rebuild-vacant/{ab.json,rust/results.json}`.
 
+Control mirroring uses direct stores: the 8-slot table is the only nonempty
+capacity below the 16-byte probe width and needs two copies. In 64 matched
+ext4 pairs, first build fell from 200.14 to 196.68 ms (paired ratio 0.980,
+95% interval 0.969–0.992); runtime ratio was 0.998 (0.990–1.005).
+The unchanged Rust harness matched both outputs: first build 195.51/107.87 ms
+(1.745×), runtime 33.18/38.47 ms (0.865×). Focused wraparound and tag probes
+passed in debug and with AddressSanitizer. Receipts:
+`direct-init/control-mirror/{ab.json,rust/results.json}`.
+
+Hosted main's unwind wrapper is optimized separately from its body before
+LLVM inlines the body. Neither forcing it to stay outlined nor inlining it
+early preserved P05 runtime: first-build ratios were 0.938 and 0.951, but
+runtime ratios were 1.021 and 1.018 in 40 matched pairs each. Neither was
+retained. Receipts: `direct-init/{entry-outline,entry-earlyinline}/ab.json`.
+
 An offline replay isolated 22.47 ms of root optimization in the concrete
 rebuild family. Its standalone archive linked with both workload revisions;
 the dependency-closed IR matched after removing module identity. This is not

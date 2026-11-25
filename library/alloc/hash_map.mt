@@ -48,10 +48,9 @@ fn allocate_rebuild_block<A: Allocator>(mut allocator: A, layout: Layout, dangli
 fn set_control(controls: ptr<mut u8>, cap: usize, index: usize, tag: u8): Unit {
     unsafe {
         *controls.add(index) = tag
-        var mirror = index + cap
-        while mirror < cap + 16usize {
-            *controls.add(mirror) = tag
-            mirror += cap
+        if index < 16usize {
+            *controls.add(cap + index) = tag
+            if cap == 8usize { *controls.add(16usize + index) = tag }
         }
     }
 }
