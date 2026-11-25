@@ -51,6 +51,21 @@ Builder::Value Builder::use(Value value) {
     return value;
   auto place = found->second;
   owners.erase(found);
+  auto &instructions = function.blocks[current].instructions;
+  if (static_cast<std::size_t>(place.root) + 1 == function.locals.size() &&
+      instructions.size() >= 2) {
+    const auto &store = instructions.back();
+    const auto &declaration = instructions[instructions.size() - 2];
+    if (store.result.id == function.values - 1 &&
+        declaration.op == Op::Declare && declaration.place == place &&
+        store.op == Op::Store && store.place == place &&
+        store.operands[0] == value) {
+      instructions.resize(instructions.size() - 2);
+      function.values -= 2;
+      function.locals.pop_back();
+      return value;
+    }
+  }
   return emit({Op::Move,
                {},
                {},

@@ -2481,6 +2481,15 @@ and edited outputs: first build 156.89/105.75 ms (1.442×), runtime
 31.54/40.04 ms (0.789×). First-build parity remains open. Receipts:
 `direct-init/first-store.SwmuLK/{ab.json,rust/results.json}`.
 
+An immediately transferred owned temporary no longer gets a separate local
+when no instruction intervenes between storing and moving it. Temporaries
+that must survive intervening evaluation keep their cleanup ownership.
+In 36 matched ext4 pairs, first build fell from 154.46 to 151.17 ms
+(paired ratio 0.956, 95% interval 0.936–0.978); runtime showed no clear
+change (1.003, 0.985–1.021). The unchanged Rust harness matched both
+outputs: first build 144.07/104.46 ms (1.394×), runtime 30.13/38.13 ms
+(0.787×). Receipts: `direct-init/adjacent-materialization.Zjci0D/{ab.json,rust/results.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
