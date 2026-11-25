@@ -244,6 +244,24 @@ public:
       throw std::logic_error("invalid deferred database record");
     records.edit(index) = std::make_shared<Record>(input, std::move(loader));
   }
+  void deferAll(std::size_t size, std::shared_ptr<const Loader> loader,
+                std::vector<std::size_t> inputs = {},
+                DatabaseRecords base = {}) {
+    if (!loader || (!inputs.empty() && inputs.size() != size))
+      throw std::logic_error("invalid deferred database records");
+    records.clear();
+    records.deferPrefix(
+        size, std::make_shared<const typename decltype(records)::Loader>(
+                  [loader = std::move(loader), inputs = std::move(inputs),
+                   base = std::move(base)](
+                      std::size_t index) -> std::shared_ptr<Record> {
+                    if (inputs.empty())
+                      return std::make_shared<Record>(index, loader);
+                    if (inputs[index] == SIZE_MAX)
+                      return base.records.at(index);
+                    return std::make_shared<Record>(inputs[index], loader);
+                  }));
+  }
   void reserve(std::size_t size) { records.reserve(size); }
   void resize(std::size_t size) { records.resize(size); }
   void clear() { records.clear(); }

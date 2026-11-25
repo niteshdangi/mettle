@@ -447,7 +447,7 @@ void verifiedRemapping() {
             "indexed header validation disagreed with decoded headers");
     if (!indexed)
       require(indexed.program.functions.empty() &&
-                  indexed.program.functionIndex.empty() &&
+                  !indexed.program.functionIndex &&
                   indexed.functionIdentities.empty() && !indexed.lazyFunctions,
               "indexed header failure exposed partial records");
     auto result = decodeProgram(bad, refs);
@@ -547,7 +547,7 @@ void crossRecordSymbolAliases() {
             "retained IR admission allocated an unused function header");
   require(demand.program.functions[0].locals.size() == 1 &&
               !demand.program.functions.isMaterialized(1) &&
-              demand.program.functionIndex[0].name == "caller",
+              (*demand.program.functionIndex)[0].name == "caller",
           "demanding one retained header materialized unrelated headers");
   auto demandedBody =
       demand.lazyFunctions->load(0, demand.program.functions[0], decode);
@@ -618,7 +618,7 @@ void crossRecordSymbolAliases() {
         },
         metadata::ValidationMode::OnDemand);
     require(bool(checked) && verifications == 0 && sourceReads == 0 &&
-                checked.program.functionIndex[0].parameters == 1,
+                (*checked.program.functionIndex)[0].parameters == 1,
             "indexed admission decoded an unused callable or body");
     snapshot.reset();
     auto first = checked.lazyFunctions->load(0, checked.program.functions[0],

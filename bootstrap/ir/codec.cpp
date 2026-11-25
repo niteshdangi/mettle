@@ -389,6 +389,20 @@ template <class Derived> struct Fields {
       } else if (present) {
         value(const_cast<std::remove_const_t<E> &>(*v));
       }
+    } else if constexpr (std::is_same_v<V, StaticInitializer>) {
+      bool present = static_cast<bool>(v);
+      self().boolean(present);
+      if constexpr (Derived::reading) {
+        if (!present)
+          v = nullptr;
+        else if (!self().deferInitializer(v)) {
+          auto decoded = std::make_shared<StaticConstant>();
+          value(*decoded);
+          v = std::move(decoded);
+        }
+      } else if (present) {
+        value(const_cast<StaticConstant &>(*v));
+      }
     } else if constexpr (IsSet<V>::value) {
       self().strings(v);
     } else if constexpr (IsPair<V>::value) {
@@ -503,9 +517,38 @@ struct Reader : Fields<Reader> {
   std::span<const std::uint8_t> bytes;
   std::size_t position = 0;
   bool interned;
+  bool bindSymbols = true;
   std::vector<std::string_view> ownedTexts;
   std::span<const std::string_view> texts;
   metadata::SourceReference sourceReference;
+  struct Deferral {
+    std::shared_ptr<const metadata::DecodeReferences> references;
+    std::shared_ptr<const void> backing;
+  };
+  const Deferral *deferral = nullptr;
+  bool deferInitializer(StaticInitializer &v) {
+    if (!deferral)
+      return false;
+    auto tail = bytes.subspan(position);
+    position = bytes.size();
+    v = StaticInitializer::deferred(
+        [tail,
+         table = std::vector<std::string_view>(texts.begin(), texts.end()),
+         references = deferral->references, backing = deferral->backing] {
+          try {
+            const std::span<const std::string_view> inherited = table;
+            Reader reader(tail, *references, true, &inherited);
+            auto decoded = std::make_shared<StaticConstant>();
+            reader.value(*decoded);
+            if (reader.position != tail.size())
+              reject("trailing data in IR record");
+            return std::shared_ptr<const StaticConstant>(std::move(decoded));
+          } catch (const InvalidArchive &error) {
+            throw metadata::InvalidMetadata(error.message);
+          }
+        });
+    return true;
+  }
   Reader(std::span<const std::uint8_t> bytes,
          const metadata::DecodeReferences &references, bool interned = false,
          const std::span<const std::string_view> *inheritedTexts = nullptr)
@@ -577,6 +620,8 @@ struct Reader : Fields<Reader> {
   template <class T> void sequence(T &v, std::size_t limit) {
     auto size = count(limit);
     v.clear();
+    if constexpr (requires { v.reserve(size); })
+      v.reserve(size);
     for (std::uint32_t i = 0; i < size; ++i) {
       v.emplace_back();
       value(v.back());
@@ -617,7 +662,7 @@ struct Reader : Fields<Reader> {
     if (name.empty() || !ref ||
         *ref > static_cast<std::uint32_t>(std::numeric_limits<int>::max()))
       reject("unmapped or invalid IR logical symbol");
-    if (bind)
+    if (bind && bindSymbols)
       symbols.bind(kind, *ref, name);
     return {name, *ref};
   }
@@ -798,7 +843,8 @@ void decodeRecords(
     Items &items,
     const std::vector<std::pair<std::size_t, std::size_t>> &extents,
     std::span<const std::uint8_t> bytes,
-    const metadata::DecodeReferences &references, Symbols &symbols) {
+    const metadata::DecodeReferences &references, Symbols &symbols,
+    bool bindSymbols = true, const Reader::Deferral *deferral = nullptr) {
   const std::size_t count = extents.size();
   std::vector<std::string> failures(count);
   std::vector<Symbols> bound(count);
@@ -806,6 +852,8 @@ void decodeRecords(
     try {
       Reader record(bytes.subspan(extents[i].first, extents[i].second),
                     references, true);
+      record.bindSymbols = bindSymbols;
+      record.deferral = deferral;
       record.value(items[i]);
       if (record.position != extents[i].second)
         reject("trailing data in IR record");
@@ -885,7 +933,9 @@ void programVersion(Reader &reader) {
     reject("unsupported IR archive format or version");
 }
 
-template <class Visit> void readFunctionRecords(Reader &reader, Visit &&visit) {
+template <class Visit, class Reserve>
+void readFunctionRecords(Reader &reader, Reserve &&reserve, Visit &&visit,
+                         bool parallel = false) {
   struct Entry {
     std::string_view name, package;
     std::span<const std::uint8_t> index;
@@ -917,13 +967,42 @@ template <class Visit> void readFunctionRecords(Reader &reader, Visit &&visit) {
   }
   if (payload > reader.bytes.size() - reader.position)
     reject("truncated IR record");
+  reserve(static_cast<std::size_t>(count));
   const auto base = reader.position;
-  for (std::uint32_t i = 0; i < count; ++i) {
-    auto &entry = entries[i];
-    entry.extent.recordOffset += base;
-    visit(i, entry.name, entry.package, entry.extent.recordOffset,
-          entry.extent.recordLength, functionSegments(entry.extent),
-          entry.index);
+  auto range = [&](std::size_t begin, std::size_t end) {
+    for (auto i = begin; i < end; ++i) {
+      auto &entry = entries[i];
+      entry.extent.recordOffset += base;
+      visit(i, entry.name, entry.package, entry.extent.recordOffset,
+            entry.extent.recordLength, functionSegments(entry.extent),
+            entry.index);
+    }
+  };
+  const std::size_t workers =
+      parallel ? std::min<std::size_t>(
+                     {4, std::thread::hardware_concurrency(), count / 1024 + 1})
+               : 1;
+  if (workers <= 1) {
+    range(0, count);
+  } else {
+    std::vector<std::exception_ptr> failures(workers);
+    std::vector<std::thread> threads;
+    const auto chunk = (count + workers - 1) / workers;
+    auto run = [&](std::size_t w) {
+      try {
+        range(w * chunk, std::min<std::size_t>(count, (w + 1) * chunk));
+      } catch (...) {
+        failures[w] = std::current_exception();
+      }
+    };
+    for (std::size_t w = 1; w < workers; ++w)
+      threads.emplace_back(run, w);
+    run(0);
+    for (auto &thread : threads)
+      thread.join();
+    for (const auto &failure : failures)
+      if (failure)
+        std::rethrow_exception(failure);
   }
   reader.position += payload;
 }
@@ -936,7 +1015,8 @@ void decodeFunctionHeaders(TypeRecords<Function, true> &functions,
                            const metadata::DecodeReferences &references,
                            Symbols &symbols,
                            std::vector<FunctionRecordExtent> &bodyRecords,
-                           std::vector<FunctionIndex> *indices = nullptr) {
+                           std::vector<FunctionIndex> *indices = nullptr,
+                           bool bindSymbols = true) {
   const std::size_t count = extents.size();
   std::vector<std::string> failures(count);
   std::vector<Symbols> bound(count);
@@ -951,6 +1031,7 @@ void decodeFunctionHeaders(TypeRecords<Function, true> &functions,
       auto headerBytes =
           recordBytes.subspan(segments.headerOffset, segments.headerLength);
       Reader header(headerBytes, references, true);
+      header.bindSymbols = bindSymbols;
       if (indices) {
         auto &index = indices->at(i);
         HeaderIndexReader scanner{{header}, index};
@@ -1169,14 +1250,14 @@ ProgramLayout programLayout(std::span<const std::uint8_t> bytes) {
     Reader reader(bytes, references);
     programVersion(reader);
     ProgramLayout result;
-    readFunctionRecords(reader,
-                        [&](std::size_t, std::string_view, std::string_view,
-                            std::size_t offset, std::size_t,
-                            const FunctionSegments &segments,
-                            std::span<const std::uint8_t>) {
-                          result.bodies.push_back({offset + segments.bodyOffset,
-                                                   segments.bodyLength});
-                        });
+    readFunctionRecords(
+        reader, [&](std::size_t count) { result.bodies.reserve(count); },
+        [&](std::size_t, std::string_view, std::string_view, std::size_t offset,
+            std::size_t, const FunctionSegments &segments,
+            std::span<const std::uint8_t>) {
+          result.bodies.push_back(
+              {offset + segments.bodyOffset, segments.bodyLength});
+        });
     return result;
   } catch (const InvalidArchive &error) {
     return {{}, error.message};
@@ -1218,6 +1299,7 @@ LazyFunctionBodies::load(std::size_t recordIndex, const Function &header,
       reject("IR function body index is out of range");
     auto bodyBytes = summarySegments(state->body(recordIndex)).second;
     Reader body(bodyBytes, references, true);
+    body.bindSymbols = !state->trusted;
     Function function = header;
     functionBody(body, function);
     if (body.position != bodyBytes.size())
@@ -1407,30 +1489,47 @@ DecodeResult decodeProgramLazy(
       std::vector<FunctionRecordExtent> extents;
       std::vector<std::span<const std::uint8_t>> indexRecords;
       std::vector<FunctionIndex> indices;
+      std::size_t bindingBase = 0;
       readFunctionRecords(
-          reader, [&](std::size_t, std::string_view name,
-                      std::string_view package, std::size_t offset,
-                      std::size_t length, const FunctionSegments &segments,
-                      std::span<const std::uint8_t> indexBytes) {
+          reader,
+          [&](std::size_t count) {
+            names.resize(count);
+            destinations.resize(count);
+            packages.resize(count);
+            extents.resize(count);
+            indexRecords.resize(count);
+            indices.resize(count);
+            functionRecords.resize(count);
+            if (definitions) {
+              bindingBase = definitions->bindings.size();
+              definitions->bindings.resize(bindingBase + count);
+            }
+            if (!retainedReferences)
+              for (std::size_t i = 0; i < count; ++i)
+                items.push_uninitialized();
+          },
+          [&](std::size_t i, std::string_view name, std::string_view package,
+              std::size_t offset, std::size_t length,
+              const FunctionSegments &segments,
+              std::span<const std::uint8_t> indexBytes) {
             const auto destination =
                 reader.identity(SymbolKind::Function, name, !definitions)
                     .second;
             if (definitions)
-              definitions->bindings.push_back(
-                  {SymbolKind::Function, destination, name});
-            names.emplace_back(name);
-            destinations.push_back(destination);
-            packages.emplace_back(package);
-            extents.push_back({offset, length, segments.bodyLength});
-            indexRecords.push_back(indexBytes);
+              definitions->bindings[bindingBase + i] = {SymbolKind::Function,
+                                                        destination, name};
+            names[i] = name;
+            destinations[i] = destination;
+            packages[i] = package;
+            extents[i] = {offset, length, segments.bodyLength};
+            indexRecords[i] = indexBytes;
             Reader index(indexBytes, references);
-            index.value(indices.emplace_back());
+            index.value(indices[i]);
             if (index.position != indexBytes.size())
               reject("trailing data in IR function index");
-            functionRecords.push_back({offset, length, segments.bodyLength});
-            if (!retainedReferences)
-              items.push_uninitialized();
-          });
+            functionRecords[i] = {offset, length, segments.bodyLength};
+          },
+          definitions != nullptr);
       if (!definitions) {
         auto slots = destinations;
         std::sort(slots.begin(), slots.end());
@@ -1449,7 +1548,8 @@ DecodeResult decodeProgramLazy(
             reject("IR function index does not match its callable header");
       }
       if (retainedReferences) {
-        result.program.functionIndex = std::move(indices);
+        result.program.functionIndex =
+            std::make_shared<std::vector<FunctionIndex>>(std::move(indices));
         const auto count = extents.size();
         auto loader =
             std::make_shared<const TypeRecords<Function, true>::Loader>(
@@ -1462,8 +1562,8 @@ DecodeResult decodeProgramLazy(
                     Symbols symbols;
                     std::vector<FunctionRecordExtent> records;
                     decodeFunctionHeaders(decoded, {extents.at(index)}, bytes,
-                                          *retainedReferences, symbols,
-                                          records);
+                                          *retainedReferences, symbols, records,
+                                          nullptr, !trusted);
                     if (!trusted) {
                       Reader directory(indexRecords.at(index),
                                        *retainedReferences);
@@ -1497,8 +1597,8 @@ DecodeResult decodeProgramLazy(
         auto [name, destination] = reader.identity(kind, !definitions);
         if (definitions)
           definitions->bindings.push_back({kind, destination, name});
-        if (!identities.emplace(name).second ||
-            !slots.insert(destination).second)
+        if (!trusted && (!identities.emplace(name).second ||
+                         !slots.insert(destination).second))
           reject("duplicate or aliased IR definition identity");
         names.emplace_back(name);
         destinations.push_back(destination);
@@ -1510,7 +1610,9 @@ DecodeResult decodeProgramLazy(
         reader.position += length;
         items.emplace_back();
       }
-      decodeRecords(items, extents, bytes, references, reader.symbols);
+      const Reader::Deferral deferral{retainedReferences, backing};
+      decodeRecords(items, extents, bytes, references, reader.symbols, !trusted,
+                    trusted && retainedReferences ? &deferral : nullptr);
     };
     auto &program = result.program;
     functions(program.functions, program.functionPackages,
@@ -1524,7 +1626,8 @@ DecodeResult decodeProgramLazy(
       auto [name, slot] = reader.identity(SymbolKind::Closure, !definitions);
       if (definitions)
         definitions->bindings.push_back({SymbolKind::Closure, slot, name});
-      if (!identities.emplace(name).second || !slots.insert(slot).second)
+      if (!trusted &&
+          (!identities.emplace(name).second || !slots.insert(slot).second))
         reject("duplicate or aliased IR closure identity");
       int function;
       reader.symbol(function, SymbolKind::Function);

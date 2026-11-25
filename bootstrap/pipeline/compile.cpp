@@ -11,8 +11,10 @@
 #include "semantics/interfaces.h"
 #include "syntax/parser.h"
 #include "types/project.h"
+#include <exception>
 #include <map>
 #include <set>
+#include <thread>
 #include <tuple>
 
 mettle::ir::VerifiedProgram::VerifiedProgram(
@@ -250,6 +252,22 @@ public:
     bool retainedInstanceQueries = false;
     const std::map<std::size_t, ir::Function> *reusedBodies = nullptr;
     const auto native = imported;
+    std::vector<std::optional<SourceId>> nativeSources;
+    std::exception_ptr nativeFailure;
+    std::jthread nativeOwners;
+    if (!packageOwners.empty() && native && native->catalog)
+      nativeOwners = std::jthread([&, catalog = native->catalog.get()] {
+        try {
+          nativeSources.resize(
+              catalog->symbolCount(metadata::SymbolKind::Function));
+          for (std::size_t i = 0; i < nativeSources.size(); ++i)
+            if (auto span = catalog->symbolSpan(metadata::SymbolKind::Function,
+                                                static_cast<std::uint32_t>(i)))
+              nativeSources[i] = span->source;
+        } catch (...) {
+          nativeFailure = std::current_exception();
+        }
+      });
     bool queryable = queries && !observe && tree.globalAssembly.empty();
     if (queryable) {
       nextQueries.emplace();
@@ -515,20 +533,23 @@ public:
                         function, span);
     };
     program.functionPackages.resize(program.functions.size());
-    if (!packageOwners.empty())
-      for (std::size_t i = 0; i < checked->syntax().functions.size() &&
-                              i < program.functionPackages.size();
-           ++i) {
-        auto source =
-            native && native->catalog && checked->syntax().functions.native(i)
-                ? native->catalog->symbolSpan(metadata::SymbolKind::Function, i)
-                      .value()
-                      .source
-                : checked->syntax().functions.header(i).span.source;
-        if (auto owner = packageOwners.find(source);
+    if (!packageOwners.empty()) {
+      const auto &functions = checked->syntax().functions;
+      const auto count =
+          std::min(functions.size(), program.functionPackages.size());
+      if (nativeOwners.joinable())
+        nativeOwners.join();
+      if (nativeFailure)
+        std::rethrow_exception(nativeFailure);
+      const bool catalog = native && native->catalog;
+      for (std::size_t i = 0; i < count; ++i)
+        if (auto owner =
+                packageOwners.find(catalog && functions.native(i)
+                                       ? nativeSources.at(i).value()
+                                       : functions.header(i).span.source);
             owner != packageOwners.end())
           program.functionPackages[i] = owner->second;
-      }
+    }
     program.staticPackages.resize(program.statics.size());
     for (std::size_t i = 0; i < checked->syntax().statics.size() &&
                             i < program.staticPackages.size();

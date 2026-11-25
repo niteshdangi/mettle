@@ -1736,14 +1736,13 @@ bool verify(const Program &program, Diagnostics &diagnostics,
   if (!valid)
     return false;
   bool entry = false;
-  std::unordered_set<std::string> names;
+  std::unordered_set<std::string_view> names;
+  std::vector<std::string_view> archived;
+  std::vector<bool> lengths;
   for (std::size_t i = 0; i < program.functions.size(); ++i) {
     if (auto index = program.deferredFunctionIndex(i);
         index && trusted && i < trusted->size() && (*trusted)[i]) {
-      if (!names.insert(index->name).second) {
-        diagnostics.error("internal", {}, "duplicate CFG function");
-        valid = false;
-      }
+      archived.push_back(index->name);
       if (index->name == "main")
         entry = index->parameters == 0 && index->result == Type::I32;
       continue;
@@ -1753,12 +1752,21 @@ bool verify(const Program &program, Diagnostics &diagnostics,
       diagnostics.error("internal", {}, "duplicate CFG function");
       valid = false;
     }
+    if (lengths.size() <= f.name.size())
+      lengths.resize(f.name.size() + 1);
+    lengths[f.name.size()] = true;
     if (f.name == "main")
       entry = f.parameters == 0 && f.result == Type::I32;
     if (trusted && i < trusted->size() && (*trusted)[i])
       continue;
     valid = function(f, program, diagnostics, normalize, unpinProof) && valid;
   }
+  for (auto name : archived)
+    if (name.size() < lengths.size() && lengths[name.size()] &&
+        names.contains(name)) {
+      diagnostics.error("internal", {}, "duplicate CFG function");
+      valid = false;
+    }
   if (program.requireEntry && !entry) {
     diagnostics.error("internal", {}, "invalid or absent CFG entry function");
     valid = false;

@@ -1237,6 +1237,10 @@ CheckedLibrary::import(const Module &module,
   bodies->functionRecords.resize(functions);
   std::size_t sourceBodies = 0;
   std::vector<std::optional<std::size_t>> supportRecords(supportCount);
+  auto headerIndex = std::const_pointer_cast<std::vector<ir::FunctionIndex>>(
+      std::move(decoded.program.functionIndex));
+  if (!headerIndex)
+    headerIndex = std::make_shared<std::vector<ir::FunctionIndex>>();
   for (std::size_t i = 0; i < decoded.program.functions.size(); ++i) {
     auto destination = decoded.functionDestinations[i];
     if (destination < functions) {
@@ -1248,14 +1252,14 @@ CheckedLibrary::import(const Module &module,
       if (destination < module.functions.size() ||
           destination - module.functions.size() >= nativeDefaults)
         return fail("compiled body occupies a consumer default-helper slot");
-      decoded.program.functionIndex[i].name = decoded.functionIdentities[i];
+      (*headerIndex)[i].name = decoded.functionIdentities[i];
       if (!bodies->defaultRecords
                .emplace(
                    catalog->defaultAt(destination - module.functions.size()), i)
                .second)
         return fail("duplicate compiled function destination");
     } else if (destination - supportBase < supportCount) {
-      decoded.program.functionIndex[i].name = decoded.functionIdentities[i];
+      (*headerIndex)[i].name = decoded.functionIdentities[i];
       if (supportRecords[destination - supportBase])
         return fail("duplicate compiled function destination");
       supportRecords[destination - supportBase] = i;
@@ -1272,7 +1276,7 @@ CheckedLibrary::import(const Module &module,
   bodies->supportRecords = std::move(supportRecords);
   bodies->headers = std::move(decoded.program.functions);
   bodies->statics = std::move(decoded.program.statics);
-  bodies->headerIndex = std::move(decoded.program.functionIndex);
+  bodies->headerIndex = std::move(headerIndex);
   if (!decoded.lazyFunctions)
     return fail("compiled IR function body loader is absent");
   bodies->functionBodySizes = std::move(decoded.functionBodySizes);

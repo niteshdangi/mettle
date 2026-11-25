@@ -228,6 +228,9 @@ add_dependencies(mettle mettle_runtime mettle_runtime_asan mettle_runtime_tsan)
 target_compile_options(mettle PRIVATE -Wall -Wextra -Wpedantic -Werror)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_link_options(mettle PRIVATE "LINKER:--build-id=sha1")
+  if(NOT METTLE_ENABLE_SANITIZERS)
+    target_link_options(mettle PRIVATE -no-pie -static-libstdc++ -static-libgcc)
+  endif()
 endif()
 
 # Like Rust's test harness, tests are never killed for running long;

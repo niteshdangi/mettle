@@ -10,21 +10,36 @@ namespace mettle::expansion {
 namespace {
 constexpr std::string_view magic{"MTMACRO\1", 8};
 
-constexpr auto crcTable = [] {
-  std::array<std::uint32_t, 256> table{};
-  for (std::uint32_t i = 0; i < table.size(); ++i) {
+constexpr auto crcTables = [] {
+  std::array<std::array<std::uint32_t, 256>, 8> tables{};
+  for (std::uint32_t i = 0; i < 256; ++i) {
     auto value = i;
     for (unsigned bit = 0; bit < 8; ++bit)
       value = (value >> 1) ^ (0xedb88320u & (0u - (value & 1u)));
-    table[i] = value;
+    tables[0][i] = value;
   }
-  return table;
+  for (std::uint32_t i = 0; i < 256; ++i)
+    for (std::size_t slice = 1; slice < tables.size(); ++slice)
+      tables[slice][i] =
+          (tables[slice - 1][i] >> 8) ^ tables[0][tables[slice - 1][i] & 0xffu];
+  return tables;
 }();
 
 std::uint32_t checksum(std::string_view bytes) {
+  const auto &t = crcTables;
   std::uint32_t result = UINT32_MAX;
-  for (unsigned char byte : bytes)
-    result = (result >> 8) ^ crcTable[(result ^ byte) & 0xffu];
+  auto data = reinterpret_cast<const unsigned char *>(bytes.data());
+  auto size = bytes.size();
+  for (; size >= 8; data += 8, size -= 8) {
+    const auto low =
+        result ^ (std::uint32_t{data[0]} | std::uint32_t{data[1]} << 8 |
+                  std::uint32_t{data[2]} << 16 | std::uint32_t{data[3]} << 24);
+    result = t[7][low & 0xffu] ^ t[6][(low >> 8) & 0xffu] ^
+             t[5][(low >> 16) & 0xffu] ^ t[4][low >> 24] ^ t[3][data[4]] ^
+             t[2][data[5]] ^ t[1][data[6]] ^ t[0][data[7]];
+  }
+  for (; size; ++data, --size)
+    result = (result >> 8) ^ t[0][(result ^ *data) & 0xffu];
   return ~result;
 }
 
@@ -153,6 +168,7 @@ private:
       good = false;
       return;
     }
+    values.reserve(values.size() + count);
     for (std::uint32_t i = 0; i < count && good; ++i) {
       values.emplace_back();
       value(values.back());

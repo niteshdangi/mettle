@@ -241,7 +241,7 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
                   std::shared_ptr<const ImportedBodies> imported,
                   const std::map<std::size_t, ir::Function> *queries) {
   ir::Program result;
-  if (imported && imported->headers.size() != imported->headerIndex.size()) {
+  if (imported && imported->headers.size() != imported->headerIndex->size()) {
     diagnostics.error("metadata", {},
                       "imported header inventory is incomplete");
     return result;
@@ -259,16 +259,18 @@ ir::Program lower(const CheckedModule &module, Diagnostics &diagnostics,
           ? std::make_shared<const TypeRecords<ir::Function, true>::Loader>(
                 [imported](std::size_t record) {
                   auto result = imported->headers.at(record);
-                  if (record < imported->headerIndex.size())
-                    result.name = imported->headerIndex[record].name;
+                  if (record < imported->headerIndex->size())
+                    result.name = (*imported->headerIndex)[record].name;
                   return result;
                 })
           : nullptr;
   auto takeRecord = [&](std::size_t record) {
     if (record >= imported->headers.size())
       throw metadata::InvalidMetadata("imported function record is absent");
-    result.functionIndex.resize(result.functions.size());
-    result.functionIndex.push_back(imported->headerIndex.at(record));
+    if (!result.functionIndex)
+      result.functionIndex = imported->headerIndex;
+    result.functionIndexRecords.resize(result.functions.size(), UINT32_MAX);
+    result.functionIndexRecords.push_back(static_cast<std::uint32_t>(record));
     result.libraryBodies.resize(result.functions.size());
     result.libraryBodies.push_back(true);
     result.lazyFunctionRecords.resize(result.functions.size());

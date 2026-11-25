@@ -946,7 +946,6 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
              .second)
       in.fail("invalid or duplicate source-module reference");
   }
-  const auto eager = in.position();
   archive.macros = in.text();
   auto section = [&](Section &target) { target.borrow(in.data(), backing); };
   section(archive.header);
@@ -954,7 +953,7 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
   const auto declarationsOffset = in.position() + 4;
   section(archive.declarations);
   if (in.good())
-    populate(bytes.data() + eager, in.position() - eager);
+    populate(archive.declarations.bytes().data(), archive.declarations.size());
   auto readSeals = [&] {
     const auto count = in.count(68, limits::functions);
     std::vector<std::string_view> seals;

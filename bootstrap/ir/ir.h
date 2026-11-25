@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -248,21 +249,67 @@ struct FunctionIndex {
   bool valid = false;
 };
 FunctionIndex indexFunction(const Function &function);
+class StaticInitializer {
+public:
+  using Loader = std::function<std::shared_ptr<const StaticConstant>()>;
+  StaticInitializer() = default;
+  StaticInitializer(std::nullptr_t) {}
+  template <class T>
+  StaticInitializer(std::shared_ptr<T> value) : value(std::move(value)) {}
+  static StaticInitializer deferred(Loader load) {
+    StaticInitializer result;
+    result.pending = std::make_shared<Pending>();
+    result.pending->load = std::move(load);
+    return result;
+  }
+  explicit operator bool() const { return value || pending; }
+  bool operator==(std::nullptr_t) const { return !*this; }
+  const StaticConstant *get() const {
+    if (!pending)
+      return value.get();
+    std::call_once(pending->once, [this] {
+      pending->value = pending->load();
+      pending->load = nullptr;
+    });
+    return pending->value.get();
+  }
+  const StaticConstant &operator*() const { return *get(); }
+  const StaticConstant *operator->() const { return get(); }
+
+private:
+  struct Pending {
+    std::once_flag once;
+    Loader load;
+    std::shared_ptr<const StaticConstant> value;
+  };
+  std::shared_ptr<const StaticConstant> value;
+  std::shared_ptr<Pending> pending;
+};
 struct Program {
   struct Static {
     std::string name, externalName, library;
     Type type;
     bool mutableBinding = false, foreignDeclaration = false;
     Span span{};
-    std::shared_ptr<const StaticConstant> initializer{};
+    StaticInitializer initializer{};
     bool trustedInitializer = false;
   };
   TypeRecords<Function, true> functions;
-  std::vector<FunctionIndex> functionIndex{};
+  std::shared_ptr<const std::vector<FunctionIndex>> functionIndex{};
+  std::vector<std::uint32_t> functionIndexRecords{};
   const FunctionIndex *deferredFunctionIndex(std::size_t index) const {
-    return index < functionIndex.size() && functionIndex[index].valid &&
-                   !functions.isMaterialized(index)
-               ? &functionIndex[index]
+    if (!functionIndex || index >= functions.size() ||
+        functions.isMaterialized(index))
+      return nullptr;
+    std::size_t record = index;
+    if (!functionIndexRecords.empty()) {
+      if (index >= functionIndexRecords.size() ||
+          functionIndexRecords[index] == UINT32_MAX)
+        return nullptr;
+      record = functionIndexRecords[index];
+    }
+    return record < functionIndex->size() && (*functionIndex)[record].valid
+               ? &(*functionIndex)[record]
                : nullptr;
   }
   // Optional package-instance ownership, aligned with `functions` and

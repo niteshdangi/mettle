@@ -1198,7 +1198,7 @@ template <class A> void record(A &a, WireRegion &r) {
 constexpr std::array<std::uint8_t, 8> magic{'M', 'T', 'T', 'Y',
                                             'R', 'E', 'G', 0};
 constexpr std::uint32_t version = 3;
-constexpr std::uint32_t indexedVersion = 6;
+constexpr std::uint32_t indexedVersion = 7;
 void readHeader(Reader &reader, Header &header, unsigned pointerBits) {
   if (reader.bytes.size() > limits::sourceBytes)
     reject("type graph exceeds source byte limit");
@@ -1233,6 +1233,10 @@ struct Tables {
   std::vector<WireRegion> regions;
 };
 void readTables(Reader &reader, Tables &tables) {
+  tables.kinds.reserve(reader.header.types);
+  tables.parents.reserve(reader.header.universes);
+  tables.binders.reserve(reader.header.binders);
+  tables.regions.reserve(reader.header.regions);
   for (std::uint32_t i = 0; i < reader.header.types; ++i) {
     ImportedTypeKind kind{};
     reader(kind);
@@ -2988,6 +2992,19 @@ std::uint32_t wireU32(std::span<const std::uint8_t> bytes, std::size_t offset) {
     value |= static_cast<std::uint32_t>(bytes[offset + i]) << (8 * i);
   return value;
 }
+std::span<const std::uint8_t> readRecordTable(Reader &reader) {
+  if (reader.header.types > reader.remaining() / 4)
+    reject("truncated type record table");
+  auto table =
+      reader.bytes.subspan(reader.offset, std::size_t{reader.header.types} * 4);
+  reader.offset += table.size();
+  return table;
+}
+void checkRecordOffset(std::span<const std::uint8_t> table, std::size_t index,
+                       std::size_t offset) {
+  if (wireU32(table, index * 4) != offset)
+    reject("type record table does not match its records");
+}
 struct LookupKeyMatch {
   std::span<const std::uint8_t> bytes;
   std::size_t offset = 0;
@@ -3175,8 +3192,10 @@ TypeGraphExport exportTypeGraph(const TypeStore &types,
       graph.type(type);
     Writer body(graph, symbols);
     std::set<DefinitionIdentity> identities;
+    std::vector<std::uint32_t> recordOffsets;
     for (std::size_t i = 0; i < graph.typeList.size(); ++i) {
       auto type = graph.typeList[i];
+      recordOffsets.push_back(static_cast<std::uint32_t>(body.bytes.size()));
       auto definition = types.importedDefinition(type);
       std::optional<DefinitionIdentity> identity;
       if (nominal(definition)) {
@@ -3237,8 +3256,11 @@ TypeGraphExport exportTypeGraph(const TypeStore &types,
       out.u32(graph.universe(universe));
     for (auto &region : regionRecords)
       record(out, region);
-    if (validation != ValidationMode::Eager)
+    if (validation != ValidationMode::Eager) {
       writeLookupTable(out, graph, symbols);
+      for (auto offset : recordOffsets)
+        out.u32(offset);
+    }
     for (auto byte : body.bytes)
       out.byte(byte);
     for (auto root : roots)
@@ -3258,10 +3280,13 @@ static TypeGraphImport importTypeGraphEager(TypeStore &types,
     readHeader(reader, header, types.targetPointerBits());
     Tables tables;
     readTables(reader, tables);
+    std::span<const std::uint8_t> recordTable;
     if (header.indexed) {
       WireTypeLookup lookup{reader.block()};
       lookup.validate(header.types);
+      recordTable = readRecordTable(reader);
     }
+    const auto bodyBegin = reader.offset;
     auto minimumBytes = static_cast<std::size_t>(header.roots) * 4;
     if (minimumBytes > reader.remaining())
       reject("truncated type graph roots");
@@ -3292,6 +3317,8 @@ static TypeGraphImport importTypeGraphEager(TypeStore &types,
     std::unordered_set<std::string_view> identities;
     for (std::uint32_t i = 0; i < header.types; ++i) {
       const auto identityBegin = reader.offset;
+      if (header.indexed)
+        checkRecordOffset(recordTable, i, identityBegin - bodyBegin);
       std::optional<DefinitionIdentity> identity;
       reader(identity);
       const auto identityBytes =
@@ -3386,6 +3413,8 @@ struct DeferredTypeGraph {
   std::vector<RegionUniverse> universes;
   Reader::ResolvedSymbols symbols;
   std::vector<Record> records;
+  std::span<const std::uint8_t> recordTable;
+  std::size_t bodyOffset = 0, bodyEnd = 0;
   mutable std::vector<ImportedTypeScalars> scalars;
   bool queryValidation = false, trusted = false;
   mutable std::unordered_map<std::size_t,
@@ -3398,6 +3427,8 @@ struct DeferredTypeGraph {
   mutable std::unordered_map<std::string, std::size_t> projectionIdentities;
   mutable std::mutex projectionMutex, symbolMutex;
   std::shared_ptr<const CompactArena> arena;
+  std::shared_ptr<CompactArena> projectionArena =
+      std::make_shared<CompactArena>();
   std::vector<CompactDefinitionView> definitions;
   mutable std::unordered_map<std::size_t, CompactDefinitionView>
       demandedDefinitions;
@@ -3407,7 +3438,14 @@ struct DeferredTypeGraph {
   std::vector<ImportedTypeIndex> index;
   WireTypeLookup lookup;
   LookupReferences references;
-  std::map<std::uint32_t, std::uint32_t> regionOrdinals, universeOrdinals;
+  static constexpr auto absentOrdinal = ~std::uint32_t{0};
+  std::vector<std::uint32_t> regionOrdinals, universeOrdinals;
+  static std::optional<std::uint32_t>
+  ordinal(const std::vector<std::uint32_t> &table, std::uint64_t key) {
+    if (key >= table.size() || table[key] == absentOrdinal)
+      return std::nullopt;
+    return table[key];
+  }
   mutable std::map<std::uint32_t, std::vector<std::string_view>> interfaces;
   mutable bool interfaceNamesReady = false;
   mutable std::array<std::unordered_map<std::string_view, std::uint32_t>,
@@ -3422,6 +3460,29 @@ struct DeferredTypeGraph {
   mutable std::mutex validationMutex;
 
   void validate(std::size_t index) const;
+  Record record(std::size_t index) const {
+    if (!trusted)
+      return records.at(index);
+    static const TypeGraphSymbols noSymbols;
+    Reader reader(bytes.first(bodyEnd), noSymbols, header);
+    reader.offset = bodyOffset + wireU32(recordTable, index * 4);
+    Record result;
+    result.nominal = reader.flag();
+    if (result.nominal) {
+      reader.block();
+      reader.block();
+      if (reader.flag())
+        reader.u64();
+    }
+    auto projection = reader.block();
+    result.projectionOffset =
+        static_cast<std::size_t>(projection.data() - bytes.data());
+    result.projectionLength = projection.size();
+    auto payload = reader.block();
+    result.offset = static_cast<std::size_t>(payload.data() - bytes.data());
+    result.length = payload.size();
+    return result;
+  }
   CompactDefinitionView decode(std::size_t index,
                                const TypeGraphSymbols &symbols) const;
   ImportedTypeScalars
@@ -3704,11 +3765,12 @@ DeferredTypeGraph::project(std::size_t index,
     auto read = [&](std::size_t index) {
       auto found = projectedKeys.find(index);
       if (found == projectedKeys.end()) {
-        const auto &slice = records.at(index);
+        const auto slice = record(index);
         auto callbacks = resolver();
+        projectionArena->reset();
         CompactReader reader(
             bytes.subspan(slice.projectionOffset, slice.projectionLength),
-            callbacks, header);
+            callbacks, header, projectionArena);
         reader.types = types;
         reader.regions = regions;
         reader.universes = universes;
@@ -3856,7 +3918,7 @@ DeferredTypeGraph::project(std::size_t index,
 CompactDefinitionView
 DeferredTypeGraph::decode(std::size_t index,
                           const TypeGraphSymbols &callbacks) const {
-  const auto &slice = records[index];
+  const auto slice = record(index);
   CompactReader reader(std::span(bytes).subspan(slice.offset, slice.length),
                        callbacks, header, demandedArena);
   reader.types = types;
@@ -3917,7 +3979,7 @@ void DeferredTypeGraph::validate(std::size_t index) const {
       if (!demandedDefinitions.contains(current)) {
         if (queryValidation)
           project(current);
-        const auto &slice = records[current];
+        const auto slice = record(current);
         auto callbacks = resolver();
         auto value = decode(current, callbacks);
         CompactReader projection(
@@ -3977,6 +4039,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     Tables tables;
     readTables(reader, tables);
     WireTypeLookup::Admission admission;
+    std::size_t recordTableOffset = 0;
     if (header.indexed) {
       deferred->lookup.bytes = reader.block();
       if (deferred->trusted)
@@ -3984,7 +4047,10 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       else
         deferred->lookup.validate(header.types,
                                   demand && !onUse ? &admission : nullptr);
+      recordTableOffset = reader.offset;
+      readRecordTable(reader);
     }
+    const auto bodyBegin = reader.offset;
     auto minimumBytes = static_cast<std::size_t>(header.roots) * 4;
     if (minimumBytes > reader.remaining())
       reject("truncated type graph roots");
@@ -4007,7 +4073,11 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
                                              reader.bytes.data());
       deferred->lookup.bytes =
           bytes.subspan(offset, deferred->lookup.bytes.size());
+      deferred->recordTable =
+          bytes.subspan(recordTableOffset, std::size_t{header.types} * 4);
     }
+    deferred->bodyOffset = bodyBegin;
+    deferred->bodyEnd = bytes.size() - std::size_t{header.roots} * 4;
     reader.bytes = deferred->bytes;
     TypeStore candidate = types;
     importRegions(candidate, tables, deferred->regions, deferred->universes);
@@ -4027,7 +4097,8 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     std::vector<CompactDefinitionView> definitions;
     if (!demand)
       definitions.reserve(header.types);
-    deferred->records.reserve(header.types);
+    if (!deferred->trusted)
+      deferred->records.reserve(header.types);
     TypeGraphImport result;
     std::unordered_set<std::string_view> identities;
     if (!deferred->trusted)
@@ -4050,12 +4121,19 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       admittedFingerprints.resize(ids.size());
     }
     if (demand) {
-      for (std::size_t i = 0; i < deferred->regions.size(); ++i)
-        deferred->regionOrdinals.emplace(deferred->regions[i].index(),
-                                         static_cast<std::uint32_t>(i));
-      for (std::size_t i = 0; i < deferred->universes.size(); ++i)
-        deferred->universeOrdinals.emplace(deferred->universes[i],
-                                           static_cast<std::uint32_t>(i));
+      auto ordinals = [](auto &table, const auto &values, auto key) {
+        std::uint32_t largest = 0;
+        for (const auto &value : values)
+          largest = std::max<std::uint32_t>(largest, key(value));
+        table.assign(std::size_t{largest} + 1,
+                     DeferredTypeGraph::absentOrdinal);
+        for (std::size_t i = values.size(); i-- > 0;)
+          table[key(values[i])] = static_cast<std::uint32_t>(i);
+      };
+      ordinals(deferred->regionOrdinals, deferred->regions,
+               [](RegionId value) { return value.index(); });
+      ordinals(deferred->universeOrdinals, deferred->universes,
+               [](RegionUniverse value) { return value; });
       auto *graph = deferred.get();
       deferred->references = {
           [graph](Type value) -> std::optional<std::uint32_t> {
@@ -4070,21 +4148,17 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
             return {};
           },
           [graph](RegionId value) -> std::optional<std::uint32_t> {
-            auto found = graph->regionOrdinals.find(value.index());
-            if (found == graph->regionOrdinals.end())
-              return {};
-            return found->second;
+            return graph->ordinal(graph->regionOrdinals, value.index());
           },
           [graph](RegionUniverse value) -> std::optional<std::uint32_t> {
-            auto found = graph->universeOrdinals.find(value);
-            if (found == graph->universeOrdinals.end())
-              return {};
-            return found->second;
+            return graph->ordinal(graph->universeOrdinals, value);
           },
           [](std::uint32_t) -> std::optional<std::string_view> { return {}; }};
     }
-    for (std::uint32_t i = 0; i < header.types; ++i) {
+    for (std::uint32_t i = 0; !deferred->trusted && i < header.types; ++i) {
       const auto identityBegin = reader.offset;
+      if (header.indexed)
+        checkRecordOffset(deferred->recordTable, i, identityBegin - bodyBegin);
       std::optional<DefinitionIdentity> identity;
       bool identified = false;
       if (onUse) {
@@ -4156,6 +4230,8 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
             },
             *definition));
     }
+    if (deferred->trusted)
+      reader.offset = deferred->bodyEnd;
     result.roots.reserve(header.roots);
     for (std::uint32_t i = 0; i < header.roots; ++i) {
       Type root;

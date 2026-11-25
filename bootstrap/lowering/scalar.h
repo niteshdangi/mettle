@@ -12,7 +12,8 @@
 namespace mettle::lowering {
 struct ImportedBodies {
   TypeRecords<ir::Function, true> headers;
-  std::vector<ir::FunctionIndex> headerIndex;
+  std::shared_ptr<const std::vector<ir::FunctionIndex>> headerIndex =
+      std::make_shared<const std::vector<ir::FunctionIndex>>();
   std::map<std::size_t, ir::Function> functions;
   std::vector<ir::Program::Static> statics;
   std::map<std::pair<std::size_t, std::size_t>, ir::Function> defaults;
