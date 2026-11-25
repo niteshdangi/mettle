@@ -2460,6 +2460,15 @@ concrete arguments and witnesses. Even removing the measured rebuild cost
 entirely would not close the current first-build gap. The first-build gate
 remains open.
 
+Against `87c524b1`, the retained library changes cut P05 first build from
+203.81 to 178.83 ms in 56 matched ext4 pairs (0.872, 95% interval
+0.863–0.882) and runtime from 33.97 to 31.09 ms (0.917, 0.911–0.922).
+Early inlining confined to private bodies without a cleanup landing pad
+saved 2.6% on first build but slowed runtime by 16.5% in 52 pairs and was
+discarded. The unchanged Rust harness still measures a 1.716× first-build
+ratio at `515bcff4`. Receipts:
+`direct-init/{p05-cumulative,direct-frame-early}/ab.json`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
