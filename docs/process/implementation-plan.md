@@ -2541,6 +2541,18 @@ gap in this engineering run, not the I14 release qualification: interval
 precision missed the 0.5-percent target. Receipts:
 `direct-init/entry-parallel/direct-link/exact/{auth-rust/results.json,direct.log,forced.log,single.log}`.
 
+P05 application check now streams region imports, caches authenticated type
+projections on demand, and avoids rescanning indirect calls after lowering.
+With the compiler invoked directly and authenticated shipped selectors active,
+320 paired WSL ext4 runs measured 16.06/16.86 ms against Rust 1.99.1 (paired
+0.977, adjusted interval 0.957–0.996). First build was 101.07/104.55 ms
+(0.969, 0.959–0.980); runtime was 30.44/38.28 ms (0.795, 0.792–0.798).
+Original and semantic-edited outputs matched. The earlier launcher used
+`--library-dir`, so those check timings include editable-library invalidation
+and are not a matched before/after comparison. The measured check interval is
+below parity but still misses I14's precision target. Receipt:
+`direct-init/entry-parallel/direct-link/exact/region-check.FYFhck/rust-confirm/results.json`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

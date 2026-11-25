@@ -279,6 +279,7 @@ void erasedAdapters(ir::Program &program, TypeStore &types,
     for (const auto &local : function.locals)
       visit(local.type);
   }
+  const auto firstAdapter = program.functions.size();
   for (auto erased : erasedTypes) {
     const auto &descriptor = types.erased(erased);
     auto parameters = types.typeParameters(erased);
@@ -416,6 +417,6 @@ void erasedAdapters(ir::Program &program, TypeStore &types,
       program.functions.push_back(std::move(adapter));
     }
   }
-  callableContracts(program);
+  callableContracts(program, firstAdapter);
 }
 } // namespace mettle::lowering

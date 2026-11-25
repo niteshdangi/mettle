@@ -1227,99 +1227,106 @@ void readHeader(Reader &reader, Header &header, unsigned pointerBits) {
       header.roots > reader.remaining() / 4)
     reject("invalid type graph table count");
 }
-struct Tables {
+std::vector<ImportedTypeKind> readTypeKinds(Reader &reader) {
   std::vector<ImportedTypeKind> kinds;
-  std::vector<std::uint32_t> parents, binders;
-  std::vector<WireRegion> regions;
-};
-void readTables(Reader &reader, Tables &tables) {
-  tables.kinds.reserve(reader.header.types);
-  tables.parents.reserve(reader.header.universes);
-  tables.binders.reserve(reader.header.binders);
-  tables.regions.reserve(reader.header.regions);
+  kinds.reserve(reader.header.types);
   for (std::uint32_t i = 0; i < reader.header.types; ++i) {
     ImportedTypeKind kind{};
     reader(kind);
-    tables.kinds.push_back(kind);
+    kinds.push_back(kind);
+  }
+  return kinds;
+}
+std::vector<Type> builtinTypes() {
+  return {primitiveTypes.begin(), primitiveTypes.end()};
+}
+struct RegionTables {
+  std::vector<std::uint32_t> parents, binders;
+  std::vector<WireRegion> regions;
+};
+void importRegions(Reader &reader, TypeStore &candidate,
+                   std::vector<RegionId> &regions,
+                   std::vector<RegionUniverse> &universes,
+                   RegionTables *tables = nullptr) {
+  auto &store = candidate.regions();
+  universes.reserve(reader.header.universes);
+  if (tables) {
+    tables->parents.reserve(reader.header.universes);
+    tables->binders.reserve(reader.header.binders);
+    tables->regions.reserve(reader.header.regions);
   }
   for (std::uint32_t i = 0; i < reader.header.universes; ++i) {
     auto parent = reader.u32();
     if (i ? parent >= i : parent != 0)
       reject("cyclic or dangling region universe ancestry");
-    tables.parents.push_back(parent);
+    universes.push_back(i ? store.binder(universes[parent], true).universe : 0);
+    if (tables)
+      tables->parents.push_back(parent);
   }
+  std::vector<RegionScope> binders;
+  binders.reserve(reader.header.binders);
   for (std::uint32_t i = 0; i < reader.header.binders; ++i) {
     auto universe = reader.u32();
     if (universe >= reader.header.universes)
       reject("dangling region binder universe");
-    tables.binders.push_back(universe);
-  }
-  for (std::uint32_t i = 0; i < reader.header.regions; ++i) {
-    WireRegion region;
-    record(reader, region);
-    tables.regions.push_back(std::move(region));
-  }
-}
-std::vector<Type> builtinTypes() {
-  return {primitiveTypes.begin(), primitiveTypes.end()};
-}
-void importRegions(TypeStore &candidate, const Tables &tables,
-                   std::vector<RegionId> &regions,
-                   std::vector<RegionUniverse> &universes) {
-  auto &store = candidate.regions();
-  universes.push_back(0);
-  for (std::size_t i = 1; i < tables.parents.size(); ++i)
-    universes.push_back(
-        store.binder(universes[tables.parents[i]], true).universe);
-  std::vector<RegionScope> binders;
-  for (auto universe : tables.binders)
     binders.push_back(store.binder(universes[universe]));
-  regions.resize(2 + tables.regions.size());
-  regions[0] = RegionId::Unspecified;
+    if (tables)
+      tables->binders.push_back(universe);
+  }
+  regions.resize(2 + reader.header.regions, RegionId::Unspecified);
   regions[1] = RegionId::Static;
-  for (std::size_t i = 0; i < tables.regions.size(); ++i) {
-    const auto &r = tables.regions[i];
-    if (r.kind == RegionKind::Intersection)
+  std::vector<std::pair<std::size_t, std::vector<std::uint32_t>>> intersections;
+  for (std::size_t i = 2; i < regions.size(); ++i) {
+    WireRegion r;
+    record(reader, r);
+    if (tables)
+      tables->regions.push_back(r);
+    if (r.kind == RegionKind::Intersection) {
+      if (!r.name.empty())
+        reject("named region intersection");
+      intersections.emplace_back(i, std::move(r.sources));
       continue;
-    if (r.universe != tables.binders[r.binder])
-      reject("region and binder universes disagree");
+    }
     auto scope = binders[r.binder];
+    if (scope.universe != universes[r.universe])
+      reject("region and binder universes disagree");
     switch (r.kind) {
     case RegionKind::Bound:
-      regions[i + 2] = store.bound(scope, r.name);
+      regions[i] = store.bound(scope, std::move(r.name));
       break;
     case RegionKind::Rigid:
-      regions[i + 2] = store.rigid(scope, r.name);
+      regions[i] = store.rigid(scope, std::move(r.name));
       break;
     case RegionKind::Inference:
       if (!r.name.empty())
         reject("named inference region");
-      regions[i + 2] = store.inference(scope);
+      regions[i] = store.inference(scope);
       break;
     case RegionKind::Local:
       if (!r.name.empty())
         reject("named local region");
-      regions[i + 2] = store.local(scope);
+      regions[i] = store.local(scope);
       break;
     default:
       reject("invalid imported region kind");
     }
   }
-  for (std::size_t i = 0; i < tables.regions.size(); ++i) {
-    const auto &r = tables.regions[i];
-    if (r.kind != RegionKind::Intersection)
-      continue;
-    if (!r.name.empty())
-      reject("named region intersection");
-    std::set<std::uint32_t> seen;
+  for (auto &[index, refs] : intersections) {
+    (void)index;
+    std::sort(refs.begin(), refs.end());
+    if (refs.front() < 2 ||
+        std::adjacent_find(refs.begin(), refs.end()) != refs.end() ||
+        std::any_of(refs.begin(), refs.end(), [&](auto ref) {
+          return regions[ref] == RegionId::Unspecified;
+        }))
+      reject("cyclic or noncanonical region intersection");
+  }
+  for (const auto &[index, refs] : intersections) {
     std::vector<RegionId> sources;
-    for (auto ref : r.sources) {
-      if (ref < 2 || tables.regions[ref - 2].kind == RegionKind::Intersection ||
-          !seen.insert(ref).second)
-        reject("cyclic or noncanonical region intersection");
+    sources.reserve(refs.size());
+    for (auto ref : refs)
       sources.push_back(regions[ref]);
-    }
-    regions[i + 2] = store.intersection(std::move(sources));
+    regions[index] = store.intersection(std::move(sources));
   }
 }
 template <class Derived> struct SemanticWalk : Fields<Derived> {
@@ -2285,7 +2292,7 @@ struct RegionRemap : SemanticWalk<RegionRemap> {
   void universe(RegionUniverse &universe) { universe = universes.at(universe); }
 };
 void remapRegionGraph(TypeStore &candidate, const TypeStore &decoded,
-                      const Tables &tables,
+                      const RegionTables &tables,
                       const std::vector<RegionId> &sourceRegions,
                       const std::vector<RegionUniverse> &sourceUniverses,
                       ExistingGraph &existing,
@@ -3278,8 +3285,12 @@ static TypeGraphImport importTypeGraphEager(TypeStore &types,
     Header header;
     Reader reader(bytes, symbols, header);
     readHeader(reader, header, types.targetPointerBits());
-    Tables tables;
-    readTables(reader, tables);
+    auto kinds = readTypeKinds(reader);
+    TypeStore candidate = types;
+    std::vector<RegionId> regions;
+    std::vector<RegionUniverse> universes;
+    RegionTables tables;
+    importRegions(reader, candidate, regions, universes, &tables);
     std::span<const std::uint8_t> recordTable;
     if (header.indexed) {
       WireTypeLookup lookup{reader.block()};
@@ -3290,20 +3301,16 @@ static TypeGraphImport importTypeGraphEager(TypeStore &types,
     auto minimumBytes = static_cast<std::size_t>(header.roots) * 4;
     if (minimumBytes > reader.remaining())
       reject("truncated type graph roots");
-    for (auto kind : tables.kinds) {
+    for (auto kind : kinds) {
       const auto required = minimumDefinitionBytes(kind);
       if (required > reader.remaining() - minimumBytes)
         reject("truncated type graph definitions");
       minimumBytes += required;
     }
-    TypeStore candidate = types;
-    std::vector<RegionId> regions;
-    std::vector<RegionUniverse> universes;
-    importRegions(candidate, tables, regions, universes);
     auto localTypes = builtinTypes();
-    localTypes.reserve(localTypes.size() + tables.kinds.size());
+    localTypes.reserve(localTypes.size() + kinds.size());
     const bool fresh = types.storedTypeCount() == 0;
-    for (auto kind : tables.kinds)
+    for (auto kind : kinds)
       localTypes.push_back(candidate.declareImportedType(kind));
     reader.types = localTypes;
     reader.regions = regions;
@@ -3323,7 +3330,7 @@ static TypeGraphImport importTypeGraphEager(TypeStore &types,
       reader(identity);
       const auto identityBytes =
           bytes.subspan(identityBegin, reader.offset - identityBegin);
-      auto definition = definitionFor(tables.kinds[i]);
+      auto definition = definitionFor(kinds[i]);
       if (header.indexed) {
         reader.block();
         framedDefinition(reader, definition);
@@ -3416,6 +3423,7 @@ struct DeferredTypeGraph {
   std::span<const std::uint8_t> recordTable;
   std::size_t bodyOffset = 0, bodyEnd = 0;
   mutable std::vector<ImportedTypeScalars> scalars;
+  mutable std::unordered_map<std::size_t, ImportedTypeScalars> trustedScalars;
   bool queryValidation = false, trusted = false;
   mutable std::unordered_map<std::size_t,
                              std::vector<std::vector<std::uint8_t>>>
@@ -3759,7 +3767,10 @@ ImportedTypeScalars
 DeferredTypeGraph::project(std::size_t index,
                            std::span<const std::uint8_t> requested) const {
   std::lock_guard lock(projectionMutex);
-  if (requested.empty() && projectionProofs.at(index))
+  if (trusted) {
+    if (auto found = trustedScalars.find(index); found != trustedScalars.end())
+      return found->second;
+  } else if (requested.empty() && projectionProofs.at(index))
     return scalars[index];
   try {
     auto read = [&](std::size_t index) {
@@ -3818,7 +3829,7 @@ DeferredTypeGraph::project(std::size_t index,
                                 "type lookup index does not match projection");
                           keys.push_back(std::move(*key));
                         });
-        auto &facts = scalars[index];
+        ImportedTypeScalars facts;
         facts.parameterKind = indexValue.parameterKind;
         facts.valueType = indexValue.valueType;
         facts.declaration = indexValue.declaration;
@@ -3828,8 +3839,11 @@ DeferredTypeGraph::project(std::size_t index,
         facts.regionOrigin = indexValue.regionOrigin;
         if (product)
           facts.aggregateKind = product->descriptor.kind;
-        if (trusted)
+        if (trusted) {
+          trustedScalars.emplace(index, facts);
           return;
+        }
+        scalars[index] = facts;
         std::array<std::vector<std::size_t>, 2> edges;
         if (!slice.nominal) {
           std::vector<Type> dependencies;
@@ -3858,8 +3872,7 @@ DeferredTypeGraph::project(std::size_t index,
     };
     if (trusted) {
       read(index);
-      projectionProofs[index] = true;
-      return scalars[index];
+      return trustedScalars.at(index);
     }
     if (!projectionProofs.at(index)) {
       read(index);
@@ -4036,8 +4049,9 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     const bool onUse = validation >= ValidationMode::OnUse;
     deferred->queryValidation = onUse;
     deferred->trusted = validation == ValidationMode::Trusted;
-    Tables tables;
-    readTables(reader, tables);
+    auto kinds = readTypeKinds(reader);
+    TypeStore candidate = types;
+    importRegions(reader, candidate, deferred->regions, deferred->universes);
     WireTypeLookup::Admission admission;
     std::size_t recordTableOffset = 0;
     if (header.indexed) {
@@ -4054,7 +4068,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     auto minimumBytes = static_cast<std::size_t>(header.roots) * 4;
     if (minimumBytes > reader.remaining())
       reject("truncated type graph roots");
-    for (auto kind : tables.kinds) {
+    for (auto kind : kinds) {
       auto required = minimumDefinitionBytes(kind);
       if (required > reader.remaining() - minimumBytes)
         reject("truncated type graph definitions");
@@ -4079,9 +4093,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     deferred->bodyOffset = bodyBegin;
     deferred->bodyEnd = bytes.size() - std::size_t{header.roots} * 4;
     reader.bytes = deferred->bytes;
-    TypeStore candidate = types;
-    importRegions(candidate, tables, deferred->regions, deferred->universes);
-    deferred->kinds = std::move(tables.kinds);
+    deferred->kinds = std::move(kinds);
     if (demand)
       candidate.reserveImportedTypes(deferred->kinds, deferred);
     deferred->types = builtinTypes();
@@ -4408,8 +4420,10 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     deferred->symbols = reader.resolveSymbols();
     if (onUse) {
       deferred->retainedSymbols = std::move(retainedSymbols);
-      deferred->scalars.resize(ids.size());
-      deferred->projectionProofs.resize(ids.size());
+      if (!deferred->trusted) {
+        deferred->scalars.resize(ids.size());
+        deferred->projectionProofs.resize(ids.size());
+      }
     } else if (demand) {
       deferred->retainedSymbols = std::move(retainedSymbols);
       for (std::size_t kind = 0; kind < Reader::symbolKinds; ++kind)
@@ -4517,8 +4531,10 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     deferred->definitions = std::move(definitions);
     if (demand) {
       deferred->symbols = {};
-      deferred->validationRegions = candidate.regions();
-      deferred->validationAbi = candidate.vaListAbi();
+      if (!deferred->trusted) {
+        deferred->validationRegions = candidate.regions();
+        deferred->validationAbi = candidate.vaListAbi();
+      }
       deferred->demandedArena = std::make_shared<CompactArena>();
     }
     auto loader = std::make_shared<const TypeStore::ImportedDefinitionLoader>(

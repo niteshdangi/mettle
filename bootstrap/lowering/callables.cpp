@@ -8,7 +8,7 @@ using ir::Exit;
 using ir::Op;
 // Gives each unresolved indirect call the contract function of its signature;
 // rerunning it after later passes add calls reuses the existing contracts.
-void callableContracts(ir::Program &program) {
+void callableContracts(ir::Program &program, std::size_t firstFunction) {
   auto key = [&](const ir::Instruction &instruction) {
     const auto &signature = program.types->callable(instruction.indirectType);
     bool twoPhase = instruction.erasedDispatch &&
@@ -21,19 +21,9 @@ void callableContracts(ir::Program &program) {
     return "mettle.indirect." + std::to_string(type.index()) +
            (twoPhase ? ".two-phase" : "");
   };
-  std::map<std::pair<std::string, std::vector<std::size_t>>, int> existing;
-  for (std::size_t f = 0; f < program.functions.size(); ++f) {
-    if (auto index = program.deferredFunctionIndex(f);
-        index && !index->indirectContract)
-      continue;
-    if (program.functions[f].indirectContract)
-      existing.emplace(std::pair{program.functions[f].externalName,
-                                 program.functions[f].callLocalParameters},
-                       static_cast<int>(f));
-  }
   std::map<std::tuple<Type, bool, std::vector<std::size_t>>, int> contracts;
   std::vector<std::size_t> pending;
-  for (std::size_t f = 0; f < program.functions.size(); ++f) {
+  for (std::size_t f = firstFunction; f < program.functions.size(); ++f) {
     if (auto index = program.deferredFunctionIndex(f);
         index && f < program.libraryBodies.size() && program.libraryBodies[f])
       continue;
@@ -44,6 +34,19 @@ void callableContracts(ir::Program &program) {
           if (pending.empty() || pending.back() != f)
             pending.push_back(f);
         }
+  }
+  if (contracts.empty())
+    return;
+  std::map<std::pair<std::string, std::vector<std::size_t>>, int> existing;
+  for (std::size_t f = 0; f < program.functions.size(); ++f) {
+    if (auto index = program.deferredFunctionIndex(f);
+        index && !index->indirectContract)
+      continue;
+    const auto &function = program.functions[f];
+    if (function.indirectContract)
+      existing.emplace(
+          std::pair{function.externalName, function.callLocalParameters},
+          static_cast<int>(f));
   }
   for (auto &[identity, index] : contracts) {
     const auto &[type, twoPhase, local] = identity;

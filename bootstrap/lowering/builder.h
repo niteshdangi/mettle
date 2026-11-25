@@ -9,7 +9,7 @@ namespace mettle::lowering {
 struct LoweringLimit : std::runtime_error {
   explicit LoweringLimit(const char *message) : std::runtime_error(message) {}
 };
-void callableContracts(ir::Program &program);
+void callableContracts(ir::Program &program, std::size_t firstFunction = 0);
 class Builder {
 public:
   explicit Builder(const CheckedModule &module,

@@ -282,12 +282,15 @@ child-process wall time and RSS include the compiler and no resident endpoint
 survives a sample. Fresh Mettle project caches use the separately provisioned
 shipped library, not a copy of another project's cache.
 `application_check` and `application_build` compare fresh standalone Mettle
-processes with direct rustc metadata and executable emission. Application check
-and build start from separate empty project caches and share only the shipped
-toolchain store. Every pair compares both application
-executables with the clean build outputs and checks the semantic edit. Unchanged
-output makes the semantic-edit timing inconclusive. Source hashes and the build
-and runtime orders are recorded for each workload.
+processes with direct rustc metadata and executable emission. Invoke the Mettle
+binary directly with its bundled library configured as the default; a shell
+launcher adds process overhead, and `--library-dir` selects editable-library
+invalidation instead of the shipped selector. Application check and build start
+from separate empty project caches and share only the shipped toolchain store.
+Every pair compares both application executables with the clean build outputs
+and checks the semantic edit. Unchanged output makes the semantic-edit timing
+inconclusive. Source hashes and the build and runtime orders are recorded for
+each workload.
 Native compiler builds generate a builtin method-name index from the bundled
 core modules, usable on the first application check when all indexed source
 digests match. Custom or changed inputs use source discovery and an

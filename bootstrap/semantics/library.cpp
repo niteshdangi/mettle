@@ -5665,11 +5665,8 @@ LibraryDeclarationImport importLibraryDeclarations(
   if (functionOffsets.size() != count * sizeof(std::uint64_t))
     archive.fail("invalid checked function directory");
   auto functionOffset = [functionOffsets](std::size_t index) {
-    std::uint64_t result = 0;
-    for (unsigned byte = 0; byte < sizeof(result); ++byte)
-      result |= std::uint64_t(functionOffsets[index * sizeof(result) + byte])
-                << (byte * 8);
-    return static_cast<std::size_t>(result);
+    return static_cast<std::size_t>(fixedWord(
+        functionOffsets, index * sizeof(std::uint64_t), sizeof(std::uint64_t)));
   };
   Archive rows(functionBytes, admission, types.get());
   ImportedFunctionRecords discarded;
@@ -5713,9 +5710,9 @@ LibraryDeclarationImport importLibraryDeclarations(
     if (value->catalog && index != i)
       archive.fail("native declaration IDs do not match archive ordinals");
     if (value->catalog) {
-      auto identity =
-          value->catalog->symbol(metadata::SymbolKind::Function, index);
-      if (!identity || identity->span != summary.span)
+      auto span =
+          value->catalog->symbolSpan(metadata::SymbolKind::Function, index);
+      if (!span || *span != summary.span)
         archive.fail(
             "checked function has inconsistent declaration provenance");
     }
@@ -5781,8 +5778,8 @@ LibraryDeclarationImport importLibraryDeclarations(
     if (scanner.defaults != scanner.parameters)
       row.fail("invalid checked function signature inventory");
     if (catalog) {
-      auto identity = catalog->symbol(metadata::SymbolKind::Function, index);
-      if (index != ordinal || !identity || identity->span != summary.span)
+      auto span = catalog->symbolSpan(metadata::SymbolKind::Function, index);
+      if (index != ordinal || !span || *span != summary.span)
         row.fail("checked function has inconsistent declaration provenance");
     }
     std::string name;

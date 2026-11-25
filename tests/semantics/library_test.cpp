@@ -925,8 +925,8 @@ fn main(): i32 {
       auto indexedImporter =
           [&](const Module &, const resolution::Resolution &,
               Diagnostics &) -> std::optional<pipeline::ImportedProgram> {
-        return pipeline::ImportedProgram{indexedDeclarations, bindings,
-                                         metadata};
+        return pipeline::ImportedProgram{
+            indexedDeclarations, bindings, metadata, {}};
       };
       auto indexedPrepared = pipeline::prepare(
           std::move(*indexedProgram), indexedDiagnostics, true, {}, {}, owners,
@@ -989,8 +989,8 @@ fn main(): i32 {
       expect(functions.admittedSize() == admitted,
              "native-backed source query replay does not admit unused headers");
     }
-    return pipeline::ImportedProgram{imported, std::move(bindings),
-                                     std::move(metadata)};
+    return pipeline::ImportedProgram{
+        imported, std::move(bindings), std::move(metadata), {}};
   };
   auto prepared = pipeline::prepare(
       std::move(*consumer), diagnostics, true, {},

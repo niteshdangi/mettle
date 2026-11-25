@@ -43,13 +43,18 @@ TypeGraphSymbols symbolMaps(unsigned offset = 0) {
 std::uint32_t u32(const std::vector<std::uint8_t> &bytes, std::size_t offset) {
   std::uint32_t result = 0;
   for (unsigned i = 0; i < 4; ++i)
-    result |= static_cast<std::uint32_t>(bytes[offset + i]) << (8 * i);
+    result |= static_cast<std::uint32_t>(bytes.at(offset + i)) << (8 * i);
   return result;
+}
+std::size_t indexedRecordOffset(const std::vector<std::uint8_t> &bytes,
+                                std::size_t indexOffset, std::size_t ordinal) {
+  auto records = indexOffset + 4 + u32(bytes, indexOffset);
+  return records + 4 * u32(bytes, 16) + u32(bytes, records + 4 * ordinal);
 }
 void put32(std::vector<std::uint8_t> &bytes, std::size_t offset,
            std::uint32_t value) {
   for (unsigned i = 0; i < 4; ++i)
-    bytes[offset + i] = static_cast<std::uint8_t>(value >> (8 * i));
+    bytes.at(offset + i) = static_cast<std::uint8_t>(value >> (8 * i));
 }
 } // namespace
 int main() {
@@ -634,9 +639,7 @@ int main() {
              "lookup membership must match the complete key, not a truncated "
              "or extended prefix");
     }
-    auto projection = indexOffset + 4 + u32(encoded.bytes, indexOffset) + 1;
-    auto full = projection + 4 + u32(encoded.bytes, projection);
-    projection = full + 4 + u32(encoded.bytes, full) + 1;
+    auto projection = indexedRecordOffset(encoded.bytes, indexOffset, 1) + 1;
     auto malformed = encoded.bytes;
     put32(malformed, projection + 4, UINT32_MAX);
     TypeStore consumer;
@@ -671,7 +674,7 @@ int main() {
                         *retained, ValidationMode::OnDemand);
     expect(bool(encoded), encoded.error);
     auto indexOffset = 36 + u32(encoded.bytes, 16) + 4 * u32(encoded.bytes, 24);
-    auto projection = indexOffset + 4 + u32(encoded.bytes, indexOffset) + 1;
+    auto projection = indexedRecordOffset(encoded.bytes, indexOffset, 0) + 1;
     auto full = projection + 4 + u32(encoded.bytes, projection);
     put32(encoded.bytes, full + 4, UINT32_MAX);
     TypeStore consumer;
@@ -702,7 +705,7 @@ int main() {
                                    ValidationMode::OnDemand);
     expect(bool(encoded), encoded.error);
     auto indexOffset = 36 + u32(encoded.bytes, 16) + 4 * u32(encoded.bytes, 24);
-    auto identityFrame = indexOffset + 4 + u32(encoded.bytes, indexOffset) + 1;
+    auto identityFrame = indexedRecordOffset(encoded.bytes, indexOffset, 0) + 1;
     auto fullRecord = identityFrame + 4 + u32(encoded.bytes, identityFrame) + 4;
     put32(encoded.bytes, fullRecord + 12, Type::Bool.index());
     TypeStore consumer;
@@ -1338,7 +1341,7 @@ int main() {
     indexedBytes = std::move(indexed.bytes);
   }
   for (auto mode : {ValidationMode::Eager, ValidationMode::OnDemand,
-                    ValidationMode::OnUse}) {
+                    ValidationMode::OnUse, ValidationMode::Trusted}) {
     TypeStore fresh;
     auto temporary = mode == ValidationMode::Eager ? bytes : indexedBytes;
     auto symbols = std::make_shared<const TypeGraphSymbols>(symbolMaps(100));
