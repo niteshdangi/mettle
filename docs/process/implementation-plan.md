@@ -2389,11 +2389,19 @@ early preserved P05 runtime: first-build ratios were 0.938 and 0.951, but
 runtime ratios were 1.021 and 1.018 in 40 matched pairs each. Neither was
 retained. Receipts: `direct-init/{entry-outline,entry-earlyinline}/ab.json`.
 
+Moving rebuild slot selection into a separate native planning pass cut first
+build by 2.4% but slowed runtime by 1.4% in 72 pairs. Fusing slot selection
+with hashing avoided the extra scan but still slowed runtime by 0.8% and
+showed no clear first-build gain in 56 pairs. Neither was retained.
+Receipts: `direct-init/{rebuild-plan,rebuild-claim}/ab.json`.
+
 An offline replay isolated 22.47 ms of root optimization in the concrete
 rebuild family. Its standalone archive linked with both workload revisions;
 the dependency-closed IR matched after removing module identity. This is not
 compiler reuse: a fresh consumer cannot assume an archive exists for its
-concrete arguments and witnesses. The first-build gate remains open.
+concrete arguments and witnesses. Even removing the measured rebuild cost
+entirely would not close the current first-build gap. The first-build gate
+remains open.
 
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
