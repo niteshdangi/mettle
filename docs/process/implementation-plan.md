@@ -2269,6 +2269,41 @@ Evidence: `~/w/anal/p05-wslfs.UxroBVgQ` (`facts-codegen-probe/sample*.log`,
 `facts-pipeline-probe/results.json`, `facts-root-pass-probe/root-passes.txt`
 and `facts-root-pass-probe/prepasses.json`).
 
+Direct installation of owned locals immediately after declaration removed
+17 of 31 replacement-runtime calls from unoptimized P05 LLVM IR. In 26
+interleaved ext4 pairs the application-build ratio was 0.959 (interval
+0.923–0.996) and the runtime ratio was 0.973 (0.928–1.019). A separate
+15-pair full run matched original and edited outputs; its build, first
+check and runtime medians were 244.89/106.22, 19.72/17.16 and 33.17/38.58 ms
+(Mettle/Rust). Absolute timings differed between runs; compare within each
+receipt. First application build and the other open gates remain unresolved.
+Evidence: `~/w/anal/p05-wslfs.UxroBVgQ/direct-init/{ab.json,bench/results.json}`.
+
+The parallel sanitizer build initially failed on both revisions: LLVM's
+temporary archive writer replaced the ASan-owned alternate signal stack on
+the native emission worker, and ASan tried to unmap the replacement at thread
+exit. Streaming machine-unit archives into the existing private staging
+directory avoids that operation without changing final-output publication.
+The parallel P05 build passed with the changed driver and cleanup translation
+units instrumented for ASan/UBSan. Full sanitizer qualification remains open.
+Evidence: `direct-init/{san-altstack-stack.trace,stream-san.log}` in the same
+ext4 evidence tree.
+
+Eliding the pending cleanup slot for immediately installed single-use
+initializers reduced P05's unoptimized LLVM IR from 1,365,544 to 1,263,614
+bytes. Across 26 interleaved ext4 pairs with authenticated `alloc` and both
+native package archive hits verified, first application build fell from
+236.02 to 220.59 ms (paired ratio 0.943, 95% interval 0.924–0.964). Runtime
+ratio was 0.999 (0.982–1.016). Earlier comparisons with mismatched library
+cache hits are not evidence. Receipt: `direct-init/unstaged-matched-ab.json`.
+The 15-pair unchanged Rust harness matched original and edited outputs.
+Mettle/Rust medians were 228/112 ms first build, 232/148 ms clean build,
+201/115 ms semantic-edit build, 17.2/17.4 ms first check and 33.0/38.7 ms
+runtime. Neither retained-storage endpoint met the stability gate. The
+parallel instrumented build and checksum passed; receipts are
+`direct-init/{unstaged-rust-bench/results.json,unstaged-san.log}`. The next
+target is root LLVM optimization; source freeze and P05 parity remain open.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

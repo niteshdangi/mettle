@@ -504,11 +504,49 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
                          lowering.alignment(source.result));
   if (source.trackCaller)
     callerField = addField(lowering.builder.getPtrTy(), 8);
+  auto isFreshStore = [&](const ir::Instruction &declaration,
+                          const ir::Instruction &store) {
+    return declaration.op == ir::Op::Declare && store.op == ir::Op::Store &&
+           declaration.place == store.place && store.place.fields.empty() &&
+           static_cast<std::size_t>(store.place.root) >= source.parameters &&
+           source.locals[store.place.root].storage ==
+               StorageDuration::Automatic;
+  };
+  std::vector<bool> unstaged(source.values);
+  for (const auto &block : source.blocks) {
+    const auto &instructions = block.instructions;
+    for (std::size_t i = 2; i < instructions.size(); ++i) {
+      const auto &store = instructions[i];
+      if (!isFreshStore(instructions[i - 1], store))
+        continue;
+      const auto value = instructions[i - 2].result;
+      if (value == store.operands[0] && value.access == ir::Access::Owned &&
+          lowering.program.types->needsDrop(value.type))
+        unstaged[value.id] = true;
+    }
+  }
+  std::vector<bool> used(source.values);
+  auto observeUse = [&](ir::Value value) {
+    if (value.id < 0 || !unstaged[value.id])
+      return;
+    if (used[value.id])
+      unstaged[value.id] = false;
+    used[value.id] = true;
+  };
+  for (const auto &block : source.blocks) {
+    for (const auto &instruction : block.instructions) {
+      for (auto operand : instruction.operands)
+        observeUse(operand);
+      observeUse(instruction.target);
+    }
+    observeUse(block.exit.value);
+  }
   ir::Function pendingSource{};
   std::vector<int> pendingIds;
   for (const auto &block : source.blocks)
     for (const auto &instruction : block.instructions)
       if (instruction.result.access == ir::Access::Owned &&
+          instruction.result.id >= 0 && !unstaged[instruction.result.id] &&
           lowering.program.types->needsDrop(instruction.result.type)) {
         pendingSource.locals.push_back(
             {"pending",
@@ -527,9 +565,14 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
     auto id = pendingIds[pendingPlan.places[place].place.root];
     values.emplace(id, addRoot(pendingPlan, place));
   }
-  for (const auto &block : source.blocks)
+  for (const auto &block : source.blocks) {
+    const ir::Instruction *previous = nullptr;
     for (const auto &instruction : block.instructions) {
+      const auto *before = previous;
+      previous = &instruction;
       if (instruction.op != ir::Op::Store)
+        continue;
+      if (before && isFreshStore(*before, instruction))
         continue;
       auto type = *projectedType(*lowering.program.types,
                                  source.locals[instruction.place.root].type,
@@ -543,6 +586,7 @@ CleanupFrame::CleanupFrame(LoweringContext &lowering,
                               values.at(instruction.operands[0].id), nullptr,
                               nullptr});
     }
+  }
   if (source.coroutine) {
     stateField = addField(lowering.builder.getInt32Ty());
     contextField = addField(lowering.builder.getPtrTy());
@@ -1272,6 +1316,8 @@ void CleanupFrame::store(const ir::Instruction &instruction,
   } else {
     lowering.store(instruction.operands[0].type, value,
                    address(instruction.place), alignment(instruction.place));
+    if (instruction.op == ir::Op::Store)
+      consume(instruction.operands[0]);
     auto node = placeNode(instruction.place);
     if (node != std::numeric_limits<unsigned>::max()) {
       set(node, true);

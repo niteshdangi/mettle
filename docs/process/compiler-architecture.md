@@ -1664,6 +1664,13 @@ extend a source lifetime: only eligible direct borrowed initializers extend thei
 temporary to the binding block. Generic instances preserve these declared
 ownership rules.
 
+A whole automatic local stored immediately after its declaration has no old
+value to destroy. The backend installs it directly, transfers the pending
+value's ownership flag, and retains its normal scope and unwind cleanup.
+If the initializer is produced immediately before the declaration and used
+only by that store, no operation can unwind between production and
+installation, so the value does not need a separate pending cleanup slot.
+
 The I06 machine boundary shares operation signatures between checking and IR
 verification in `types/machine`. Raw memory operations retain explicit unsafe
 requirements: callers establish provenance, extent, alignment, initialized

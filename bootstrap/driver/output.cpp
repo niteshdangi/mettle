@@ -339,12 +339,25 @@ llvm::Error emitUnitArchive(llvm::Module &module, const Options &options,
     member->MemberName = memberNames[index];
     members.push_back(std::move(*member));
   }
-  if (auto error = llvm::writeArchive(
-          output, members, llvm::SymtabWritingMode::NormalSymtab,
-          llvm::object::Archive::getDefaultKindForTriple(
-              llvm::Triple(options.target)),
-          true, false))
-    return error;
+  std::error_code openError;
+  llvm::raw_fd_ostream stream(output, openError, llvm::sys::fs::OF_None);
+  if (openError)
+    return llvm::createStringError(openError, "cannot create object archive");
+  auto archiveError = llvm::writeArchiveToStream(
+      stream, members, llvm::SymtabWritingMode::NormalSymtab,
+      llvm::object::Archive::getDefaultKindForTriple(
+          llvm::Triple(options.target)),
+      true, false);
+  stream.close();
+  if (stream.has_error()) {
+    auto writeError = stream.error();
+    stream.clear_error();
+    return llvm::joinErrors(
+        std::move(archiveError),
+        llvm::createStringError(writeError, "cannot write object archive"));
+  }
+  if (archiveError)
+    return archiveError;
   if (store)
     artifacts.push_back({bucketKey, output.str(), false});
   if (options.explain)

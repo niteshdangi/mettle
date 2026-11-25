@@ -1861,6 +1861,12 @@ def check_ir_shape(run, args, directory, evidence):
                "mettle_rt_unwind_begin" in body
                for _, _, body in functions(cleanup)):
         raise AssertionError("A function with a destructor lost its cleanup frame")
+    if cleanup.count("call void @mettle_rt_replace(") > 1:
+        raise AssertionError("Initializing the temporary guard uses replacement cleanup")
+    unwind = next(body for name, _, body in functions(cleanup)
+                  if name == "@mettle.run.unwind")
+    if unwind.count("call void @mettle_rt_cleanup(") != 3:
+        raise AssertionError("The guard initializer has a separate unwind slot")
     obj = directory / "shape-cleanup-run"
     run([args.compiler, "build", directory / "shape-cleanup.mt",
          "-o", obj, "--profile", "release"])
