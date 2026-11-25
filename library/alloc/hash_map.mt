@@ -532,6 +532,7 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         core.mem.forget(take payload_guard)
     }
 
+    @inline(never)
     mut fn try_reserve_impl(extra: usize): Unit throws TryReserveError {
         let need = match (self.entries.len()).checked_add(extra) {
             present(n) => n,
@@ -701,16 +702,14 @@ extend<K: Hash + PartialEq, V, A: Allocator, S: BuildHasher> Map<K, V, A, S> {
         none
     }
 
+    @inline(never)
     mut fn try_append(hash: u64, take key: K, take value: V, vacant: usize): usize throws TryReserveError {
-        let old_controls = self.entries.controls
         var pos = vacant
         let reuses_deleted = self.entries.cap != 0usize &&
             unsafe { *self.entries.controls.add(pos) == 254u8 }
-        if !reuses_deleted {
+        if !reuses_deleted && self.entries.count >= self.capacity() {
             try self.try_reserve(1usize)
-            if self.entries.controls != old_controls {
-                pos = vacant_slot(self.entries.controls, self.entries.cap, hash)
-            }
+            pos = vacant_slot(self.entries.controls, self.entries.cap, hash)
         }
         if unsafe { *self.entries.controls.add(pos) == 254u8 } {
             self.entries.deleted -= 1usize

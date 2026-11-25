@@ -2160,6 +2160,18 @@ unchanged. Application build and check remain open; profile root LLVM work
 and archive import separately before expanding either change.
 Evidence: `~/w/anal/p05-admission.1795601303/{phases.log,check-ab.json,bench/results.json}`.
 
+Seven fresh P05 profiles put median root LLVM optimization at 157 ms and
+root code generation at 39 ms. HashMap insertion now calls reserve only
+when a new slot needs growth or a tombstone cleanup, and keeps new-key
+insertion out of the existing-key update path. In 17 interleaved WSL
+build comparisons, the paired median ratios were 0.951 for both first and
+seed-edit builds; in 45 fixed-core runtime pairs the ratio was 0.995.
+The change preserves the full O2 pipeline and does not change the workload.
+Nine pinned-Rust pairs measured 281/269 ms first application build and
+24.8/17.4 ms first application check (Mettle/Rust). Both remain open. Outputs
+matched; retained clean bytes were 421,888/507,904.
+Evidence: `~/w/anal/p05-llvm.45uor24m/{phases.log,outline-ab.json,bench/results.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher

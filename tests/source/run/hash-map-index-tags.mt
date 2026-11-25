@@ -96,6 +96,14 @@ fn main(): i32 {
             i += 1
         }
         if small.get(Key(7, 99)).is_present() { return 19 }
+        let full_capacity = small.capacity()
+        let expected = round * 10
+        if small.remove(Key(0, 99)).or_panic() != expected ||
+            small.insert(Key(7, 7), expected + 1).is_present() ||
+            small.capacity() != full_capacity ||
+            *small.get(Key(7, 99)).or_panic() != expected + 1 { return 24 }
+        if small.remove(Key(7, 99)).or_panic() != expected + 1 ||
+            small.insert(Key(0, 0), expected + 0).is_present() { return 25 }
         i = 0
         while i < 7 {
             let id = if i == 6 { 15 } else { i }
