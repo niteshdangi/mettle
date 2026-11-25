@@ -305,7 +305,10 @@ v4 commits to query metadata and ordered, section-specific checked-function and
 IR body digests; checked IR v12 keeps body-private strings with independently
 framed bodies. Admission authenticates the metadata commitment without hashing
 unused checked-function blocks or IR bodies; an archive whose Store stat stamp
-still matches an earlier authentication is not re-hashed. A shipped archive
+still matches an earlier authentication is not re-hashed and, under the same
+compiler identity, is trusted: its declaration, type and IR records decode
+without repeating the structural validation performed when it was authenticated.
+Unauthenticated and shipped archives are validated on use. A shipped archive
 selected by its source selector is mapped only when first demanded, and covers
 its dependencies' sources; if it fails admission, the library falls back to
 its sources. Native imports retain immutable

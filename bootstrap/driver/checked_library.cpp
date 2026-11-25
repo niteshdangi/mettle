@@ -944,9 +944,10 @@ bool CheckedLibrary::ensureMounted(std::string &error) {
           : nullptr;
   auto decoded = retained
                      ? copyLibraryHeader(*retained)
-                     : decodeLibraryHeader(archive.header, references,
-                                           archive.header.owner(),
-                                           metadata::ValidationMode::OnUse);
+                     : decodeLibraryHeader(
+                           archive.header, references, archive.header.owner(),
+                           archive.trusted ? metadata::ValidationMode::Trusted
+                                           : metadata::ValidationMode::OnUse);
   if (!decoded) {
     error = decoded.error;
     return false;
@@ -1028,7 +1029,9 @@ CheckedLibrary::ImportedTypes CheckedLibrary::importTypes() const {
   result.types->setVaListAbi(targetVaListAbi(target));
   result.graph = metadata::importTypeGraph(
       *result.types, archive.types, *result.symbols,
-      metadata::ValidationMode::OnUse, result.symbols, archive.types.owner());
+      archive.trusted ? metadata::ValidationMode::Trusted
+                      : metadata::ValidationMode::OnUse,
+      result.symbols, archive.types.owner());
   return result;
 }
 
@@ -1044,7 +1047,8 @@ CheckedLibrary::import(const Module &module,
   if (module.functions.size() < functions || module.statics.size() < statics ||
       module.interfaces.size() < interfaces)
     return fail("compiled library header was not mounted before its consumer");
-  if (!archive.verifyIRBody || !archive.verifyDeclarationPayload)
+  if (!archive.trusted &&
+      (!archive.verifyIRBody || !archive.verifyDeclarationPayload))
     return fail(
         "compiled library is missing authenticated payload commitments");
   auto catalog = header.index;
@@ -1174,6 +1178,8 @@ CheckedLibrary::import(const Module &module,
   if (options.libraryQueries)
     if (auto reused = options.libraryQueries->find(root, queryIdentity))
       return reused;
+  const auto validation = archive.trusted ? metadata::ValidationMode::Trusted
+                                          : metadata::ValidationMode::OnUse;
   auto storage = std::make_shared<const ImportedStorage>(ImportedStorage{
       archive.sources, std::move(archive.ir), archive.declarations,
       archive.verifyIRBody, archive.verifyDeclarationPayload, archive.backing});
@@ -1195,17 +1201,20 @@ CheckedLibrary::import(const Module &module,
   };
   auto retainedReferences =
       std::make_shared<const metadata::DecodeReferences>(references);
-  auto pendingIR = std::async(
-      std::launch::async | std::launch::deferred,
-      [storage, retainedReferences] {
-        return ir::decodeProgramLazy(
-            storage->ir, *retainedReferences, true, retainedReferences, storage,
-            storage->verifyIRBody, metadata::ValidationMode::OnDemand);
-      });
+  auto pendingIR =
+      std::async(std::launch::async | std::launch::deferred,
+                 [storage, retainedReferences, validation] {
+                   return ir::decodeProgramLazy(
+                       storage->ir, *retainedReferences, true,
+                       retainedReferences, storage, storage->verifyIRBody,
+                       validation == metadata::ValidationMode::Trusted
+                           ? validation
+                           : metadata::ValidationMode::OnDemand);
+                 });
   auto declarations = importLibraryDeclarations(
       storage->declarations, types, *retainedReferences, &module, storage,
-      retainedReferences, metadata::ValidationMode::OnUse, {},
-      storage->verifyDeclarationPayload, catalog);
+      retainedReferences, validation, {}, storage->verifyDeclarationPayload,
+      catalog);
   if (!declarations)
     return fail(declarations.error);
   if (declarations.declarations->closures.size() != closureCount)

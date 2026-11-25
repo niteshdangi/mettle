@@ -4,6 +4,8 @@
 #include "types/layout.h"
 #include "types/project.h"
 #include <algorithm>
+#include <bit>
+#include <cstring>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
@@ -402,7 +404,7 @@ public:
     return revisions;
   }
   bool good() const { return error.empty(); }
-  bool validateUnused = true;
+  bool validateUnused = true, trusted = false;
   template <class T> bool same(const T &left, const T &right) {
     Archive first(*encode, *types, hygiene);
     Archive second(*encode, *types, hygiene);
@@ -2097,6 +2099,10 @@ void fixedWord(std::vector<std::uint8_t> &bytes, std::uint64_t value,
 std::uint64_t fixedWord(std::span<const std::uint8_t> bytes, std::size_t offset,
                         unsigned width) {
   std::uint64_t result = 0;
+  if (std::endian::native == std::endian::little && width == sizeof(result)) {
+    std::memcpy(&result, bytes.data() + offset, sizeof(result));
+    return result;
+  }
   for (unsigned byte = 0; byte < width; ++byte)
     result |= std::uint64_t(bytes[offset + byte]) << (byte * 8);
   return result;
@@ -3552,7 +3558,7 @@ public:
                           std::shared_ptr<HeaderSources> sources)
       : owner(std::move(owner)), sources(std::move(sources)) {}
   void read(Archive &archive, const Module &module) {
-    queryValidation = !archive.validateUnused;
+    queryValidation = !archive.validateUnused && !archive.trusted;
     headerCounts = {module.functions.size(),  module.statics.size(),
                     module.products.size(),   module.aliases.size(),
                     module.interfaces.size(), module.implementations.size()};
@@ -3567,6 +3573,22 @@ public:
     }
     if (offsets.size() % rowBytes) {
       archive.fail("invalid declaration lookup directory");
+      return;
+    }
+    if (archive.trusted) {
+      for (std::size_t kind = 0; kind < symbolKeys.size(); ++kind) {
+        auto prefix = symbolKey('s', static_cast<metadata::SymbolKind>(kind));
+        auto begin = lowerBound(prefix);
+        auto end = begin, last = size();
+        while (end != last) {
+          auto middle = end + (last - end) / 2;
+          if (keyAt(middle).starts_with(prefix))
+            end = middle + 1;
+          else
+            last = middle;
+        }
+        symbolKeys[kind] = std::pair{begin, end};
+      }
       return;
     }
     std::string_view previous;
@@ -3949,7 +3971,21 @@ public:
   }
   std::optional<std::uint32_t>
   symbol(metadata::SymbolKind kind, std::string_view identity) const override {
-    return one<std::uint32_t>(symbolKey('s', kind), identity);
+    auto table = static_cast<std::size_t>(kind);
+    if (table >= symbolKeys.size() || !symbolKeys[table])
+      return one<std::uint32_t>(symbolKey('s', kind), identity);
+    auto [begin, end] = *symbolKeys[table];
+    while (begin != end) {
+      auto middle = begin + (end - begin) / 2;
+      if (keyAt(middle).substr(3) < identity)
+        begin = middle + 1;
+      else
+        end = middle;
+    }
+    return begin != symbolKeys[table]->second &&
+                   keyAt(begin).substr(3) == identity
+               ? std::optional(value<std::uint32_t>(begin))
+               : std::nullopt;
   }
   std::size_t symbolCount(metadata::SymbolKind kind) const override {
     auto index = static_cast<std::size_t>(kind);
@@ -4069,6 +4105,9 @@ private:
   std::array<std::span<const std::uint8_t>,
              static_cast<std::size_t>(metadata::SymbolKind::Static) + 1>
       symbolRows;
+  std::array<std::optional<std::pair<std::size_t, std::size_t>>,
+             static_cast<std::size_t>(metadata::SymbolKind::Static) + 1>
+      symbolKeys;
   std::uint64_t symbolRow(metadata::SymbolKind kind,
                           std::uint32_t index) const {
     if (index >= symbolCount(kind))
@@ -4123,6 +4162,28 @@ private:
     return begin;
   }
   template <class T> T rawValue(std::size_t index) const {
+    if constexpr (std::is_unsigned_v<T> && !std::is_same_v<T, bool>) {
+      auto payload = payloadAt(index);
+      std::uint64_t bits = 0;
+      std::size_t offset = 0;
+      for (unsigned shift = 0;; shift += 7) {
+        if (offset >= payload.size() || shift > 63)
+          throw metadata::InvalidMetadata(
+              "invalid declaration lookup: truncated declaration integer");
+        auto byte = payload[offset++];
+        if (shift == 63 && byte > 1)
+          throw metadata::InvalidMetadata(
+              "invalid declaration lookup: declaration integer exceeds its "
+              "representation");
+        bits |= std::uint64_t(byte & 0x7f) << shift;
+        if (!(byte & 0x80))
+          break;
+      }
+      if (bits > std::numeric_limits<T>::max() || offset != payload.size())
+        throw metadata::InvalidMetadata(
+            "invalid declaration lookup: malformed declaration integer");
+      return static_cast<T>(bits);
+    }
     Archive reader(payloadAt(index), references, nullptr);
     reader.headerSources = sources;
     T result{};
@@ -4909,7 +4970,7 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
                .second)
         envelope.fail("conflicting declaration source revision");
     }
-    if (validation != metadata::ValidationMode::OnUse)
+    if (validation < metadata::ValidationMode::OnUse)
       for (std::size_t i = 0; i < rowCount && envelope.good(); ++i) {
         Span span;
         if (auto error = sources->resolve(i, span))
@@ -4986,7 +5047,8 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
   decltype(sources->revisions){}.swap(sources->revisions);
   auto frozen = std::make_shared<const metadata::DecodeReferences>();
   Archive archive(payload, *frozen, nullptr);
-  archive.validateUnused = validation != metadata::ValidationMode::OnUse;
+  archive.validateUnused = validation < metadata::ValidationMode::OnUse;
+  archive.trusted = validation == metadata::ValidationMode::Trusted;
   archive.headerSources = sources;
   archive.readSyntax = [storage, frozen, sources,
                         payload](std::size_t begin, std::size_t size,
@@ -5013,9 +5075,10 @@ decodeLibraryHeader(std::span<const std::uint8_t> bytes,
   index->read(archive, module);
   if (validation == metadata::ValidationMode::Eager)
     archive(result.types);
-  else
+  else if (validation != metadata::ValidationMode::Trusted)
     archive.discard(result.types);
-  archive.finish();
+  if (validation != metadata::ValidationMode::Trusted)
+    archive.finish();
   if (!archive.good())
     result.error = std::move(archive.error);
   else {
@@ -5444,7 +5507,7 @@ LibraryDeclarationImport importLibraryDeclarations(
       std::shared_ptr<const std::uint8_t>(std::move(backing), bytes.data());
   const auto &admission = retained ? references : record;
   Archive archive(bytes, admission, types.get());
-  archive.validateUnused = validation != metadata::ValidationMode::OnUse;
+  archive.validateUnused = validation < metadata::ValidationMode::OnUse;
   std::map<std::tuple<SourceId, std::uint32_t, std::uint32_t>, std::size_t>
       implementationIndices;
   if (module && !catalog)
@@ -5582,7 +5645,7 @@ LibraryDeclarationImport importLibraryDeclarations(
     }
     auto header = rows.readBlock();
     auto payload = rows.readBlock();
-    if (validation == metadata::ValidationMode::OnUse)
+    if (validation >= metadata::ValidationMode::OnUse)
       continue;
     Archive summaryReader(header, admission, types.get());
     std::uint32_t index = 0;
@@ -5630,7 +5693,7 @@ LibraryDeclarationImport importLibraryDeclarations(
       archive.fail(std::move(rows.error));
   }
   rows.finish();
-  if (validation != metadata::ValidationMode::OnUse && value->catalog &&
+  if (validation < metadata::ValidationMode::OnUse && value->catalog &&
       indexedDefaults != value->catalog->defaultCount())
     archive.fail("incomplete default-helper declaration directory");
   if (!rows.good())

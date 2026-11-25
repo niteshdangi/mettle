@@ -987,9 +987,12 @@ decodeLibraryArchive(std::string_view bytes, std::string_view identity,
       return std::nullopt;
     }
   }
-  archive.verifyDeclarationPayload =
-      payloadVerifier(backing, std::move(declarationSeals));
-  archive.verifyIRBody = payloadVerifier(backing, std::move(irSeals));
+  if (!authenticated) {
+    archive.verifyDeclarationPayload =
+        payloadVerifier(backing, std::move(declarationSeals));
+    archive.verifyIRBody = payloadVerifier(backing, std::move(irSeals));
+  }
+  archive.trusted = authenticated;
   archive.backing = std::move(backing);
   archive.sources.validated = true;
   return archive;

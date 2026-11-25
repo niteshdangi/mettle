@@ -105,6 +105,7 @@ struct LibraryArchive {
   Section header, types, declarations, ir;
   std::function<bool(std::size_t, std::span<const std::uint8_t>)> verifyIRBody,
       verifyDeclarationPayload;
+  bool trusted = false;
   // Keeps the memory the borrowed sections point into alive.
   std::shared_ptr<const void> backing;
 };

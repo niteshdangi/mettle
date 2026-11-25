@@ -3056,6 +3056,25 @@ struct WireTypeLookup {
       reject("invalid type lookup candidate count");
     return {key, record.subspan(8 + keySize)};
   }
+  void index() {
+    count = wireU32(bytes, 0);
+    const auto erased =
+        static_cast<std::uint8_t>(ImportedTypeQuery::Kind::Erased);
+    auto partition = [&](bool inclusive) {
+      std::size_t first = 0, last = count;
+      while (first != last) {
+        const auto middle = first + (last - first) / 2;
+        const auto kind = group(middle).key.front();
+        if (kind < erased || (inclusive && kind == erased))
+          first = middle + 1;
+        else
+          last = middle;
+      }
+      return first;
+    };
+    erasedBegin = partition(false);
+    erasedEnd = partition(true);
+  }
   void validate(std::uint32_t typeCount, Admission *admission = nullptr) {
     count = wireU32(bytes, 0);
     if (count > bytes.size() / 4 || directorySize() > bytes.size() ||
@@ -3368,7 +3387,7 @@ struct DeferredTypeGraph {
   Reader::ResolvedSymbols symbols;
   std::vector<Record> records;
   mutable std::vector<ImportedTypeScalars> scalars;
-  bool queryValidation = false;
+  bool queryValidation = false, trusted = false;
   mutable std::unordered_map<std::size_t,
                              std::vector<std::vector<std::uint8_t>>>
       projectedKeys;
@@ -3403,6 +3422,8 @@ struct DeferredTypeGraph {
   mutable std::mutex validationMutex;
 
   void validate(std::size_t index) const;
+  CompactDefinitionView decode(std::size_t index,
+                               const TypeGraphSymbols &symbols) const;
   ImportedTypeScalars
   project(std::size_t index,
           std::span<const std::uint8_t> requested = {}) const;
@@ -3652,7 +3673,7 @@ DeferredTypeGraph::resolve(const ImportedTypeQuery &query) const {
     auto ordinals = lookup.find(key);
     for (std::size_t i = 0; i < ordinals.size(); i += 4) {
       auto ordinal = wireU32(ordinals, i);
-      if (queryValidation)
+      if (queryValidation && !trusted)
         project(ordinal, key);
       values.push_back(ordinal);
     }
@@ -3713,26 +3734,28 @@ DeferredTypeGraph::project(std::size_t index,
         };
         auto product = definitionRecord<ImportedProduct>(view);
         std::vector<std::vector<std::uint8_t>> keys;
-        lookupQueries(kinds[index], indexValue,
-                      product ? product->descriptor.name : std::string_view{},
-                      [&](const ImportedTypeQuery &query) {
-                        auto key = lookupKey(query, references);
-                        if (!key)
-                          reject("unmapped demanded type lookup key");
-                        auto ordinals = lookup.find(*key);
-                        std::size_t first = 0, last = ordinals.size() / 4;
-                        while (first != last) {
-                          const auto middle = first + (last - first) / 2;
-                          if (wireU32(ordinals, middle * 4) < index)
-                            first = middle + 1;
-                          else
-                            last = middle;
-                        }
-                        if (first == ordinals.size() / 4 ||
-                            wireU32(ordinals, first * 4) != index)
-                          reject("type lookup index does not match projection");
-                        keys.push_back(std::move(*key));
-                      });
+        if (!trusted)
+          lookupQueries(kinds[index], indexValue,
+                        product ? product->descriptor.name : std::string_view{},
+                        [&](const ImportedTypeQuery &query) {
+                          auto key = lookupKey(query, references);
+                          if (!key)
+                            reject("unmapped demanded type lookup key");
+                          auto ordinals = lookup.find(*key);
+                          std::size_t first = 0, last = ordinals.size() / 4;
+                          while (first != last) {
+                            const auto middle = first + (last - first) / 2;
+                            if (wireU32(ordinals, middle * 4) < index)
+                              first = middle + 1;
+                            else
+                              last = middle;
+                          }
+                          if (first == ordinals.size() / 4 ||
+                              wireU32(ordinals, first * 4) != index)
+                            reject(
+                                "type lookup index does not match projection");
+                          keys.push_back(std::move(*key));
+                        });
         auto &facts = scalars[index];
         facts.parameterKind = indexValue.parameterKind;
         facts.valueType = indexValue.valueType;
@@ -3743,6 +3766,8 @@ DeferredTypeGraph::project(std::size_t index,
         facts.regionOrigin = indexValue.regionOrigin;
         if (product)
           facts.aggregateKind = product->descriptor.kind;
+        if (trusted)
+          return;
         std::array<std::vector<std::size_t>, 2> edges;
         if (!slice.nominal) {
           std::vector<Type> dependencies;
@@ -3769,6 +3794,11 @@ DeferredTypeGraph::project(std::size_t index,
         projectedKeys.emplace(index, std::move(keys));
       }
     };
+    if (trusted) {
+      read(index);
+      projectionProofs[index] = true;
+      return scalars[index];
+    }
     if (!projectionProofs.at(index)) {
       read(index);
       const auto &edges = projectionEdges.at(index);
@@ -3823,10 +3853,46 @@ DeferredTypeGraph::project(std::size_t index,
   }
 }
 
+CompactDefinitionView
+DeferredTypeGraph::decode(std::size_t index,
+                          const TypeGraphSymbols &callbacks) const {
+  const auto &slice = records[index];
+  CompactReader reader(std::span(bytes).subspan(slice.offset, slice.length),
+                       callbacks, header, demandedArena);
+  reader.types = types;
+  reader.regions = regions;
+  reader.universes = universes;
+  auto definition = compactDefinitionFor(kinds[index]);
+  std::visit([&](auto &value) { reader(value); }, definition);
+  if (reader.remaining())
+    reject("trailing bytes in a demanded type record");
+  auto value = std::visit(
+      [&](auto &record) -> CompactDefinitionView {
+        using T = std::decay_t<decltype(record)>;
+        auto storage = reader.arena->allocate<T>(1);
+        storage.front() = std::move(record);
+        return &storage.front();
+      },
+      definition);
+  auto resolved = reader.resolveSymbols();
+  std::array<CompactDefinitionView, 1> remapped{value};
+  remapCompactSymbols(remapped, resolved);
+  return value;
+}
+
 void DeferredTypeGraph::validate(std::size_t index) const {
   if (!retainedSymbols)
     return;
   std::lock_guard lock(validationMutex);
+  if (trusted) {
+    if (!demandedDefinitions.contains(index))
+      try {
+        demandedDefinitions.emplace(index, decode(index, resolver()));
+      } catch (const InvalidGraph &error) {
+        throw InvalidMetadata("invalid demanded type record: " + error.message);
+      }
+    return;
+  }
   if (validated.contains(index))
     return;
   try {
@@ -3853,27 +3919,7 @@ void DeferredTypeGraph::validate(std::size_t index) const {
           project(current);
         const auto &slice = records[current];
         auto callbacks = resolver();
-        CompactReader reader(
-            std::span(bytes).subspan(slice.offset, slice.length), callbacks,
-            header, demandedArena);
-        reader.types = types;
-        reader.regions = regions;
-        reader.universes = universes;
-        auto definition = compactDefinitionFor(kinds[current]);
-        std::visit([&](auto &value) { reader(value); }, definition);
-        if (reader.remaining())
-          reject("trailing bytes in a demanded type record");
-        auto value = std::visit(
-            [&](auto &record) -> CompactDefinitionView {
-              using T = std::decay_t<decltype(record)>;
-              auto storage = reader.arena->allocate<T>(1);
-              storage.front() = std::move(record);
-              return &storage.front();
-            },
-            definition);
-        auto resolved = reader.resolveSymbols();
-        std::array<CompactDefinitionView, 1> remapped{value};
-        remapCompactSymbols(remapped, resolved);
+        auto value = decode(current, callbacks);
         CompactReader projection(
             std::span(bytes).subspan(slice.projectionOffset,
                                      slice.projectionLength),
@@ -3922,18 +3968,22 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     auto &header = deferred->header;
     CompactReader reader(bytes, symbols, header);
     readHeader(reader, header, types.targetPointerBits());
-    if (validation == ValidationMode::OnUse && !header.indexed)
+    if (validation >= ValidationMode::OnUse && !header.indexed)
       reject("query-driven types require an indexed graph");
     const bool demand = header.indexed && validation != ValidationMode::Eager;
-    const bool onUse = validation == ValidationMode::OnUse;
+    const bool onUse = validation >= ValidationMode::OnUse;
     deferred->queryValidation = onUse;
+    deferred->trusted = validation == ValidationMode::Trusted;
     Tables tables;
     readTables(reader, tables);
     WireTypeLookup::Admission admission;
     if (header.indexed) {
       deferred->lookup.bytes = reader.block();
-      deferred->lookup.validate(header.types,
-                                demand && !onUse ? &admission : nullptr);
+      if (deferred->trusted)
+        deferred->lookup.index();
+      else
+        deferred->lookup.validate(header.types,
+                                  demand && !onUse ? &admission : nullptr);
     }
     auto minimumBytes = static_cast<std::size_t>(header.roots) * 4;
     if (minimumBytes > reader.remaining())
@@ -3980,7 +4030,8 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
     deferred->records.reserve(header.types);
     TypeGraphImport result;
     std::unordered_set<std::string_view> identities;
-    identities.reserve(header.types);
+    if (!deferred->trusted)
+      identities.reserve(header.types);
     bool uniqueKeys = true;
     std::size_t memberships = 0;
     FlatTypeEdges edges;
@@ -4081,7 +4132,7 @@ importCompactTypeGraph(TypeStore &types, std::span<const std::uint8_t> bytes,
       deferred->records.push_back(slice);
       if (!demand && slice.nominal != identified)
         reject("missing or unexpected logical definition identity");
-      if (identified) {
+      if (identified && !deferred->trusted) {
         if (!identities
                  .insert({reinterpret_cast<const char *>(identityBytes.data()),
                           identityBytes.size()})

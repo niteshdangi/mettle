@@ -245,11 +245,13 @@ struct SymbolDefinitions {
   };
   std::vector<Binding> bindings;
   std::vector<std::size_t> names;
-  void finish() {
+  void finish(bool trusted) {
     std::sort(bindings.begin(), bindings.end(),
               [](const auto &a, const auto &b) {
                 return std::pair{a.kind, a.index} < std::pair{b.kind, b.index};
               });
+    if (trusted)
+      return;
     for (std::size_t i = 0; i < bindings.size(); ++i) {
       if (i && bindings[i - 1].kind == bindings[i].kind &&
           bindings[i - 1].index == bindings[i].index)
@@ -1189,6 +1191,7 @@ struct LazyFunctionBodies::State {
   Symbols symbols;
   TargetFacts target;
   FunctionBodyVerifier verifyBody;
+  bool trusted = false;
   mutable std::mutex mutex;
 
   std::span<const std::uint8_t> body(std::size_t recordIndex) const {
@@ -1219,9 +1222,11 @@ LazyFunctionBodies::load(std::size_t recordIndex, const Function &header,
     functionBody(body, function);
     if (body.position != bodyBytes.size())
       reject("trailing data in IR function body");
-    checkFunction(function);
-    checkFunctionNumbers(
-        function, state->target.pointerBits ? state->target.pointerBits : 64);
+    if (!state->trusted) {
+      checkFunction(function);
+      checkFunctionNumbers(
+          function, state->target.pointerBits ? state->target.pointerBits : 64);
+    }
     {
       std::lock_guard lock(state->mutex);
       state->symbols.merge(body.symbols);
@@ -1379,6 +1384,9 @@ DecodeResult decodeProgramLazy(
         (!retainedReferences || !verifyBody))
       reject("on-demand IR headers require retained references and "
              "authenticated bodies");
+    const bool trusted = validation == metadata::ValidationMode::Trusted;
+    if (trusted && !retainedReferences)
+      reject("trusted IR headers require retained references");
     if (retainedReferences && !backing) {
       auto owned = std::make_shared<const std::vector<std::uint8_t>>(
           bytes.begin(), bytes.end());
@@ -1389,9 +1397,10 @@ DecodeResult decodeProgramLazy(
     programVersion(reader);
     DecodeResult result;
     auto state = std::make_shared<LazyFunctionBodies::State>();
-    auto definitions = validation == metadata::ValidationMode::OnDemand
-                           ? std::make_shared<SymbolDefinitions>()
-                           : nullptr;
+    auto definitions =
+        validation == metadata::ValidationMode::OnDemand || trusted
+            ? std::make_shared<SymbolDefinitions>()
+            : nullptr;
     std::vector<FunctionRecordExtent> functionRecords;
     auto functions = [&](auto &items, auto &packages, auto &names,
                          auto &destinations) {
@@ -1442,32 +1451,38 @@ DecodeResult decodeProgramLazy(
       if (retainedReferences) {
         result.program.functionIndex = std::move(indices);
         const auto count = extents.size();
-        auto loader = std::make_shared<
-            const TypeRecords<Function, true>::Loader>(
-            [bytes, extents = std::move(extents), retainedReferences, backing,
-             state, indexRecords = std::move(indexRecords)](std::size_t index) {
-              try {
-                TypeRecords<Function, true> decoded;
-                decoded.push_uninitialized();
-                Symbols symbols;
-                std::vector<FunctionRecordExtent> records;
-                decodeFunctionHeaders(decoded, {extents.at(index)}, bytes,
-                                      *retainedReferences, symbols, records);
-                Reader directory(indexRecords.at(index), *retainedReferences);
-                FunctionIndex expected;
-                directory.value(expected);
-                if (!sameFunctionIndex(expected, indexFunction(decoded[0])))
-                  reject(
-                      "IR function index does not match its callable header");
-                {
-                  std::lock_guard lock(state->mutex);
-                  state->symbols.merge(symbols);
-                }
-                return std::move(decoded.edit(0));
-              } catch (const InvalidArchive &error) {
-                throw metadata::InvalidMetadata(error.message);
-              }
-            });
+        auto loader =
+            std::make_shared<const TypeRecords<Function, true>::Loader>(
+                [bytes, extents = std::move(extents), retainedReferences,
+                 backing, state, trusted,
+                 indexRecords = std::move(indexRecords)](std::size_t index) {
+                  try {
+                    TypeRecords<Function, true> decoded;
+                    decoded.push_uninitialized();
+                    Symbols symbols;
+                    std::vector<FunctionRecordExtent> records;
+                    decodeFunctionHeaders(decoded, {extents.at(index)}, bytes,
+                                          *retainedReferences, symbols,
+                                          records);
+                    if (!trusted) {
+                      Reader directory(indexRecords.at(index),
+                                       *retainedReferences);
+                      FunctionIndex expected;
+                      directory.value(expected);
+                      if (!sameFunctionIndex(expected,
+                                             indexFunction(decoded[0])))
+                        reject("IR function index does not match its callable "
+                               "header");
+                    }
+                    {
+                      std::lock_guard lock(state->mutex);
+                      state->symbols.merge(symbols);
+                    }
+                    return std::move(decoded.edit(0));
+                  } catch (const InvalidArchive &error) {
+                    throw metadata::InvalidMetadata(error.message);
+                  }
+                });
         items.deferPrefix(count, std::move(loader));
       }
     };
@@ -1518,18 +1533,21 @@ DecodeResult decodeProgramLazy(
       result.closureFunctions.emplace_back(slot, function);
     }
     if (definitions) {
-      definitions->finish();
-      for (const auto &[key, name] : reader.symbols.identities)
-        definitions->contains(key.first, key.second, name);
+      definitions->finish(trusted);
+      if (!trusted)
+        for (const auto &[key, name] : reader.symbols.identities)
+          definitions->contains(key.first, key.second, name);
       reader.symbols.definitions = std::move(definitions);
     }
     tail(reader, program);
     if (reader.position != bytes.size())
       reject("trailing data in IR archive");
-    checkNumbers(program);
+    if (!trusted)
+      checkNumbers(program);
     state->bytes = bytes;
     state->backing = std::move(backing);
     state->verifyBody = std::move(verifyBody);
+    state->trusted = trusted;
     result.functionBodySizes.reserve(functionRecords.size());
     for (const auto &record : functionRecords)
       result.functionBodySizes.push_back(record.bodyLength);
