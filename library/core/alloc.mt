@@ -189,15 +189,14 @@ extend Layout {
     }
 
     pub const fn dangling_ptr(): NonNull<u8> {
-        unsafe { NonNull<u8>.new_unchecked(dangling(self.align)) }
+        unsafe { NonNull<u8>.new_unchecked(core.ptr.without_provenance_mut<u8>(self.align)) }
     }
 }
 
-// Dangling, well-aligned address used for zero-sized blocks; never dereferenced.
-const fn dangling(align: usize): ptr<mut u8> { unsafe { core.mem.transmute<ptr<mut u8>>(align) } }
-
 // Well-aligned non-null placeholder for empty storage of `T`; never dereferenced.
-pub const fn dangling_for<T>(): ptr<mut T> { dangling(core.mem.align_of<T>()).cast<T>() }
+pub const fn dangling_for<T>(): ptr<mut T> {
+    core.ptr.without_provenance_mut<T>(core.mem.align_of<T>())
+}
 
 // Safety: implementations uphold allocation validity, exclusivity and no-unwind guarantees.
 pub unsafe interface GlobalAlloc {

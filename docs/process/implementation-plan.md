@@ -2518,6 +2518,16 @@ The unchanged Rust harness matched both outputs: first build 131.14/103.48 ms
 (1.227×), runtime 29.85/37.72 ms (0.791×). First-build parity remains open.
 Receipts: `direct-init/native-rebuild.pBccwofs/{ab.json,rust/results.json}`.
 
+Empty-storage pointers now use the existing provenance-free address
+conversion directly. This removes the opaque call across the native archive
+boundary: optimized P05 `main` has three landing pads instead of eleven,
+with no unwind edges for forming dangling pointers. In 40 matched ext4
+pairs, first build fell from 138.41 to 127.89 ms (0.912, 95% interval
+0.889–0.936); runtime showed no measurable change (0.992, 0.979–1.005).
+The unchanged Rust harness matched both outputs: first build 127.75/104.27 ms
+(1.189×), runtime 29.95/38.05 ms (0.786×). First-build parity remains open.
+Receipts: `direct-init/provenance-dangling.AxCgzUWL/{ab.json,optimized.ll,rust/results.json}`.
+
 ### 8.6. Architectural evolution and operation completion: I15-I17
 
 I15 ports substantive compiler functionality to Mettle, not a thin launcher
