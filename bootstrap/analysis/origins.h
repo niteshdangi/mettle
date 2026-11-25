@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <span>
@@ -41,6 +42,7 @@ decodeEffects(std::span<const std::uint8_t> bytes,
 class EffectSummaries {
 public:
   using Loader = std::function<std::optional<FunctionEffects>(std::size_t)>;
+  using Shared = std::shared_ptr<const FunctionEffects>;
   explicit EffectSummaries(std::size_t count) : items(count) {}
   const FunctionEffects &operator[](std::size_t index) const {
     return read(index, items[index]);
@@ -48,7 +50,20 @@ public:
   const FunctionEffects &at(std::size_t index) const {
     return read(index, items.at(index));
   }
-  FunctionEffects &slot(std::size_t index) { return items[index]; }
+  const FunctionEffects &get(std::size_t index) const {
+    return items[index] ? *items[index] : none();
+  }
+  const Shared &shared(std::size_t index) const { return items[index]; }
+  void set(std::size_t index, FunctionEffects value) {
+    items[index] = std::make_shared<const FunctionEffects>(std::move(value));
+  }
+  void share(std::size_t index, Shared value) {
+    items[index] = std::move(value);
+  }
+  static const FunctionEffects &none() {
+    static const FunctionEffects empty;
+    return empty;
+  }
   void record(std::set<std::size_t> *sink) const { reads = sink; }
   // Summaries a loader supplies are final: their functions are never analysed.
   void persisted(Loader load) {
@@ -60,7 +75,8 @@ public:
     if (loader && !attempted[index]) {
       attempted[index] = true;
       if (auto effects = loader(index)) {
-        items[index] = std::move(*effects);
+        items[index] =
+            std::make_shared<const FunctionEffects>(std::move(*effects));
         stored[index] = true;
         if (bodies.size() <= index)
           bodies.resize(items.size());
@@ -85,14 +101,13 @@ public:
 private:
   mutable std::vector<bool> bodies, attempted, stored;
   Loader loader;
-  const FunctionEffects &read(std::size_t index,
-                              const FunctionEffects &value) const {
+  const FunctionEffects &read(std::size_t index, const Shared &value) const {
     if (reads)
       reads->insert(index);
     load(index);
-    return value;
+    return value ? *value : none();
   }
-  mutable std::vector<FunctionEffects> items;
+  mutable std::vector<Shared> items;
   mutable std::set<std::size_t> *reads = nullptr;
 };
 struct Target {

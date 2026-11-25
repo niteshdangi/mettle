@@ -8,7 +8,7 @@
 
 namespace mettle::analysis {
 struct LoanResults {
-  std::vector<FunctionEffects> effects;
+  std::vector<EffectSummaries::Shared> effects;
   // Which functions' effects were computed; trusted library bodies nothing
   // calls are left out and must be analysed if a later program needs them.
   std::vector<bool> analyzed;

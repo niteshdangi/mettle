@@ -675,7 +675,7 @@ loans(const ir::Program &program, Diagnostics &diagnostics,
            f < program.functions.size() && f < previous->analyzed.size(); ++f)
         if (previous->analyzed[f]) {
           reusable[f] = true;
-          summaries.slot(f) = previous->effects[f];
+          summaries.share(f, previous->effects[f]);
           summaries.setBodied(f, f < program.lazyFunctionRecords.size() &&
                                      program.lazyFunctionRecords[f]);
         }
@@ -719,14 +719,14 @@ loans(const ir::Program &program, Diagnostics &diagnostics,
       }
       for (std::size_t f = 0; f < reusable.size(); ++f)
         if (reusable[f]) {
-          summaries.slot(f) = previous->effects[f];
+          summaries.share(f, previous->effects[f]);
           ++result.reusedFunctions;
         }
     }
     for (std::size_t f = 0; f < declared.size(); ++f)
       if (declared[f]) {
         reusable[f] = true;
-        summaries.slot(f) = previous->effects[*program.declarationSources[f]];
+        summaries.share(f, previous->effects[*program.declarationSources[f]]);
         summaries.setBodied(f, true);
       }
     // Analyzing callees before callers lets most summaries settle on the first
@@ -752,9 +752,8 @@ loans(const ir::Program &program, Diagnostics &diagnostics,
           pending.emplace(rank[f], f);
           scheduled[f] = true;
         }
-    std::vector<std::optional<ir::Function>> expanded(program.functions.size());
-    std::vector<std::optional<ir::Function>> bodies(program.functions.size());
-    std::vector<std::optional<OriginInfo>> infos(program.functions.size());
+    std::map<std::size_t, std::optional<ir::Function>> expanded, bodies;
+    std::map<std::size_t, OriginInfo> infos;
     std::size_t steps = 0;
     while (!pending.empty()) {
       auto f = pending.begin()->second;
@@ -782,21 +781,20 @@ loans(const ir::Program &program, Diagnostics &diagnostics,
           pending.emplace(rank[callee], callee);
         }
       }
-      const bool stable = info.effects == summaries.slot(f);
+      const bool stable = info.effects == summaries.get(f);
       if (!stable || loaded) {
         if (++steps > limits::activeLoans)
           throw std::length_error("view effect analysis limit exceeded");
-        summaries.slot(f) = info.effects;
+        summaries.set(f, info.effects);
         for (auto dependent : dependents[f])
           pending.emplace(rank[dependent], dependent);
       }
       if (!isTrusted(f))
-        infos[f] = std::move(info);
+        infos.insert_or_assign(f, std::move(info));
     }
-    for (std::size_t f = 0; f < program.functions.size(); ++f)
-      if (infos[f])
-        check(expanded[f] ? *expanded[f] : program.functions[f], program,
-              *infos[f], diagnostics);
+    for (const auto &[f, info] : infos)
+      check(expanded[f] ? *expanded[f] : program.functions[f], program, info,
+            diagnostics);
     if (diagnostics.empty()) {
       result.analyzed.assign(program.functions.size(), true);
       for (std::size_t f = 0; f < program.functions.size(); ++f)
@@ -804,7 +802,7 @@ loans(const ir::Program &program, Diagnostics &diagnostics,
                              summaries.supplied(f);
       result.effects.reserve(program.functions.size());
       for (std::size_t f = 0; f < program.functions.size(); ++f)
-        result.effects.push_back(std::move(summaries.slot(f)));
+        result.effects.push_back(summaries.shared(f));
     }
   } catch (const std::length_error &error) {
     diagnostics.error("limit", {}, error.what());

@@ -52,6 +52,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
 
         begin = time.perf_counter()
+        if arguments[0] == executable and arguments[1:2] in (["build"], ["check"]):
+            arguments = [*arguments, "--standalone"]
         result = processes.run(arguments, text=True, capture_output=True, env=env, input=input_text,
                                 preexec_fn=constrain_memory if memory_limit else None)
         evidence["commands"].append({"command": list(map(str, arguments)),

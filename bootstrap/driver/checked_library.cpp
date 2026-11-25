@@ -485,7 +485,10 @@ bool CheckedLibrary::prepareArchive(std::string &error) {
                           i < loans.effects.size();
        ++i)
     if (loans.analyzed[i])
-      if (auto encoded = analysis::encodeEffects(loans.effects[i], references))
+      if (auto encoded = analysis::encodeEffects(
+              loans.effects[i] ? *loans.effects[i]
+                               : analysis::EffectSummaries::none(),
+              references))
         summaries[i] = std::move(*encoded);
   auto bodies = ir::encodeProgram(program, references, summaries);
   if (!bodies) {

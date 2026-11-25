@@ -54,6 +54,8 @@ TEXT_PROGRAM = 'import core.iter.Iterator;\nfn code(read text: core.text.Text): 
 
 
 def run(arguments, expected=0):
+    if arguments[1:2] in (["build"], ["check"]):
+        arguments = [*arguments, "--standalone"]
     result = processes.run(arguments, text=True, capture_output=True)
     if result.returncode != expected:
         raise AssertionError(

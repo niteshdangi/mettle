@@ -603,7 +603,7 @@ def git_source():
     build_and_run(app)
     lock = lock_of(app)
     assert first in lock and "sha256-tree-2:" in lock, lock
-    invoke(["check", app, "--locked", "--cache-dir", evidence / "other-cache"])
+    invoke(["check", app, "--locked", "--cache-dir", evidence / "other-cache", "--standalone"])
     assert lock_of(app) == lock
     invoke(["check", app, "--offline", "--locked"])
     edit(repository / "src/main.mt", "{ 7 }", "{ 8 }")
@@ -3794,6 +3794,7 @@ def driver_resident_context():
     absent = {key: value for key, value in environment.items()
               if key != "METTLE_RESIDENT_INPUT"}
     arguments = [str(mettle), "check", str(source)]
+    recreated = directory / "recreated"
     try:
         good = processes.run(arguments, text=True, capture_output=True, env=present)
         assert good.returncode == 0, good.stderr
@@ -3824,7 +3825,6 @@ def driver_resident_context():
         for client in clients:
             out, err = client.communicate(timeout=60)
             assert client.returncode == 0, (out, err)
-        recreated = directory / "recreated"
         for _ in range(2):
             shutil.rmtree(recreated, ignore_errors=True)
             recreated.mkdir()
@@ -3835,6 +3835,9 @@ def driver_resident_context():
             assert relative.returncode == 0, relative.stderr
     finally:
         processes.run([str(mettle), "serve", "--stop"], check=True, env=environment)
+        if recreated.is_dir():
+            processes.run([str(mettle), "serve", "--stop"], check=True, env=environment,
+                          cwd=recreated)
 
 
 def driver_resident_cancellation():
@@ -4038,6 +4041,7 @@ def run_case(case):
         return 1
     finally:
         evidence.mkdir(parents=True, exist_ok=True)
+        processes.run([str(mettle), "serve", "--stop"], cwd=evidence)
         (evidence / "evidence.json").write_text(json.dumps(record, indent=2) + "\n")
 
 

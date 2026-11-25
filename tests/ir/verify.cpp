@@ -1393,7 +1393,7 @@ void contentsOnlyResultPathCases() {
         types->substitute(program.functions[0].regionSignature, bindings);
     program.functions.push_back(std::move(caller));
     mettle::analysis::EffectSummaries calls(2);
-    calls.slot(0) = info.effects;
+    calls.set(0, info.effects);
     auto transferred =
         mettle::analysis::origins(program.functions[1], program, calls);
     for (auto &projection : path)

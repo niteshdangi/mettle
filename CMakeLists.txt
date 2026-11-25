@@ -452,7 +452,7 @@ if(BUILD_TESTING)
       list(APPEND shipped_store_commands
            COMMAND mettle build "${PROJECT_SOURCE_DIR}/tests/cache_prime/${library}.mt"
                    -o "${PROJECT_BINARY_DIR}/shipped-store-${profile}-${library}"
-                   --profile ${profile} --prepare-shipped-library
+                   --profile ${profile} --prepare-shipped-library --standalone
                    --cache-dir "${METTLE_SHIPPED_STORE_DIR}")
     endforeach()
   endforeach()
@@ -461,7 +461,8 @@ if(BUILD_TESTING)
   function(mettle_add_cache_prime fixture config library)
     add_test(NAME cache.prime.${config}.${library}
              COMMAND mettle build "${PROJECT_SOURCE_DIR}/tests/cache_prime/${library}.mt"
-                     -o "${PROJECT_BINARY_DIR}/cache-prime-${config}-${library}" ${ARGN})
+                     -o "${PROJECT_BINARY_DIR}/cache-prime-${config}-${library}"
+                     --standalone ${ARGN})
     set_tests_properties(cache.prime.${config}.${library} PROPERTIES
                          FIXTURES_SETUP ${fixture} PROCESSORS 1)
   endfunction()
