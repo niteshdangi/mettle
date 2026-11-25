@@ -56,6 +56,7 @@ fn set_control(controls: ptr<mut u8>, cap: usize, index: usize, tag: u8): Unit {
     }
 }
 
+@inline(never)
 fn vacant_slot(controls: ptr<mut u8>, cap: usize, hash: u64): usize {
     let mask = cap - 1usize
     var start = (hash as usize) & mask

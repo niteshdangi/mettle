@@ -2366,6 +2366,14 @@ The unchanged Rust harness matched both outputs: first build 195.57/100.52 ms
 (1.870×), runtime 32.42/37.62 ms (0.864×). Receipts:
 `direct-init/rebuild-layouts/{ab.json,rust/results.json}`.
 
+The vacant-slot probe runs only during rebuild or immediately after growth.
+Keeping it in native alloc avoids copying its loop into concrete callers.
+In 34 matched ext4 pairs, first build fell from 202.34 to 191.33 ms (paired
+ratio 0.959, 95% interval 0.943–0.976); runtime ratio was 1.008
+(0.999–1.017). The unchanged Rust harness matched both outputs: first build
+193.59/102.96 ms (1.804×), runtime 33.32/38.53 ms (0.870×). Receipts:
+`direct-init/rebuild-vacant/{ab.json,rust/results.json}`.
+
 An offline replay isolated 22.47 ms of root optimization in the concrete
 rebuild family. Its standalone archive linked with both workload revisions;
 the dependency-closed IR matched after removing module identity. This is not
