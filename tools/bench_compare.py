@@ -68,7 +68,9 @@ class Runner:
                         "--", *command]
         with open(out, "wb") as stdout, open(err, "wb") as stderr:
             start = time.perf_counter()
-            process = subprocess.Popen(measured, cwd=cwd, env=env, stdout=stdout,
+            process = subprocess.Popen(measured,
+                                       cwd=cwd if cwd is not None else self.logs.parent.absolute(),
+                                       env=env, stdout=stdout,
                                        stderr=stderr, stdin=subprocess.DEVNULL)
             _, status, usage = os.wait4(process.pid, 0)
             elapsed = time.perf_counter() - start

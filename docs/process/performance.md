@@ -19,8 +19,10 @@ former 10-percent investigation threshold is superseded.
 
 Owner selection (2026-11-26): dedicated WSL2 is the Linux runner for I14
 qualification; a separate physical Linux installation is not required. Keep
-measured inputs, toolchains, caches and outputs on the WSL Linux filesystem,
-exclude competing host and guest work during measurement blocks, and record
+measured inputs, toolchains, caches, outputs and process working directories on
+the WSL Linux filesystem. The comparison harness defaults timed commands to its
+output directory rather than inheriting the caller's working directory.
+Exclude competing host and guest work during measurement blocks, and record
 the host/guest configuration. Section 4's per-workload decisions and fixed
 sampling requirements still apply. Earlier WSL pilot results do not
 become release evidence merely because the runner is now selected.
