@@ -1,5 +1,9 @@
 # Mettle contributor and agent rules
 
+At session start and after every context reset, read `AGENTS.md` before editing.
+Other documents and summaries are not substitutes. Reuse that read until this
+file changes.
+
 ## ANY CODE WRITTEN SHOULD BE BEST-IN-CLASS
 
 ## Tautological abstractions, tests, compiler passes, language features, and wrappers are considered harmful. Every addition must introduce meaningful functionality, enforce an invariant, improve correctness, or reduce complexity. Otherwise, avoid it.
