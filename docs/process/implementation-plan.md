@@ -225,8 +225,11 @@ obligations ([post-v1-worklist.md](post-v1-worklist.md)).
   Linux. Linux-only services (for example epoll and `/proc`) become applicable
   where selected.
 - I14 qualifies `linux-x64`. Correctness, sanitizer and reproducibility checks
-  may run under WSL2 or a container; runtime, compile-time and storage gates
-  need a qualified runner, and virtualized timings are pilot evidence only.
+  may run under WSL2 or a container. By owner selection (2026-11-26), dedicated
+  WSL2 is also the runner for runtime, compile-time and storage qualification;
+  no separate physical Linux host is required. The measurement controls and
+  statistical gates in performance.md still apply; earlier pilot timings
+  remain pilot evidence.
 
 ### 8.1. Foundation and first executable: I01-I02
 

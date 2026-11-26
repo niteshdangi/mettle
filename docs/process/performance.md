@@ -17,6 +17,14 @@ and binary size; they have no equality gates, but unacceptable growth must be
 visible. No slowdown allowance or cross-workload compensation applies; the
 former 10-percent investigation threshold is superseded.
 
+Owner selection (2026-11-26): dedicated WSL2 is the Linux runner for I14
+qualification; a separate physical Linux installation is not required. Keep
+measured inputs, toolchains, caches and outputs on the WSL Linux filesystem,
+exclude competing host and guest work during measurement blocks, and record
+the host/guest configuration. Section 4's per-workload decisions, fixed sampling
+and precision requirements still apply. Earlier WSL pilot results do not
+become release evidence merely because the runner is now selected.
+
 ## 2. Benchmark definitions
 
 Before collecting release results, version each workload with:
