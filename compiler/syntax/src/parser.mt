@@ -130,7 +130,7 @@ extend<region r> Parser<region r> {
         var index = mark
         while index < self.pending.len() {
             let child = self.pending[index]
-            self.result.children.push(child)
+            self.result.children.push(take child)
             index += 1
         }
         let children = IndexRange(first, self.result.children.len() as u32)
@@ -138,9 +138,9 @@ extend<region r> Parser<region r> {
         let token_end = if self.last_token + 1 < start.token { start.token } else { self.last_token + 1 }
         let node = SyntaxNode(kind, Span(self.source, start.begin, end), IndexRange(start.token as u32, token_end as u32), children, operation, false)
         let id = NodeId(self.result.nodes.len() as u32)
-        self.result.nodes.push(node)
+        self.result.nodes.push(take node)
         self.pending.truncate(mark)
-        self.pending.push(id)
+        self.pending.push(take id)
     }
     fn reserved(): bool {
         (self.at("fn") || self.at("let") || self.at("var") || self.at("if") || self.at("else")
@@ -561,7 +561,7 @@ extend<region r> Parser<region r> {
         let slot = self.look.index / 4
         if slot < self.rejected_applications.len() && (self.rejected_applications[slot] & self.application_mask(self.look.index)) != 0u8 { return false }
         let opening = self.look.index
-        self.application_stack.push(opening)
+        self.application_stack.push(take opening)
         var index = self.look.index + 1
         while index < self.result.tokens.len() {
             let token = self.result.tokens[index]
@@ -569,7 +569,7 @@ extend<region r> Parser<region r> {
             let byte = if token.kind.is(Kind.Symbol) && token.span.end == token.span.begin + 1u32 { self.bytes[token.span.begin as usize] } else { 0u8 }
             if byte == b'(' || byte == b'[' || byte == b'{' {
                 let delimiter = byte
-                self.application_delimiters.push(delimiter)
+                self.application_delimiters.push(take delimiter)
             } else if byte == b')' || byte == b']' || byte == b'}' {
                 if self.application_delimiters.is_empty() { break }
                 let last = self.application_delimiters.len() - 1
@@ -580,7 +580,7 @@ extend<region r> Parser<region r> {
             else if byte == b';' || token.kind.is(Kind.FormatHoleClose) { break }
             else if byte == b'<' {
                 let opening = index
-                self.application_stack.push(opening)
+                self.application_stack.push(take opening)
             }
             else if token.kind.is(Kind.Symbol) && self.bytes[token.span.begin as usize] == b'>' {
                 let width = (token.span.end - token.span.begin) as usize

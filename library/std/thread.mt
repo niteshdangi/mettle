@@ -172,7 +172,7 @@ extend Builder {
             present(name) => unsafe {
                 let empty = 0u8
                 try start<T, F>(
-                    f,
+                    take f,
                     if name.as_bytes().len() == 0usize {
                         core.ptr.from_ref(empty)
                     } else {
@@ -183,7 +183,7 @@ extend Builder {
                 )
             },
             none => unsafe {
-                try start<T, F>(f, core.ptr.null<u8>(), 0usize, self.stack_size)
+                try start<T, F>(take f, core.ptr.null<u8>(), 0usize, self.stack_size)
             }
         }
         JoinHandle(
@@ -201,7 +201,7 @@ extend Builder {
         read scope: Scope<region s> from s,
         take f: F
     ): ScopedJoinHandle<T> throws SpawnError {
-        try scope.try_spawn_configured(read self, f)
+        try scope.try_spawn_configured(read self, take f)
     }
 }
 
@@ -339,11 +339,11 @@ unsafe extend<T: Transferable> JoinHandle<T> implements Transferable {}
 unsafe extend<T: Transferable> JoinHandle<T> implements Shareable {}
 
 pub fn try_spawn<T: Transferable + Static, F: take fn(): T + Transferable + Static>(take f: F): JoinHandle<T> throws SpawnError {
-    try Builder.new().spawn(f)
+    try Builder.new().spawn(take f)
 }
 
 pub fn spawn<T: Transferable + Static, F: take fn(): T + Transferable + Static>(take f: F): JoinHandle<T> {
-    let outcome = capture try_spawn<T, F>(f)
+    let outcome = capture try_spawn<T, F>(take f)
     match take outcome {
         success(handle) => handle,
         failure(error) => panic("failed to spawn a thread")
@@ -453,7 +453,7 @@ type ScopeGuard<region r, region s> {
                 let next = if index < list.get().len() {
                     present(list.get()[index])
                 } else { none }
-                core.mem.drop(list)
+                core.mem.drop(take list)
                 match next {
                     present(header) => { join_header(header) },
                     none => { break }
@@ -465,7 +465,7 @@ type ScopeGuard<region r, region s> {
                 let locked = capture self.scope.threads.lock()
                 var list = match take locked { success(g) => g, failure(e) => e.into_inner() }
                 let next = list.get_mut().pop()
-                core.mem.drop(list)
+                core.mem.drop(take list)
                 match take next {
                     present(header) => {
                         if (*header).code != 0 &&
@@ -554,7 +554,7 @@ extend<region s> Scope<region s> {
             present(name) => unsafe {
                 let empty = 0u8
                 try start<T, F>(
-                    f,
+                    take f,
                     if name.as_bytes().len() == 0usize {
                         core.ptr.from_ref(empty)
                     } else {
@@ -565,7 +565,7 @@ extend<region s> Scope<region s> {
                 )
             },
             none => unsafe {
-                try start<T, F>(f, core.ptr.null<u8>(), 0usize, config.stack_size)
+                try start<T, F>(take f, core.ptr.null<u8>(), 0usize, config.stack_size)
             }
         }
         let header = started.0
@@ -575,7 +575,7 @@ extend<region s> Scope<region s> {
             (*header).refs.fetch_add(1u32, core.sync.atomic.Ordering.Relaxed)
             threads.get_mut().push(header.cast<Header>())
         }
-        core.mem.drop(threads)
+        core.mem.drop(take threads)
         ScopedJoinHandle(
             header,
             slot,
@@ -591,7 +591,7 @@ extend<region s> Scope<region s> {
         receiver read self: Scope<region s> from s,
         take f: F
     ): ScopedJoinHandle<T> {
-        let outcome = capture self.try_spawn_configured(Builder.new(), f)
+        let outcome = capture self.try_spawn_configured(Builder.new(), take f)
         match take outcome {
             success(handle) => handle,
             failure(error) => panic("failed to spawn a thread")

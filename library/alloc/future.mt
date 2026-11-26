@@ -16,7 +16,7 @@ pub type Erased<T> {
 
 // Allocates once; no polling or body effects occur during construction.
 pub fn erase<T, F: Future<Output = T> + Static>(take future: F): Erased<T> {
-    let storage = boxed.new(future).into_raw()
+    let storage = boxed.new(take future).into_raw()
     Erased(storage.0.cast<u8>(), poll_impl<T, F>, release_impl<F>)
 }
 

@@ -687,13 +687,13 @@ extend<K, V, A: Allocator> SortedMap<K, V, A> {
             if node == self.root && (*node).len == 0usize {
                 self.root = child
                 (*child).parent = null_node<K, V>()
-                detached.push(node)
+                detached.push(take node)
             }
             node = child
         }
         if node == self.root && (*node).len == 0usize {
             self.root = null_node<K, V>()
-            detached.push(node)
+            detached.push(take node)
         }
     }
 
@@ -870,7 +870,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                     let found = search_node(node, key)
                     let leaf = (*node).leaf
                     if !leaf { node = node_child(node, found.0) }
-                    positions.push(found.0)
+                    positions.push(take found.0)
                     if leaf { break }
                 }
             }
@@ -926,7 +926,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
                 none => { break }
             }
             match take self.pop_last() {
-                present(entry) => { let _old = upper.insert(entry.0, entry.1) },
+                present(entry) => { let _old = upper.insert(take entry.0, take entry.1) },
                 none => { break }
             }
         }
@@ -994,11 +994,11 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         }
     }
     pub mut fn try_insert(take key: K, take value: V): V? throws AllocError {
-        let inserted = try self.try_insert_with_slot(key, value)
+        let inserted = try self.try_insert_with_slot(take key, take value)
         inserted.0
     }
     pub mut fn insert(take key: K, take value: V): V? {
-        let outcome = capture self.try_insert(key, value)
+        let outcome = capture self.try_insert(take key, take value)
         match take outcome {
             success(old) => old,
             failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
@@ -1033,7 +1033,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
             other.take_entry(at.0, at.1)
         }
         if other.len == 0usize {
-            let _ = self.insert(middle.key, middle.value)
+            let _ = self.insert(take middle.key, take middle.value)
             return ()
         }
         var left = if other_first { other.root } else { self.root }
@@ -1281,7 +1281,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> {
         }
         while true {
             match take other.pop_first() {
-                present(entry) => { let _ = self.insert(entry.0, entry.1) },
+                present(entry) => { let _ = self.insert(take entry.0, take entry.1) },
                 none => { break }
             }
         }
@@ -1340,7 +1340,7 @@ extend<region r, K: Ord, V, A: Allocator> OccupiedEntry<region r, K, V, A> {
 extend<region r, K: Ord, V, A: Allocator> VacantEntry<region r, K, V, A> {
     pub fn key(): read K from self { read self.key }
     pub take fn insert(take value: V): mut V from r {
-        let outcome = capture self.map.try_insert_with_slot(self.key, value)
+        let outcome = capture self.map.try_insert_with_slot(take self.key, take value)
         match take outcome {
             success(result) => unsafe { mut (*node_entry(result.1, result.2)).value },
             failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
@@ -1373,7 +1373,7 @@ extend<region r, K: Ord, V, A: Allocator> Entry<region r, K, V, A> {
     pub take fn or_insert(take value: V): mut V from r {
         match take self {
             Entry.Occupied(entry) => entry.into_mut(),
-            Entry.Vacant(entry) => entry.insert(value)
+            Entry.Vacant(entry) => entry.insert(take value)
         }
     }
     pub take fn or_insert_with<F: take fn(): V>(take make: F): mut V from r {
@@ -1387,7 +1387,7 @@ extend<region r, K: Ord, V, A: Allocator> Entry<region r, K, V, A> {
             Entry.Occupied(entry) => entry.into_mut(),
             Entry.Vacant(entry) => {
                 let value = make(read entry.key)
-                entry.insert(value)
+                entry.insert(take value)
             }
         }
     }
@@ -1395,11 +1395,11 @@ extend<region r, K: Ord, V, A: Allocator> Entry<region r, K, V, A> {
         match take self {
             Entry.Occupied(entry) => {
                 var occupied = entry
-                let _old = occupied.insert(value)
+                let _old = occupied.insert(take value)
                 occupied
             },
             Entry.Vacant(entry) => {
-                let outcome = capture entry.map.try_insert_with_slot(entry.key, value)
+                let outcome = capture entry.map.try_insert_with_slot(take entry.key, take value)
                 match take outcome {
                     success(result) => OccupiedEntry(entry.map, result.1, result.2),
                     failure(_) => handle_alloc_error(layout_of<Node<K, V>>())
@@ -1446,7 +1446,7 @@ extend<region r, K: Ord + fmt.Debug, V: fmt.Debug, A: Allocator> Entry<region r,
 
 pub type SortedSet<K, A: Allocator = Global> { map: SortedMap<K, Unit, A> }
 
-pub fn set_new_in<K, A: Allocator>(take a: A): SortedSet<K, A> { SortedSet(new_in<K, Unit, A>(a)) }
+pub fn set_new_in<K, A: Allocator>(take a: A): SortedSet<K, A> { SortedSet(new_in<K, Unit, A>(take a)) }
 pub fn set_new<K>(): SortedSet<K> { SortedSet(new<K, Unit>()) }
 
 extend<K: Ord, A: Allocator> SortedSet<K, A> {
@@ -1460,7 +1460,7 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
         }
     }
     pub mut fn insert(take key: K): bool {
-        match self.map.insert(key, ()) { present(_) => false, none => true }
+        match self.map.insert(take key, ()) { present(_) => false, none => true }
     }
     pub mut fn remove<Q: Ord + unsized>(read key: Q): bool where K: KeyView<Q> {
         match self.map.remove(key) { present(_) => true, none => false }
@@ -1481,7 +1481,7 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
                 present(unsafe { core.ptr.replace(key_slot, value) })
             },
             none => {
-                let _old = self.map.insert(value, ())
+                let _old = self.map.insert(take value, ())
                 none
             }
         }
@@ -2628,7 +2628,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> implements ExtendItems<(K, V)
         var source = items.into_iter()
         while true {
             match take source.next() {
-                present(pair) => { let old = self.insert(pair.0, pair.1) },
+                present(pair) => { let old = self.insert(take pair.0, take pair.1) },
                 none => { break }
             }
         }
@@ -2637,7 +2637,7 @@ extend<K: Ord, V, A: Allocator> SortedMap<K, V, A> implements ExtendItems<(K, V)
 extend<K: Ord, V> SortedMap<K, V> implements FromItems<(K, V)> {
     static fn from_iter<I: OwnedIterable<Item = (K, V)>>(take items: I): SortedMap<K, V> {
         var out = new<K, V>()
-        out.extend(items)
+        out.extend(take items)
         out
     }
 }
@@ -2645,7 +2645,7 @@ extend<K: Ord, V> SortedMap<K, V> implements FromItems<(K, V)> {
 extend<K: Ord, V, const N: usize> SortedMap<K, V> implements core.convert.From<[(K, V); N]> {
     static fn from(take items: [(K, V); N]): SortedMap<K, V> {
         var out = new<K, V>()
-        for item in take items { let _ = out.insert(item.0, item.1) }
+        for item in take items { let _ = out.insert(take item.0, take item.1) }
         out
     }
 }
@@ -2689,14 +2689,14 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> implements ExtendItems<K> {
     mut fn extend<I: OwnedIterable<Item = K>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
-            match take source.next() { present(item) => { let added = self.insert(item) }, none => { break } }
+            match take source.next() { present(item) => { let added = self.insert(take item) }, none => { break } }
         }
     }
 }
 extend<K: Ord> SortedSet<K> implements FromItems<K> {
     static fn from_iter<I: OwnedIterable<Item = K>>(take items: I): SortedSet<K> {
         var out = set_new<K>()
-        out.extend(items)
+        out.extend(take items)
         out
     }
 }
@@ -2704,7 +2704,7 @@ extend<K: Ord> SortedSet<K> implements FromItems<K> {
 extend<K: Ord, const N: usize> SortedSet<K> implements core.convert.From<[K; N]> {
     static fn from(take items: [K; N]): SortedSet<K> {
         var out = set_new<K>()
-        for item in take items { let _ = out.insert(item) }
+        for item in take items { let _ = out.insert(take item) }
         out
     }
 }
@@ -2739,7 +2739,7 @@ extend<K: Ord, A: Allocator> SortedSet<K, A> {
     pub mut fn append(mut other: SortedSet<K, A>): Unit {
         while true {
             match take other.pop_first() {
-                present(key) => { let _ = self.insert(key) },
+                present(key) => { let _ = self.insert(take key) },
                 none => { break }
             }
         }

@@ -352,7 +352,7 @@ extend<T, A: Allocator> Deque<T, A> {
         self.len += 1usize
     }
     pub mut fn push_back_mut(take value: T): mut T from self {
-        self.push_back(value)
+        self.push_back(take value)
         self.get_mut(self.len - 1usize).or_panic()
     }
     pub mut fn push_front(take value: T): Unit {
@@ -365,7 +365,7 @@ extend<T, A: Allocator> Deque<T, A> {
         self.len += 1usize
     }
     pub mut fn push_front_mut(take value: T): mut T from self {
-        self.push_front(value)
+        self.push_front(take value)
         self.get_mut(0usize).or_panic()
     }
     pub mut fn pop_front(): T? {
@@ -383,12 +383,12 @@ extend<T, A: Allocator> Deque<T, A> {
     pub mut fn pop_front_if<F: take fn(mut T): bool>(take test: F): T? {
         if self.len == 0usize { return none }
         let first = self.get_mut(0usize).or_panic()
-        if test(first) { self.pop_front() } else { none }
+        if test(mut *first) { self.pop_front() } else { none }
     }
     pub mut fn pop_back_if<F: take fn(mut T): bool>(take test: F): T? {
         if self.len == 0usize { return none }
         let last = self.get_mut(self.len - 1usize).or_panic()
-        if test(last) { self.pop_back() } else { none }
+        if test(mut *last) { self.pop_back() } else { none }
     }
     pub fn get(i: usize): (read T from self)? {
         if i >= self.len { return none }
@@ -461,8 +461,8 @@ extend<T, A: Allocator> Deque<T, A> {
     }
     pub mut fn insert(i: usize, take value: T): Unit {
         if i > self.len { super.alloc.panic_precondition() }
-        if i == 0usize { self.push_front(value); return () }
-        if i == self.len { self.push_back(value); return () }
+        if i == 0usize { self.push_front(take value); return () }
+        if i == self.len { self.push_back(take value); return () }
         self.reserve(1usize)
         if i < self.len - i {
             self.head = if self.head == 0usize { self.cap - 1usize } else { self.head - 1usize }
@@ -494,7 +494,7 @@ extend<T, A: Allocator> Deque<T, A> {
         self.len += 1usize
     }
     pub mut fn insert_mut(i: usize, take value: T): mut T from self {
-        self.insert(i, value)
+        self.insert(i, take value)
         self.get_mut(i).or_panic()
     }
     pub mut fn remove(i: usize): T? {
@@ -578,7 +578,7 @@ extend<T, A: Allocator> Deque<T, A> {
         var i = 0usize
         while i < mid {
             let value = self.pop_front().or_panic()
-            self.push_back(value)
+            self.push_back(take value)
             i += 1usize
         }
     }
@@ -591,7 +591,7 @@ extend<T, A: Allocator> Deque<T, A> {
         var i = 0usize
         while i < mid {
             let value = self.pop_back().or_panic()
-            self.push_front(value)
+            self.push_front(take value)
             i += 1usize
         }
     }
@@ -1222,7 +1222,7 @@ extend<T, A: Allocator> Deque<T, A> implements ExtendItems<T> {
     mut fn extend<I: OwnedIterable<Item = T>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
-            match take source.next() { present(item) => { self.push_back(item) }, none => { break } }
+            match take source.next() { present(item) => { self.push_back(take item) }, none => { break } }
         }
     }
 }
@@ -1231,7 +1231,7 @@ extend<region r, T: Copy, A: Allocator> Deque<T, A> implements ExtendItems<read 
         var source = items.into_iter()
         while true {
             match take source.next() {
-                present(item) => { self.push_back(*item) },
+                present(item) => { self.push_back(take *item) },
                 none => { break }
             }
         }
@@ -1240,7 +1240,7 @@ extend<region r, T: Copy, A: Allocator> Deque<T, A> implements ExtendItems<read 
 extend<T> Deque<T> implements FromItems<T> {
     static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): Deque<T> {
         var out = new<T>()
-        out.extend(items)
+        out.extend(take items)
         out
     }
 }
@@ -1258,8 +1258,8 @@ extend<T, A: Allocator> Deque<T, A> implements core.convert.From<super.vec.List<
 
 extend<T, const N: usize> Deque<T> implements core.convert.From<[T; N]> {
     static fn from(take items: [T; N]): Deque<T> {
-        let list = super.vec.List<T>.(core.convert.From<[T; N]>).from(items)
-        Deque<T>.(core.convert.From<super.vec.List<T>>).from(list)
+        let list = super.vec.List<T>.(core.convert.From<[T; N]>).from(take items)
+        Deque<T>.(core.convert.From<super.vec.List<T>>).from(take list)
     }
 }
 
@@ -1279,7 +1279,7 @@ extend<T, A: Allocator> super.vec.List<T, A> implements core.convert.From<Deque<
             let capacity = if size == 0usize { 0xffffffffffffffffusize } else { ring.cap }
             let allocator = core.ptr.`read`(core.ptr.from_ref(ring.a))
             core.mem.forget(take ring)
-            super.vec.List<T, A>.from_raw_parts_in(pointer, length, capacity, allocator)
+            super.vec.List<T, A>.from_raw_parts_in(pointer, length, capacity, take allocator)
         }
     }
 }

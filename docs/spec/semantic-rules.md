@@ -852,13 +852,12 @@ payload type, and it does not change access: `allocator: take arena` still
 contains a consuming expression, and a `mut` parameter still requires a mutable
 place. The resolved parameter mapping is stored separately from evaluation order.
 
-Preferred call style omits `mut` for declaration-known mutable parameters:
-`parse(input, map)`. An explicit `mut place` stays legal, useful when forming or
-storing a view or requesting a particular reborrow, and lint does not require
-it; a redundancy hint may remove it only where checked access, loans and
-evaluation order are equivalent. Keep `take` where intentional consumption
-should be visible. This is style guidance, not a change to parameter modes or
-borrow checking.
+Leave ordinary reads and copies unmarked. Prefer making exclusive access and
+transfer of existing arguments visible at the call: `parse(input, mut map)`
+and `enqueue(take job)`. Leave fresh values unmarked. Use `mut *view` to
+explicitly reborrow the referent of a stored mutable view. An explicit borrow
+can change the region being lent; `implicit-argument-access` warns without
+rewriting the call or changing borrow checking.
 
 For ordinary assignment, evaluate the replacement value first, then the
 destination place once, then replace its old value. Destructuring assignment first

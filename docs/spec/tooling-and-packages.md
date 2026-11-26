@@ -572,6 +572,7 @@ Rules (stable kebab-case names):
 | `unused-import` | an `import` name (or glob) no lookup went through; `pub` imports are exempt |
 | `unreachable-code` | the first statement of a block after a statement that never completes |
 | `unused-outcome` | an expression statement whose value is an `Outcome` (for example a bare `capture f()`); handle it, `try` it or write `let _ =` |
+| `implicit-argument-access` | an existing place passed implicitly to a `mut` or `take` parameter; excludes method receivers and fresh values |
 
 Levels are `allow`, `warn` (default) and `deny`. `--allow|--warn|--deny RULE`
 set a rule, the rule name `warnings` sets the default for every rule (`--deny

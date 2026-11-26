@@ -52,7 +52,7 @@ pub interface Iterator: Sized {
         var accumulator = start
         while true {
             match take source.next() {
-                present(item) => { accumulator = callable(take accumulator, item) },
+                present(item) => { accumulator = callable(take accumulator, take item) },
                 none => { break }
             }
         }
@@ -63,7 +63,7 @@ pub interface Iterator: Sized {
         var total = S.(Sum<Self.Item>).zero()
         while true {
             match take source.next() {
-                present(item) => { total = total.plus(item) },
+                present(item) => { total = total.plus(take item) },
                 none => { break }
             }
         }
@@ -74,7 +74,7 @@ pub interface Iterator: Sized {
         var total = P.(Product<Self.Item>).one()
         while true {
             match take source.next() {
-                present(item) => { total = total.times(item) },
+                present(item) => { total = total.times(take item) },
                 none => { break }
             }
         }
@@ -84,7 +84,7 @@ pub interface Iterator: Sized {
         var source = self
         var callable = f
         while true {
-            match take source.next() { present(item) => { callable(item) }, none => { break } }
+            match take source.next() { present(item) => { callable(take item) }, none => { break } }
         }
     }
     mut fn try_fold<B, E, F: mut fn(take B, take Self.Item): B throws E>(
@@ -94,7 +94,7 @@ pub interface Iterator: Sized {
         var accumulator = start
         while true {
             match take self.next() {
-                present(item) => match take capture f(take accumulator, item) {
+                present(item) => match take capture f(take accumulator, take item) {
                     success(value) => { accumulator = value },
                     failure(error) => { return failure(error) }
                 },
@@ -106,7 +106,7 @@ pub interface Iterator: Sized {
     mut fn try_for_each<E, F: mut fn(take Self.Item): Unit throws E>(mut f: F): (Outcome<Unit, E>) {
         while true {
             match take self.next() {
-                present(item) => match take capture f(item) {
+                present(item) => match take capture f(take item) {
                     success(_) => {},
                     failure(error) => { return failure(error) }
                 },
@@ -120,7 +120,7 @@ pub interface Iterator: Sized {
         var predicate = test
         while true {
             match take self.next() {
-                present(item) => { if predicate(item) { return true } },
+                present(item) => { if predicate(take item) { return true } },
                 none => { break }
             }
         }
@@ -131,7 +131,7 @@ pub interface Iterator: Sized {
         var predicate = test
         while true {
             match take self.next() {
-                present(item) => { if !predicate(item) { return false } },
+                present(item) => { if !predicate(take item) { return false } },
                 none => { break }
             }
         }
@@ -153,7 +153,7 @@ pub interface Iterator: Sized {
         while true {
             match take self.next() {
                 present(item) => {
-                    if predicate(item) { return present(index) }
+                    if predicate(take item) { return present(index) }
                     index += 1usize
                 },
                 none => { break }
@@ -165,7 +165,7 @@ pub interface Iterator: Sized {
         var callable = f
         while true {
             match take self.next() {
-                present(item) => { match take callable(item) { present(found) => { return present(found) }, none => {} } },
+                present(item) => { match take callable(take item) { present(found) => { return present(found) }, none => {} } },
                 none => { break }
             }
         }
@@ -284,7 +284,7 @@ pub interface Iterator: Sized {
             match take source.next() {
                 present(item) => {
                     match take accumulator {
-                        present(value) => { accumulator = present(callable(value, item)) },
+                        present(value) => { accumulator = present(callable(take value, take item)) },
                         none => { accumulator = present(item) }
                     }
                 },
@@ -346,7 +346,7 @@ pub interface Iterator: Sized {
         while true {
             match take source.next() {
                 present(item) => match take best {
-                    present(current) => { best = present(super.cmp.max(current, item)) },
+                    present(current) => { best = present(super.cmp.max(take current, take item)) },
                     none => { best = present(item) }
                 },
                 none => { break }
@@ -361,7 +361,7 @@ pub interface Iterator: Sized {
         while true {
             match take source.next() {
                 present(item) => match take best {
-                    present(current) => { best = present(super.cmp.min(current, item)) },
+                    present(current) => { best = present(super.cmp.min(take current, take item)) },
                     none => { best = present(item) }
                 },
                 none => { break }
@@ -372,7 +372,7 @@ pub interface Iterator: Sized {
     // Lexicographic comparison of two sequences; the shorter one orders first.
     take fn cmp<O: OwnedIterable<Item = Self.Item>>(take other: O): Ordering where Self.Item: Ord {
         var left = self
-        var right = O.(OwnedIterable).into_iter(other)
+        var right = O.(OwnedIterable).into_iter(take other)
         while true {
             match take left.next() {
                 present(a) => match take right.next() {
@@ -393,7 +393,7 @@ pub interface Iterator: Sized {
     // Returns none as soon as an incomparable pair is met.
     take fn partial_cmp<O: OwnedIterable<Item = Self.Item>>(take other: O): Ordering? where Self.Item: PartialOrd {
         var left = self
-        var right = O.(OwnedIterable).into_iter(other)
+        var right = O.(OwnedIterable).into_iter(take other)
         while true {
             match take left.next() {
                 present(a) => match take right.next() {
@@ -413,7 +413,7 @@ pub interface Iterator: Sized {
     }
     take fn eq<O: OwnedIterable<Item = Self.Item>>(take other: O): bool where Self.Item: PartialEq {
         var left = self
-        var right = O.(OwnedIterable).into_iter(other)
+        var right = O.(OwnedIterable).into_iter(take other)
         while true {
             match take left.next() {
                 present(a) => match take right.next() {
@@ -426,19 +426,19 @@ pub interface Iterator: Sized {
         true
     }
     take fn ne<O: OwnedIterable<Item = Self.Item>>(take other: O): bool where Self.Item: PartialEq {
-        !self.eq(other)
+        !self.eq(take other)
     }
     take fn lt<O: OwnedIterable<Item = Self.Item>>(take other: O): bool where Self.Item: PartialOrd {
-        match self.partial_cmp(other) { present(order) => order.is_lt(), none => false }
+        match self.partial_cmp(take other) { present(order) => order.is_lt(), none => false }
     }
     take fn le<O: OwnedIterable<Item = Self.Item>>(take other: O): bool where Self.Item: PartialOrd {
-        match self.partial_cmp(other) { present(order) => order.is_le(), none => false }
+        match self.partial_cmp(take other) { present(order) => order.is_le(), none => false }
     }
     take fn gt<O: OwnedIterable<Item = Self.Item>>(take other: O): bool where Self.Item: PartialOrd {
-        match self.partial_cmp(other) { present(order) => order.is_gt(), none => false }
+        match self.partial_cmp(take other) { present(order) => order.is_gt(), none => false }
     }
     take fn ge<O: OwnedIterable<Item = Self.Item>>(take other: O): bool where Self.Item: PartialOrd {
-        match self.partial_cmp(other) { present(order) => order.is_ge(), none => false }
+        match self.partial_cmp(take other) { present(order) => order.is_ge(), none => false }
     }
     take fn is_sorted(): bool where Self.Item: PartialOrd {
         var source = self
@@ -505,7 +505,7 @@ pub interface Iterator: Sized {
         while true {
             match take source.next() {
                 present(item) => {
-                    if predicate(read item) { yes.extend(once(item)) } else { no.extend(once(item)) }
+                    if predicate(read item) { yes.extend(once(take item)) } else { no.extend(once(take item)) }
                 },
                 none => { break }
             }
@@ -521,15 +521,15 @@ pub interface Iterator: Sized {
             match take Self.(Iterator).next(mut source) {
                 present(item) => {
                     let (a, b): (A, B) = item
-                    left.extend(once(a))
-                    right.extend(once(b))
+                    left.extend(once(take a))
+                    right.extend(once(take b))
                 },
                 none => { break }
             }
         }
         (left, right)
     }
-    take fn collect<C: FromItems<Self.Item>>(): C { C.(FromItems<Self.Item>).from_iter(self) }
+    take fn collect<C: FromItems<Self.Item>>(): C { C.(FromItems<Self.Item>).from_iter(take self) }
 }
 
 extend<region r, I: Iterator> mut I from r implements Iterator {
@@ -569,7 +569,7 @@ extend<T, I: Iterator<Item = T?>> OptionalItems<T, I> implements Iterator {
 }
 extend<T, C: FromItems<T>> C? implements FromItems<T?> {
     static fn from_iter<I: OwnedIterable<Item = T?>>(take items: I): C? {
-        let iter: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(items)
+        let iter: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(take items)
         var optional: OptionalItems<T, I.(OwnedIterable).IntoIter> = OptionalItems(iter, true)
         let value = C.(FromItems<T>).from_iter(mut optional)
         if optional.valid { present(value) } else { none }
@@ -595,7 +595,7 @@ extend<T, E, I: Iterator<Item = (Outcome<T, E>)>> OutcomeItems<T, E, I> implemen
 }
 extend<T, E, C: FromItems<T>> (Outcome<C, E>) implements FromItems<(Outcome<T, E>)> {
     static fn from_iter<I: OwnedIterable<Item = (Outcome<T, E>)>>(take items: I): (Outcome<C, E>) {
-        let iter: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(items)
+        let iter: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(take items)
         var outcomes: OutcomeItems<T, E, I.(OwnedIterable).IntoIter> = OutcomeItems(iter, none)
         let value = C.(FromItems<T>).from_iter(mut outcomes)
         match take outcomes.error {
@@ -607,13 +607,13 @@ extend<T, E, C: FromItems<T>> (Outcome<C, E>) implements FromItems<(Outcome<T, E
 
 extend Unit implements FromItems<Unit> {
     static fn from_iter<I: OwnedIterable<Item = Unit>>(take items: I): Unit {
-        var source: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(items)
+        var source: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(take items)
         while source.next().is_present() {}
     }
 }
 extend Unit implements ExtendItems<Unit> {
     mut fn extend<I: OwnedIterable<Item = Unit>>(take items: I): Unit {
-        Unit.(FromItems<Unit>).from_iter(items)
+        Unit.(FromItems<Unit>).from_iter(take items)
     }
 }
 
@@ -631,26 +631,26 @@ extend<T, I: Iterator<Item = (T,)>> UnwrappedSingles<T, I> implements Iterator {
     }
 }
 fn extend_singles<T, E: ExtendItems<T>, I: OwnedIterable<Item = (T,)>>(mut target: E, take items: I): Unit {
-    let iter: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(items)
+    let iter: I.(OwnedIterable).IntoIter = I.(OwnedIterable).into_iter(take items)
     var singles: UnwrappedSingles<T, I.(OwnedIterable).IntoIter> = UnwrappedSingles(iter)
     target.extend(mut singles)
 }
 extend<T, E: ExtendItems<T>> (E,) implements ExtendItems<(T,)> {
     mut fn extend<I: OwnedIterable<Item = (T,)>>(take items: I): Unit {
-        extend_singles<T, E, I>(mut self.0, items)
+        extend_singles<T, E, I>(mut self.0, take items)
     }
 }
 extend<T, E: Default + ExtendItems<T>> (E,) implements FromItems<(T,)> {
     static fn from_iter<I: OwnedIterable<Item = (T,)>>(take items: I): (E,) {
         var inner = E.(Default).default()
-        extend_singles<T, E, I>(mut inner, items)
+        extend_singles<T, E, I>(mut inner, take items)
         (inner,)
     }
 }
 
 // `let v: List<i32> = collect(items)`.
 pub fn collect<T, I: OwnedIterable<Item = T>, C: FromItems<T>>(take items: I): C {
-    C.(FromItems<T>).from_iter(items)
+    C.(FromItems<T>).from_iter(take items)
 }
 
 pub fn chain<T, A: Iterator<Item = T>, B: Iterator<Item = T>>(take first: A, take second: B): Chained<A, B> {
@@ -662,7 +662,7 @@ pub fn zip<A: Iterator, B: Iterator>(take first: A, take second: B): Zipped<A, B
 
 // The iterator of an owned `for` source; async loops keep it in their state.
 pub fn into_iterator<T: OwnedIterable>(take items: T): T.IntoIter {
-    T.(OwnedIterable).into_iter(items)
+    T.(OwnedIterable).into_iter(take items)
 }
 
 // Iterators that can also yield from the back.
@@ -695,7 +695,7 @@ pub interface BidirectionalIterator: Iterator {
             match take self.next_back() {
                 present(item) => {
                     index -= 1usize
-                    if predicate(item) { return present(index) }
+                    if predicate(take item) { return present(index) }
                 },
                 none => { return none }
             }
@@ -708,7 +708,7 @@ pub interface BidirectionalIterator: Iterator {
         var accumulator = start
         while true {
             match take source.next_back() {
-                present(item) => { accumulator = callable(take accumulator, item) },
+                present(item) => { accumulator = callable(take accumulator, take item) },
                 none => { break }
             }
         }
@@ -721,7 +721,7 @@ pub interface BidirectionalIterator: Iterator {
         var accumulator = start
         while true {
             match take self.next_back() {
-                present(item) => match take capture f(take accumulator, item) {
+                present(item) => match take capture f(take accumulator, take item) {
                     success(value) => { accumulator = value },
                     failure(error) => { return failure(error) }
                 },
@@ -888,12 +888,12 @@ extend<B, I: Iterator, F: mut fn(take I.Item): B> Mapped<B, I, F> implements Ite
     type Item = B
     fn size_hint(): (usize, usize?) { self.iter.size_hint() }
     mut fn next(): B? {
-        match take self.iter.next() { present(item) => present(self.f(item)), none => none }
+        match take self.iter.next() { present(item) => present(self.f(take item)), none => none }
     }
 }
 extend<B, I: Iterator + BidirectionalIterator, F: mut fn(take I.(Iterator).Item): B> Mapped<B, I, F> implements BidirectionalIterator {
     mut fn next_back(): B? {
-        match take self.iter.next_back() { present(item) => present(self.f(item)), none => none }
+        match take self.iter.next_back() { present(item) => present(self.f(take item)), none => none }
     }
 }
 
@@ -930,7 +930,7 @@ extend<B, I: Iterator, F: mut fn(take I.Item): B?> FilterMapped<B, I, F> impleme
     mut fn next(): B? {
         while true {
             match take self.iter.next() {
-                present(item) => { match take self.f(item) { present(found) => { return present(found) }, none => {} } },
+                present(item) => { match take self.f(take item) { present(found) => { return present(found) }, none => {} } },
                 none => { break }
             }
         }
@@ -942,7 +942,7 @@ extend<B, I: Iterator + BidirectionalIterator, F: mut fn(take I.(Iterator).Item)
         while true {
             match take self.iter.next_back() {
                 present(item) => {
-                    match take self.f(item) {
+                    match take self.f(take item) {
                         present(found) => { return present(found) },
                         none => {}
                     }
@@ -960,7 +960,7 @@ extend<B, I: Iterator, F: mut fn(take I.Item): B?> MappedWhile<B, I, F> implemen
     fn size_hint(): (usize, usize?) { (0usize, self.iter.size_hint().1) }
     mut fn next(): B? {
         match take self.iter.next() {
-            present(item) => self.f(item),
+            present(item) => self.f(take item),
             none => none
         }
     }
@@ -1018,7 +1018,7 @@ extend<O: Iterator, U: OwnedIterable, F: mut fn(take O.Item): U> FlatMapped<O, U
                 }
             }
             match take self.outer.next() {
-                present(item) => { self.front = present(U.(OwnedIterable).into_iter(self.f(item))) },
+                present(item) => { self.front = present(U.(OwnedIterable).into_iter(self.f(take item))) },
                 none => { self.outer_done = true }
             }
         }
@@ -1046,7 +1046,7 @@ where U.IntoIter: BidirectionalIterator {
                 }
             }
             match take self.outer.next_back() {
-                present(item) => { self.back = present(U.(OwnedIterable).into_iter(self.f(item))) },
+                present(item) => { self.back = present(U.(OwnedIterable).into_iter(self.f(take item))) },
                 none => { self.outer_done = true }
             }
         }
@@ -1107,7 +1107,7 @@ extend<B, I: Iterator, S, F: mut fn(mut S, take I.Item): B?> Scanned<B, I, S, F>
     fn size_hint(): (usize, usize?) { (0usize, self.iter.size_hint().1) }
     mut fn next(): B? {
         match take self.iter.next() {
-            present(item) => self.f(mut self.state, item),
+            present(item) => self.f(mut self.state, take item),
             none => none
         }
     }
@@ -1157,7 +1157,7 @@ extend<U: OwnedIterable, O: Iterator<Item = U>> Flatten<U, O> implements Iterato
                 }
             }
             match take self.outer.next() {
-                present(inner) => { self.front = present(U.(OwnedIterable).into_iter(inner)) },
+                present(inner) => { self.front = present(U.(OwnedIterable).into_iter(take inner)) },
                 none => { self.outer_done = true }
             }
         }
@@ -1185,7 +1185,7 @@ where U.IntoIter: BidirectionalIterator {
                 }
             }
             match take self.outer.next_back() {
-                present(inner) => { self.back = present(U.(OwnedIterable).into_iter(inner)) },
+                present(inner) => { self.back = present(U.(OwnedIterable).into_iter(take inner)) },
                 none => { self.outer_done = true }
             }
         }
@@ -1589,7 +1589,7 @@ extend<I: Iterator> Peekable<I> {
             present(item) => item,
             none => { return none }
         }
-        match take capture callable(item) {
+        match take capture callable(take item) {
             success(value) => present(value),
             failure(rest) => {
                 self.slot = present(present(rest))
@@ -1844,8 +1844,8 @@ extend<T> Bound<T> {
     }
     pub take fn map<U, F: take fn(take T): U>(take f: F): Bound<U> {
         match take self {
-            Bound.Included(value) => Bound.Included(f(value)),
-            Bound.Excluded(value) => Bound.Excluded(f(value)),
+            Bound.Included(value) => Bound.Included(f(take value)),
+            Bound.Excluded(value) => Bound.Excluded(f(take value)),
             Bound.Unbounded => Bound.Unbounded
         }
     }
@@ -2352,7 +2352,7 @@ pub fn max<I: Iterator>(take items: I): I.Item? where I.Item: Ord {
         match take source.next() {
             present(item) => {
                 match take best {
-                    present(current) => { best = present(super.cmp.max(current, item)) },
+                    present(current) => { best = present(super.cmp.max(take current, take item)) },
                     none => { best = present(item) }
                 }
             },
@@ -2369,7 +2369,7 @@ pub fn min<I: Iterator>(take items: I): I.Item? where I.Item: Ord {
         match take source.next() {
             present(item) => {
                 match take best {
-                    present(current) => { best = present(super.cmp.min(current, item)) },
+                    present(current) => { best = present(super.cmp.min(take current, take item)) },
                     none => { best = present(item) }
                 }
             },

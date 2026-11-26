@@ -369,7 +369,7 @@ const fn mutable_data_pointer<T>(mut xs: [T]): ptr<mut T> {
 
 // Safety: `index < xs.len()`.
 unsafe fn element<T>(mut xs: [T], index: usize): ptr<mut T> {
-    mutable_data_pointer(xs).add(index)
+    mutable_data_pointer(mut xs).add(index)
 }
 
 extend<T> [T] {
@@ -1893,7 +1893,7 @@ extend<T> [T] {
         SliceSplitN(SliceSplit(read self, test, 0usize, self.len(), count, true, false, false))
     }
     pub fn rsplit<F: mut fn(read T): bool>(take test: F): super.iter.Reversed<SliceSplit<region self, T, F>> {
-        self.split(test).rev()
+        self.split(take test).rev()
     }
     pub fn split_inclusive<F: mut fn(read T): bool>(
         take test: F
@@ -2103,7 +2103,7 @@ extend<region r, T> SliceChunksExactMut<region r, T> implements Iterator {
     }
     mut fn next(): (mut [T] from r)? {
         let size = self.size
-        split_off_mut(mut self.items, super.iter.range_to(size))
+        split_off_mut(mut self.items, super.iter.range_to(take size))
     }
 }
 extend<region r, T> SliceChunksExactMut<region r, T> implements BidirectionalIterator {
@@ -2198,7 +2198,7 @@ extend<region r, T> SliceRChunksExactMut<region r, T> implements Iterator {
 extend<region r, T> SliceRChunksExactMut<region r, T> implements BidirectionalIterator {
     mut fn next_back(): (mut [T] from r)? {
         let size = self.size
-        split_off_mut(mut self.items, super.iter.range_to(size))
+        split_off_mut(mut self.items, super.iter.range_to(take size))
     }
 }
 extend<region r, T> SliceRChunksExactMut<region r, T> implements super.iter.ExactSizeIterator {}

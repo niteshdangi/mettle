@@ -2327,6 +2327,50 @@ def lint_reports_semantic_findings():
     invoke(["lint", source, "--deny", "no-such-rule"], 2)
 
 
+def lint_reports_implicit_argument_access():
+    source = evidence / "argument-access.mt"
+    text = (
+        "fn change(mut value: i32, amount: i32) { value += amount }\n"
+        "fn bump(mut value: i32) { value += 1 }\n"
+        "fn consume<T>(take value: T): T { take value }\n"
+        "fn copy_value(value: i32): i32 { value }\n"
+        "@allow(implicit_argument_access)\n"
+        "fn quiet(mut quiet_value: i32) { bump(quiet_value) }\n"
+        "fn main(): i32 {\n"
+        "    var state = 0\n"
+        "    change(amount: 2, value: (state))\n"
+        "    change(mut state, 1)\n"
+        "    let indirect: fn(mut i32): Unit = bump\n"
+        "    var via_pointer = 0\n"
+        "    indirect(via_pointer)\n"
+        "    var values = [0, 0]\n"
+        "    let index = 1usize\n"
+        "    indirect(values[index])\n"
+        "    let moved = 3\n"
+        "    let _ = consume<i32>(moved)\n"
+        "    let explicit = 4\n"
+        "    let _ = consume<i32>((take explicit))\n"
+        "    let _ = consume<i32>(5)\n"
+        "    copy_value(state) + via_pointer\n"
+        "}\n")
+    source.write_text(text)
+    command = ["lint", source, "--format", "json"]
+    rule = "implicit-argument-access"
+    findings = invoke_json(command)
+    assert [
+        (text[item["span"]["begin"]:item["span"]["end"]], item["message"])
+        for item in findings if item["code"] == rule
+    ] == [
+        ("(state)", "this argument is implicitly borrowed exclusively"),
+        ("via_pointer", "this argument is implicitly borrowed exclusively"),
+        ("values[index]", "this argument is implicitly borrowed exclusively"),
+        ("moved", "this argument is implicitly consumed"),
+    ], findings
+    assert not any(item["code"] == rule
+                   for item in invoke_json([*command, "--allow", rule]))
+    invoke_json([*command, "--deny", rule], 1)
+
+
 def run_forwards_args_and_exit_status():
     directory = evidence / "run-case"
     directory.mkdir()
@@ -4063,7 +4107,8 @@ CASES = [driver_output_preserves_imports, driver_panic_rejects_other_signals,
          doc_writes_deterministic_html,
          doc_resolves_dependency_links_and_warns, doc_standalone_warning_sources,
          doctests_run_isolated_examples,
-         lint_reports_semantic_findings, debug_info, debugger_workflow,
+         lint_reports_semantic_findings, lint_reports_implicit_argument_access,
+         debug_info, debugger_workflow,
          language_server, language_server_imported_diagnostics,
          test_json_timeout_and_modules]
 

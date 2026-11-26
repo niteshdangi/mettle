@@ -95,7 +95,7 @@ pub fn new<T>(take value: T): Mutex<T> {
     Mutex(raw, core.sync.atomic.AtomicBool.new(false), core.cell.Cell.new(value))
 }
 extend<T> Mutex<T> implements From<T> {
-    static fn from(take value: T): Mutex<T> { new(value) }
+    static fn from(take value: T): Mutex<T> { new(take value) }
 }
 extend<T: Default> Mutex<T> implements Default {
     static fn default(): Mutex<T> { new(T.(Default).default()) }

@@ -54,7 +54,7 @@ pub fn new<T>(take value: T): RwLock<T> {
     RwLock(raw, core.sync.atomic.AtomicBool.new(false), core.cell.Cell.new(value))
 }
 extend<T> RwLock<T> implements From<T> {
-    static fn from(take value: T): RwLock<T> { new(value) }
+    static fn from(take value: T): RwLock<T> { new(take value) }
 }
 extend<T: Default> RwLock<T> implements Default {
     static fn default(): RwLock<T> { new(T.(Default).default()) }

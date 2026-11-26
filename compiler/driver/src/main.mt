@@ -33,17 +33,17 @@ fn read_source(mut input: Reader, limit: usize): List<u8>? throws io.Error {
 fn source_read_limit(): Unit throws io.Error {
     let empty_data = [0u8; 0]
     var empty = io.slice_reader(empty_data)
-    let accepted = (try read_source(empty, 0usize)).or_panic()
+    let accepted = (try read_source(mut empty, 0usize)).or_panic()
     assert(accepted.is_empty(), "empty input exceeds zero limit")
     let array = [1u8, 2u8, 3u8, 4u8]
     let data = array.split_at(0usize).1
     var exact = io.slice_reader(data)
-    let accepted = (try read_source(exact, data.len())).or_panic()
+    let accepted = (try read_source(mut exact, data.len())).or_panic()
     assert(accepted.as_slice() == data, "exact-limit input changed")
     var over = io.slice_reader(data)
-    assert((try read_source(over, data.len() - 1usize)).is_none(), "over-limit input accepted")
+    assert((try read_source(mut over, data.len() - 1usize)).is_none(), "over-limit input accepted")
     var zero = io.slice_reader(data)
-    assert((try read_source(zero, 0usize)).is_none(), "nonempty input accepted at zero limit")
+    assert((try read_source(mut zero, 0usize)).is_none(), "nonempty input accepted at zero limit")
 }
 
 @test
@@ -51,10 +51,10 @@ fn source_read_chunk_limit(): Unit throws io.Error {
     let array = [42u8; 4097]
     let data = array.split_at(0usize).1
     var exact = io.slice_reader(data)
-    let accepted = (try read_source(exact, data.len())).or_panic()
+    let accepted = (try read_source(mut exact, data.len())).or_panic()
     assert(accepted.as_slice() == data, "multi-chunk input changed")
     var over = io.slice_reader(data)
-    assert((try read_source(over, 4096usize)).is_none(), "over-limit second chunk accepted")
+    assert((try read_source(mut over, 4096usize)).is_none(), "over-limit second chunk accepted")
 }
 
 fn run(): i32 throws io.Error {
@@ -63,7 +63,7 @@ fn run(): i32 throws io.Error {
     if args.len() != 2 && !syntax { io.eprint("usage: mettle-selfhost [syntax] SOURCE\n"); return 2 }
     var input = try fs.open(args[if syntax { 2usize } else { 1usize }])
     let metadata = try input.metadata()
-    let loaded = if metadata.is_file() && metadata.len() > SOURCE_BYTES as u64 { none } else { try read_source(input, SOURCE_BYTES) }
+    let loaded = if metadata.is_file() && metadata.len() > SOURCE_BYTES as u64 { none } else { try read_source(mut input, SOURCE_BYTES) }
     let present(bytes) = loaded else { io.eprint("error[limit] 0:0 source file must be smaller than 4 GiB\n"); return 1 }
     if syntax {
         let result = parse(bytes.as_slice(), 0u32)

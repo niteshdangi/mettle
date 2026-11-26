@@ -249,7 +249,7 @@ pub fn read_link(read input: PathInput): OsString throws Error {
         if count < 0isize { throw io.last_os_error() }
         if (count as usize) < capacity {
             result.truncate(count as usize)
-            return ffi.os_string_from_vec(result)
+            return ffi.os_string_from_vec(take result)
         }
         capacity *= 2usize
     }
@@ -484,10 +484,10 @@ extend File implements io.IsTerminal {
 }
 
 extend File implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.fd, mut buf) }
 }
 extend<region r> read File from r implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.fd, buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.fd, mut buf) }
 }
 
 extend File implements Writer {
@@ -520,7 +520,7 @@ extend File implements FileExt {
     fn read_at(mut buf: [u8], offset: u64): usize throws Error {
         let native_offset = try checked_file_offset(offset)
         while true {
-            let count = unsafe { pread(self.fd, sys.data_mut(buf), buf.len(), native_offset) }
+            let count = unsafe { pread(self.fd, sys.data_mut(mut buf), buf.len(), native_offset) }
             if count >= 0isize { return count as usize }
             let error = io.last_os_error()
             if !error.kind().is(ErrorKind.Interrupted) { throw error }
@@ -544,7 +544,7 @@ extend File implements FileExt {
 pub fn read_bytes(read input: PathInput): List<u8> throws Error {
     var f = try open(input)
     var out = vec.new<u8>()
-    let n = try f.read_to_end(out)
+    let n = try f.read_to_end(mut out)
     out
 }
 
@@ -553,7 +553,7 @@ pub fn `read`(read input: PathInput): List<u8> throws Error { try read_bytes(inp
 // The whole file as text; ill-formed UTF-8 fails with `InvalidData`.
 pub fn read_to_string(read input: PathInput): String throws Error {
     let bytes = try read_bytes(input)
-    let decoded = capture alloc.string.from_utf8(bytes)
+    let decoded = capture alloc.string.from_utf8(take bytes)
     match take decoded {
         success(s) => s,
         failure(e) => throw io.from_kind(ErrorKind.InvalidData)
@@ -573,7 +573,7 @@ pub fn `copy`(read from: PathInput, read to: PathInput): u64 throws Error {
     var buffer = [0u8; 4096]
     var total = 0u64
     while true {
-        let count = try source.read_some(buffer)
+        let count = try source.read_some(mut buffer)
         if count == 0usize { break }
         let bytes = unsafe { core.slice.subslice_unchecked(buffer, 0usize, count) }
         try destination.write_all(bytes)
@@ -729,7 +729,7 @@ extend ReadDir {
             return none
         }
         let bytes = unsafe { sys.bytes_from_c(name) }
-        present(DirEntry(ffi.os_string_from_vec(bytes), self.dir.as_path().to_path_buf()))
+        present(DirEntry(ffi.os_string_from_vec(take bytes), self.dir.as_path().to_path_buf()))
     }
 }
 

@@ -68,13 +68,13 @@ extend<B, C> ControlFlow<B, C> {
     }
     pub take fn map_break<U, F: take fn(take B): U>(take f: F): ControlFlow<U, C> {
         match take self {
-            ControlFlow.Break(value) => ControlFlow.Break(f(value)),
+            ControlFlow.Break(value) => ControlFlow.Break(f(take value)),
             ControlFlow.Continue(value) => ControlFlow.Continue(value)
         }
     }
     pub take fn map_continue<U, F: take fn(take C): U>(take f: F): ControlFlow<B, U> {
         match take self {
-            ControlFlow.Continue(value) => ControlFlow.Continue(f(value)),
+            ControlFlow.Continue(value) => ControlFlow.Continue(f(take value)),
             ControlFlow.Break(value) => ControlFlow.Break(value)
         }
     }

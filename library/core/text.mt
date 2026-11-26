@@ -1493,7 +1493,7 @@ extend Text {
             present(parts) => parts,
             none => { return none }
         }
-        match take from_utf8_mut(middle) {
+        match take from_utf8_mut(mut *middle) {
             success(value) => present(value),
             failure(_) => none
         }
@@ -1564,32 +1564,32 @@ extend Text {
     }
     // Byte offset of the first occurrence of `pattern`; the empty pattern is at 0.
     pub fn find<P: Pattern>(take pattern: P): usize? {
-        match find_pattern(read self, pattern, false) {
+        match find_pattern(read self, take pattern, false) {
             present(found) => present(found.0),
             none => none
         }
     }
     // Byte offset of the last occurrence of `pattern`; the empty pattern is at the end.
     pub fn rfind<P: Pattern>(take pattern: P): usize? {
-        match find_pattern(read self, pattern, true) {
+        match find_pattern(read self, take pattern, true) {
             present(found) => present(found.0),
             none => none
         }
     }
     pub fn contains<P: Pattern>(take pattern: P): bool {
-        match self.find(pattern) { present(_) => true, none => false }
+        match self.find(take pattern) { present(_) => true, none => false }
     }
     pub fn matches<P: Pattern>(take pattern: P): Matches<region self, P> {
         Matches(read self, pattern, 0usize, self.len(), false)
     }
     pub fn rmatches<P: Pattern>(take pattern: P): RMatches<region self, P> {
-        RMatches(self.matches(pattern))
+        RMatches(self.matches(take pattern))
     }
     pub fn match_indices<P: Pattern>(take pattern: P): MatchIndices<region self, P> {
-        MatchIndices(self.matches(pattern))
+        MatchIndices(self.matches(take pattern))
     }
     pub fn rmatch_indices<P: Pattern>(take pattern: P): RMatchIndices<region self, P> {
-        RMatchIndices(self.matches(pattern))
+        RMatchIndices(self.matches(take pattern))
     }
     pub const fn eq_ignore_ascii_case(read other: Text): bool {
         if self.len() != other.len() { return false }
@@ -1743,11 +1743,11 @@ extend Text {
             present(value) => value,
             none => { return none }
         }
-        let first = match take from_utf8_mut(parts.0) {
+        let first = match take from_utf8_mut(mut *parts.0) {
             success(value) => value,
             failure(_) => { return none }
         }
-        let second = match take from_utf8_mut(parts.1) {
+        let second = match take from_utf8_mut(mut *parts.1) {
             success(value) => value,
             failure(_) => { return none }
         }
@@ -1780,7 +1780,7 @@ extend Text {
         Split(read self, separator, false, true, true)
     }
     pub fn rsplit<P: Pattern>(take separator: P): RSplit<region self, P> {
-        RSplit(self.split(separator))
+        RSplit(self.split(take separator))
     }
     pub fn splitn(count: usize, read separator: Text from self): SplitN<region self> {
         SplitN(self.split(read separator), count)
@@ -1789,10 +1789,10 @@ extend Text {
         RSplitN(self.split(read separator), count)
     }
     pub fn split_terminator<P: Pattern>(take pattern: P): SplitTerminator<region self, P> {
-        SplitTerminator(TerminatorSplit(self.split(pattern), true))
+        SplitTerminator(TerminatorSplit(self.split(take pattern), true))
     }
     pub fn rsplit_terminator<P: Pattern>(take pattern: P): RSplitTerminator<region self, P> {
-        RSplitTerminator(TerminatorSplit(self.split(pattern), true))
+        RSplitTerminator(TerminatorSplit(self.split(take pattern), true))
     }
     pub fn split_inclusive(read separator: Text from self): SplitInclusive<region self> {
         SplitInclusive(read self, read separator, false, true)

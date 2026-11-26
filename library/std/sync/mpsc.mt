@@ -209,9 +209,9 @@ pub type Receiver<T> {
                 match take guard.get_mut().pop_front() {
                     present(envelope) => {
                         if envelope.receipt.is_present() {
-                            guard.get_mut().push_back(envelope)
+                            guard.get_mut().push_back(take envelope)
                         } else {
-                            discarded.push_back(envelope)
+                            discarded.push_back(take envelope)
                         }
                     },
                     none => {}
@@ -309,7 +309,7 @@ extend<T> SyncSender<T> {
               } else {
                   guard.get().len() >= self.chan.get().bound
               }) {
-            let waited = capture self.chan.get().space.wait(guard)
+            let waited = capture self.chan.get().space.wait(take guard)
             guard = match take waited { success(g) => g, failure(e) => e.into_inner() }
         }
         if !self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
@@ -329,7 +329,7 @@ extend<T> SyncSender<T> {
             // Only receipt publication acknowledges this sender's own message.
             while !accepted(read receipt) &&
                   self.chan.get().open.load(core.sync.atomic.Ordering.Acquire) {
-                let waited = capture self.chan.get().space.wait(guard)
+                let waited = capture self.chan.get().space.wait(take guard)
                 guard = match take waited { success(g) => g, failure(e) => e.into_inner() }
             }
             if !accepted(read receipt) {
@@ -385,7 +385,7 @@ extend<T> SyncSender<T> {
             }
             let remaining = (timeout_nanos as u128 - elapsed) as u64
             let waited = capture self.chan.get().space.wait_timeout(
-                guard, time.from_nanos(remaining)
+                take guard, time.from_nanos(remaining)
             )
             let pair = match take waited { success(pair) => pair, failure(e) => e.into_inner() }
             guard = pair.0
@@ -414,7 +414,7 @@ extend<T> SyncSender<T> {
                 }
                 let remaining = (timeout_nanos as u128 - elapsed) as u64
                 let waited = capture self.chan.get().space.wait_timeout(
-                    guard, time.from_nanos(remaining)
+                    take guard, time.from_nanos(remaining)
                 )
                 let pair = match take waited { success(pair) => pair, failure(e) => e.into_inner() }
                 guard = pair.0
@@ -446,7 +446,7 @@ extend<T> Receiver<T> {
             let next = guard.get_mut().pop_front()
             match take next {
                 present(envelope) => {
-                    result = present(receive(envelope))
+                    result = present(receive(take envelope))
                     waiting = false
                     self.chan.get().space.notify_all()
                 },
@@ -456,7 +456,7 @@ extend<T> Receiver<T> {
                     } else {
                         let _previous = self.chan.get().waiting_receivers.fetch_add(1usize, core.sync.atomic.Ordering.Relaxed)
                         self.chan.get().space.notify_one()
-                        let waited = capture self.chan.get().ready.wait(guard)
+                        let waited = capture self.chan.get().ready.wait(take guard)
                         guard = match take waited { success(g) => g, failure(e) => e.into_inner() }
                         let _previous = self.chan.get().waiting_receivers.fetch_sub(1usize, core.sync.atomic.Ordering.Relaxed)
                     }
@@ -472,7 +472,7 @@ extend<T> Receiver<T> {
         let next = guard.get_mut().pop_front()
         match take next {
             present(envelope) => {
-                let value = receive(envelope)
+                let value = receive(take envelope)
                 self.chan.get().space.notify_all()
                 value
             },
@@ -501,7 +501,7 @@ extend<T> Receiver<T> {
             }
             let remaining = (timeout_nanos as u128 - elapsed) as u64
             let waited = capture self.chan.get().ready.wait_timeout(
-                guard, time.from_nanos(remaining)
+                take guard, time.from_nanos(remaining)
             )
             let pair = match take waited { success(pair) => pair, failure(e) => e.into_inner() }
             guard = pair.0
@@ -511,7 +511,7 @@ extend<T> Receiver<T> {
         let next = guard.get_mut().pop_front()
         match take next {
             present(envelope) => {
-                let value = receive(envelope)
+                let value = receive(take envelope)
                 self.chan.get().space.notify_all()
                 value
             },

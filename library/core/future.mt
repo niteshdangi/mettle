@@ -20,7 +20,7 @@ extend<T> Poll<T> {
     pub const fn is_pending(): bool { match self { Poll.Ready(value) => false, Poll.Pending => true } }
     pub take fn map<U, F: take fn(take T): U>(take f: F): Poll<U> {
         match take self {
-            Poll.Ready(value) => Poll.Ready(f(value)),
+            Poll.Ready(value) => Poll.Ready(f(take value)),
             Poll.Pending => Poll.Pending
         }
     }
@@ -96,7 +96,7 @@ extend<T, E> Poll<(Outcome<T, E>)> {
     pub take fn map_ok<U, F: take fn(take T): U>(take f: F): Poll<(Outcome<U, E>)> {
         match take self {
             Poll.Ready(result) => Poll.Ready(match take result {
-                success(value) => success(f(value)),
+                success(value) => success(f(take value)),
                 failure(error) => failure(error)
             }),
             Poll.Pending => Poll.Pending
@@ -106,7 +106,7 @@ extend<T, E> Poll<(Outcome<T, E>)> {
         match take self {
             Poll.Ready(result) => Poll.Ready(match take result {
                 success(value) => success(value),
-                failure(error) => failure(f(error))
+                failure(error) => failure(f(take error))
             }),
             Poll.Pending => Poll.Pending
         }
@@ -118,7 +118,7 @@ extend<T, E> Poll<(Outcome<T, E>)?> {
         match take self {
             Poll.Ready(result) => Poll.Ready(match take result {
                 present(outcome) => present(match take outcome {
-                    success(value) => success(f(value)),
+                    success(value) => success(f(take value)),
                     failure(error) => failure(error)
                 }),
                 none => none
@@ -131,7 +131,7 @@ extend<T, E> Poll<(Outcome<T, E>)?> {
             Poll.Ready(result) => Poll.Ready(match take result {
                 present(outcome) => present(match take outcome {
                     success(value) => success(value),
-                    failure(error) => failure(f(error))
+                    failure(error) => failure(f(take error))
                 }),
                 none => none
             }),
@@ -364,7 +364,7 @@ extend<T, C> Coroutine<T, C> implements Future {
 // exclusively borrowed Context for this poll.
 pub unsafe fn poll_await<F: Future>(mut future: F, cx: ptr<mut u8>): F.Output? {
     let context = unsafe { mut *cx.cast<Context>() }
-    match take unsafe { core.pin.Pin.new_unchecked(mut future).poll(context) } {
+    match take unsafe { core.pin.Pin.new_unchecked(mut future).poll(mut *context) } {
         Poll.Ready(value) => present(value),
         Poll.Pending => none
     }

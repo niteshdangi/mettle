@@ -100,7 +100,7 @@ extern "C" {
 }
 
 pub fn fill_random_bytes(mut bytes: [u8]): Unit {
-    if unsafe { mettle_rt_random_fill(data_mut(bytes), bytes.len()) } != 0 {
+    if unsafe { mettle_rt_random_fill(data_mut(mut bytes), bytes.len()) } != 0 {
         core.intrinsics.abort()
     }
 }

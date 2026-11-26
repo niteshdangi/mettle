@@ -92,7 +92,7 @@ extend SocketAddr implements ToSocketAddrs {
     type Iter<region r> = Once<SocketAddr>
     fn to_socket_addrs<region r>(receiver read self: Self from r): Once<SocketAddr> throws Error {
         let address: SocketAddr = self
-        core.iter.once(address)
+        core.iter.once(take address)
     }
 }
 
@@ -151,7 +151,7 @@ extend Text implements ToSocketAddrs {
         match take capture parse_socket_addr(self) {
             success(address) => {
                 var addresses = vec.new<SocketAddr>()
-                addresses.push(address)
+                addresses.push(take address)
                 return addresses.into_iter()
             },
             failure(_) => {}
@@ -626,7 +626,7 @@ fn local_of(fd: i32, peer: i32): SocketAddr throws Error {
     var port = 0u16
     var flowinfo = 0u32
     var scope_id = 0u32
-    if unsafe { sys.mettle_rt_sock_name(fd, peer, core.ptr.from_mut(family), sys.data_mut(bytes), 16usize, core.ptr.from_mut(port), core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)) } != 0 {
+    if unsafe { sys.mettle_rt_sock_name(fd, peer, core.ptr.from_mut(family), sys.data_mut(mut bytes), 16usize, core.ptr.from_mut(port), core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)) } != 0 {
         throw io.last_os_error()
     }
     decode_socket_addr(family, bytes, port, flowinfo, scope_id)
@@ -635,7 +635,7 @@ fn local_of(fd: i32, peer: i32): SocketAddr throws Error {
 fn stream_read(fd: i32, mut buf: [u8]): usize throws Error {
     if buf.len() == 0usize { return 0usize }
     while true {
-        let n = unsafe { sys.`read`(fd, sys.data_mut(buf), buf.len()) }
+        let n = unsafe { sys.`read`(fd, sys.data_mut(mut buf), buf.len()) }
         if n >= 0isize { return n as usize }
         let e = net_error(fd)
         if !e.kind().is(ErrorKind.Interrupted) { throw e }
@@ -653,7 +653,7 @@ fn stream_write(fd: i32, read buf: [u8]): usize throws Error {
 fn socket_peek(fd: i32, mut buf: [u8]): usize throws Error {
     if buf.len() == 0usize { return 0usize }
     while true {
-        let count = unsafe { recv(fd, sys.data_mut(buf), buf.len(), 2) }
+        let count = unsafe { recv(fd, sys.data_mut(mut buf), buf.len(), 2) }
         if count >= 0isize { return count as usize }
         let error = net_error(fd)
         if !error.kind().is(ErrorKind.Interrupted) { throw error }
@@ -801,7 +801,7 @@ pub fn tcp_listen<A: ToSocketAddrs + unsized>(read addr: A): TcpListener throws 
 fn tcp_listen_address(addr: SocketAddr): TcpListener throws Error {
     let fd = try new_socket(0, family_of(addr.ip))
     let owned = unsafe { sys.OwnedFd.from_raw_fd(fd) }
-    let listener = unsafe { try TcpListener.from_owned_fd(owned) }
+    let listener = unsafe { try TcpListener.from_owned_fd(take owned) }
     try bind_address(fd, addr)
     if unsafe { sys.listen(fd, 128) } != 0 { throw io.last_os_error() }
     listener
@@ -903,7 +903,7 @@ extend TcpListener {
             sys.mettle_rt_sock_accept(
                 self.fd, self.accept_millis, if nonblocking { 1 } else { 0 },
                 core.ptr.from_mut(timed_out), core.ptr.from_mut(family),
-                sys.data_mut(bytes), 16usize, core.ptr.from_mut(port),
+                sys.data_mut(mut bytes), 16usize, core.ptr.from_mut(port),
                 core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)
             )
         }
@@ -943,7 +943,7 @@ extend AsyncTcpListener {
                 sys.mettle_rt_sock_accept(
                     self.fd, -1, 1, core.ptr.from_mut(timed_out),
                     core.ptr.from_mut(family),
-                    sys.data_mut(bytes), 16usize, core.ptr.from_mut(port),
+                    sys.data_mut(mut bytes), 16usize, core.ptr.from_mut(port),
                     core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)
                 )
             }
@@ -978,7 +978,7 @@ extend TcpStream {
     pub fn local_addr(): SocketAddr throws Error { try local_of(self.fd, 0) }
     pub fn peer_addr(): SocketAddr throws Error { try local_of(self.fd, 1) }
     pub fn peek(mut buf: [u8]): usize throws Error {
-        try socket_peek(self.fd, buf)
+        try socket_peek(self.fd, mut buf)
     }
     pub fn try_clone(): TcpStream throws Error {
         let cloned = unsafe { sys.mettle_rt_dup(self.fd) }
@@ -1033,7 +1033,7 @@ extend TcpStream {
 }
 
 extend TcpStream implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try stream_read(self.fd, buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error { try stream_read(self.fd, mut buf) }
 }
 
 extend TcpStream implements Writer {
@@ -1042,7 +1042,7 @@ extend TcpStream implements Writer {
 }
 
 extend<region r> read TcpStream from r implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try stream_read(self.fd, buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error { try stream_read(self.fd, mut buf) }
 }
 
 extend<region r> read TcpStream from r implements Writer {
@@ -1110,7 +1110,7 @@ extend AsyncTcpStream {
     pub async fn read_some(mut buf: [u8]): usize throws Error {
         if buf.len() == 0usize { return 0usize }
         while true {
-            let n = unsafe { sys.`read`(self.fd, sys.data_mut(buf), buf.len()) }
+            let n = unsafe { sys.`read`(self.fd, sys.data_mut(mut buf), buf.len()) }
             if n >= 0isize { return n as usize }
             let error = io.last_os_error()
             if error.kind().is(ErrorKind.Interrupted) { continue }
@@ -1253,11 +1253,11 @@ extend UdpSocket {
     }
 
     pub fn recv_from(mut buf: [u8]): (usize, SocketAddr) throws Error {
-        try datagram_recv_from(self.fd, buf, 0)
+        try datagram_recv_from(self.fd, mut buf, 0)
     }
 
     pub fn peek_from(mut buf: [u8]): (usize, SocketAddr) throws Error {
-        try datagram_recv_from(self.fd, buf, 1)
+        try datagram_recv_from(self.fd, mut buf, 1)
     }
 
     pub fn send(read buf: [u8]): usize throws Error {
@@ -1265,8 +1265,8 @@ extend UdpSocket {
         if count < 0isize { throw net_error(self.fd) }
         count as usize
     }
-    pub fn recv(mut buf: [u8]): usize throws Error { try datagram_recv(self.fd, buf, 0) }
-    pub fn peek(mut buf: [u8]): usize throws Error { try datagram_recv(self.fd, buf, 2) }
+    pub fn recv(mut buf: [u8]): usize throws Error { try datagram_recv(self.fd, mut buf, 0) }
+    pub fn peek(mut buf: [u8]): usize throws Error { try datagram_recv(self.fd, mut buf, 2) }
 }
 
 fn datagram_recv_from(fd: i32, mut buf: [u8], peek: i32): (usize, SocketAddr) throws Error {
@@ -1277,8 +1277,8 @@ fn datagram_recv_from(fd: i32, mut buf: [u8], peek: i32): (usize, SocketAddr) th
     var scope_id = 0u32
     let result = unsafe {
         sys.mettle_rt_sock_recvfrom(
-            fd, sys.data_mut(buf), buf.len(), peek, core.ptr.from_mut(family),
-            sys.data_mut(address), 16usize, core.ptr.from_mut(port),
+            fd, sys.data_mut(mut buf), buf.len(), peek, core.ptr.from_mut(family),
+            sys.data_mut(mut address), 16usize, core.ptr.from_mut(port),
             core.ptr.from_mut(flowinfo), core.ptr.from_mut(scope_id)
         )
     }
@@ -1288,7 +1288,7 @@ fn datagram_recv_from(fd: i32, mut buf: [u8], peek: i32): (usize, SocketAddr) th
 
 fn datagram_recv(fd: i32, mut buf: [u8], flags: i32): usize throws Error {
     while true {
-        let count = unsafe { recv(fd, sys.data_mut(buf), buf.len(), flags) }
+        let count = unsafe { recv(fd, sys.data_mut(mut buf), buf.len(), flags) }
         if count >= 0isize { return count as usize }
         let error = net_error(fd)
         if !error.kind().is(ErrorKind.Interrupted) { throw error }
@@ -1320,7 +1320,7 @@ pub fn resolve(read host: Text, port: u16): List<SocketAddr> throws Error {
         var scope_id = 0u32
         if unsafe {
             sys.mettle_rt_resolve_get(
-                handle.raw, index, core.ptr.from_mut(family), sys.data_mut(bytes),
+                handle.raw, index, core.ptr.from_mut(family), sys.data_mut(mut bytes),
                 16usize, core.ptr.from_mut(result_port), core.ptr.from_mut(flowinfo),
                 core.ptr.from_mut(scope_id)
             )
@@ -1437,11 +1437,11 @@ extend UnixStream {
 }
 
 extend UnixStream implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try stream_read(self.fd, buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error { try stream_read(self.fd, mut buf) }
 }
 
 extend<region r> read UnixStream from r implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try stream_read(self.fd, buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error { try stream_read(self.fd, mut buf) }
 }
 
 extend UnixStream implements Writer {
@@ -1509,6 +1509,6 @@ extend UnixDatagram {
     }
 
     pub fn recv(mut bytes: [u8]): usize throws Error {
-        try stream_read(self.fd, bytes)
+        try stream_read(self.fd, mut bytes)
     }
 }

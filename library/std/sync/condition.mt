@@ -121,7 +121,7 @@ extend Condition {
         var current = guard
         var test = predicate
         while test(current.get_mut()) {
-            current = try self.wait(current)
+            current = try self.wait(take current)
         }
         current
     }
@@ -143,7 +143,7 @@ extend Condition {
                 present(value) => value,
                 none => time.from_nanos(0u64)
             }
-            let waited = try self.wait_timeout(current, remaining)
+            let waited = try self.wait_timeout(take current, remaining)
             current = waited.0
             first_wait = false
         }
@@ -153,7 +153,7 @@ extend Condition {
         take guard: MutexGuard<T, region r>,
         milliseconds: u64
     ): (MutexGuard<T, region r>, TimedOut) throws PoisonError<(MutexGuard<T, region r>, TimedOut)> {
-        try self.wait_timeout(guard, time.from_millis(milliseconds))
+        try self.wait_timeout(take guard, time.from_millis(milliseconds))
     }
     pub fn notify_one(): Unit {
         if unsafe { mettle_rt_cond_notify_one(self.raw) } != 0 {

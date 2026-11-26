@@ -116,14 +116,14 @@ pub fn try_new_in<T, A: Allocator>(take value: T, take allocator: A): LocalShare
     LocalShared(p, b, a)
 }
 pub fn new_in<T, A: Allocator>(take value: T, take allocator: A): LocalShared<T, A> {
-    let outcome = capture try_new_in(value, allocator)
+    let outcome = capture try_new_in(take value, take allocator)
     match take outcome {
         success(r) => r,
         failure(e) => handle_alloc_error(unsafe { layout_unchecked(e.size, e.align) })
     }
 }
-pub fn new<T>(take value: T): LocalShared<T> { new_in(value, Global()) }
-pub fn try_new<T>(take value: T): LocalShared<T> throws AllocError { try try_new_in(value, Global()) }
+pub fn new<T>(take value: T): LocalShared<T> { new_in(take value, Global()) }
+pub fn try_new<T>(take value: T): LocalShared<T> throws AllocError { try try_new_in(take value, Global()) }
 
 // An empty Weak has no allocation or count; its null header is the sentinel.
 pub fn new_weak<T>(): Weak<T> {
@@ -137,10 +137,10 @@ extend<T> Weak<T> implements core.default.Default {
 pub fn try_new_uninit_in<T, A: Allocator>(
     take allocator: A
 ): LocalShared<core.mem.MaybeUninit<T>, A> throws AllocError {
-    try try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
+    try try_new_in(core.mem.MaybeUninit<T>.uninit(), take allocator)
 }
 pub fn new_uninit_in<T, A: Allocator>(take allocator: A): LocalShared<core.mem.MaybeUninit<T>, A> {
-    let result = capture try_new_uninit_in<T, A>(allocator)
+    let result = capture try_new_uninit_in<T, A>(take allocator)
     match take result {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
@@ -154,10 +154,10 @@ pub fn new_uninit<T>(): LocalShared<core.mem.MaybeUninit<T>> { new_uninit_in<T, 
 pub fn try_new_zeroed_in<T, A: Allocator>(
     take allocator: A
 ): LocalShared<core.mem.MaybeUninit<T>, A> throws AllocError {
-    try try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
+    try try_new_in(core.mem.MaybeUninit<T>.zeroed(), take allocator)
 }
 pub fn new_zeroed_in<T, A: Allocator>(take allocator: A): LocalShared<core.mem.MaybeUninit<T>, A> {
-    let result = capture try_new_zeroed_in<T, A>(allocator)
+    let result = capture try_new_zeroed_in<T, A>(take allocator)
     match take result {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
@@ -193,14 +193,14 @@ pub fn try_new_uninit_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
 ): LocalShared<[core.mem.MaybeUninit<T>], A> throws AllocError {
-    try try_new_slice_in<T, A>(len, allocator, false)
+    try try_new_slice_in<T, A>(len, take allocator, false)
 }
 
 pub fn new_uninit_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
 ): LocalShared<[core.mem.MaybeUninit<T>], A> {
-    let result = capture try_new_uninit_slice_in<T, A>(len, allocator)
+    let result = capture try_new_uninit_slice_in<T, A>(len, take allocator)
     match take result {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe {
@@ -223,14 +223,14 @@ pub fn try_new_zeroed_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
 ): LocalShared<[core.mem.MaybeUninit<T>], A> throws AllocError {
-    try try_new_slice_in<T, A>(len, allocator, true)
+    try try_new_slice_in<T, A>(len, take allocator, true)
 }
 
 pub fn new_zeroed_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
 ): LocalShared<[core.mem.MaybeUninit<T>], A> {
-    let result = capture try_new_zeroed_slice_in<T, A>(len, allocator)
+    let result = capture try_new_zeroed_slice_in<T, A>(len, take allocator)
     match take result {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe {
@@ -271,7 +271,7 @@ pub fn try_copy_text_in<A: Allocator>(read value: Text, take allocator: A): Loca
 }
 
 pub fn copy_text_in<A: Allocator>(read value: Text, take allocator: A): LocalShared<Text, A> {
-    let outcome = capture try_copy_text_in(value, allocator)
+    let outcome = capture try_copy_text_in(value, take allocator)
     match take outcome {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
@@ -316,17 +316,17 @@ pub fn new_cyclic_in<T, A: Allocator + Clone, F: take fn(read Weak<T, A>): T>(
     take allocator: A,
     take make: F
 ): LocalShared<T, A> {
-    let result = capture try_new_cyclic_in<T, A, F>(allocator, make)
+    let result = capture try_new_cyclic_in<T, A, F>(take allocator, take make)
     match take result {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe { layout_unchecked(error.size, error.align) })
     }
 }
 pub fn try_new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): LocalShared<T> throws AllocError {
-    try try_new_cyclic_in<T, Global, F>(Global(), make)
+    try try_new_cyclic_in<T, Global, F>(Global(), take make)
 }
 pub fn new_cyclic<T, F: take fn(read Weak<T>): T>(take make: F): LocalShared<T> {
-    new_cyclic_in<T, Global, F>(Global(), make)
+    new_cyclic_in<T, Global, F>(Global(), take make)
 }
 
 extend<T: unsized, A: Allocator + Clone> LocalShared<T, A> {
@@ -435,7 +435,7 @@ pub unsafe fn increment_strong_count<T: unsized, A: Allocator + Clone>(
     RawLocalShared(raw.p, raw.h, allocator)
 }
 pub unsafe fn decrement_strong_count<T: unsized, A: Allocator>(take raw: RawLocalShared<T, A>): Unit {
-    let _owner = unsafe { from_raw(raw) }
+    let _owner = unsafe { from_raw(take raw) }
 }
 
 extend<T: unsized, A: Allocator + Clone> Weak<T, A> {
@@ -639,7 +639,7 @@ extend<T: unsized, A: Allocator> LocalShared<T, A> implements Borrow<T> {
     fn borrow(): read T from self { self.get() }
 }
 extend<T> LocalShared<T> implements From<T> {
-    static fn from(take value: T): LocalShared<T> { new(value) }
+    static fn from(take value: T): LocalShared<T> { new(take value) }
 }
 extend<T: PartialEq + unsized, A: Allocator> LocalShared<T, A> implements PartialEq {
     fn eq(read other: LocalShared<T, A>): bool { self.get().eq(other.get()) }
@@ -691,7 +691,7 @@ pub type Pinned<T: unsized, A: Allocator = Global> {
 }
 
 pub fn pin<T>(take value: T): Pinned<T> {
-    let raw = new(value).into_raw()
+    let raw = new(take value).into_raw()
     Pinned(raw.p, raw.h, raw.a)
 }
 
@@ -839,8 +839,8 @@ extend<region r> LocalShared<core.ffi.CStr> implements From<mut core.ffi.CStr fr
 extend<region r, B: core.borrow.ToOwned + unsized> LocalShared<B> implements From<super.borrow.BorrowedOrOwned<region r, B>> where LocalShared<B>: From<read B from r> + From<B.Owned> {
     static fn from(take value: super.borrow.BorrowedOrOwned<region r, B>): LocalShared<B> {
         match take value {
-            super.borrow.BorrowedOrOwned.Borrowed(view) => LocalShared<B>.(From<read B from r>).from(view),
-            super.borrow.BorrowedOrOwned.Owned(owner) => LocalShared<B>.(From<B.Owned>).from(owner)
+            super.borrow.BorrowedOrOwned.Borrowed(view) => LocalShared<B>.(From<read B from r>).from(take view),
+            super.borrow.BorrowedOrOwned.Owned(owner) => LocalShared<B>.(From<B.Owned>).from(take owner)
         }
     }
 }
@@ -860,7 +860,7 @@ extend<region r, T: Clone> LocalShared<[T]> implements From<read [T] from r> {
             copies.push(T.(Clone).clone(values[index]))
             index += 1usize
         }
-        LocalShared<[T]>.from(copies)
+        LocalShared<[T]>.from(take copies)
     }
 }
 extend<region r, T: Clone> LocalShared<[T]> implements From<mut [T] from r> {
@@ -870,8 +870,8 @@ extend<region r, T: Clone> LocalShared<[T]> implements From<mut [T] from r> {
 }
 extend<T> LocalShared<[T]> implements FromItems<T> {
     static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): LocalShared<[T]> {
-        let values = super.vec.List<T>.(FromItems<T>).from_iter(items)
-        LocalShared<[T]>.from(values)
+        let values = super.vec.List<T>.(FromItems<T>).from_iter(take items)
+        LocalShared<[T]>.from(take values)
     }
 }
 extend<T: unsized, A: Allocator> LocalShared<T, A> implements fmt.Pointer {

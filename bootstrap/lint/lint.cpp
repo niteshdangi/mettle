@@ -101,6 +101,7 @@ private:
   std::shared_ptr<const TypeStore> types;
   Overrides current;
   std::vector<Finding> findings;
+  Level argumentAccessLevel = Level::Allow;
 
   Level effective(std::string_view rule) const {
     auto name = std::string(rule);
@@ -155,6 +156,7 @@ private:
       if (!declarations[i].body.get())
         continue;
       current = overrides(declarations[i].item.attributes);
+      argumentAccessLevel = effective(implicitArgumentAccess);
       Unit unit(module.function(i));
       walk(*declarations[i].body, unit);
       finish(unit);
@@ -196,6 +198,8 @@ private:
         mark(unit, facts->slot, facts->exclusivePlace);
       else if (node.kind == Kind::Binding)
         declare(unit, facts->slot, node.flag, node.text, node.span);
+      else if (node.kind == Kind::Call && argumentAccessLevel != Level::Allow)
+        argumentAccess(node, *facts);
     }
     for (const auto &pattern : node.patterns)
       collect(pattern, unit);
@@ -205,6 +209,59 @@ private:
     }
     for (const auto &child : node.children)
       walk(*child, unit);
+  }
+
+  void argumentAccess(const Node &node, const NodeFacts &call) {
+    auto visit = [&](std::size_t index, ParameterMode mode) {
+      if (mode != ParameterMode::Mut && mode != ParameterMode::Take)
+        return;
+      const auto &argument = *node.children[index];
+      auto *value = &argument;
+      while (value->kind == Kind::Group)
+        value = value->children.front().get();
+      if (value->kind == Kind::Unary &&
+          (value->text == "mut" || value->text == "take"))
+        return;
+      for (;;) {
+        if (const auto *facts = module.find(*value); facts && facts->place) {
+          report(implicitArgumentAccess, argument.span,
+                 mode == ParameterMode::Mut
+                     ? "this argument is implicitly borrowed exclusively"
+                     : "this argument is implicitly consumed");
+          return;
+        }
+        if (value->kind != Kind::Field && value->kind != Kind::Index &&
+            value->kind != Kind::Group &&
+            !(value->kind == Kind::Unary && value->text == "*"))
+          return;
+        value = value->children.front().get();
+      }
+    };
+    if (call.indirect) {
+      const auto *callee = module.find(*node.children.front());
+      if (!callee)
+        return;
+      auto type = callee->type;
+      while (types->isView(type))
+        type = types->view(type).payload;
+      if (call.receiverPlan)
+        type = call.receiverPlan->target;
+      if (!types->isCallable(type))
+        return;
+      const auto &parameters = types->callable(type).parameters;
+      for (std::size_t i = 1;
+           i < node.children.size() && i <= parameters.size(); ++i)
+        visit(i, parameters[i - 1].mode);
+    } else if (!call.constructor && call.callee >= 0) {
+      const auto count =
+          module.syntax().functions.header(call.callee).parameters.size();
+      const auto &locals = module.function(call.callee).locals;
+      for (std::size_t i = 0;
+           i < call.argumentOrder.size() && i + 1 < node.children.size(); ++i)
+        if (auto target = call.argumentOrder[i];
+            target < count && target < locals.size())
+          visit(i + 1, locals[target].mode);
+    }
   }
 
   void closure(const Node &node, Unit &parent) {
@@ -276,8 +333,8 @@ private:
 
 const std::vector<std::string_view> &rules() {
   static const std::vector<std::string_view> names{
-      unusedBinding, unusedMutability, unusedImport, unreachableCode,
-      unusedOutcome};
+      unusedBinding,   unusedMutability, unusedImport,
+      unreachableCode, unusedOutcome,    implicitArgumentAccess};
   return names;
 }
 

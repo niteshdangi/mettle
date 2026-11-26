@@ -109,7 +109,7 @@ extend<region r, T: Ord, A: Allocator> PeekMut<region r, T, A> implements DerefM
     }
 }
 
-pub fn new_in<T, A: Allocator>(take a: A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(a)) }
+pub fn new_in<T, A: Allocator>(take a: A): BinaryHeap<T, A> { BinaryHeap(super.vec.new_in<T, A>(take a)) }
 pub fn new<T>(): BinaryHeap<T> { new_in(Global()) }
 pub fn try_with_capacity_in<T, A: Allocator>(n: usize, take a: A): BinaryHeap<T, A> throws TryReserveError {
     BinaryHeap(try super.vec.try_with_capacity_in<T, A>(n, take a))
@@ -170,7 +170,7 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
                 break
             }
         }
-        self.data.push(value)
+        self.data.push(take value)
         var i = last
         while i > destination {
             let parent = (i - 1usize) / 2usize
@@ -183,11 +183,11 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> {
             success(_) => {},
             failure(error) => { throw PushError(value, error) }
         }
-        self.push_reserved(value)
+        self.push_reserved(take value)
     }
     pub mut fn push(take value: T): Unit {
         self.data.reserve(1usize)
-        self.push_reserved(value)
+        self.push_reserved(take value)
     }
     pub mut fn pop(): T? {
         let n = self.data.len()
@@ -458,7 +458,7 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements core.convert.From<List<
 
 extend<T: Ord, const N: usize> BinaryHeap<T> implements core.convert.From<[T; N]> {
     static fn from(take items: [T; N]): BinaryHeap<T> {
-        let list = super.vec.List<T>.(core.convert.From<[T; N]>).from(items)
+        let list = super.vec.List<T>.(core.convert.From<[T; N]>).from(take items)
         BinaryHeap<T>.(core.convert.From<super.vec.List<T>>).from(take list)
     }
 }
@@ -549,14 +549,14 @@ extend<T: Ord, A: Allocator> BinaryHeap<T, A> implements ExtendItems<T> {
     mut fn extend<I: OwnedIterable<Item = T>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
-            match take source.next() { present(item) => { self.push(item) }, none => { break } }
+            match take source.next() { present(item) => { self.push(take item) }, none => { break } }
         }
     }
 }
 extend<T: Ord> BinaryHeap<T> implements FromItems<T> {
     static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): BinaryHeap<T> {
         var out = new<T>()
-        out.extend(items)
+        out.extend(take items)
         out
     }
 }

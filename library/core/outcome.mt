@@ -56,32 +56,32 @@ extend<T, E> (Outcome<T, E>) {
         match take self { success(value) => value, failure(error) => fallback }
     }
     pub take fn or_else<F: take fn(take E): T>(take fallback: F): T {
-        match take self { success(value) => value, failure(error) => fallback(error) }
+        match take self { success(value) => value, failure(error) => fallback(take error) }
     }
 
     pub take fn map<U, F: take fn(take T): U>(take f: F): (Outcome<U, E>) {
-        match take self { success(value) => success(f(value)), failure(error) => failure(error) }
+        match take self { success(value) => success(f(take value)), failure(error) => failure(error) }
     }
     pub take fn map_or<U, F: take fn(take T): U>(take fallback: U, take f: F): U {
-        match take self { success(value) => f(value), failure(error) => fallback }
+        match take self { success(value) => f(take value), failure(error) => fallback }
     }
     pub take fn map_failure<F, G: take fn(take E): F>(take f: G): (Outcome<T, F>) {
-        match take self { success(value) => success(value), failure(error) => failure(f(error)) }
+        match take self { success(value) => success(value), failure(error) => failure(f(take error)) }
     }
     pub take fn and<U>(take other: (Outcome<U, E>)): (Outcome<U, E>) {
         match take self { success(_) => other, failure(error) => failure(error) }
     }
     pub take fn map_or_else<U, F: take fn(take E): U, G: take fn(take T): U>(take fallback: F, take f: G): U {
-        match take self { success(value) => f(value), failure(error) => fallback(error) }
+        match take self { success(value) => f(take value), failure(error) => fallback(take error) }
     }
     pub take fn map_or_default<U: Default, F: take fn(take T): U>(take f: F): U {
-        match take self { success(value) => f(value), failure(_) => U.(Default).default() }
+        match take self { success(value) => f(take value), failure(_) => U.(Default).default() }
     }
     pub take fn is_success_and<F: take fn(take T): bool>(take test: F): bool {
-        match take self { success(value) => test(value), failure(error) => false }
+        match take self { success(value) => test(take value), failure(error) => false }
     }
     pub take fn is_failure_and<F: take fn(take E): bool>(take test: F): bool {
-        match take self { success(value) => false, failure(error) => test(error) }
+        match take self { success(value) => false, failure(error) => test(take error) }
     }
     pub take fn inspect<F: take fn(read T): Unit>(take f: F): (Outcome<T, E>) {
         match take self {
@@ -102,10 +102,10 @@ extend<T, E> (Outcome<T, E>) {
         }
     }
     pub take fn and_then<U, F: take fn(take T): (Outcome<U, E>)>(take f: F): (Outcome<U, E>) {
-        match take self { success(value) => f(value), failure(error) => failure(error) }
+        match take self { success(value) => f(take value), failure(error) => failure(error) }
     }
     pub take fn or_success_with<F, G: take fn(take E): (Outcome<T, F>)>(take f: G): (Outcome<T, F>) {
-        match take self { success(value) => success(value), failure(error) => f(error) }
+        match take self { success(value) => success(value), failure(error) => f(take error) }
     }
     pub take fn or_success<F>(take other: (Outcome<T, F>)): (Outcome<T, F>) {
         match take self { success(value) => success(value), failure(error) => other }

@@ -46,7 +46,7 @@ extend<region r, T> (mut T from r)? implements From<mut (T?) from r> {
 }
 
 extend<T, U> T implements Into<U> where U: From<T> {
-    take fn into(): U { U.(From<T>).from(self) }
+    take fn into(): U { U.(From<T>).from(take self) }
 }
 
 @fallback
@@ -60,6 +60,6 @@ extend<T, U> T implements TryFrom<U> where U: Into<T> {
 extend<T, U> T implements TryInto<U> where U: TryFrom<T> {
     type Error = U.(TryFrom<T>).Error
     take fn try_into(): (Outcome<U, U.(TryFrom<T>).Error>) {
-        U.(TryFrom<T>).try_from(self)
+        U.(TryFrom<T>).try_from(take self)
     }
 }

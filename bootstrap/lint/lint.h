@@ -17,6 +17,8 @@ inline constexpr std::string_view unusedMutability = "unused-mutability";
 inline constexpr std::string_view unusedImport = "unused-import";
 inline constexpr std::string_view unreachableCode = "unreachable-code";
 inline constexpr std::string_view unusedOutcome = "unused-outcome";
+inline constexpr std::string_view implicitArgumentAccess =
+    "implicit-argument-access";
 const std::vector<std::string_view> &rules();
 bool known(std::string_view rule);
 

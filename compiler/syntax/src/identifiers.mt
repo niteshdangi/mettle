@@ -74,11 +74,11 @@ fn decompose(scalar: u32, mut out: List<u32>): Unit {
             let begin = table[index + 1usize] as usize
             let end = begin + table[index + 2usize] as usize
             var at = begin
-            while at < end { let value = DECOMPOSED[at]; out.push(value); at += 1usize }
+            while at < end { let value = DECOMPOSED[at]; out.push(take value); at += 1usize }
             return
         }
     }
-    out.push(scalar)
+    out.push(take scalar)
 }
 
 fn reorder(mut scalars: List<u32>): Unit {

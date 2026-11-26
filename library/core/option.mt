@@ -27,7 +27,7 @@ extend<T> T? {
         match mut self { present(value) => present(mut value), none => none }
     }
     pub mut fn get_or_insert(take value: T): mut T from self {
-        if self.is_none() { let _ = self.replace(value) }
+        if self.is_none() { let _ = self.replace(take value) }
         match mut self {
             present(current) => mut current,
             none => super.panic.panic("get_or_insert failed to install a value")
@@ -60,16 +60,16 @@ extend<T> T? {
     }
 
     pub take fn map<U, F: take fn(take T): U>(take f: F): U? {
-        match take self { present(value) => present(f(value)), none => none }
+        match take self { present(value) => present(f(take value)), none => none }
     }
     pub take fn map_or<U, F: take fn(take T): U>(take fallback: U, take f: F): U {
-        match take self { present(value) => f(value), none => fallback }
+        match take self { present(value) => f(take value), none => fallback }
     }
     pub take fn map_or_else<U, F: take fn(): U, G: take fn(take T): U>(take fallback: F, take f: G): U {
-        match take self { present(value) => f(value), none => fallback() }
+        match take self { present(value) => f(take value), none => fallback() }
     }
     pub take fn map_or_default<U: Default, F: take fn(take T): U>(take f: F): U {
-        match take self { present(value) => f(value), none => U.(Default).default() }
+        match take self { present(value) => f(take value), none => U.(Default).default() }
     }
     pub take fn or_default(): T where T: Default {
         match take self {
@@ -78,13 +78,13 @@ extend<T> T? {
         }
     }
     pub take fn is_present_and<F: take fn(take T): bool>(take test: F): bool {
-        match take self { present(value) => test(value), none => false }
+        match take self { present(value) => test(take value), none => false }
     }
     pub take fn is_none_or<F: take fn(take T): bool>(take test: F): bool {
-        match take self { present(value) => test(value), none => true }
+        match take self { present(value) => test(take value), none => true }
     }
     pub take fn and_then<U, F: take fn(take T): U?>(take f: F): U? {
-        match take self { present(value) => f(value), none => none }
+        match take self { present(value) => f(take value), none => none }
     }
     pub take fn and<U>(take other: U?): U? {
         match take self { present(_) => other, none => none }
@@ -141,7 +141,7 @@ extend<T> T? {
     }
     // Installs `value`, dropping any previous payload, and returns a view of it.
     pub mut fn insert(take value: T): mut T from self {
-        let _ = self.replace(value)
+        let _ = self.replace(take value)
         match mut self {
             present(current) => mut current,
             none => super.panic.panic("insert failed to install a value")

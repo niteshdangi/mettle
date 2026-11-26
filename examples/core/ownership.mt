@@ -17,9 +17,9 @@ fn finish(take counter: Counter): i32 {
 fn main(): i32 {
     var counter = Counter(41)
     let _ = counter
-    increment(counter)
+    increment(mut counter)
     let observed = inspect(counter)
-    let result = finish(counter)
+    let result = finish(take counter)
     if observed == 42 && result == 42 {
         0
     } else {

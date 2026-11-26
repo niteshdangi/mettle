@@ -54,7 +54,7 @@ extend Barrier {
         }
         guard.get_mut().count = next
         while guard.get().generation == round {
-            let waited = capture self.arrived.wait(guard)
+            let waited = capture self.arrived.wait(take guard)
             guard = match take waited { success(g) => g, failure(e) => e.into_inner() }
         }
         BarrierWaitResult(false)

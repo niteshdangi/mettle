@@ -83,7 +83,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
         self.len += 1usize
     }
     pub mut fn push_back(take value: T): Unit {
-        let n = match capture self.alloc_node(value, self.tail, core.ptr.null_mut<Node<T>>()) {
+        let n = match capture self.alloc_node(take value, self.tail, core.ptr.null_mut<Node<T>>()) {
             success(n) => n,
             failure(_) => handle_alloc_error(layout_of<Node<T>>())
         }
@@ -92,11 +92,11 @@ extend<T, A: Allocator> LinkedList<T, A> {
         self.len += 1usize
     }
     pub mut fn push_back_mut(take value: T): mut T from self {
-        self.push_back(value)
+        self.push_back(take value)
         unsafe { mut (*self.tail).value }
     }
     pub mut fn push_front(take value: T): Unit {
-        let n = match capture self.alloc_node(value, core.ptr.null_mut<Node<T>>(), self.head) {
+        let n = match capture self.alloc_node(take value, core.ptr.null_mut<Node<T>>(), self.head) {
             success(n) => n,
             failure(_) => handle_alloc_error(layout_of<Node<T>>())
         }
@@ -105,7 +105,7 @@ extend<T, A: Allocator> LinkedList<T, A> {
         self.len += 1usize
     }
     pub mut fn push_front_mut(take value: T): mut T from self {
-        self.push_front(value)
+        self.push_front(take value)
         unsafe { mut (*self.head).value }
     }
     pub mut fn pop_front(): T? {
@@ -498,14 +498,14 @@ extend<T, A: Allocator> LinkedList<T, A> implements ExtendItems<T> {
     mut fn extend<I: OwnedIterable<Item = T>>(take items: I): Unit {
         var source = items.into_iter()
         while true {
-            match take source.next() { present(item) => { self.push_back(item) }, none => { break } }
+            match take source.next() { present(item) => { self.push_back(take item) }, none => { break } }
         }
     }
 }
 extend<T> LinkedList<T> implements FromItems<T> {
     static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): LinkedList<T> {
         var out = new<T>()
-        out.extend(items)
+        out.extend(take items)
         out
     }
 }

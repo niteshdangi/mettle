@@ -382,7 +382,7 @@ fn dispose(take future: ErasedFuture, code: i32, cancelled: bool): Unit {
 
 // The queue holds raw Heap<Shared<Task>> pointers: the Task -> ExecutorShared -> queue ->
 // Task type cycle is otherwise beyond region inference.
-fn leak_task(take task: Shared<Task>): ptr<mut u8> { boxed.new(task).into_raw().0.cast<u8>() }
+fn leak_task(take task: Shared<Task>): ptr<mut u8> { boxed.new(take task).into_raw().0.cast<u8>() }
 fn reclaim_task(raw: ptr<mut u8>): Shared<Task> {
     unsafe { boxed.from_raw_in(raw.cast<Shared<Task>>(), Global()).into_inner() }
 }
@@ -528,7 +528,7 @@ type CancelRest {
 
 pub fn executor(): Executor {
     let queue = Queue(alloc.vec_deque.new<ptr<mut u8>>(), false)
-    Executor(arc.new(ExecutorShared(mutex.new(queue), new_reactor(),
+    Executor(arc.new(ExecutorShared(mutex.new(take queue), new_reactor(),
                              core.sync.atomic.AtomicUsize.new(0usize),
                              core.sync.atomic.AtomicBool.new(false))),
              core.cell.UnsafeCell.new(alloc.vec.new<ptr<mut u8>>()))
@@ -578,7 +578,7 @@ extend Executor {
             if guard.get().closed { panic("cannot spawn on a closed executor") }
         }
         let result = arc.new(ResultSlot(mutex.new(ResultState<T>(none, 0u8, 0))))
-        let task = new_task(erase(future, result.retain()), self.hub.retain())
+        let task = new_task(erase(take future, result.retain()), self.hub.retain())
         unsafe { (*self.tasks.get()).push(leak_task(task.retain())) }
         let old = self.hub.get().live.fetch_add(1usize, core.sync.atomic.Ordering.AcqRel)
         if old == 0xffffffffffffffffusize { core.intrinsics.abort() }
@@ -588,7 +588,7 @@ extend Executor {
 
     // Owned tasks and their results must be safe to retain independently.
     pub fn spawn<T: Transferable + Static, F: Future<Output = T> + Transferable + Static>(take future: F): JoinHandle<T> {
-        self.spawn_inner(future)
+        self.spawn_inner(take future)
     }
 
     // Number of spawned futures that have not completed.
@@ -603,7 +603,7 @@ extend Executor {
         var finished = false
         while !finished {
             match take next_task(self.hub.get(), true) {
-                present(task) => { let _polled = poll_task(task) },
+                present(task) => { let _polled = poll_task(take task) },
                 none => { finished = true }
             }
         }
@@ -621,7 +621,7 @@ extend Executor {
         var finished = false
         while !finished {
             match take next_task(self.hub.get(), false) {
-                present(task) => { if poll_task(task) { polls += 1usize } },
+                present(task) => { if poll_task(take task) { polls += 1usize } },
                 none => { finished = true }
             }
         }
@@ -689,7 +689,7 @@ fn cancel(read task: Shared<Task>): Unit {
     }
     match take removed {
         present(future) => {
-            dispose(future, 0, true)
+            dispose(take future, 0, true)
             task.get().finished.store(true, core.sync.atomic.Ordering.Release)
             task.get().finalizing.store(false, core.sync.atomic.Ordering.Release)
         },
@@ -731,7 +731,7 @@ fn poll_task(take task: Shared<Task>): bool {
     }
     match take removed {
         present(future) => {
-            dispose(future, panic_code, cancelled)
+            dispose(take future, panic_code, cancelled)
             task.get().finished.store(true, core.sync.atomic.Ordering.Release)
             task.get().finalizing.store(false, core.sync.atomic.Ordering.Release)
         },
@@ -763,7 +763,7 @@ extend<T> JoinHandle<T> {
         }
         while !self.is_finished() {
             match take next_task(self.task.get().hub.get(), true) {
-                present(task) => { let _polled = poll_task(task) },
+                present(task) => { let _polled = poll_task(take task) },
                 none => { break }
             }
         }
@@ -787,7 +787,7 @@ extend<region s> Scope<region s> not Shareable
 
 extend<region s> Scope<region s> {
     pub fn spawn<T: Within<region s>, F: Future<Output = T> + Within<region s>>(receiver read self: Scope<region s> from s, take future: F): JoinHandle<T> {
-        self.executor.spawn_inner(future)
+        self.executor.spawn_inner(take future)
     }
 }
 
@@ -861,7 +861,7 @@ fn poll_scoped<T, F: Future<Output = T>>(data: ptr<mut u8>, context: ptr<mut u8>
     // owned waker, not the Context pointer.
     let cx = unsafe { mut *context.cast<Context>() }
     let polled = unsafe {
-        core.pin.Pin.new_unchecked(mut (*packet).future).poll(cx)
+        core.pin.Pin.new_unchecked(mut (*packet).future).poll(mut *cx)
     }
     match take polled {
         Poll.Ready(value) => {
@@ -986,7 +986,7 @@ extend<region s, T> AsyncScope<region s, T> {
     ): AsyncJoinHandle<region s, Output> {
         if self.completed { panic("cannot spawn on a closed async scope") }
         let result = arc.new(ResultSlot(mutex.new(ResultState<Output>(none, 0u8, 0))))
-        self.children.push_back(erase_scoped(future, result.retain()))
+        self.children.push_back(erase_scoped(take future, result.retain()))
         AsyncJoinHandle(result, core.cell.Cell.new(Brand(0u8)))
     }
 }
@@ -1014,7 +1014,7 @@ extend<region s, T> AsyncScope<region s, T> implements Future {
                 none => { core.intrinsics.abort() }
             }
             if !(child.poll)(child.data, core.ptr.from_mut(mut child_cx).cast<u8>()) {
-                me.children.push_back(child)
+                me.children.push_back(take child)
             }
             count -= 1usize
         }

@@ -66,15 +66,15 @@ pub fn try_new_in<T, A: Allocator>(take value: T, take allocator: A): Heap<T, A>
 }
 
 pub fn new_in<T, A: Allocator>(take value: T, take allocator: A): Heap<T, A> {
-    let outcome = capture try_new_in(value, allocator)
+    let outcome = capture try_new_in(take value, take allocator)
     match take outcome {
         success(b) => b,
         failure(e) => handle_alloc_error(layout_of<T>())
     }
 }
 
-pub fn try_new<T>(take value: T): Heap<T> throws AllocError { try try_new_in(value, Global()) }
-pub fn new<T>(take value: T): Heap<T> { new_in(value, Global()) }
+pub fn try_new<T>(take value: T): Heap<T> throws AllocError { try try_new_in(take value, Global()) }
+pub fn new<T>(take value: T): Heap<T> { new_in(take value, Global()) }
 
 fn uninit_slice_layout<T>(len: usize): Layout throws AllocError {
     let result = capture layout_array<core.mem.MaybeUninit<T>>(len)
@@ -105,14 +105,14 @@ pub fn try_new_uninit_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
 ): Heap<[core.mem.MaybeUninit<T>], A> throws AllocError {
-    try try_new_slice_in<T, A>(len, allocator, false)
+    try try_new_slice_in<T, A>(len, take allocator, false)
 }
 
 pub fn new_uninit_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
 ): Heap<[core.mem.MaybeUninit<T>], A> {
-    let result = capture try_new_uninit_slice_in<T, A>(len, allocator)
+    let result = capture try_new_uninit_slice_in<T, A>(len, take allocator)
     match take result {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe {
@@ -135,14 +135,14 @@ pub fn try_new_zeroed_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
 ): Heap<[core.mem.MaybeUninit<T>], A> throws AllocError {
-    try try_new_slice_in<T, A>(len, allocator, true)
+    try try_new_slice_in<T, A>(len, take allocator, true)
 }
 
 pub fn new_zeroed_slice_in<T, A: Allocator>(
     len: usize,
     take allocator: A
 ): Heap<[core.mem.MaybeUninit<T>], A> {
-    let result = capture try_new_zeroed_slice_in<T, A>(len, allocator)
+    let result = capture try_new_zeroed_slice_in<T, A>(len, take allocator)
     match take result {
         success(owner) => owner,
         failure(error) => handle_alloc_error(unsafe {
@@ -185,7 +185,7 @@ pub fn copy_text_in<A: Allocator>(
     read value: Text,
     take allocator: A
 ): Heap<Text, A> {
-    let outcome = capture try_copy_text_in(value, allocator)
+    let outcome = capture try_copy_text_in(value, take allocator)
     match take outcome {
         success(owner) => owner,
         failure(_) => handle_alloc_error(layout_of_val(value))
@@ -208,7 +208,7 @@ pub fn from_string<A: Allocator>(
     // String guarantees UTF-8 validity; the slice length and initialized byte
     // extent are preserved by the pointer cast.
     let text = unsafe { core.mem.transmute<ptr<mut Text>>(raw.0) }
-    unsafe { from_raw_in(text, raw.1) }
+    unsafe { from_raw_in(text, take raw.1) }
 }
 
 fn text_from_chars<I: OwnedIterable<Item = char>>(take items: I): Heap<Text> {
@@ -220,7 +220,7 @@ fn text_from_chars<I: OwnedIterable<Item = char>>(take items: I): Heap<Text> {
             none => { break }
         }
     }
-    from_string(output)
+    from_string(take output)
 }
 
 fn text_from_borrowed_chars<region r, I: OwnedIterable<Item = read char from r>>(
@@ -234,7 +234,7 @@ fn text_from_borrowed_chars<region r, I: OwnedIterable<Item = read char from r>>
             none => { break }
         }
     }
-    from_string(output)
+    from_string(take output)
 }
 
 fn text_from_parts<region r, I: OwnedIterable<Item = read Text from r>>(
@@ -248,7 +248,7 @@ fn text_from_parts<region r, I: OwnedIterable<Item = read Text from r>>(
             none => { break }
         }
     }
-    from_string(output)
+    from_string(take output)
 }
 
 fn text_from_strings<I: OwnedIterable<Item = super.string.String>>(
@@ -262,7 +262,7 @@ fn text_from_strings<I: OwnedIterable<Item = super.string.String>>(
             none => { break }
         }
     }
-    from_string(output)
+    from_string(take output)
 }
 
 fn text_from_heaps<A: Allocator, I: OwnedIterable<Item = Heap<Text, A>>>(
@@ -276,16 +276,16 @@ fn text_from_heaps<A: Allocator, I: OwnedIterable<Item = Heap<Text, A>>>(
             none => { break }
         }
     }
-    from_string(output)
+    from_string(take output)
 }
 
 pub fn try_new_uninit_in<T, A: Allocator>(
     take allocator: A
 ): Heap<core.mem.MaybeUninit<T>, A> throws AllocError {
-    try try_new_in(core.mem.MaybeUninit<T>.uninit(), allocator)
+    try try_new_in(core.mem.MaybeUninit<T>.uninit(), take allocator)
 }
 pub fn new_uninit_in<T, A: Allocator>(take allocator: A): Heap<core.mem.MaybeUninit<T>, A> {
-    let result = capture try_new_uninit_in<T, A>(allocator)
+    let result = capture try_new_uninit_in<T, A>(take allocator)
     match take result {
         success(owner) => owner,
         failure(_) => handle_alloc_error(layout_of<T>())
@@ -299,10 +299,10 @@ pub fn new_uninit<T>(): Heap<core.mem.MaybeUninit<T>> { new_uninit_in<T, Global>
 pub fn try_new_zeroed_in<T, A: Allocator>(
     take allocator: A
 ): Heap<core.mem.MaybeUninit<T>, A> throws AllocError {
-    try try_new_in(core.mem.MaybeUninit<T>.zeroed(), allocator)
+    try try_new_in(core.mem.MaybeUninit<T>.zeroed(), take allocator)
 }
 pub fn new_zeroed_in<T, A: Allocator>(take allocator: A): Heap<core.mem.MaybeUninit<T>, A> {
-    let result = capture try_new_zeroed_in<T, A>(allocator)
+    let result = capture try_new_zeroed_in<T, A>(take allocator)
     match take result {
         success(owner) => owner,
         failure(_) => handle_alloc_error(layout_of<T>())
@@ -368,13 +368,13 @@ extend<T, A: Allocator> Heap<core.mem.MaybeUninit<T>, A> {
         // before transferring the same allocation and allocator as Heap<T>.
         unsafe { core.ptr.write(self.p.cast<T>(), value) }
         let raw = self.into_raw()
-        unsafe { from_raw_in(raw.0.cast<T>(), raw.1) }
+        unsafe { from_raw_in(raw.0.cast<T>(), take raw.1) }
     }
 
     // Safety: the caller initialized the payload before taking ownership as T.
     pub take unsafe fn assume_init(): Heap<T, A> {
         let raw = self.into_raw()
-        unsafe { from_raw_in(raw.0.cast<T>(), raw.1) }
+        unsafe { from_raw_in(raw.0.cast<T>(), take raw.1) }
     }
 }
 
@@ -384,7 +384,7 @@ extend<T, A: Allocator> Heap<[core.mem.MaybeUninit<T>], A> {
     pub take unsafe fn assume_init(): Heap<[T], A> {
         let raw = self.into_raw()
         let slice = unsafe { core.mem.transmute<ptr<mut [T]>>(raw.0) }
-        unsafe { from_raw_in(slice, raw.1) }
+        unsafe { from_raw_in(slice, take raw.1) }
     }
 }
 
@@ -559,48 +559,48 @@ extend<T, const N: usize, A: Allocator> Heap<[T; N], A> implements MutableIterab
 }
 extend<T> Heap<[T]> implements FromItems<T> {
     static fn from_iter<I: OwnedIterable<Item = T>>(take items: I): Heap<[T]> {
-        let values = super.vec.List<T>.(FromItems<T>).from_iter(items)
+        let values = super.vec.List<T>.(FromItems<T>).from_iter(take items)
         values.into_heap_slice()
     }
 }
 extend Heap<Text> implements FromItems<char> {
     static fn from_iter<I: OwnedIterable<Item = char>>(take items: I): Heap<Text> {
-        text_from_chars(items)
+        text_from_chars(take items)
     }
 }
 extend<region r> Heap<Text> implements FromItems<read char from r> {
     static fn from_iter<I: OwnedIterable<Item = read char from r>>(
         take items: I
     ): Heap<Text> {
-        text_from_borrowed_chars(items)
+        text_from_borrowed_chars(take items)
     }
 }
 extend<region r> Heap<Text> implements FromItems<read Text from r> {
     static fn from_iter<I: OwnedIterable<Item = read Text from r>>(
         take items: I
     ): Heap<Text> {
-        text_from_parts(items)
+        text_from_parts(take items)
     }
 }
 extend Heap<Text> implements FromItems<super.string.String> {
     static fn from_iter<I: OwnedIterable<Item = super.string.String>>(
         take items: I
     ): Heap<Text> {
-        text_from_strings(items)
+        text_from_strings(take items)
     }
 }
 extend<A: Allocator> Heap<Text> implements FromItems<Heap<Text, A>> {
     static fn from_iter<I: OwnedIterable<Item = Heap<Text, A>>>(
         take items: I
     ): Heap<Text> {
-        text_from_heaps<A>(items)
+        text_from_heaps<A>(take items)
     }
 }
 extend<T: Clone, A: Allocator + Clone> Heap<T, A> implements Clone {
     fn clone(): Heap<T, A> { new_in(T.(Clone).clone(self.get()), self.a.clone()) }
 }
 extend<T> Heap<T> implements From<T> {
-    static fn from(take value: T): Heap<T> { new(value) }
+    static fn from(take value: T): Heap<T> { new(take value) }
 }
 extend<T: Default> Heap<T> implements Default {
     static fn default(): Heap<T> { new(T.(Default).default()) }
@@ -620,18 +620,18 @@ extend<region r, T: Clone> Heap<[T]> implements From<mut [T] from r> {
     static fn from(take items: mut [T] from r): Heap<[T]> { items.to_vec().into_heap_slice() }
 }
 extend<T, const N: usize> Heap<[T]> implements From<[T; N]> {
-    static fn from(take items: [T; N]): Heap<[T]> { super.vec.List<T>.(From<[T; N]>).from(items).into_heap_slice() }
+    static fn from(take items: [T; N]): Heap<[T]> { super.vec.List<T>.(From<[T; N]>).from(take items).into_heap_slice() }
 }
 extend<T, A: Allocator> Heap<[T], A> implements From<super.vec.List<T, A>> {
     static fn from(take items: super.vec.List<T, A>): Heap<[T], A> { items.into_heap_slice() }
 }
 extend<T, A: Allocator> Heap<[T], A> {
-    pub take fn into_vec(): super.vec.List<T, A> { super.vec.List<T, A>.(From<Heap<[T], A>>).from(self) }
+    pub take fn into_vec(): super.vec.List<T, A> { super.vec.List<T, A>.(From<Heap<[T], A>>).from(take self) }
 }
 extend<A: Allocator> Heap<Text, A> {
-    pub take fn into_heap_bytes(): Heap<[u8], A> { Heap<[u8], A>.(From<Heap<Text, A>>).from(self) }
+    pub take fn into_heap_bytes(): Heap<[u8], A> { Heap<[u8], A>.(From<Heap<Text, A>>).from(take self) }
     pub take fn into_string(): super.string.String<A> {
-        super.string.String<A>.(From<Heap<Text, A>>).from(self)
+        super.string.String<A>.(From<Heap<Text, A>>).from(take self)
     }
 }
 extend<A: Allocator> Heap<[u8], A> implements From<Heap<Text, A>> {
@@ -639,7 +639,7 @@ extend<A: Allocator> Heap<[u8], A> implements From<Heap<Text, A>> {
         let raw = value.into_raw()
         // Text and byte slices share length metadata and byte alignment.
         let bytes = unsafe { core.mem.transmute<ptr<mut [u8]>>(raw.0) }
-        unsafe { from_raw_in(bytes, raw.1) }
+        unsafe { from_raw_in(bytes, take raw.1) }
     }
 }
 extend<region r, T: Clone> Heap<[T]> implements From<super.borrow.BorrowedOrOwned<region r, [T]>> {
@@ -670,7 +670,7 @@ extend<T, const N: usize, A: Allocator> Heap<[T; N], A> implements TryFrom<super
     }
 }
 extend Heap<Text> implements From<super.string.String> {
-    static fn from(take value: super.string.String): Heap<Text> { from_string(value) }
+    static fn from(take value: super.string.String): Heap<Text> { from_string(take value) }
 }
 extend Heap<core.ffi.CStr> implements From<super.ffi.CString> {
     static fn from(take value: super.ffi.CString): Heap<core.ffi.CStr> {
@@ -703,7 +703,7 @@ extend<region r> Heap<Text> implements From<super.borrow.BorrowedOrOwned<region 
     static fn from(take value: super.borrow.BorrowedOrOwned<region r, Text>): Heap<Text> {
         match take value {
             super.borrow.BorrowedOrOwned.Borrowed(view) => copy_text(view),
-            super.borrow.BorrowedOrOwned.Owned(owner) => from_string(owner)
+            super.borrow.BorrowedOrOwned.Owned(owner) => from_string(take owner)
         }
     }
 }
@@ -730,10 +730,10 @@ extend<A: Allocator> Heap<any Any, A> {
     }
 }
 extend<region r, E: Error> Heap<any Error from r> implements From<E from r> {
-    static fn from(take value: E from r): Heap<any Error from r> { new(value) }
+    static fn from(take value: E from r): Heap<any Error from r> { new(take value) }
 }
 extend<region r, E: ThreadSafeError> Heap<any ThreadSafeError from r> implements From<E from r> {
-    static fn from(take value: E from r): Heap<any ThreadSafeError from r> { new(value) }
+    static fn from(take value: E from r): Heap<any ThreadSafeError from r> { new(take value) }
 }
 extend<region r> Heap<any ThreadSafeError from r> implements From<super.string.String> {
     static fn from(take value: super.string.String): Heap<any ThreadSafeError from r> {
@@ -804,7 +804,7 @@ pub type Pinned<T: unsized, A: Allocator = super.alloc.Global> {
 }
 
 // `pinned heap value`: the payload is pinned from its first use.
-pub fn pin<T>(take value: T): Pinned<T> { new(value).into_pinned() }
+pub fn pin<T>(take value: T): Pinned<T> { new(take value).into_pinned() }
 
 extend<T: unsized, A: Allocator> Heap<T, A> {
     // A unique heap payload does not move when its owner moves, so pinning
@@ -827,7 +827,7 @@ extend<T: unsized, A: Allocator> Pinned<T, A> {
             let p = self.p
             let a = core.ptr.`read`(core.ptr.from_ref(self.a))
             core.mem.forget(take self)
-            from_raw_in(p, a)
+            from_raw_in(p, take a)
         }
     }
 }

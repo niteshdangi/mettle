@@ -221,7 +221,7 @@ extend CString {
     pub take fn into_heap_c_str(): Heap<CStr> {
         let raw = self.v.into_heap_slice().into_raw()
         let pointer = unsafe { core.mem.transmute<ptr<mut CStr>>(raw.0) }
-        unsafe { super.boxed.from_raw_in(pointer, raw.1) }
+        unsafe { super.boxed.from_raw_in(pointer, take raw.1) }
     }
     pub take fn into_raw(): ptr<mut i8> { self.into_heap_c_str().into_raw().0.cast<i8>() }
 
@@ -257,7 +257,7 @@ extend CString implements core.convert.From<Heap<CStr>> {
     static fn from(take value: Heap<CStr>): CString {
         let raw = value.into_raw()
         let pointer = unsafe { core.mem.transmute<ptr<mut [u8]>>(raw.0) }
-        let bytes: Heap<[u8]> = unsafe { super.boxed.from_raw_in(pointer, raw.1) }
+        let bytes: Heap<[u8]> = unsafe { super.boxed.from_raw_in(pointer, take raw.1) }
         CString(List<u8>.(core.convert.From<Heap<[u8]>>).from(take bytes))
     }
 }
@@ -374,7 +374,7 @@ extend CString implements core.convert.From<List<core.num.NonZero<u8>>> {
         while true {
             match take source.next() {
                 present(value) => {
-                    bytes.push(u8.(core.convert.From<core.num.NonZero<u8>>).from(value))
+                    bytes.push(u8.(core.convert.From<core.num.NonZero<u8>>).from(take value))
                 },
                 none => { break }
             }

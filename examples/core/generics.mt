@@ -18,7 +18,7 @@ fn main(): i32 {
     inspect(number)
     let copied = duplicate(number)
     let first = Counter(copied)
-    let second = identity(first)
+    let second = identity(take first)
     if number == 42 && second.value == 42 {
         0
     } else {

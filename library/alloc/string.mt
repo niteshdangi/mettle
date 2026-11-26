@@ -220,7 +220,7 @@ pub fn from_text(read t: Text): String {
     s
 }
 pub fn from_text_in<A: Allocator>(read t: Text, take a: A): String<A> {
-    var s = new_in(a)
+    var s = new_in(take a)
     s.push_str(t)
     s
 }
@@ -580,8 +580,7 @@ extend<A: Allocator> String<A> {
         alloc.boxed.from_string(take self)
     }
     pub take fn leak(): mut Text from static {
-        let bytes = self.into_bytes().leak()
-        unsafe { from_utf8_unchecked_mut(bytes) }
+        unsafe { from_utf8_unchecked_mut(self.into_bytes().leak()) }
     }
     pub take fn into_raw_parts_with_alloc(): (
         ptr<mut u8>,
@@ -637,7 +636,7 @@ extend<A: Allocator> String<A> {
         var i = 0usize
         while i < bytes.len() {
             let b = bytes[i]
-            self.v.push(b)
+            self.v.push(take b)
             i += 1usize
         }
     }
@@ -647,7 +646,7 @@ extend<A: Allocator> String<A> {
         var i = 0usize
         while i < bytes.len() {
             let b = bytes[i]
-            self.v.push(b)
+            self.v.push(take b)
             i += 1usize
         }
     }
@@ -658,7 +657,7 @@ extend<A: Allocator> String<A> {
         var i = 0usize
         while i < n {
             let b = buf[i]
-            self.v.push(b)
+            self.v.push(take b)
             i += 1usize
         }
     }
@@ -669,7 +668,7 @@ extend<A: Allocator> String<A> {
         var i = 0usize
         while i < n {
             let b = buf[i]
-            self.v.insert(index + i, b)
+            self.v.insert(index + i, take b)
             i += 1usize
         }
     }
@@ -679,7 +678,7 @@ extend<A: Allocator> String<A> {
         var i = 0usize
         while i < bytes.len() {
             let b = bytes[i]
-            self.v.insert(index + i, b)
+            self.v.insert(index + i, take b)
             i += 1usize
         }
     }
@@ -752,7 +751,7 @@ extend<A: Allocator> String<A> {
         var index = 0usize
         while index < bytes.len() {
             let byte = bytes[index]
-            self.v.insert(start + index, byte)
+            self.v.insert(start + index, take byte)
             index += 1usize
         }
     }
@@ -770,7 +769,7 @@ extend<A: Allocator> String<A> {
         var index = 0usize
         while index < count {
             let byte = self.v.as_slice()[start + index]
-            self.v.push(byte)
+            self.v.push(take byte)
             index += 1usize
         }
     }
@@ -898,7 +897,7 @@ extend<A: Allocator> String<A> implements fmt.Debug {
 extend<A: Allocator> String<A> implements TryFrom<List<u8, A>> {
     type Error = FromUtf8Error<A>
     static fn try_from(take bytes: List<u8, A>): (Outcome<String<A>, FromUtf8Error<A>>) {
-        match take capture from_utf8(bytes) {
+        match take capture from_utf8(take bytes) {
             success(value) => success(value),
             failure(error) => failure(error)
         }
@@ -1055,7 +1054,7 @@ extend<A: Allocator> String<A> implements From<alloc.boxed.Heap<Text, A>> {
             core.mem.transmute<ptr<mut [u8]>>(raw.0)
         }
         let byte_box: alloc.boxed.Heap<[u8], A> = unsafe {
-            alloc.boxed.from_raw_in(bytes_pointer, raw.1)
+            alloc.boxed.from_raw_in(bytes_pointer, take raw.1)
         }
         let bytes = List<u8, A>.(
             From<alloc.boxed.Heap<[u8], A>>

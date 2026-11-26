@@ -115,7 +115,7 @@ extend Vars implements Iterator {
     mut fn next(): (String, String)? {
         match take self.inner.next() {
             present((name, value)) => {
-                present((variable_text(name), variable_text(value)))
+                present((variable_text(take name), variable_text(take value)))
             },
             none => none
         }
@@ -216,7 +216,7 @@ pub fn join_paths<I: OwnedIterable<Item = PathBuf>>(take paths: I): OsString thr
         bytes.extend_from_slice(value)
         first = false
     }
-    ffi.os_string_from_vec(bytes)
+    ffi.os_string_from_vec(take bytes)
 }
 
 // The value of `name`, or none when unset (or the name is not representable).
@@ -289,7 +289,7 @@ pub fn `var`(read name: OsStr): String throws VarError {
         present(value) => {
             match take capture value.into_string() {
                 success(text) => text,
-                failure(error) => throw VarError.NotUnicode(ffi.os_string_from_vec(error.bytes))
+                failure(error) => throw VarError.NotUnicode(ffi.os_string_from_vec(take error.bytes))
             }
         },
         none => throw VarError.NotPresent

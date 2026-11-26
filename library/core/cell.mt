@@ -163,7 +163,7 @@ extend<T> core.cell.RefCell<T> {
     pub fn replace_with<F: take fn(mut T): T>(take f: F): T {
         var guard = self.borrow_mut()
         let current = guard.get_mut()
-        let replacement = f(current)
+        let replacement = f(mut *current)
         core.mem.replace(current, replacement)
     }
 }
@@ -383,7 +383,7 @@ extend<T> OnceCell<T> {
             none => {}
         }
         let value = initializer()
-        match capture self.set(value) {
+        match capture self.set(take value) {
             success(_) => {},
             failure(_) => core.panic.panic("reentrant OnceCell initialization")
         }
@@ -482,7 +482,7 @@ extend<T, F: take fn(): T> LazyCell<T, F> {
             none => core.panic.panic("LazyCell instance has previously been poisoned")
         }
         let value = initializer()
-        match capture self.value.set(value) {
+        match capture self.value.set(take value) {
             success(_) => {},
             failure(_) => core.panic.panic("LazyCell initialization was reentrant")
         }
@@ -503,7 +503,7 @@ extend<T, F: take fn(): T> LazyCell<T, F> {
             none => core.panic.panic("LazyCell instance has previously been poisoned")
         }
         let value = initializer()
-        match capture self.value.set(value) {
+        match capture self.value.set(take value) {
             success(_) => {},
             failure(_) => core.panic.panic("LazyCell initialization was reentrant")
         }

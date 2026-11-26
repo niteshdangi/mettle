@@ -173,7 +173,7 @@ extend ChildStdout implements core.fmt.Debug {
 }
 
 extend ChildStdout implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.descriptor.as_raw_fd(), buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.descriptor.as_raw_fd(), mut buf) }
 }
 
 pub type ChildStderr {
@@ -219,7 +219,7 @@ extend ChildStderr implements core.fmt.Debug {
 }
 
 extend ChildStderr implements Reader {
-    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.descriptor.as_raw_fd(), buf) }
+    mut fn read_some(mut buf: [u8]): usize throws Error { try io.read_fd(self.descriptor.as_raw_fd(), mut buf) }
 }
 
 extend sys.OwnedFd implements From<ChildStdin> {
@@ -298,7 +298,7 @@ extend Child {
 
     pub take fn wait_with_output(): Output throws Error {
         var child = self
-        try collect_output(child)
+        try collect_output(mut child)
     }
 }
 
@@ -431,7 +431,7 @@ extend Command {
             }
             index += 1usize
         }
-        self.changes.push(change)
+        self.changes.push(take change)
     }
     // Sets `name` for the child only.
     pub mut fn env(read name: OsStr, read value: OsStr): Unit {
@@ -631,12 +631,12 @@ fn collect_output(mut child: Child): Output throws Error {
         let ready = unsafe { sys.mettle_rt_poll_pair(stdout_fd, stderr_fd) }
         if ready < 0 { throw io.last_os_error() }
         if (ready & 1) != 0 {
-            let n = try io.read_fd(stdout_fd, chunk)
+            let n = try io.read_fd(stdout_fd, mut chunk)
             if n == 0usize { core.mem.drop(stdout.`take`()); stdout_fd = -1i32 }
             else { out.extend_from_slice(chunk.split_at(n).0) }
         }
         if (ready & 2) != 0 {
-            let n = try io.read_fd(stderr_fd, chunk)
+            let n = try io.read_fd(stderr_fd, mut chunk)
             if n == 0usize { core.mem.drop(stderr.`take`()); stderr_fd = -1i32 }
             else { err.extend_from_slice(chunk.split_at(n).0) }
         }
@@ -689,32 +689,32 @@ extend Stdio implements From<io.Stderr> {
 }
 extend Stdio implements From<super.fs.File> {
     static fn from(take value: super.fs.File): Stdio {
-        Stdio.Descriptor(sys.OwnedFd.(From<super.fs.File>).from(value))
+        Stdio.Descriptor(sys.OwnedFd.(From<super.fs.File>).from(take value))
     }
 }
 extend Stdio implements From<io.PipeReader> {
     static fn from(take value: io.PipeReader): Stdio {
-        Stdio.Descriptor(sys.OwnedFd.(From<io.PipeReader>).from(value))
+        Stdio.Descriptor(sys.OwnedFd.(From<io.PipeReader>).from(take value))
     }
 }
 extend Stdio implements From<io.PipeWriter> {
     static fn from(take value: io.PipeWriter): Stdio {
-        Stdio.Descriptor(sys.OwnedFd.(From<io.PipeWriter>).from(value))
+        Stdio.Descriptor(sys.OwnedFd.(From<io.PipeWriter>).from(take value))
     }
 }
 extend Stdio implements From<ChildStdin> {
     static fn from(take value: ChildStdin): Stdio {
-        Stdio.Descriptor(sys.OwnedFd.(From<ChildStdin>).from(value))
+        Stdio.Descriptor(sys.OwnedFd.(From<ChildStdin>).from(take value))
     }
 }
 extend Stdio implements From<ChildStdout> {
     static fn from(take value: ChildStdout): Stdio {
-        Stdio.Descriptor(sys.OwnedFd.(From<ChildStdout>).from(value))
+        Stdio.Descriptor(sys.OwnedFd.(From<ChildStdout>).from(take value))
     }
 }
 extend Stdio implements From<ChildStderr> {
     static fn from(take value: ChildStderr): Stdio {
-        Stdio.Descriptor(sys.OwnedFd.(From<ChildStderr>).from(value))
+        Stdio.Descriptor(sys.OwnedFd.(From<ChildStderr>).from(take value))
     }
 }
 extend Stdio implements Debug {
