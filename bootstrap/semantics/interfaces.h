@@ -192,6 +192,8 @@ public:
   std::size_t size() const { return records.size(); }
   bool empty() const { return records.empty(); }
   bool isMaterialized(std::size_t index) const {
+    if (!mappedPrefix && !records.isMaterialized(index))
+      return false;
     const auto &record = records.at(index);
     return record && record->ready.load(std::memory_order_acquire);
   }
@@ -249,6 +251,7 @@ public:
                 DatabaseRecords base = {}) {
     if (!loader || (!inputs.empty() && inputs.size() != size))
       throw std::logic_error("invalid deferred database records");
+    mappedPrefix = !inputs.empty();
     records.clear();
     records.deferPrefix(
         size, std::make_shared<const typename decltype(records)::Loader>(
@@ -264,13 +267,17 @@ public:
   }
   void reserve(std::size_t size) { records.reserve(size); }
   void resize(std::size_t size) { records.resize(size); }
-  void clear() { records.clear(); }
+  void clear() {
+    records.clear();
+    mappedPrefix = false;
+  }
   bool operator==(const DatabaseRecords &other) const {
     return size() == other.size() && std::equal(begin(), end(), other.begin());
   }
 
 private:
   TypeRecords<std::shared_ptr<Record>, true> records;
+  bool mappedPrefix = false;
 };
 template <class K, class V> class DatabaseMap {
   using Positions = OverlayMap<K, std::size_t>;
