@@ -110,6 +110,11 @@ A replacement experiment needs a new registered plan with prior results retained
 do not extend the favorable-looking run until it passes. A measurement-resolution
 budget is not permission to accept a known systematic regression.
 
+An adequately precise runtime tie satisfies "match or beat"; a compile-time
+tie does not satisfy "beat". The comparison harness reuses the same source and
+output paths across repetitions, with fresh build directories each time, so
+path-dependent cache identities do not masquerade as storage instability.
+
 Investigate failures in semantics, algorithm, data layout, library implementation,
 frontend lowering, LLVM settings, runtime policy, and environment separately.
 Preserve minimized reproductions. Do not weaken safety or switch algorithms

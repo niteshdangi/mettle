@@ -176,7 +176,7 @@ def t_quantile(probability, df):
     return (low + high) / 2.0
 
 
-def decide(mettle, rust, endpoints):
+def decide(mettle, rust, endpoints, allow_tie=False):
     """Section 4 rule on paired block metrics; ratio above one is worse."""
     pairs = list(zip(mettle, rust))
     if len(pairs) < 2 or any(m <= 0 or r <= 0 for m, r in pairs):
@@ -199,7 +199,7 @@ def decide(mettle, rust, endpoints):
     if verdict == "inconclusive":
         gate = "inconclusive"
     else:
-        gate = "pass" if verdict == "win" else "fail"
+        gate = "pass" if verdict == "win" or (allow_tie and verdict == "tie") else "fail"
     return {"verdict": verdict, "gate": gate, "ratio": math.exp(mean), "lower": lower,
             "upper": upper, "pairs": len(logs), "alpha": alpha,
             "half_width_log": half}
@@ -535,12 +535,12 @@ def run_workload(label, prepare, args, runner, compiler, endpoints, rng, base):
             programs = {}
             app_outputs = {}
             sides = {}
-            sources = work / f"src{repetition}"
+            sources = work / "src"
             mettle_tree = shutil.copytree(template_m, sources / "mettle")
             rust_tree = shutil.copytree(template_r, sources / "rust")
             mettle_entry = mettle_tree / template_entry.relative_to(template_m)
             for language in ("mettle", "rust"):
-                directory = work / f"rep{repetition}" / language
+                directory = work / "rep" / language
                 tree = mettle_tree if language == "mettle" else rust_tree
                 sides[language] = Side(language, runner, compiler, tree,
                                        mettle_entry, directory, cargo_home)
@@ -575,9 +575,12 @@ def run_workload(label, prepare, args, runner, compiler, endpoints, rng, base):
                                           for side, value in app_outputs.items()},
                              edited={side: rows[side][-1]["edited_output"] for side in rows})
                 return entry
-            if not args.keep_work:
-                shutil.rmtree(work / f"rep{repetition}", ignore_errors=True)
-                shutil.rmtree(work / f"src{repetition}", ignore_errors=True)
+            if args.keep_work:
+                (work / "rep").rename(work / f"rep{repetition}")
+                sources.rename(work / f"src{repetition}")
+            else:
+                shutil.rmtree(work / "rep")
+                shutil.rmtree(sources)
         entry["output"] = {side: {"exit_status": value[0], "stdout_sha256":
                                   hashlib.sha256(value[1]).hexdigest()}
                            for side, value in outputs.items()}
@@ -603,7 +606,8 @@ def run_workload(label, prepare, args, runner, compiler, endpoints, rng, base):
         for metric in TIME_METRICS:
             samples = entry["samples"][metric]
             entry["decisions"][metric] = decide(
-                samples["mettle"], samples["rust"], endpoints)
+                samples["mettle"], samples["rust"], endpoints,
+                allow_tie=metric == "runtime")
         entry["edited_output"] = {"exit_status": edited[0], "stdout_sha256":
                                   hashlib.sha256(edited[1].encode("latin-1")).hexdigest()}
         clean_output = outputs["rust"]
