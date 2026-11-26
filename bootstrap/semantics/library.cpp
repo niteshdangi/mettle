@@ -2346,10 +2346,14 @@ public:
     }
     checking.indexedImplementations = count;
     count = archive.collectionSize();
-    checking.projections.resize(count);
+    if (archive.trusted)
+      projectionRecords.blocks->reserve(count);
     for (std::size_t i = 0; i < count && archive.good(); ++i)
-      record(&checking.projections, i, projectionRecords,
-             [&] { projection(checking, i); });
+      record<interfaces::Projection>(nullptr, i, projectionRecords,
+                                     [&] { projection(checking, i); });
+    checking.projections.clear();
+    if (count && archive.good())
+      checking.projections.deferAll(count, projectionRecords.load);
     map(checking.unpinImplementations, checking, unpinRecords);
     map(checking.structuralDeclarations, checking, structuralRecords);
     archive(checking.argumentsReady, checking.callableContracts);
@@ -2882,10 +2886,7 @@ private:
       records.blocks->reserve(records.blocks->size() + count);
     finalized.resize(static_cast<std::size_t>(size));
     std::vector<bool> seen(static_cast<std::size_t>(size));
-    constexpr auto bulk = std::is_same_v<T, interfaces::Implementation>;
-    std::vector<std::size_t> inputs;
-    if constexpr (bulk)
-      inputs.assign(static_cast<std::size_t>(size), SIZE_MAX);
+    std::vector<std::size_t> inputs(static_cast<std::size_t>(size), SIZE_MAX);
     for (std::size_t i = 0; i < count && archive.good(); ++i) {
       std::uint32_t index = 0;
       if (interfaces)
@@ -2897,12 +2898,10 @@ private:
         return;
       }
       seen[index] = true;
-      if constexpr (bulk) {
+      if constexpr (std::is_same_v<T, interfaces::Implementation>)
         changedImplementations[index] = true;
-        inputs[index] =
-            record<T>(nullptr, index, records, [&] { scan(index); }, phase);
-      } else
-        record(&finalized, index, records, [&] { scan(index); });
+      inputs[index] =
+          record<T>(nullptr, index, records, [&] { scan(index); }, phase);
     }
     if (size > checking.size())
       for (auto i = checking.size(); i < size; ++i)
@@ -2910,10 +2909,9 @@ private:
           archive.fail("missing checked phase record");
           return;
         }
-    if constexpr (bulk)
-      if (archive.good() && count)
-        finalized.deferAll(static_cast<std::size_t>(size), records.load,
-                           std::move(inputs), checking);
+    if (archive.good() && count)
+      finalized.deferAll(static_cast<std::size_t>(size), records.load,
+                         std::move(inputs), checking);
   }
   const interfaces::Database::DefinitionHeader *
   owner(Type type, const interfaces::Database &database) const {
