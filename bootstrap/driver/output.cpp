@@ -1202,6 +1202,8 @@ static int emitOne(const Options &options, const Source &source,
           arguments.push_back("-fno-sanitize-recover=all");
         }
 #endif
+        if (target.isOSLinux() && options.emit == "executable")
+          arguments.push_back("-Wl,--as-needed");
 #ifdef METTLE_CLANG_LINK_PLANNER
         if (!bundledLld.empty() && options.emit == "executable" &&
             options.sysroot.empty() && options.sanitizers.empty())
