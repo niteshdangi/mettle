@@ -1006,8 +1006,11 @@ Exact unoptimized bitcode and compiler/target/profile/overflow identities allow
 unchanged isolated units to skip both O2 and machine emission. Other units retain
 whole-module O2 followed by exact optimized-unit reuse. Only the coordinator
 mutates the original LLVM context or queries the unit cache. Workers parse owned
-bitcode into private contexts; their pool leaves a CPU for the coordinator and
-joins before module owners are destroyed.
+bitcode into private contexts. The pool is bounded by available CPUs; the
+coordinator submits units immediately and then waits rather than delaying the
+largest unit for local emission. Single-CPU execution avoids the pool and emits
+the largest unit in its original context. Jobs join before module owners are
+destroyed.
 Native archive hits bypass native lowering, optimization and emission. The
 existing bounded Store retains aggregate unit
 buckets with current membership, validates object digests and rebuilds malformed

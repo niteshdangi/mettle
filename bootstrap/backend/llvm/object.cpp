@@ -772,7 +772,8 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
     if (output->empty())
       return llvm::Error::success();
     job.output = std::move(*output);
-    if (&unit.getContext() == &module.getContext() &&
+    if ((!llvm::llvm_is_multithreaded() || threads <= 1) &&
+        &unit.getContext() == &module.getContext() &&
         (!local || unit.getInstructionCount() > local->getInstructionCount())) {
       local = &unit;
       localOwner = std::move(owner);
@@ -783,7 +784,7 @@ llvm::Error emitObjectUnits(llvm::Module &module, llvm::StringRef triple,
     if (llvm::llvm_is_multithreaded() && threads > 1) {
       if (!pool)
         pool = std::make_unique<llvm::DefaultThreadPool>(
-            llvm::hardware_concurrency(threads - 1));
+            llvm::hardware_concurrency(threads));
       parallel.push_back(pool->async([&run, job = std::move(job)] {
         thread_local std::unique_ptr<llvm::TargetMachine> worker;
         return run(job, worker);
