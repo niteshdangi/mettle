@@ -141,8 +141,8 @@ synchronization. FFI needs ABI/layout and ownership/destruction probes.
 Do not add `noalias`, `nsw`/`nuw`, unreachable assumptions or equivalent shortcuts
 from an informal ownership description.
 
-ASan/UBSan compiler runs are required for new memory/unsafe work and before
-ownership-milestone closure. They instrument project C++ code, not the prebuilt
+ASan/UBSan compiler runs are required for new memory/unsafe work.
+They instrument project C++ code, not the prebuilt
 LLVM libraries or automatically every emitted Mettle program. The driver now
 has opt-in `--sanitize address|thread` instrumentation for emitted Mettle
 programs.
@@ -251,7 +251,7 @@ framework or test added just to validate the wording of this standard.
 | Language behavior or IR/backend | Debug/Release source-profile checks; Linux source execution when target behavior/lowering is affected |
 | Library/API | Applicable access/failure/invalidation/complexity cases and layer restrictions; target/ABI cases when relevant |
 | Release qualification | Clean reproducible builds, current source/tool/sysroot/artifact identities and applicable target checks |
-| Performance | Equivalent contracts/datasets and the registered performance protocol; separate compiler time/memory from program runtime |
+| Performance | Equivalent contracts/datasets; separate compiler time/memory from program runtime |
 
 Build, sanitizer, reproducibility and target checks are different evidence
 scopes; none substitutes for another.
@@ -273,6 +273,6 @@ and exit condition. Do not silently grandfather a new failure.
 Review semantics, failure/cleanup, complexity, portability and tests before
 cosmetics. No feature or public contract is complete because code exists or
 metadata lists it. Report missing/unqualified work honestly.
-The [performance protocol](performance.md) controls speed claims; exploratory
-results are not runtime-parity evidence. Publication, licensing and paid
+Speed claims require measurements of equivalent behavior, not inference from
+implementation choices. Publication, licensing and paid
 infrastructure remain separate owner decisions.

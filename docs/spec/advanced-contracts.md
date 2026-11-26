@@ -199,8 +199,3 @@ Attribute families and payloads:
 Unknown required attributes are errors. Target features cannot silently change
 the public type layout of a supposedly compatible interface. The specification
 annex defines packed/align combinations and assembly operand/option contracts.
-
-## 7. Remaining design versus implementation evidence
-
-Require compiler/runtime tests, ABI probes and independent safety review.
-These extensions add no rejected identity proposal to scope.

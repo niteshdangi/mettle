@@ -45,8 +45,6 @@ struct Options {
   std::set<std::string> injectedFeatures;
   std::vector<resolution::Library::Package> injectedPackages;
   std::vector<std::pair<std::string, std::string>> packageDependencies;
-  // Build cache (see docs/process/performance.md section 5.1.1). An empty
-  // directory selects METTLE_CACHE_DIR, then the user cache directory.
   std::string cacheDir;
   std::uint64_t cacheLimitKib = 0, cacheMaxAgeDays = 30;
   bool noCache = false, explain = false, dryRun = false, standalone = false;

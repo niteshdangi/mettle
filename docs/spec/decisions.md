@@ -14,13 +14,11 @@
 | D08 | Generic defaults use declaration-known constraints; unconstrained T borrows |
 | D09 | Named structs/enums explicitly opt into Copy; built-in aggregates are structural |
 | D10 | Runtime must match or beat Rust per agreed workload; builds and memory are measured per D17 |
-| D11 | Routine decisions are delegated; do not stop for approval after every item |
-| D12 | Every material comparison explains Rust behavior, likely faster option and uncertainty |
 | D13 | Function results use optional `: Type`, not `->`; omission infers from body returns/tails, not callers. Explicit annotations remain checked contracts, including for public definitions. |
 | D14 | `Unit` is a predeclared type name, not a keyword; `()` is its sole value, not a second type spelling. Omitted results may infer Unit but do not default to it. |
 | D15 | `Never` is the predeclared uninhabited type, replacing the lowercase built-in spelling; it remains distinct from Unit. Prefer `let _ = expression` for intentional non-Unit discard; semicolon semantics remain unchanged. |
 | D16 | Identity: Mettle must not read like a Rust copy. Priorities: source readability, runtime matching or beating Rust (D10), faster compilation and less build-cache storage (D17). Judge complete programs, not punctuation counts. |
-| D17 | Compile time (clean, incremental, check-only) and retained build-cache bytes must beat the frozen Rust/Cargo baseline on the agreed workloads, on a qualified runner, with RSS and binary size reported; a compiler-work regression guard also applies ([performance.md §5.1-5.2](../process/performance.md#51-compile-time-and-build-storage-gate)). Replaces the earlier "no accepted equality gate" for compile time |
+| D17 | Compile time (clean, incremental, check-only) and retained build-cache bytes must beat Rust/Cargo on equivalent workloads; report RSS and binary size |
 
 These decisions supersede v0.21 implicit retention, the 10-percent slowdown
 trigger and the Word blueprint's earlier parameter/copyability rules.
@@ -49,41 +47,6 @@ D18-D29 retain V1 capability, ownership, failure and runtime contracts.
 | D33 | `Outcome<T, E>` names native stored success/failure values; `throws E` is reserved for callable effects. Owner accepted 2026-11-09 | [language-grammar.md §3](language-grammar.md#3-type-expressions) |
 | D34 | If/while headers accept comma-separated boolean conditions and `let pattern = expression` clauses, evaluated once left to right with short-circuiting. Owner accepted 2026-11-09 | [language-grammar.md §6](language-grammar.md#6-expressions-errors-and-control-flow) |
 
-## Routine selections made under delegation
-
-- R01: Explicit take invalidates its source even for Copy; ordinary Copy passing
-  leaves the source usable. No runtime byte clearing is implied.
-- R02: let/var, declaration-known access modes, static initialization, and
-  destructor-constrained partial moves follow the documented core rules.
-- R03: Result inference solves recursive dependencies or requests annotations;
-  callable types/bodyless declarations retain explicit results. Error effects
-  and ambiguous borrow-source relationships are not inferred from bodies.
-  The result delimiter applies consistently to methods, closures and foreign
-  signatures. These refinements supersede the earlier mandatory-arrow grammar.
-- R04: Operand evaluation is left-to-right; ordinary assignment evaluates the
-  replacement before its destination. Primitive compound assignment uses
-  RHS-before-destination ordering; overloaded compound assignment follows
-  receiver-then-argument evaluation, fixed at declaration checking.
-- R05: `.mt`, `copy type`, `Copy`, and labeled `Type(...)` calls are working grammar
-  conventions, not public compatibility promises.
-- R06: The first executable target is Linux x86-64; development subsets do not
-  reduce the selected language contracts.
-- R07: C++20/CMake/Ninja/Clang, existing fixture runners; toolchain-pins.json fixes
-  source IDs; archive and installed-artifact locks identify build inputs.
-- R08: specification-annex.md selects numeric conversions, higher-ranked solving,
-  closure/pattern cleanup, macro phases, layouts, assembly and dispatch rules.
-- R09: memory-and-concurrency.md selects validity/provenance/atomic contracts and
-  poll-scoped borrowed-task execution epochs, without claiming a safety proof.
-- R10: language-grammar.md composes the extended productions; reference-profiles.md
-  selects deployment/SDK, ABI, linker, Wasm and freestanding design baselines.
-- R11: library-surface.md and the native operation-family specifications define
-  library contracts, including sealed/default/compiler-controlled protocols.
-- R12: tooling-and-packages.md selects manifest/resolver, cache, test/doctest,
-  formatting, editor and debugger contracts.
-- R13: performance.md selects paired log-ratio intervals, family-wise error control,
-  and separate pilot/release samples. The owner removed the fixed percentage
-  precision target on 2026-11-26; uncertainty and performance requirements remain.
-
 ## Platform and product boundaries
 
 The gated compiler host and target are Linux x86-64, using WSL2 or maintained
@@ -91,13 +54,6 @@ Linux. Historical macOS results do not qualify Linux. Windows MSVC/PE/CodeView
 support requires its own implementation and target checks.
 Licensing, registry governance and public stabilization require explicit owner
 decisions; selected syntax is not a public stability guarantee.
-
-## Documentation and implementation boundary
-
-Specification completion does not prove parser/coherence/
-memory-model correctness, target support or performance, choose a license or
-revive rejected identity proposals. Estimates require measured progress/capacity;
-plans do not authorize publication, installation, licensing or domain reservation.
 
 ## Proposed (not accepted): declarative macro surface
 

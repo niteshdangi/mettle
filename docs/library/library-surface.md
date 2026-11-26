@@ -591,7 +591,7 @@ message shapes; renderer thunks may be shared per value-type/format operation;
 ordinary unrelated generics may still specialize. Normal backend inlining stays
 possible: the guarantee is no recipe-shape instantiation of the logger, not
 identical machine code. Measure indirect calls, renderer/code-size growth and
-check cost under performance.md.
+check cost when measuring performance.
 
 Receiver, ordinary arguments and holes evaluate once in source order. Owned hole
 temporaries survive through the enclosing call; borrowed holes are loans only

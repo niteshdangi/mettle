@@ -358,16 +358,11 @@ clean and edited build time, peak memory, total retained bytes and generated
 program runtime separately under the existing performance protocol. Package
 boundaries or self-compilation alone establish no performance or safety claim.
 
-### 1.2. Approved bootstrap compiled-interface work
+### 1.2. Bootstrap compiled interfaces
 
-The owner permits the C++ bootstrap work needed for this reusable boundary;
-this is not permission for unrelated bootstrap tuning or a test-only cache.
-The owner's 2026-11-17 I14 scope extension includes indexed imports, immutable
-dependency contracts with consumer-owned mutation overlays, and resident
-compilation/query reuse. These performance requirements are not deferred to I15;
-I15 still owns the substantive Mettle implementation and staged self-hosting.
-The first delivery must reuse checked `core` across different consumers.
-`alloc` and `std` follow through the same format and import path. The format
+The reusable boundary includes indexed imports, immutable dependency contracts
+with consumer-owned mutation overlays, and resident compilation/query reuse.
+Checked `core`, `alloc` and `std` use the same format and import path. The format
 must remain implementable by the self-hosted compiler; no public metadata ABI
 stability is promised.
 
@@ -1714,7 +1709,7 @@ If the initializer is produced immediately before the declaration and used
 only by that store, no operation can unwind between production and
 installation, so the value does not need a separate pending cleanup slot.
 
-The I06 machine boundary shares operation signatures between checking and IR
+The machine boundary shares operation signatures between checking and IR
 verification in `types/machine`. Raw memory operations retain explicit unsafe
 requirements: callers establish provenance, extent, alignment, initialized
 validity, exclusive access and non-overlap where required. Bytewise copies and
@@ -1759,9 +1754,8 @@ the destructured input.
 
 ### Native machine and ownership interfaces
 
-Shared interfaces for the eight initial machine-boundary workstreams. Scope
-excludes new targets, portable SIMD, thread libraries, allocator-backed pin
-owners and general I09 compile-time programming.
+These interfaces cover the machine boundary, separate from portable SIMD,
+thread libraries, allocator-backed pin owners and general compile-time programming.
 
 | Workstream | Producer and shared representation | Validators and consumers |
 | --- | --- | --- |
@@ -1788,8 +1782,7 @@ Shared invariants for the implementation pass:
   not authorize an implicit numeric conversion.
 - A typed constant initializer is validated before emission. Target floating
   representation uses the existing direct-rounding rule, not host `double`;
-  global address constants retain symbol/relocation provenance. Full user
-  const-function/macro execution remains I09.
+  global address constants retain symbol/relocation provenance.
 - Immutable static bindings containing interior-mutable storage must not become
   LLVM read-only memory. Statics are not automatic scope-destruction roots.
   Linkage and assembly symbol references share resolved identities and target
@@ -1836,14 +1829,6 @@ and SIMD/feature acceptance, guarded execution and rejection. Reuse
 `tests/source`, `tests/backend/machine.py` and its C/C++ callbacks, plus
 `tools/test_linux_target.py`. Prepare the Linux freestanding and independent
 atomic memory-model/race cases before release qualification.
-
-Implement shared metadata and its dependent producers/validators/consumers
-coherently, with one writer and no builds racing source edits. A shared
-representation change invalidates dependent compiler objects and relevant
-receipts; it does not justify rerunning unrelated passing test groups per edit.
-New component directories enter CMake only with their implementation and
-component-owned dependencies. No full qualification matrix starts until implementation, fixtures and
-documentation are ready.
 
 ### Async state-machine interfaces
 
@@ -1923,26 +1908,22 @@ cancellation at each initialization state, partial moves and panic cleanup.
 Negative cases must reject moves while loans remain live and invalid
 cross-thread state at the intended ownership/type phase. Existing unsupported
 fixtures must be updated when their cases are implemented, not merely removed.
-Until these interfaces, fixtures and documentation are complete, no source-freeze
-or I11 qualification gate is satisfied.
+## 5. Feature responsibilities
 
-## 5. Full-language growth map
-
-These are component responsibilities to instantiate when the relevant milestone
-is implemented. Each addition requires dependencies, interfaces, invariants and
-tests in the same change.
+Each feature keeps its dependencies, interfaces, invariants and tests within
+the owning component boundaries.
 
 | Work | Owning components and boundary |
 | --- | --- |
-| Products, ownership and destruction (I03) | Products/views in `types`; access/source contracts in `semantics`; canonical `places`; loan/move/init/effects in `analysis`; scope elaboration in `lowering`; static plans in `cleanup` |
-| Modules, enums, patterns, errors and methods (I04) | `resolution` owns modules/imports; parser families own syntax; semantics owns coverage/effects/default plans; lowering owns guarded binding and typed-failure continuations |
-| Generics, interfaces, regions and dispatch (I05) | Declaration-checked bodies, canonical type/region identities, constraint/coherence solver and instance planning; backend consumes instances rather than solving bounds |
-| Layout, unsafe operations and C ABI (I06) | Target facts and object layout in `types`, distinct from language type identity; physical ABI lowering in `backend`; unsafe validity checks and explicit intrinsics; target-specific probes |
-| Core/alloc/hosted libraries (I07-I08) | Native Mettle modules and minimal runtime contracts, not hardcoded collections or OS calls inside the parser/checker. `alloc` reaches memory only through the `mettle_rt_alloc/dealloc/realloc` hooks (`runtime/alloc.cpp`). `std` reaches the OS through declared libc externs and the shims in `runtime/sys.cpp` (errno, flags, `stat`, `readdir`, `spawn`, sockets, clocks); the panic hook lives in `runtime/panic.cpp` |
-| Constants, macros and packages (I09) | Const evaluator over defined IR; hygienic expansion with source ancestry; package graph/build planner outside compiler semantics |
-| Threads and async (I10-I11) | Transferable/Shareable/Static and UnwindSafe/RefUnwindSafe are intrinsic properties proved structurally by `semantics/interface_solver.cpp` (`proveStructuralProperty`), with manual `unsafe extend`/negative `extend X not P` recorded in `interfaces::Database::structuralDeclarations`; thread/lock/TLS operations reach pthreads only through the `mettle_rt_thread_*`/`mettle_rt_mutex_*`/`mettle_rt_cond_*`/`mettle_rt_rwlock_*`/`mettle_rt_tls_*` hooks (`runtime/thread.cpp`), while channel selection uses its process-wide generation condition there to sleep without polling. Static TLS descriptors are keyed by their static addresses; TLS values share a per-thread active-key list so thread exit and the hosted main exit destroy them in reverse first-installation order. `std.thread`/`std.sync` and `alloc.arc` are native Mettle modules. `async` bodies are coroutine closures desugared in `syntax/parser/async.cpp`; suspension is `ir::Exit::Suspend`, the state is the backend frame (`backend/llvm/cleanup.cpp`), and its Transferable/Shareable proof includes a scope-based interior recorded by `semantics/captures.cpp`; `std.task` is the separately selected executor |
-| IDE/tooling/incremental (I12) | Reusable in-memory pipeline, immutable inputs/results and revision-bound diagnostics; module/item query boundaries and dependency tracking |
-| Additional backends/self-hosting (I15-I16) | Preserve checked/runtime/ABI boundaries; replace compiler implementation/backend without importing LLVM into language representations |
+| Products, ownership and destruction | Products/views in `types`; access/source contracts in `semantics`; canonical `places`; loan/move/init/effects in `analysis`; scope elaboration in `lowering`; static plans in `cleanup` |
+| Modules, enums, patterns, errors and methods | `resolution` owns modules/imports; parser families own syntax; semantics owns coverage/effects/default plans; lowering owns guarded binding and typed-failure continuations |
+| Generics, interfaces, regions and dispatch | Declaration-checked bodies, canonical type/region identities, constraint/coherence solver and instance planning; backend consumes instances rather than solving bounds |
+| Layout, unsafe operations and C ABI | Target facts and object layout in `types`, distinct from language type identity; physical ABI lowering in `backend`; unsafe validity checks and explicit intrinsics; target-specific probes |
+| Core/alloc/hosted libraries | Native Mettle modules and minimal runtime contracts, not hardcoded collections or OS calls inside the parser/checker. `alloc` reaches memory only through the `mettle_rt_alloc/dealloc/realloc` hooks (`runtime/alloc.cpp`). `std` reaches the OS through declared libc externs and the shims in `runtime/sys.cpp` (errno, flags, `stat`, `readdir`, `spawn`, sockets, clocks); the panic hook lives in `runtime/panic.cpp` |
+| Constants, macros and packages | Const evaluator over defined IR; hygienic expansion with source ancestry; package graph/build planner outside compiler semantics |
+| Threads and async | Transferable/Shareable/Static and UnwindSafe/RefUnwindSafe are intrinsic properties proved structurally by `semantics/interface_solver.cpp` (`proveStructuralProperty`), with manual `unsafe extend`/negative `extend X not P` recorded in `interfaces::Database::structuralDeclarations`; thread/lock/TLS operations reach pthreads only through the `mettle_rt_thread_*`/`mettle_rt_mutex_*`/`mettle_rt_cond_*`/`mettle_rt_rwlock_*`/`mettle_rt_tls_*` hooks (`runtime/thread.cpp`), while channel selection uses its process-wide generation condition there to sleep without polling. Static TLS descriptors are keyed by their static addresses; TLS values share a per-thread active-key list so thread exit and the hosted main exit destroy them in reverse first-installation order. `std.thread`/`std.sync` and `alloc.arc` are native Mettle modules. `async` bodies are coroutine closures desugared in `syntax/parser/async.cpp`; suspension is `ir::Exit::Suspend`, the state is the backend frame (`backend/llvm/cleanup.cpp`), and its Transferable/Shareable proof includes a scope-based interior recorded by `semantics/captures.cpp`; `std.task` is the separately selected executor |
+| IDE/tooling/incremental | Reusable in-memory pipeline, immutable inputs/results and revision-bound diagnostics; module/item query boundaries and dependency tracking |
+| Additional backends/self-hosting | Preserve checked/runtime/ABI boundaries; replace compiler implementation/backend without importing LLVM into language representations |
 
 Modules are not packages, compiler components are not Mettle modules, and
 syntax extensions are not a public plugin system. Keep these identities distinct.

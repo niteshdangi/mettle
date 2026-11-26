@@ -381,7 +381,7 @@ The exact project license remains an owner decision.
 
 Borrowed views, concrete iterators, ordinary error results and C-compatible
 calls require no mandatory allocation. Compare equivalent layout, allocator,
-dispatch and failure behavior under [performance.md](../process/performance.md).
+dispatch and failure behavior when measuring performance.
 
 Native layout and C ABI requirements are specified in sections 7-8 and the
 [platform contracts](../spec/platform-contracts.md).

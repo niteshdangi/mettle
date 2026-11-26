@@ -559,7 +559,7 @@ acceptance corpus that the typing rules above refine.
   on overflow, while unchecked add/subtract/multiply use the destination width.
   [The scalar rules](#3-scalars-and-arithmetic) define exceptional
   arithmetic and shifts; required constants use checked evaluation.
-- Performance claims require [the measurement protocol](../process/performance.md).
+- Performance claims require measurements of equivalent programs.
   Syntax choices, optimizations and backend reuse alone establish no speed result.
 
 ### 14.2. Ownership operations

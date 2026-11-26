@@ -309,6 +309,6 @@ not admitted by that contract.
 ## 8. Runtime implications
 
 Compare equivalent numeric modes, layout/assembly promises, dispatch and scoped
-task lifetimes under [performance.md](../process/performance.md). Region solving requires
+task lifetimes when measuring performance. Region solving requires
 no runtime region objects. Capture destruction follows the deterministic order
 specified in section 3.

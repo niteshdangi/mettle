@@ -1026,7 +1026,6 @@ Semantic diagnostic identifiers are not frozen yet.
 
 Labels and generic modes resolve statically; constructors initialize fields.
 These require no runtime name dictionary, type test, clone or retain.
-Comparison gates are defined in [performance.md](../process/performance.md).
 
 
 Validate examples, ambiguous prefixes, separators and negative diagnostics

@@ -60,7 +60,6 @@ each regression must guard meaningful behavior.
   unimplemented or unqualified work explicitly.
 - Update affected specifications/examples when changing a contract.
 - Check safety, cleanup, evaluation order, arithmetic policy and compatibility.
-- Do not claim runtime parity from the engineering P01 experiment.
 
 There is no selected project publication license and no hosted CI service is
 configured by these instructions. No contribution instruction authorizes

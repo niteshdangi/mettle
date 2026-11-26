@@ -5,7 +5,7 @@ unsupported today and are not implied by the contract.
 
 ## Implementation notes
 
-### Unicode table generation (I07)
+### Unicode table generation
 
 `tools/unicode_tables.py UCD_DIR OUTPUT.mt` generates the Unicode 17.0.0
 property and case-mapping module used by `library/core/char.mt`. Keep the UCD
@@ -18,7 +18,7 @@ Case folding data is version-checked but is not used as lower/uppercase
 mapping: those mappings come from `UnicodeData.txt` and unconditional
 `SpecialCasing.txt`.
 
-### Emitted-program sanitizers (I10/I11)
+### Emitted-program sanitizers
 
 `mettle build`, `mettle run`
 and `mettle test` accept `--sanitize address` or `--sanitize thread` for
@@ -35,7 +35,7 @@ itself, and this backend does not yet emit UBSan checks for other undefined
 operations; linking the UBSan runtime alone would not instrument emitted code.
 The emitted backend does not provide UBSan or cross-target qualification.
 
-### Package planning subset (I09 T001)
+### Package planning
 
 `mettle check|build DIR_OR_package.mettle` plans the package in the `packages`
 component, then compiles the selected entry with each resolved
@@ -235,8 +235,8 @@ Age and byte limits are enforced at that update, not deferred;
 eviction checks candidate timestamps to observe reads by concurrent processes.
 An interrupted update or damaged accounting rebuilds the index from the
 published store before pruning. `--no-cache` disables
-both whole-build and package-object caches. Storage design: performance.md
-section 5.1.1. Flags: `--cache-dir DIR`, `--no-cache`,
+both whole-build and package-object caches.
+Flags: `--cache-dir DIR`, `--no-cache`,
 `--cache-limit-kib N`, `--cache-max-age-days N`, `--explain`;
 `METTLE_CACHE_LIMIT_KIB` sets a byte budget in KiB (default 0, unbounded); an explicit
 `--cache-limit-kib` takes precedence. Invalid environment values are errors.
@@ -860,39 +860,9 @@ Optional Rust bridges build as separate interoperability packages with explicit
 Rust toolchain/ABI adapters. They do not introduce a mandatory rustc dependency
 into native Mettle builds.
 
-## 6. Comparison and evidence
+## 6. End-user cache store
 
-The command, package, editor and debugger contracts above are required developer
-workflows. Build speed and retained build-cache storage also have measured
-release gates in performance.md section 5.1.
-Feature resolution, caching and richer debug output affect build cost/artifact
-size; no inherent application-speed improvement follows from their spelling.
-Implementation acceptance needs resolver fixtures, invalidation tests, compiler/
-editor agreement, debugger probes and executable documentation on real targets.
-
-## 7. Storage: two separate products
-
-Build-cache size is an accepted gate (performance.md section 5.1), so storage is
-specified for both products, which have different owners and must not be mixed.
-
-### 7.1. Compiler-development storage
-
-Inventory archive/version hashes, worktree/VM consumers, evidence obligations
-and offline pins before proposing owner-approved retirement. Directory names
-and allocated-block counts alone do not establish artifact identity or physical
-savings. Remove only approved resolved paths; verify build selection,
-bootstrap and evidence access afterward.
-
-Keep pinned offline archives; other downloads may be removed after checksum
-verification and successful extraction. Preserve refusal to overwrite unknown
-installations and share toolchains only when identities match. Protect unmerged
-source and active builds; retire lane worktrees through owner-approved Git
-operations, accounting for shared metadata separately.
-
-### 7.2. End-user cache store
-
-I09 owns complete cache identities and immutable local sharing; I12 owns the
-user-facing workflow. Distinguish tool installation, dependency sources,
+Distinguish tool installation, dependency sources,
 compiled/intermediate/query caches, debug data, scratch and final outputs.
 Identities include all semantic, compiler, host/target, SDK, policy,
 environment and path-sensitive inputs, and editor and CLI reuse only compatible
@@ -902,9 +872,3 @@ Shared blobs are never writable through materialized outputs. Debug profiles
 account for all symbol files, since moving debug data alone does not reduce
 total size. Budget changes must not silently change overflow, panic,
 specialization or ABI.
-
-The build-output store, live leases and `mettle clean` are implemented (section
-T003). A separate `mettle storage` report and dependency-source/debug-data pruning
-remain deferred; use filesystem reports. Measure
-cold/warm retained bytes, peak scratch, rebuild cost and matched runtime behavior
-before selecting default budgets or claiming savings.
