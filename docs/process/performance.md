@@ -292,11 +292,10 @@ development machine.
 
 ### 5.3. Application comparisons
 
-Build paired workload sources from `benchmarks/<name>/`
-(Mettle `main.mt` and Rust `Cargo.toml`/`src/main.rs`) with
+Build equivalent Mettle and Rust workload sources with
 `mettle build --standalone --profile release --overflow-checks off --cache-dir <fresh>` and
 `cargo build --release --offline` (fresh `CARGO_TARGET_DIR` and `CARGO_HOME`, no
-dependencies, `CARGO_INCREMENTAL=0`). These sources cover P01-P06.
+dependencies, `CARGO_INCREMENTAL=0`).
 Programs return a 7-bit checksum as exit status; require equal status and stdout
 from both languages for the clean and the semantically edited build.
 Check-only measurements use a separate fresh cache/target directory on both
@@ -323,7 +322,6 @@ methods from the builtin extension modules and Iterator interface methods
 participate. Calls whose receiver resolves to a module without a lexical
 value shadow bypass builtin discovery. Source-only consumers retain index
 input dependencies even when no checked library is mounted.
-P05 uses fixed-key SipHash-1-3 builders and get-then-insert on both sides.
 
 Rust profile: `opt-level=3`, `debug=false`, `lto=false`, `codegen-units=16`,
 `panic=abort`, `overflow-checks=false`, `incremental=false`, edition 2024, host

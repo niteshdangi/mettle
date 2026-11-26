@@ -1,4 +1,4 @@
-fn seed(): i32 { 12345 } // bench-edit-point
+fn seed(): i32 { 12345 }
 
 fn integrate(steps: i32): f64 {
     let count = steps as f64

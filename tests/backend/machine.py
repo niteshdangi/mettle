@@ -1983,8 +1983,7 @@ def check_ir_shape(run, args, directory, evidence):
 
 def check_driver_outputs(run, args, directory, evidence):
     if not ARM64 and platform.machine().lower() in ("amd64", "x86_64"):
-        source = (Path(__file__).resolve().parents[2] / "benchmarks" /
-                  "p02_float_kernel" / "main.mt")
+        source = Path(__file__).with_name("float_induction.mt")
         output = directory / "float-induction"
         run([args.compiler, "build", source, "--standalone", "--profile",
              "release", "-o", output])
