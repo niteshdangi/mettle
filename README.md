@@ -7,12 +7,9 @@ runtime parity and release-platform qualification are not established.
 
 The compiler builds Mettle programs with ownership checking, generics,
 interfaces, machine/FFI facilities, native `core`/`alloc`/`std` libraries,
-packages, macros, async and developer tools. The owner accepted the main-branch
-stabilization batch on 2026-11-11; library delivery follows the milestone plan.
+packages, macros, async and developer tools.
 The gated compiler host and target are Linux x86-64
 (native or WSL2); historical macOS evidence does not qualify that host.
-See the [implementation plan](docs/process/implementation-plan.md#8-delivery-milestones)
-for current obligations and revision-scoped evidence.
 
 `bootstrap/` contains the C++ seed/reference compiler; `compiler/` contains the
 Mettle implementation in progress. Packages use optional `package.mettle`
@@ -77,8 +74,7 @@ See [commands and packages](docs/spec/tooling-and-packages.md) for other operati
 Read [CONTRIBUTING.md](CONTRIBUTING.md), the
 [quality standard](docs/process/code-quality.md) and
 [compiler architecture](docs/process/compiler-architecture.md).
-Use focused fixtures during implementation and the required frozen-source
-gates for qualification. Source cases use the existing runner:
+Use focused fixtures for the affected behavior. Source cases use the existing runner:
 
 ```sh
 python3 tests/source.py run BUILD/mettle OUTDIR -j 2 --filter REGEX
@@ -163,21 +159,17 @@ Result inference uses the body, not callers. Callable types and bodyless
 declarations require explicit results. `Unit` has value `()`; `Never` has no
 values. Use `let _ = expression` for intentional discards.
 
-## Planning map
+## Documentation
 
-- [Implementation and delivery gates](docs/process/implementation-plan.md)
 - [Architecture](docs/process/compiler-architecture.md) and [decisions](docs/spec/decisions.md)
 - [Semantic rules](docs/spec/semantic-rules.md)
 - [Grammar](docs/spec/language-grammar.md)
 - [Advanced contracts](docs/spec/advanced-contracts.md), [annex](docs/spec/specification-annex.md)
   and [memory model](docs/spec/memory-and-concurrency.md)
-- [Library/ABI](docs/library/library-and-abi.md), [native surface](docs/library/library-surface.md)
-  and [baseline mapping](docs/process/baseline-mapping.md)
-- [Capability coverage](docs/process/status.md) and [I13 work](docs/process/i13-library.md)
+- [Library/ABI](docs/library/library-and-abi.md) and [native surface](docs/library/library-surface.md)
 - [Packages/tools](docs/spec/tooling-and-packages.md) and [VS Code support](tools/vscode/README.md)
 - [Platforms and profiles](docs/spec/platform-contracts.md)
   and [toolchain pins](docs/toolchain-pins.json)
-- [Baseline reproduction](docs/baseline/README.md) and [documentation gate](docs/process/status.md)
 - [Performance protocol](docs/process/performance.md)
 - [Core example expectations](examples/core/expectations.json)
   and [extended expectations](examples/spec/expectations.json)

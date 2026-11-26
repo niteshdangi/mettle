@@ -945,52 +945,18 @@ its payload/allocator thread properties stay explicit.
 V1 execution scope is Linux x64; all eight reference profiles remain post-V1
 obligations. Layout arithmetic, pointer sizes and foreign scalar types are
 target-derived. Allocating operations are not implicitly usable in required
-constant evaluation. For each operation specified here, the local catalog's
-exact stable constant-callability flag remains native eligibility metadata
-under T08, evaluated solely with native constant/memory rules as described in
-core section 15.1. This does not grant allocation, payload Clone/destruction or arbitrary
+constant evaluation. Constant-callability must be specified by the native
+operation contract and follows native constant/memory rules in core section
+15.1. This does not grant allocation, payload Clone/destruction or arbitrary
 allocator/hash-builder construction a constant-evaluation capability.
 Construction, failure, destruction and borrowing semantics do not vary with
 optimization profile.
 
-## 12. Exact coverage and remaining work
+## 12. Contract boundary
 
-The authored runtime coverage is the explicit groups in sections 1..11:
-
-| Native module/type (source family) | Assigned groups |
-| --- | --- |
-| `core.alloc` with `alloc.alloc` and `std.alloc` reexports | Layout construction/access/array/extension/alignment/padding/repetition/dangling; native allocator operations; raw global allocation/provider operations |
-| `alloc.boxed.Heap` | Initialized/uninitialized/zeroed construction, projections, extraction/raw/leak/pin/downcast, array/slice iteration and listed conversions |
-| `alloc.rc.LocalShared/Weak`, `alloc.arc.Shared/Weak` (source sync) | Construction/retain/weak/count/uniqueness/extraction/cyclic/uninit/raw/pin groups |
-| `alloc.vec.List` | Capacity, mutation, raw/spare storage, drain/splice/extract, slice delegation, flatten/box/leak/iteration groups |
-| `alloc.vec_deque.VecDeque` | End/index movement, storage views/contiguity, range/drain/iteration, capacity/resize/retention/conversion groups |
-| `alloc.linked_list.LinkedList` | Endpoints, nodes/append/split, traversal/containment/extraction/cleanup |
-| `alloc.binary_heap.BinaryHeap/PeekMut` | Heap query/push/pop/guard/retain/drain/storage/sorted conversion/capacity |
-| `alloc.hash_map.Map` and entries | Lookup/insert/remove/mutable values, iteration, entry, drain/extract, capacity/hash policy, checked disjoint lookup |
-| `alloc.btree.SortedMap` and entries | Shared map/entry operations, ordered ranges/endpoints/split/append |
-| Set/SortedSet | Membership/representatives/algebra/traversal, ordered endpoints/range/split/append |
-| `alloc.string.String` | UTF encoding/conversion, byte capacity/mutation, view delegation, drain, owned search replacement/case/repeat/raw operations |
-| `alloc.ffi.CString` and error types | Termination validation, owned recovery/UTF conversion, borrowed/boxed/raw conversions |
-| `alloc.borrow` | ToOwned, general BorrowedOrOwned branch/projection/owning conversion and the slice instantiation |
-| allocation-backed slice methods | Cloning/concat/join/repeat and stable/cached-key sorting |
-
-This table is a selector boundary for the named operations, not a wildcard
-claim over every member, inherited implementation and constant in a type's
-inventory. In particular, full retirement still needs:
-
-- Member-by-member reconciliation for storage writers other than the covered
-  write_copy_of_slice, and unlisted push/entry/cursor helpers.
-  Core sections 4/5 cover address-based substring/element/subslice queries
-  and split-off-view helpers, including their zero-size/provenance caveats.
-  No whole Vec/str/slice page may be assigned
-  solely because most methods are described here.
-- Runtime members not specified here remain unmigrated; their local stable
-  constant-callability metadata does not substitute for a missing runtime
-  semantic contract.
-- General BorrowedOrOwned declarations, the slice alias's non-Clone extension
-  and complete hash-builder constructor/member reconciliation. D30/D31 resolve
-  the policy and naming decisions, not their implementation/type-checking
-  receipts. The current zero-key implementation is not randomized.
-- Full source-cfg applicability and target ABI/allocator/thread evidence
-  on the seven non-V1 profiles. No platform coverage follows from portable
-  prose alone.
+Sections 1-11 define the listed operations, not every possible member of each
+type. Unlisted operations need their own native contracts. Core sections 4-5
+define address-based substring/element/subslice queries and split-off-view
+helpers, including their zero-size/provenance rules.
+Platform support requires target ABI, allocator and thread checks; it does not
+follow from portable prose.

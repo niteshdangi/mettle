@@ -10,9 +10,9 @@ architecture operations independently of another programming language.
 
 Architecture builtins have fixed native declaration identities, parameter and
 result types, constant operands, target/feature predicates and safety modes.
-The frozen declaration catalog retains these facts and their provenance;
-an external documentation URL is not the semantic authority for the operations
-specified below. The signature translation rules in
+Native declarations and these contracts define those facts;
+an external documentation URL is not their semantic authority.
+The signature translation rules in
 [library-surface](library-surface.md#2-recursive-translation-rules) determine
 native access modes, generic constants and type identities.
 

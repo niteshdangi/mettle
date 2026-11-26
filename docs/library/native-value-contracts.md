@@ -294,6 +294,4 @@ and [outcome operations](../../tests/source/run/i13-outcome-operations.mt).
 The contract covers only operations listed here. Named iterator types and the
 explicitly described protocol/collection implementations have separate
 [core definitions](native-core-library-contracts.md); unlisted methods and
-type-specific implementations remain outside this chapter. Native-authority assignments
-and the remaining reference-owned surfaces are recorded in
-[the mapping register](../process/baseline-mapping.md#7-native-operation-authority).
+type-specific implementations remain outside this chapter.

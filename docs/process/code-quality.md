@@ -1,6 +1,6 @@
 # Compiler and library code quality standard
 
-Status: normative repository standard, adopted before I03. It governs new work
+Normative repository standard. It governs new work
 and code touched by a change. It does not declare future libraries implemented
 or convert test/sanitizer results into a safety proof.
 
@@ -12,8 +12,7 @@ fully preserves the contract. Do not introduce abstractions, dependencies,
 configuration or speculative optimizations without a concrete need.
 
 Fix bugs caused by a change and their directly coupled call sites. Do not mix
-unrelated cleanup into a feature/fix. Existing debt is not permission for new
-debt; substantial unrelated debt gets separately recorded work.
+unrelated cleanup into a feature/fix. Existing debt is not permission for new debt.
 Do not impose arbitrary file-length or coverage-percentage targets as a proxy
 for correctness.
 
@@ -250,8 +249,8 @@ framework or test added just to validate the wording of this standard.
 | Compiler/runtime C++ | Incremental build and applicable CTest fixtures |
 | Memory/unsafe/ownership | Above plus ASan/UBSan build and relevant boundary/cleanup regressions |
 | Language behavior or IR/backend | Debug/Release source-profile checks; Linux source execution when target behavior/lowering is affected |
-| Library/API | Applicable access/failure/invalidation/complexity cases, native contract mapping and layer restrictions; target/ABI cases when relevant |
-| Milestone/release closure | Clean reproducible builds, current source/tool/sysroot/artifact identities and the owning milestone's complete target gates |
+| Library/API | Applicable access/failure/invalidation/complexity cases and layer restrictions; target/ABI cases when relevant |
+| Release qualification | Clean reproducible builds, current source/tool/sysroot/artifact identities and applicable target checks |
 | Performance | Equivalent contracts/datasets and the registered performance protocol; separate compiler time/memory from program runtime |
 
 Build, sanitizer, reproducibility and target checks are different evidence
@@ -261,9 +260,8 @@ scopes; none substitutes for another.
 
 Prefer the standard library and existing pinned dependencies. New dependencies
 need a concrete purpose, compatible layering/license, exact version/content
-identity, supported platforms and a justified cost. Do not auto-upgrade tools,
-add network access to ordinary checks, or edit generated baseline reference
-signatures/provenance to conceal a native mapping problem.
+identity, supported platforms and a justified cost. Do not auto-upgrade tools
+or add network access to ordinary checks.
 
 New project warnings are errors. Static analysis uses the committed safety
 check set, not every available style opinion. System/vendor code is outside the
@@ -275,6 +273,6 @@ and exit condition. Do not silently grandfather a new failure.
 Review semantics, failure/cleanup, complexity, portability and tests before
 cosmetics. No feature or public contract is complete because code exists or
 metadata lists it. Report missing/unqualified work honestly.
-The [performance protocol](performance.md) controls speed claims; early P01
+The [performance protocol](performance.md) controls speed claims; exploratory
 results are not runtime-parity evidence. Publication, licensing and paid
 infrastructure remain separate owner decisions.

@@ -1,8 +1,7 @@
 # Compiler, runtime and library architecture
 
 Normative component and phase contracts for the full language. Future components
-are responsibilities, not delivered features. Implementation/qualification scope
-is tracked in [implementation-plan.md](implementation-plan.md).
+are responsibilities, not delivered features.
 
 ## 1. Repository and component boundaries
 
@@ -1758,7 +1757,7 @@ relationships preserve returned-view sources and expose only earlier bindings
 to defaults. Default thunks reborrow those projections rather than consuming
 the destructured input.
 
-### I06 completion interface plan
+### Native machine and ownership interfaces
 
 Shared interfaces for the eight initial machine-boundary workstreams. Scope
 excludes new targets, portable SIMD, thread libraries, allocator-backed pin
@@ -1822,9 +1821,9 @@ Shared invariants for the implementation pass:
   profiles select different native vector register ABIs, including reverse
   transitions into generic baseline code. A dispatch guard does not change the
   containing function's physical ABI or permit instruction leakage before it.
-- Stable architecture-specific SIMD/register interfaces follow the frozen
-  target inventory. Do not invent a portable SIMD API or silently promise every
-  target/profile operation before I13. A known but unavailable facility gets an
+- Architecture-specific SIMD/register interfaces follow the native machine
+  contracts. Do not invent a portable SIMD API or silently promise every
+  target/profile operation. A known but unavailable facility gets an
   explicit unsupported diagnostic, not unchecked instructions.
 
 Acceptance fixtures are planned with these interfaces: typed numeric boundaries
@@ -1836,17 +1835,17 @@ assembly operand order, early/late clobbers, options, symbols and naked entries;
 and SIMD/feature acceptance, guarded execution and rejection. Reuse
 `tests/source`, `tests/backend/machine.py` and its C/C++ callbacks, plus
 `tools/test_linux_target.py`. Prepare the Linux freestanding and independent
-atomic memory-model/race cases before the source-freeze gate.
+atomic memory-model/race cases before release qualification.
 
 Implement shared metadata and its dependent producers/validators/consumers
 coherently, with one writer and no builds racing source edits. A shared
 representation change invalidates dependent compiler objects and relevant
 receipts; it does not justify rerunning unrelated passing test groups per edit.
 New component directories enter CMake only with their implementation and
-component-owned dependencies. No full qualification matrix starts until the
-inventory, fixtures and documentation satisfy the source-freeze gate.
+component-owned dependencies. No full qualification matrix starts until implementation, fixtures and
+documentation are ready.
 
-### I11 async state-machine interface plan
+### Async state-machine interfaces
 
 The parser desugars async bodies into
 `core.future.coroutine(take fn(): T { .. })` and `await` into a poll loop
@@ -1860,8 +1859,7 @@ Pinned `Future.poll` through `any Future<Output = T>` requires a fixed associate
 output. Borrowed dispatch is distinct from the explicit Static heap owner
 `alloc.future.Erased<T>` with typed poll/release callbacks and from
 `Heap<any Future>`'s general unsizing/drop path. Erased async-interface returns
-still need an explicit source future-storage contract. Open items are tracked
-in implementation-plan section 8.4.
+still need an explicit source future-storage contract.
 
 The shared interfaces must be implemented together, not enabled one at a time
 for source programs:
@@ -2126,7 +2124,7 @@ initialization, checked-tree lifetime/moves, immutable spelling, in-memory UTF-8
 and rejection before verified publication. Frontend/IR/analysis compilation
 receives no LLVM includes; the standalone boundary executable has no LLVM
 symbol dependency. The separate historical dependency checker is retired.
-Qualification is revision-bound evidence (implementation-plan section 9), not
+Qualification requires revision-bound execution evidence, not
 inferred from component counts.
 
 ## F-string lowering

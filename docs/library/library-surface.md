@@ -4,25 +4,15 @@ Normative operation translation.
 
 ## 1. What specifies an operation
 
-Each record in baseline/operations.jsonl.gz specifies a public exposure, associated
-operation, or implementation relation. The catalog retains its reference
-declaration, source span, receiver/implementation context, stability and target
-conditions for scope and migration audit. Assigned operations have native
-signatures and behavior in their owning specifications; unassigned operations
-still require recursive translation of the retained declaration.
+The [native library contracts](library-and-abi.md) and their operation-family
+specifications define signatures, semantics, complexity, panics, unsafe
+preconditions and allocation/invalidation guarantees. There is no external
+inventory or reference-owned fallback. Operations not specified natively need
+an explicit native contract before they can be promised.
+An in-scope unimplemented operation is an implementation failure, not an
+unspecified API. An actual contradiction is a specification defect.
 
-For operations assigned native authority in
-[the mapping register](../process/baseline-mapping.md#7-native-operation-authority),
-the owning native specification supplies semantics, complexity, panics, unsafe
-preconditions and allocation/invalidation guarantees.
-For unmigrated operations the linked versioned contract still supplies those
-requirements; its removal is blocked until a complete native contract replaces it.
-The native mapping supplies the names, types, ownership and calling conventions.
-An in-scope unimplemented operation is an implementation failure, not an unspecified API.
-An actual contradiction is a specification defect and reopens the gate.
-
-Source-keyed canonical IDs share definition evidence and implementation context.
-They are not type-layout hashes. Public reexports of one declaration must refer
+Public reexports of one declaration must refer
 to the same native identity, not independently defined lookalike types.
 Transparent source aliases remain aliases; newtypes remain distinct.
 Macro-generated declarations retain their generated name/signature and owner/
@@ -54,8 +44,9 @@ an abort is not caught in-process.
 
 ## 2. Recursive translation rules
 
-The manifest records the applicable rule IDs. T01 applies to every declaration;
-the other IDs identify additional shapes present, not exclusive alternatives.
+These rules describe native API correspondence with Rust terminology.
+They do not incorporate an external API inventory. T01 applies to every
+declaration; the other rules describe additional shapes, not alternatives.
 
 | ID | Native declaration contract |
 | --- | --- |
@@ -80,9 +71,8 @@ Literal by-value Copy inputs may be duplicated explicitly where the native take
 rule would otherwise invalidate their source. That is the accepted source-mode
 difference, not an extra payload clone or retain inserted by the implementation.
 
-Type references in these rules resolve through the same canonical public type
-table. Defaulted unstable allocator parameters do not turn an otherwise stable
-default-allocator API into a promise of every nightly instantiation.
+Type references resolve to native declarations. A default allocator parameter
+does not promise every experimental allocator instantiation.
 
 ## 3. Unsized values, properties and explicit owners
 
@@ -235,10 +225,8 @@ library-layer attributes at package-root configuration.
 Reject duplicates/conflicting singleton choices rather than relying on order.
 
 Package/module/import/type/interface/any/take/view operations are specified by
-the native grammar. Reserved catalog vocabulary does not introduce an additional
+the native grammar. Reserved vocabulary does not introduce an additional
 language construct or a tail-call capability.
-Language keyword/attribute documentation records are kept separate from stable
-library APIs in the audit counts.
 
 ## 5. Layout and foreign completion
 
@@ -305,9 +293,7 @@ external name alone does not give a native-layout value a stable C calling ABI.
 ### Initial assembly and architecture mechanisms
 
 The [native machine contracts](native-machine-contracts.md) specify common
-instruction access/feature rules and explicitly assigned helper operations.
-The [authority register](../process/baseline-mapping.md#7-native-operation-authority)
-distinguishes those assignments from remaining instruction-contract migration.
+instruction access/feature rules and explicitly described helper operations.
 
 The initial mechanisms use compiler-owned Linux x86-64 SSE/SSE2 and Darwin
 ARM64 NEON baselines, never host-native tuning. Full operation/profile
@@ -369,67 +355,26 @@ rather than introducing sysctl, allocator or runtime dependencies.
 
 ## 6. Applicability, aliases and exclusions
 
-Runtime stability and const-callability are independent fields. Source unstable
-attributes override absent rendered badges, including inherited/default trait
-methods. Implementation members inherit their interface member's instability,
-even when their implementation omits its badge/attribute. A stable trait's
-header does not incorporate its experimental children. Owner amendment (2026-11-09): deprecated APIs, including records inheriting
-deprecation from their context, are excluded from required scope. Keep their
-reference provenance; do not delete or rewrite frozen declarations.
+Runtime availability and constant-callability are independent.
+A stable interface does not make experimental members stable. Deprecated and
+experimental reference APIs are not implicitly required.
 
-Target applicability is the frozen source declaration plus its enclosing module/
-macro cfg graph, and the displayed availability conditions. Source-constraints
-retains the actual cfg/cfg_attr/target-feature forms, not an English approximation.
-Do not conjoin every cfg in a source file: declarations and expansion context
-determine which predicate applies. Actual target support is established later
-by compiling/probing the native implementation under the same conditions.
+Target applicability follows each native declaration's enclosing module/macro
+configuration and feature conditions. Do not conjoin every condition in a
+source file: declaration and expansion context determine the applicable
+predicate. Validate target support by compiling and executing the native
+implementation under those conditions.
 
-The public library inventory does not include unrelated third-party types merely
-because the reference documentation lists a dependency's implementation of a
-standard interface.
-Those records are explicitly retained as external_implementation, not silently
-deleted or incorrectly promised as stable std APIs.
+Explicit native allocator control, negative thread properties and borrowed
+scopes remain native requirements. Third-party implementations are not part of
+the standard library merely because they implement a standard interface.
 
-Experimental APIs are inventoried but not automatically committed. Explicitly
-accepted native allocator control, negative thread properties and borrowed
-scopes remain required independently of the reference's nightly register.
+### 6.1. Library families
 
-### 6.1. V1 operation subset
-
-By owner decision, V1 (I13/I14) requires only the following subset of the
-stable inventory. Every other applicable non-deprecated stable record — including
-architecture intrinsics beyond the A006 initial tables, OS
-extension modules other than the selected Unix ones, and other rare types —
-remains required, but it moves to I17. The capability rows, the
-experience-track programs and the explicitly accepted items of section 6 remain
-V1 obligations regardless of this subset.
-
-Owner amendment (2026-11-09): all selected reference profiles remain required
-for post-V1 applicability/qualification, without expanding the Linux-only V1
-gate. The [reconciled worklist](../process/post-v1-worklist.md) separates independent
-obligations, implementation members, shared declarations and exclusions.
-Its counts are inventory scope, not implementation or target-qualification
-receipts. Source-cfg applicability still requires review on each profile.
-
-A record from the pinned inventory is in the V1 subset when it is stable, not
-deprecated, applicable to the gated `linux-x64` profile and not under `arch` or a
-non-Unix `os` module, and one of the following holds:
-
-- It is the declaration of a selected type or trait, or a selected free
-  function or macro.
-- It is an inherent method, associated constant, variant or public field of a
-  selected type.
-- It is a required or provided member of a selected trait.
-- It is an implementation of a selected trait for a selected type. Each
-  (type, trait) pair is one obligation, covering every member and associated
-  type of that implementation.
-
-Integer widths, float widths and same-shape atomics are folded into one family
-each, but the family must still be evidenced at every width. With this folding
-the subset is about 2,900 operation families plus 1,760 trait/type pairs, out
-of 106,125 canonical contracts.
-
-Selected catalog type identities (native names follow section 9):
+The following families describe the selected library surface. Rust names here
+identify corresponding concepts; native names follow section 9. Individual
+operations are defined by their native family specifications, not by an
+external catalog or milestone ledger.
 
 - **Scalars and core values:** `Option`, `Result`, the integer and float
   primitives, `bool`, `char`, `str`, slices, arrays, tuples, unit, `Range`,
@@ -502,7 +447,8 @@ Selected free functions and macros:
 ## 7. What this does not certify
 
 Qualification requires checked declarations, unsafe invariants, applicable cfg
-execution and runtime comparison; manifest records alone establish none of these.
+execution and runtime comparison; a written specification alone establishes none
+of these.
 
 ## 8. Conditional supporting protocols
 
@@ -511,44 +457,35 @@ whose explicit reference-language declaration is experimental. Rejecting that
 call would lose a stable capability; exposing every experimental implementation
 would expand the agreed baseline. The native translation preserves the callable
 and its exact eligible substitutions, not unrestricted implementation rights.
-The machine-readable family register is
-[supporting-protocols.json](../baseline/supporting-protocols.json).
 
 | Family | Native contract and boundary |
 | --- | --- |
 | Allocators | Preserve default Global construction and allocator identity through every owner; custom allocator operations are also an explicitly accepted native facility. Default parameters never imply a hidden payload clone or different deallocator. |
 | Sequence/index helpers | Concat/Join and slice-pattern protocols retain eligible inputs and associated outputs. Checked disjoint indexing validates all ranges/overlap before lending exclusive results; the unsafe alternative retains its preconditions. |
-| Text patterns | Provide sealed pattern/search capabilities for the frozen character, character-set, text and callable shapes. Forward, reverse and double-ended searching are distinct capabilities; positions remain valid UTF-8 boundaries. Do not promise arbitrary user searcher implementations. |
+| Text patterns | Provide sealed pattern/search capabilities for character, character-set, text and callable shapes. Forward, reverse and double-ended searching are distinct capabilities; positions remain valid UTF-8 boundaries. Do not promise arbitrary user searcher implementations. |
 | Initialization clone | Clone-to-uninitialized storage tracks which components have become valid. Panic cleans only initialized components; it cannot expose an invalid safe reference. This does not stabilize unrelated experimental clone entry points. |
 | Numeric helpers | Compiler-derived float/integer conversion, numeric-buffer and zero-valid primitive predicates preserve exact eligible widths/types. Unchecked conversions still require their range/NaN preconditions; zeroability is not inferred for references or enums from size alone. |
-| Range helpers | Sealed stepping and one-sided-range capabilities retain the frozen eligible scalar/range families, end-point treatment, overflow and iteration contracts. Custom unrestricted Step implementations are not part of the automatic baseline. |
+| Range helpers | Sealed stepping and one-sided-range capabilities retain the native scalar/range families, end-point treatment, overflow and iteration contracts. Custom unrestricted Step implementations are not implicitly available. |
 | Compiler properties | Tuple, function-pointer, pointee/metadata-size and discriminant predicates are compiler-known constraints, not unsafe user-forgeable layout assertions. Unsized/metadata rules follow section 3; distinct property predicates must not all collapse to Sized. |
 | Async calls | Read/mutate/consume callable modes can construct concrete futures under their capture/region contracts. This does not expose experimental explicit call methods or associated future families as stable public APIs. |
-| Short circuit | Sealed output/residual/branch capabilities support the frozen optional, outcome, control-flow and poll combinations. Preserve residual identity and each operation's early-stop/cleanup behavior. This is library generic dispatch, not permission for `try expression` to silently convert errors or add new effects. |
+| Short circuit | Sealed output/residual/branch capabilities support the specified optional, outcome, control-flow and poll combinations. Preserve residual identity and each operation's early-stop/cleanup behavior. This is library generic dispatch, not permission for `try expression` to silently convert errors or add new effects. |
 | Uninhabited values | Native `Never` expresses uninhabited results and divergence; no value may be fabricated to satisfy it. |
 | Atomic aliases | Stable bool/integer/pointer aliases retain their operations and target conditions even if the reference implements them through experimental generic Atomic. Unsupported payload instantiations remain unavailable. |
-| Variadic arguments | Compiler-known VarArgs eligibility retains the frozen promoted scalar/pointer shapes and target C ABI. It does not permit arbitrary owner/aggregate reads or relax the actual-next-argument unsafe precondition. |
+| Variadic arguments | Compiler-known VarArgs eligibility retains the promoted scalar/pointer shapes and target C ABI in section 5. It does not permit arbitrary owner/aggregate reads or relax the actual-next-argument unsafe precondition. |
 | Raw OS errors | Native target error-code identity preserves the stable raw-code constructor/accessor round trip. A private/experimental source alias does not require user casts with information loss. |
 
-For these sealed families, the exact eligible substitutions, associated
-identities and operational preconditions are incorporated from the pinned
-declaration/source contracts, translated recursively by T01-T16. No additional
-public implementation rights arise by naming a helper. Native diagnostics
-describe the failed capability, not a requirement to enable an external
-experimental feature.
+For these sealed families, eligible substitutions, associated identities and
+operational preconditions must be specified natively. No additional public
+implementation rights arise by naming a helper. Native diagnostics describe
+the failed capability, not a requirement to enable an external experimental
+feature.
 Inherent implementation headers group operations; an experimental child cannot
 become stable merely because its container type/header is stable.
 
-The validator requires every remaining stable-to-experimental supporting
-reference to name one of these families. It separately rejects a stable
-implementation member whose interface member is experimental. Thus Error
-provider/Request, experimental buffered-reader cursors and experimental Windows
-process-attribute methods are not smuggled in as supporting-protocol exceptions.
-
 ## 9. Vocabulary and the `experience-1` prelude
 
-Decision D21. Canonical reexports or aliases preserve the
-baseline identities that baseline-mapping.md requires; there is one collection
+Decision D21. Reexports or aliases preserve native declaration identity;
+there is one collection
 implementation, not a branded and a compatibility copy. Compiler-recognized
 protocols follow resolved declaration identities, not a second set of
 spelling-based special cases.
@@ -694,8 +631,7 @@ errors still panic when reported by the sink.
 
 ### 10.3. Implementation status
 
-Formatting is profile-scoped and incomplete; current receipts and remaining F1
-work belong to implementation-plan. The current hole surface accepts Text or
+Formatting is profile-scoped and incomplete. The current hole surface accepts Text or
 sized Display implementors. Current float formatting uses shortest round-trip
 digits, plain positional notation, `NaN`/`inf` and `-0`, without libc;
 `Spec.precision` does not yet apply to floats. Format specifiers, Debug holes,
@@ -766,7 +702,7 @@ remain available separately, and no invalid Text or lossy String conversion is
 constructed.
 
 Windows storage, sink dispatch and output expectations are target prerequisites,
-not established support (implementation-plan §8.7, R2).
+not established support.
 
 ## 13. Hosted task scopes and networking
 

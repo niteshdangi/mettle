@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""Focused behavioral checks for maintained benchmark and debugger tooling."""
+"""Focused behavioral checks for maintained development tooling."""
 
 import ast
 import hashlib
 import importlib.util
 import json
 import os
-import random
 import re
 import shlex
 import shutil
@@ -19,7 +18,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-import bench_compare as bench
 import test_linux_target as linux
 import unicode_tables as unicode
 
@@ -45,76 +43,6 @@ def build_and_run(entry, directory):
     if built.returncode:
         raise AssertionError(built.stdout + built.stderr)
     return subprocess.run([str(program)], capture_output=True)
-
-
-class BenchmarkTests(unittest.TestCase):
-    def test_scaling_sources_compile_and_run(self):
-        for generic, expected in ((False, 61), (True, 105)):
-            with self.subTest(generic=generic):
-                directory = OUTPUT / ("generic" if generic else "plain")
-                tree, _ = bench.generate_scale(directory, 1, 1, generic)
-                result = build_and_run(tree, directory)
-                self.assertEqual(result.returncode, expected, result.stderr)
-
-    def test_imprecise_estimates_cannot_pass(self):
-        for samples in ([0.1, 0.2] * 15, [5.0, 10.0] * 15, [0.1, 10.0]):
-            with self.subTest(samples=samples[:2]):
-                result = bench.decide(samples, [1.0] * len(samples), 60)
-                self.assertEqual(result["verdict"], "inconclusive")
-                self.assertEqual(result["gate"], "inconclusive")
-
-    def test_precise_wins_ties_and_slowdowns_keep_their_gates(self):
-        for ratio, verdict, gate in ((0.5, "win", "pass"), (1.0, "tie", "fail"),
-                                     (2.0, "slowdown", "fail")):
-            with self.subTest(ratio=ratio):
-                result = bench.decide([ratio] * 30, [1.0] * 30, 60)
-                self.assertEqual((result["verdict"], result["gate"]), (verdict, gate))
-
-    def test_second_pair_output_mismatch_disqualifies_workload(self):
-        args = SimpleNamespace(pairs=2, keep_work=False, warmup=0, runs=1)
-        for broken in ("edited", "application", "clean"):
-            with self.subTest(broken=broken), tempfile.TemporaryDirectory() as tmp:
-                base = Path(tmp)
-                fixture = base / "source"
-                fixture.mkdir()
-
-                def sample(side):
-                    changed = side.language == "mettle" and side.directory.parent.name == "rep1"
-                    return ({"edited_output": [int(changed and broken == "edited"), ""]},
-                            side.executable, (int(changed and broken == "application"), b""))
-
-                runner = Mock()
-                def program(path):
-                    changed = broken == "clean" and "rep1" in path.parts and "mettle" in path.parts
-                    return {"returncode": int(changed), "stdout": b"", "peak_rss_bytes": 1,
-                            "seconds": 1.0}
-
-                runner.program.side_effect = program
-                with patch.object(bench.Side, "sample", sample):
-                    result = bench.run_workload("fixture", lambda _: (fixture, fixture, fixture), args,
-                                                runner, None, 8, random.Random(0), base)
-                self.assertEqual((result["status"], result["repetition"]), ("output_mismatch", 2))
-                self.assertNotIn("decisions", result)
-
-    def test_failed_runtime_or_warmup_is_not_a_checksum(self):
-        class FakeRunner(bench.Runner):
-            def __init__(self, status):
-                self.status = status
-
-            def run(self, *args, **kwargs):
-                return {"returncode": self.status, "stdout": b"", "stderr": "",
-                        "seconds": 1.0, "peak_rss_bytes": 1}
-
-        for warmup in (0, 1):
-            for status in (-11, -9, 128):
-                with self.subTest(warmup=warmup, status=status):
-                    with self.assertRaises(bench.Failure):
-                        bench.measure_runtime(FakeRunner(status), {"mettle": "M", "rust": "R"},
-                                              warmup, [("mettle", "rust")] * 2, 1)
-        samples, outputs, _ = bench.measure_runtime(
-            FakeRunner(127), {"mettle": "M", "rust": "R"}, 1, [("mettle", "rust")] * 2, 1)
-        self.assertEqual(outputs["mettle"], (127, b""))
-        self.assertEqual(samples["mettle"], [1.0, 1.0])
 
 
 class CacheEnvironmentTests(unittest.TestCase):

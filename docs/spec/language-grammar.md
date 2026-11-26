@@ -2,8 +2,7 @@
 
 Status: selected full-language grammar; section 14 holds the core-subset
 conventions it extends. Extended alternatives apply to the same syntax; subset
-omissions describe sequencing, not reduced V1 scope. Implementation evidence:
-[implementation-plan.md](../process/implementation-plan.md) §8.7.
+omissions describe sequencing, not reduced V1 scope.
 
 ## 1. Lexical completion
 

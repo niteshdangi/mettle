@@ -1,7 +1,7 @@
 # Platform and feature contracts
 
-Status: selected profiles and qualification gates. Support evidence is recorded
-in [implementation-plan.md](../process/implementation-plan.md).
+Selected profiles and qualification requirements. A profile is supported only
+after its applicable compiler, runtime and ABI checks pass on that target.
 
 ## 1. Target profile selection
 

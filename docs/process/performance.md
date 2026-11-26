@@ -12,16 +12,19 @@ Decisions D16-D17 require better readability and three measured release gates:
 - **Retained build-cache bytes** must beat the frozen Rust/Cargo baseline for the
   same workloads and build states (section 5.1).
 
+The frozen performance comparator is Rust 1.99.1, edition 2024. Record the
+actual compiler and Cargo identities with each measurement.
+
 Apply section 4 on a qualified runner. Report compiler/program RSS, allocations
 and binary size; they have no equality gates, but unacceptable growth must be
 visible. No slowdown allowance or cross-workload compensation applies; the
 former 10-percent investigation threshold is superseded.
 
-Owner selection (2026-11-26): dedicated WSL2 is the Linux runner for I14
+Owner selection (2026-11-26): dedicated WSL2 is the Linux runner for release
 qualification; a separate physical Linux installation is not required. Keep
 measured inputs, toolchains, caches, outputs and process working directories on
-the WSL Linux filesystem. The comparison harness defaults timed commands to its
-output directory rather than inheriting the caller's working directory.
+the WSL Linux filesystem. Run timed commands from their output directory
+rather than an unrelated caller's working directory.
 Exclude competing host and guest work during measurement blocks, and record
 the host/guest configuration. Section 4's per-workload decisions and fixed
 sampling requirements still apply. Earlier WSL pilot results do not
@@ -44,7 +47,7 @@ all Rust runs followed by all Mettle runs. Separate cold-start workloads from
 steady-state workloads. Never remove inconvenient results after inspecting which
 language lost; annotate infrastructure failures using predeclared rules.
 
-## 3. Initial workload backlog
+## 3. Workloads
 
 | ID | Workload | Primary evidence |
 | --- | --- | --- |
@@ -61,18 +64,10 @@ language lost; annotate infrastructure failures using predeclared rules.
 | P11 | C callback/buffer bridge | Call and translation overhead with equivalent contracts |
 | P12 | Compiler bootstrap workload | Runtime of produced compiler, distinct from time to build it |
 
-P01 can start at M1; later workloads begin only when their required capabilities
-exist. Passing the early subset is not passing the V1 runtime gate.
+Run workloads only when their required capabilities exist. Passing an early
+subset is not passing the V1 runtime gate.
 P12 becomes applicable when a comparable compiler workload exists; do not compare
 different compiler algorithms as if they were identical generated-code tests.
-
-`tools/run_p01.py` begins P01 using equivalent signed-i32 xorshift reductions
-with matching overflow policy and generic CPU selection. An independent Python
-calculation checks each exit checksum. It records compiler elapsed time/process
-peak RSS, sources/binaries and six randomized pairs per size in `build/p01/`.
-These include process startup and use one uncontrolled shared-host session.
-This is engineering evidence only. Record the actual Rust version; anything
-other than frozen 1.99.1 cannot qualify release comparison.
 
 ## 4. Decision rule
 
@@ -116,8 +111,8 @@ permits accepting a known systematic regression.
 
 A runtime tie requires evidence of matching performance, not merely bounds
 overlapping parity; a compile-time tie does not satisfy "beat".
-The comparison harness reuses the same source and
-output paths across repetitions, with fresh build directories each time, so
+Reuse the same source and output paths across repetitions, with fresh build
+directories each time, so
 path-dependent cache identities do not masquerade as storage instability.
 
 Investigate failures in semantics, algorithm, data layout, library implementation,
@@ -134,7 +129,7 @@ binary/debug-info size, retained build-cache bytes and bootstrap stages.
 Compiler time and produced-program runtime are separate metrics; self-hosting or
 backend ownership implies no speedup.
 
-On Linux, the comparison harness uses GNU time for command peak RSS rather than
+On Linux, use GNU time for command peak RSS rather than
 Python's `wait4` RSS, which can include the parent's pre-exec high-water mark.
 Elapsed time includes the same measurement helper on both sides.
 
@@ -192,8 +187,8 @@ compiler or bundled library, even when `BUILD_TESTING=OFF`. This places the
 store where that compiler looks for it. The producer seals each newly
 published large archive against its file identity. Consumers reuse that
 verification across project caches; copying or modifying the archive
-invalidates the seal and requires normal verification. The comparison harness rejects
-native-library source fallback instead of timing it as application compilation.
+invalidates the seal and requires normal verification. Reject native-library
+source fallback instead of timing it as application compilation.
 
 The user build cache is built to retain less than Cargo's `target/` directory:
 
@@ -289,23 +284,21 @@ guard incomplete; no unqualified substitute is allowed.
 For generated suffix, projection and builder families at N, 2N, 4N and 8N, require
 successive instruction growth of at most **2.2x** after fixed setup is amortized,
 and record parser visits and solver constraint steps to locate repeated work.
-Include the two exhibit programs of implementation-plan section 8.7 and
-generic-heavy code. These budgets are regression guards on top of, not
+Include representative formatted-I/O, path/collection and generic-heavy
+programs. These budgets are regression guards on top of, not
 substitutes for, the section 5.1 gate. Wall time, RSS, code size and
 allocations remain reported; no hard 5% elapsed-time gate applies on a loaded
 development machine.
 
-### 5.3. D17 comparison harness
+### 5.3. Application comparisons
 
-`tools/bench_compare.py` builds each paired workload from `benchmarks/<name>/`
+Build paired workload sources from `benchmarks/<name>/`
 (Mettle `main.mt` and Rust `Cargo.toml`/`src/main.rs`) with
 `mettle build --standalone --profile release --overflow-checks off --cache-dir <fresh>` and
 `cargo build --release --offline` (fresh `CARGO_TARGET_DIR` and `CARGO_HOME`, no
-dependencies, `CARGO_INCREMENTAL=0`). Options and output format are documented
-by the tool's `--help`. Workloads cover the P01-P06 subsets the compiler
-supports; P07-P12 are added when comparable. Programs return a 7-bit checksum
-as exit status; the harness requires equal status and stdout from both
-languages for the clean and the semantically edited build.
+dependencies, `CARGO_INCREMENTAL=0`). These sources cover P01-P06.
+Programs return a 7-bit checksum as exit status; require equal status and stdout
+from both languages for the clean and the semantically edited build.
 Check-only measurements use a separate fresh cache/target directory on both
 sides, with release profile and overflow checks off. Mettle runs standalone so
 child-process wall time and RSS include the compiler and no resident endpoint
@@ -317,9 +310,9 @@ binary directly with its bundled library configured as the default; a shell
 launcher adds process overhead, and `--library-dir` selects editable-library
 invalidation instead of the shipped selector. Application check and build start
 from separate empty project caches and share only the shipped toolchain store.
-Every pair compares both application executables with the clean build outputs
-and checks the semantic edit. Unchanged output makes the semantic-edit timing
-inconclusive. Source hashes and the build and runtime orders are recorded for
+Compare both application executables with the clean build outputs
+and check the semantic edit. Unchanged output makes the semantic-edit timing
+inconclusive. Record source hashes and the build and runtime orders for
 each workload.
 Native compiler builds generate a builtin method-name index from the bundled
 core modules, usable on the first application check when all indexed source
@@ -344,8 +337,8 @@ executable; Cargo's are the whole `target/`. Time endpoints use section 4
 endpoints). Runtime and compile-time metrics require a win. Byte metrics compare
 medians and require stability within one percent.
 Without a qualified runner, 30 pairs and the frozen Rust toolchain the report is
-an engineering signal only. The section 5.2 instruction counters are not
-collected by this harness.
+an engineering signal only. Collect the section 5.2 instruction counters
+separately.
 
 ### 5.4. Debug-build compile-time work
 
@@ -355,41 +348,10 @@ sanitizer instrumentation still runs in debug emission. Selector changes need
 measured evidence across supported targets. Every symbolic body, including
 unused declarations, must still be checked.
 
-### 5.5. Front-end work items from the 2026-11-14 profile (I14)
-
-Pilot measurements (WSL2, loaded machine, indicative only; repeat under the
-section 5.1 protocol before claiming a result). A program importing only
-`std.io`, no build cache, took about 21 s in the front end; importing `core`
-only, about 7 s; an empty program, about 2 s. With the checked-library cache
-warm, a small test builds in about 2.4 s. Stack sampling of the 21 s case (ten
-interrupted runs, one per 2 s mark; proportions are approximate) showed, in
-order: SHA-256 hashing of the library sources and archive preparation (first
-~6 s), interface-implementation coherence over the whole library
-(`Solver::coherent`, ~6-10 s), IR verification (~12 s), and borrow/loan
-analysis (`analysis::loans`, ~14-16 s). LLVM codegen and linking added about
-0-4 s. The library does not change between builds, yet each pass re-runs over
-it. These are I14 compile-time gate candidates, not V1 behavior changes; each
-must keep every symbolic body checked (section 5.4).
-
-| Item | Work | Acceptance |
-| --- | --- | --- |
-| I14-C1 | Library input hashing: stop re-reading and software-hashing the whole library per invocation. Keep the cache-key semantics (library contents, path, compiler identity and the flags in `library_cache.cpp`) but obtain the content identity from a size/mtime-validated manifest and use hardware SHA where available. | Same keys for same inputs; changed content still invalidates; cold and warm wall time before/after |
-| I14-C2 | Coherence: store the library-only coherence result in the checked-library archive; per build check only the program's implementations against the library and each other. | Identical diagnostics on overlap, orphan and conflicting-implementation fixtures; wall-time delta |
-| I14-C3 | IR verification and loan/origin analysis of library functions: record the verified/analyzed result in the archive keyed by library contents and reuse it, instead of re-running per build. Do not skip any body. | Same diagnostics and unwind/cleanup behavior; wall-time and peak-RSS delta |
-
-Pilot, 2026-11-15 (WSL2, release `std` program, cold cache, indicative only):
-front-end check 281 s to 76 s after `propertyBound` stopped rescanning the
-module per property; warm build 437 s to 58 s once the cache budget held one
-740 MiB library set (now unbounded). Remaining warm-build profile: LLVM codegen
-~49%, SHA-256 ~13% (I14-C1), library mount ~11%, specialization ~12%.
-
-Record raw before/after results in the I14 evidence bundle; a faster result
-does not offset a regression in retained cache bytes (section 5.1).
-
 ## 6. V1 / V1.1 / V1.2 evidence
 
-V1 requires the audited capability denominator, supported-profile probes, semantic
-corpus, tooling workflows, and the runtime, compile-time and build-storage gates. Publish known limitations without
+V1 requires supported-profile probes, the semantic corpus, tooling workflows,
+and the runtime, compile-time and build-storage gates. Publish known limitations without
 reclassifying missing promised capabilities as completed.
 
 V1.1 additionally requires a substantive self-hosted compiler, repeatable staged

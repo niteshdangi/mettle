@@ -4,15 +4,13 @@ Status: selected platform-operation contracts. This companion to
 [native hosted contracts](native-hosted-contracts.md) specifies resource transfer
 and platform extension families without implying that their implementations
 exist on every selected profile. Deprecated and experimental APIs are excluded.
-Frozen identities, signature types and actual target predicates are in the
-nondeprecated stable records of `baseline/operations.jsonl.gz`; behavioral rules
-are native here. Reexports in `prelude`, `unix.io` and `wasi.io` preserve identity,
+Native declarations and these contracts define identities, signatures and
+target conditions. Reexports in `prelude`, `unix.io` and `wasi.io` preserve identity,
 not independent resource types.
 
 V1 gate: only Linux (and the portable core of each family) is exercised for V1.
-Sections specific to Windows, macOS, Android, WASI or other profiles are
-post-V1 obligations ([post-v1-worklist.md](../process/post-v1-worklist.md)); they define
-contracts but are not V1 acceptance requirements.
+Sections specific to Windows, macOS, Android, WASI or other profiles define
+contracts, not established target support.
 
 ## 1. Platform applicability and common rules
 
@@ -144,7 +142,7 @@ operation error retaining its raw code, never fallback to an ambient unrestricte
 host path. Path traversal, absolute-path handling and preopen lookup remain
 confined to the selected WASI/libc capability resolver.
 
-The frozen stable surface does not expose a WASI rights-mask setter or an
+The native surface does not expose a WASI rights-mask setter or an
 OpenOptions right-selection protocol. Its libc-backed opening does not promise
 one exact minimal numeric rights mask. The contract is sufficient rights for
 the requested supported operation, bounded by the rights actually granted;
@@ -382,7 +380,7 @@ handle can keep the kernel thread object alive without keeping it running or
 granting access to a Mettle result. Raw extraction does not make a non-Static
 thread safe to outlive its borrowed data.
 
-## 8. C aliases, evidence and explicit limits
+## 8. C aliases and platform boundaries
 
 `std.os.raw` C scalar aliases and Windows raw aliases retain the target C ABI
 width, signedness and identity. They are not selected from the build host's C++
@@ -396,60 +394,12 @@ and Linux abstract/quickack sockets; Unix/Windows process setup/status; Unix and
 Windows thread-resource transfer; and target C aliases. Generic inherited
 operations are not independently redefined here.
 
-Unclosed details requiring explicit assignment rather than inference:
-
-- Exhaustive source-record reconciliation, including platform-specific auto/
-  implementation relations, constants and less common aliases, is not supplied
-  by a list of family names.
-- Windows verbatim/device-path grammar and ordinary/batch Command encoding are
-  specified by native-hosted-contracts sections 4.3 and 6.3.
-- Sections 2.1–2.2 and 7 specify inheritance, rights, credential order and
-  pthread result cleanup. Profile probes must still establish stat layout/field
-  widths, flag availability and that each adapter enforces those contracts;
-  missing execution is not an unspecified ownership or rights rule.
-- `wasi32` selects Preview 1 only. A `wasip2` namespace or an archive page for
-  another OS does not select new runtime imports or additional profiles.
-
-### 8.1. Integration selectors
-
-Within the nondeprecated stable catalog, sections 2–7 target these operation
-owners and their explicitly described members:
-
-| Catalog selector | Section |
-| --- | --- |
-| `std::os::fd::{AsFd,AsRawFd,FromRawFd,IntoRawFd,BorrowedFd,OwnedFd}` and canonical Unix/WASI reexports | 2 |
-| `std::os::windows::io::{AsHandle,AsRawHandle,FromRawHandle,IntoRawHandle,BorrowedHandle,OwnedHandle,AsSocket,AsRawSocket,FromRawSocket,IntoRawSocket,BorrowedSocket,OwnedSocket,HandleOrNull,HandleOrInvalid}` | 2 |
-| `std::os::{unix,wasi}::ffi::{OsStrExt,OsStringExt}`; `std::os::windows::ffi::{OsStrExt,OsStringExt,EncodeWide}` | 3 |
-| `std::os::unix::fs::{OpenOptionsExt,PermissionsExt,MetadataExt,FileTypeExt,DirEntryExt,FileExt,DirBuilderExt}` and `{symlink,chown,lchown,fchown,chroot}` | 4 |
-| `std::os::{linux,darwin}::fs::MetadataExt`; `std::os::darwin::fs::FileTimesExt` | 4 |
-| `std::os::windows::fs::{OpenOptionsExt,FileExt,MetadataExt,FileTypeExt,FileTimesExt,symlink_file,symlink_dir}` | 5 |
-| `std::os::unix::net::{SocketAddr,UnixStream,UnixListener,UnixDatagram,Incoming}`; `std::os::linux::net::{SocketAddrExt,TcpStreamExt}` | 6 |
-| `std::os::unix::process::{CommandExt,ExitStatusExt,ExitStatusErrorExt,parent_id}`; `std::os::windows::process::{CommandExt,ExitStatusExt}` | 7.1–7.2 |
-| `std::os::unix::thread::JoinHandleExt`; Windows thread handle relations | 7.3 |
-| `std::os::raw` and `std::os::windows::raw` target C aliases | 8 |
-
-Each member must still be matched to its actual declaration, target condition
-and native receiver/ownership mode. The table does not assign arbitrary
-inherited iterator/conversion methods or every operation under those prefixes.
-
-The bounded adapter follow-up additionally fixes the contract of:
-
-- `OwnedFd::try_clone`, `BorrowedFd::try_clone_to_owned`, and descriptor-backed
-  `File::try_clone`, socket/pipe clones: section 2.1 defaults, section 2.2 WASI
-  unsupported duplication, preserving each operation's actual availability.
-- Windows `OwnedHandle::try_clone`, `BorrowedHandle::try_clone_to_owned`,
-  `OwnedSocket::try_clone`, `BorrowedSocket::try_clone_to_owned` and resource
-  clones through those boundaries: section 2.1 noninheritance; section 2's
-  provenance-sensitive null/pseudo-handle rules.
-- Native file/pipe/socket construction, raw borrow/wrap/transfer members, and
-  `Command::{spawn,status,output}` standard-stream setup: sections 2–2.2,
-  distinguishing default flags from foreign-configured inheritable state.
-- `std::os::unix::process::CommandExt::{uid,gid,pre_exec,exec,process_group}`:
-  section 7.1 ordering, EPERM-only supplementary-group exception and partial
-  effects; no newly stabilized credential APIs.
-- `std::os::unix::thread::JoinHandleExt::{as_pthread_t,into_pthread_t}`:
-  section 7.3 native join/detach obligation versus separately cleaned Mettle
-  result/panic packet.
+Windows verbatim/device-path grammar and ordinary/batch Command encoding are
+specified by native-hosted-contracts sections 4.3 and 6.3. Sections 2.1-2.2 and
+7 specify inheritance, rights, credential order and pthread result cleanup.
+Profile probes establish stat layout/field widths, flag availability and
+adapter behavior; missing execution is not an unspecified ownership rule.
+`wasi32` selects Preview 1 only; a namespace does not select new runtime imports.
 
 Primary OS authorities for platform effects are the
 [POSIX system interfaces](https://pubs.opengroup.org/onlinepubs/9799919799/functions/contents.html),

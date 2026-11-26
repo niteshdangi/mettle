@@ -245,10 +245,8 @@ clobber registers before all inputs are consumed; late outputs promise otherwise
 Register conflicts, reserved registers, and operand type/class mismatches are
 compile-time errors.
 
-Use the frozen baseline's supported per-target register names/classes and
-template-modifier tables as the initial instruction-interface inventory. These
-are target facilities. Record deviations in
-the target manifest; do not silently omit a promised stable target operation.
+Register names/classes and template modifiers are target facilities defined
+by the native assembly interface. Reject unsupported combinations explicitly.
 
 Supported options have explicit contracts: nomem, readonly, preserves_flags,
 nostack, noreturn, pure, raw, and target syntax selection. pure requires nomem or
@@ -262,14 +260,11 @@ have no compiler-created frame/prologue/epilogue and must implement the declared
 ABI themselves. Assembly that unwinds needs an explicitly supported unwind form
 and target metadata; ordinary inline assembly cannot unexpectedly unwind.
 
-## 6. Versioned baseline incorporation
+## 6. Native operation contracts
 
-Frozen instruction/register tables, target C ABI facts and per-operation
-contracts remain normative input for unmigrated operations under
-[baseline-mapping.md](../process/baseline-mapping.md). Operations assigned to a standalone
-native specification in its section 7 use that specification as authority;
-their frozen records remain audit provenance.
-Conflicts with native rules reopen mapping; incorporation is not qualification.
+The native library and machine specifications define operation behavior.
+Target C ABI facts follow the selected platform ABI. External API inventories
+do not supply missing native contracts or establish target qualification.
 
 ## 7. Coherence, erasure and opaque types
 

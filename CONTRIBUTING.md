@@ -7,13 +7,9 @@ component targets and dependencies.
 The [language specifications](docs/spec/semantic-rules.md) define behavior;
 implementation convenience does not override them.
 
-For milestone work, follow the
-[execution gates](AGENTS.md#milestone-execution-gates): inventory the complete
-scope before compiler edits, batch shared-interface changes, and separate
-focused implementation checks from frozen-source qualification.
-
-Until self-hosting (I15), limit C++ compiler changes to what V1 requires; see
-the [C++ compiler scope](docs/process/implementation-plan.md#8-delivery-milestones).
+Batch dependent shared-interface changes coherently and run focused checks for
+the affected behavior. Until substantive self-hosting, limit C++ compiler changes
+to V1-required features, correctness/soundness fixes and measured performance work.
 
 ## Local checks
 
@@ -40,8 +36,8 @@ also run standalone CTest. Repeat static analysis in another configuration only
 when its changed definitions or sources require it.
 The [quality standard](docs/process/code-quality.md#5-unsafe-memory-and-concurrency)
 owns sanitizer requirements and the toolchain compatibility decision.
-The Linux host qualification gate and historical macOS evidence scopes are in
-[implementation-plan section 8.0](docs/process/implementation-plan.md).
+The gated compiler host and target are Linux x86-64, native or WSL2.
+Historical macOS results do not qualify a Linux host.
 
 Cross-target/backend changes also require the existing Linux source runner:
 
@@ -52,7 +48,7 @@ python3 tools/test_linux_target.py --source
 Start the dedicated VM first and stop it after dependent work; see the
 [README](README.md) for the complete runner commands.
 
-## Change checklist
+## Changes
 
 Use existing runners and the
 [compiler test categories](docs/process/code-quality.md#6-diagnostics-and-behavioral-tests);
@@ -64,8 +60,6 @@ each regression must guard meaningful behavior.
   unimplemented or unqualified work explicitly.
 - Update affected specifications/examples when changing a contract.
 - Check safety, cleanup, evaluation order, arithmetic policy and compatibility.
-- Keep generated baseline data separate from authored/native implementation.
-  Regenerate only through its mapping/audit logic; preserve reference provenance.
 - Do not claim runtime parity from the engineering P01 experiment.
 
 There is no selected project publication license and no hosted CI service is

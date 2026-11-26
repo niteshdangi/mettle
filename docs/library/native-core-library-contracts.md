@@ -1357,49 +1357,21 @@ constant call must meet the same preconditions as runtime. No arbitrary
 callback, destructor, allocation, erased dispatch or Clone implementation
 becomes const-callable by appearing in this document.
 
-For an operation whose runtime semantics are specified here, the local
-catalog's stable constant-callability flag is native eligibility metadata
-under T08. Such a call evaluates using the native value, arithmetic, region,
-initialization and memory rules alone; it requires neither another language's
-evaluator nor its documentation. The flag preserves eligibility, not permission
-to perform otherwise-invalid constant effects. Eligibility does not arise merely
-because an implementation can fold a call. A runtime member not
-specified here remains unmigrated regardless of whether that flag is stable.
+Constant-callability must be specified by the native operation contract.
+Such a call evaluates using native value, arithmetic, region, initialization
+and memory rules alone; it requires neither another language's evaluator nor
+its documentation. Eligibility does not permit otherwise-invalid constant
+effects and does not arise merely because an implementation can fold a call.
 
-### 15.2. Native authority boundary
-
-The covered runtime groups are:
-
-| Native/source family | Covered members |
-| --- | --- |
-| `core.cmp`, `clone`, `default`, `convert`, `borrow`, `hash`, `error` | Protocol operations and structural/primitive implementation behavior in section 2; error sources and checked downcasts |
-| Integer/bool/char/f32/f64 primitives, `core.num`, `core.ascii` | Explicit section 3 helpers, named NonZero helpers/numeric wrappers, constants, parse/escape behavior |
-| `core.text` (source `str`) | UTF-8/view/search/split/trim/scalar/byte/encoding/escape groups in section 4 |
-| `core.slice`, arrays | Projection/chunks/windows/splits/disjoint/movement/search/order/construction/iteration groups in section 5 |
-| `core.iter` | Protocols, listed constructors/adapters/consumers, FromItems/ExtendItems and selected short-circuit collection |
-| Source `core.option`/`core.result` Iter, IterMut, IntoIter | Zero-or-one next/next_back/size_hint/len/fused behavior, owned cleanup and the stated Clone eligibility; inherited consumers/adapters retain their own bounds |
-| `core.ptr`, `mem`, `cell`, `pin`, marker properties | Explicit section 9/10 runtime operations and invariants |
-| `core.ops`, source `range` | Listed operators, bounds, sealed scalar iteration and ControlFlow |
-| `core.fmt`, `any`, `hint` | Listed protocols, builders, type checks and optimizer hints |
-| `core.future/task`, `sync.atomic` | Listed poll/waker and target-supported atomic families |
-| `core.ffi`, `alloc.ffi` reexports | CStr/foreign scalar/variadic rules here and CString in the collection document |
+### 15.2. Contract boundary
 
 A protocol law applies to all of its implementation members, but does not
 invent an absent implementation or erase its declared bounds. Separate
 type-specific operations are covered only by an explicit group above.
 Public reexports preserve one identity and one contract.
 
-The following are concrete limits to complete core/alloc retirement:
-
-- Newly added or uncommon members not named or semantically grouped here
-  (including numeric-buffer formatting extensions, newer peek/initialization
-  helpers and spare-storage writers other than write_copy_of_slice) require
-  member-specific reconciliation before assignment.
-- `core.io` byte-I/O adapters, `core.net` address methods and `core.time.Duration`
-  require their own native operation authority; a std reexport alone does
-  not define them. Hosted contract specifications may supply that shared
-  authority. No socket/thread/clock semantics are imported into core here.
-- Complete generated derive/auto-property/implementation-member and
-  compiler-facility coverage is not established by this document.
-  Unsupported target/compiler features remain implementation gaps rather
-  than changing the language or library contracts.
+Unlisted operations require their own native contracts. Hosted specifications
+may define shared byte-I/O, address and Duration behavior; a std reexport alone
+does not define it or import OS services into core.
+Unsupported target/compiler features remain implementation gaps rather than
+changing the language or library contracts.

@@ -5,23 +5,18 @@ profiles remain obligations after V1; absence of a service on a profile does not
 remove that profile or make a valid operation invalid on another profile.
 
 V1 gate: only Linux (and the portable core of each family) is exercised for V1.
-Sections specific to Windows, macOS, Android, WASI or other profiles are
-post-V1 obligations ([post-v1-worklist.md](../process/post-v1-worklist.md)); they define
-contracts but are not V1 acceptance requirements.
+Sections specific to Windows, macOS, Android, WASI or other profiles define
+contracts, not established target support.
 
 ## 1. Scope, signatures and effects
 
 This document owns the hosted behavior of `std.io`, OS strings, paths, files,
 environment, processes, clocks, threads, TLS, locks, channels and networking.
 [Native OS contracts](native-os-contracts.md) own platform extensions and raw
-resource transfers. Canonical identities, generic bounds, exact overloads,
-stable const-callability and target predicates are identified by the
-nondeprecated records in `baseline/operations.jsonl.gz`, translated by
+resource transfers. Native declarations and the contracts below define operation
+identities, bounds, overloads and target conditions under
 [library-surface sections 2–3](library-surface.md#2-recursive-translation-rules).
-The catalog identifies operations; it is not the behavioral authority for the
-families specified here. Deprecated records are excluded, including deprecated
-members of otherwise retained types. A stable parent does not admit an
-experimental child.
+A stable parent does not admit experimental members.
 
 Signatures below use `read`, `mut` and `take` for access and ownership;
 `Outcome<X, E>` denotes the stored outcome as well as the declared failure of a
@@ -1059,11 +1054,11 @@ loopback address is not the IPv6 loopback value `::1`.
 All these queries borrow their receiver, allocate nothing, cannot fail or
 panic on a valid address, and use O(1) work/storage.
 
-The pinned catalog marks `is_global`, `is_benchmarking`, IPv4 `is_shared`/
+`is_global`, `is_benchmarking`, IPv4 `is_shared`/
 `is_reserved`, IpAddr/IPv6 `is_documentation`, IPv6 `is_unicast`/
-`is_unicast_global`/`is_ipv4_mapped` and multicast-scope facilities experimental.
-They are not stable migration gaps and are not admitted by a stable address
-type or by the presence of their implementation in the source archive.
+`is_unicast_global`/`is_ipv4_mapped` and multicast-scope facilities are not
+selected by these contracts. A stable address type does not implicitly admit
+additional queries.
 
 #### Canonicalization, conversions and bitwise operations
 
@@ -1233,7 +1228,7 @@ WASI networking, remote-worker borrowed scopes or any particular Linux reactor.
 An adapter must meet these ownership/wakeup contracts and the profile imports
 before its service can be claimed.
 
-## 10. Coverage boundary and remaining receipts
+## 10. Contract boundary
 
 This document supplies family behavior for the signatures explicitly grouped
 in sections 3–9, including native aliases and reexports of those same identities.
@@ -1242,70 +1237,7 @@ owners; appearing on a hosted type's documentation page is not a second hosted
 implementation obligation. OS-specific members are assigned separately by
 native-os-contracts.
 
-These are concrete limits, not permissions to discard frozen capabilities:
-
-1. A per-canonical-operation reconciliation must still identify every eligible
-   overload, implementation relation, target predicate and stable const member
-   against these sections and the other native owners. This prose alone is not
-   evidence that every record was assigned or verified.
-2. The exact stable IP classification tables, conversions and selected bitwise
-   operations are specified in section 9.1. Experimental registry queries are
-   excluded rather than left as stable migration gaps. This does not select
-   every operator/conversion merely because it appears on an address page.
-3. Windows component rules and ordinary/batch argument encoding are specified
-   in sections 4.3 and 6.3. Uncommon platform error-code classification tables
-   still need per-operation reconciliation; raw code retention alone does not
-   specify every portable classification.
-4. WASI recursive-deletion race resistance, Windows console/overlapped I/O,
-   Linux/Android/macOS reactor adapters, all-profile thread/TLS teardown and
-   process inheritance require profile-specific implementation/evidence.
-   Missing OS imports are explicit capability limits, not optional removal of
-   the eight-profile plan.
-5. Debug is governed by section 1's diagnostic-format contract, not an invented
-   stable output-byte obligation. Specialized members outside the explicit
-   selectors still require their own contracts.
-
-### 10.1. Operation selectors for integration
-
-Selectors use catalog reference paths solely to identify the native operations.
-Apply `runtime_stability == stable`, `deprecated == false` and the actual
-availability predicate before selecting. A `Type.*` below denotes the explicitly
-described inherent/interface members of that type, not every inherited method,
-implementation relation, associated constant or undocumented future member.
-
-| Catalog selector | Native contract location |
-| --- | --- |
-| `std::io::{Read,Write,BufRead,Seek}::{read,read_vectored,read_exact,read_to_end,read_to_string,write,write_vectored,write_all,flush,write_fmt,fill_buf,consume,read_until,read_line,skip_until,lines,split,seek,rewind,stream_position,seek_relative,by_ref,bytes,chain,take}` where actually declared | Sections 3.2–3.3; formatted output delegates to library-surface section 10 |
-| `std::io::{Error,IoSlice,IoSliceMut,BufReader,BufWriter,LineWriter,Cursor,Chain,Take,Bytes,Empty,Repeat,Sink,IntoInnerError,WriterPanicked}` described members | Sections 3.1–3.3 |
-| `std::io::{copy,empty,repeat,sink,read_to_string,stdin,stdout,stderr,pipe}` and described standard-stream/pipe members | Sections 3.2–3.4 |
-| `std::ffi::{OsStr,OsString}` and `std::path::{Path,PathBuf,Components,Ancestors,Iter}` described members; `std::path::{absolute,is_separator}` | Sections 4.1–4.3 |
-| `std::fs::{File,OpenOptions,Metadata,Permissions,FileType,FileTimes,DirBuilder,ReadDir,DirEntry}` described members and all free filesystem functions explicitly listed in section 5 | Section 5 |
-| `std::env::{args,args_os,var,var_os,vars,vars_os,set_var,remove_var,split_paths,join_paths,current_dir,current_exe,set_current_dir,temp_dir,home_dir}` | Section 6.1 |
-| `std::process::{Command,Child,ChildStdin,ChildStdout,ChildStderr,Stdio,Output,ExitStatus,ExitStatusError,ExitCode,Termination}` described members; `std::process::{id,exit,abort}` | Sections 6.2–6.3 |
-| `core::time::Duration` and `std::time::Duration` named constructors/queries/arithmetic in section 7.1, including `TryFromFloatSecsError`; `std::time::{Instant,SystemTime,SystemTimeError}` described members | Section 7; Debug follows section 1 |
-| `std::thread::{spawn,scope,current,available_parallelism,sleep,yield_now,park,park_timeout,panicking}` and described Builder/Thread/ThreadId/JoinHandle/Scope/ScopedJoinHandle/LocalKey members | Sections 8.1–8.2 |
-| `std::sync::{Mutex,RwLock,Condvar,Barrier,Once,OnceLock,LazyLock}` and their described guards/poison/wait-result members; `std::sync::mpsc` send/receive/iterator families | Sections 8.3–8.4 |
-| `std::net::{TcpStream,TcpListener,UdpSocket,ToSocketAddrs}` described members; `core::net`/std address constructors, parsing, field access/mutation, octet/segment/integer conversion | Section 9; explicit additional selectors below |
-| Native `std.task` readiness/timers, AsyncTcpListener/AsyncTcpStream and scope operations | Section 9.3 plus existing library-surface section 13 and library-and-abi section 1; not new catalog identities |
-
-This table is a review selector, not permission to assign whole module/type
-prefixes mechanically. In particular no `std::*`, `core::net::*` or
-`std::os::*` blanket migration is established.
-
-Additional precise selectors closed by sections 4.3, 6.3 and 9.1 follow.
-Address selectors apply to the canonical `core::net` definitions and matching
-`std::net` reexports, not independently defined address types.
-
-| Member selector | Contract |
-| --- | --- |
-| `IpAddr::{is_ipv4,is_ipv6,is_unspecified,is_loopback,is_multicast,to_canonical}` | Exact stored-variant tests and mapped-only canonicalization |
-| `Ipv4Addr::{is_unspecified,is_loopback,is_private,is_link_local,is_broadcast,is_multicast,is_documentation,to_ipv6_compatible,to_ipv6_mapped,to_bits,from_bits}` | Exact tables and conversions in section 9.1 |
-| `Ipv6Addr::{is_unspecified,is_loopback,is_multicast,is_unique_local,is_unicast_link_local,to_ipv4,to_ipv4_mapped,to_canonical,to_bits,from_bits}` | Exact tables and conversions in section 9.1 |
-| Ipv4Addr/Ipv6Addr implementations of `BitAnd.bitand`, `BitOr.bitor`, `Not.not`, `BitAndAssign.bitand_assign`, `BitOrAssign.bitor_assign` | All frozen stable owned/borrowed overloads with those interface identities; no other operator family |
-| Ipv4Addr conversions with u32/[u8;4]; Ipv6Addr conversions with u128/[u8;16]/[u16;8] | Network-significance and array-unit rules in section 9.1 |
-| `std::path::Prefix::is_verbatim`; `PrefixComponent::{kind,as_os_str}`; `Component::as_os_str`; `Components::{next,next_back,as_path}`; Windows `Path::{components,iter,has_root,is_absolute,is_relative,join}`, `PathBuf::push`, `path.absolute` | Prefix/body/root rules in section 4.3, combined with existing section 4.2 operations |
-| Windows `std::process::Command::{arg,args,spawn,status,output}`; `std::os::windows::process::CommandExt::raw_arg` | Ordinary/batch encoding and rejection rules in section 6.3 |
-| Hosted-type implementations of `core.fmt.Debug.fmt`, including address/time types | Section 1 diagnostic-format rules; no output-byte compatibility obligation |
-
-The parent authority register must link these sections before retiring any
-reference-owned fallback.
+Platform-specific services require their own implementation and execution
+checks. Missing OS imports are explicit capability limits. Raw error-code
+retention alone does not specify every portable classification. Debug follows
+section 1's diagnostic-format contract, not a stable output-byte obligation.

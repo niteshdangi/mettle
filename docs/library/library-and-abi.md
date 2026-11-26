@@ -8,12 +8,9 @@ by [library-surface.md](library-surface.md). Native operation definitions are in
 [hosted contracts](native-hosted-contracts.md),
 [OS extensions](native-os-contracts.md) and
 [machine contracts](native-machine-contracts.md).
-The [authority register](../process/baseline-mapping.md#7-native-operation-authority)
-identifies their exact assignments;
-unmigrated operations retain the explicit fallback in
-[baseline-mapping.md](../process/baseline-mapping.md). Profile-scoped implementation
-evidence is recorded in [implementation-plan.md](../process/implementation-plan.md);
-the API contract is not a qualification receipt.
+These native specifications define the API contracts; no external operation
+inventory supplies additional contracts. Target support requires execution
+and ABI checks on the applicable platform.
 
 ## 1. Library layers and naming
 
@@ -386,7 +383,5 @@ Borrowed views, concrete iterators, ordinary error results and C-compatible
 calls require no mandatory allocation. Compare equivalent layout, allocator,
 dispatch and failure behavior under [performance.md](../process/performance.md).
 
-Operation authority is assigned by [the native mapping register](../process/baseline-mapping.md#7-native-operation-authority).
-Unmigrated contracts retain their recorded reference; native layout and C ABI
-requirements are specified in sections 7-8 and the
+Native layout and C ABI requirements are specified in sections 7-8 and the
 [platform contracts](../spec/platform-contracts.md).
