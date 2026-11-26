@@ -757,7 +757,17 @@ static int emitOne(const Options &options, const Source &source,
           options.debugInfo && options.emit != "ir" ? &debugRequest : nullptr,
           options.sanitizers.contains("address"),
           options.sanitizers.contains("thread"),
-          {splitPackages, {}, !options.library, false, privateRoot},
+          {splitPackages,
+           {},
+           !options.library,
+           false,
+           privateRoot,
+           options.emit != "executable" ||
+               std::any_of(
+                   options.emits.begin(), options.emits.end(),
+                   [](const auto &format) { return format != "executable"; }) ||
+               !options.extraLibraries.empty() ||
+               options.cc != METTLE_CXX_PATH || !options.sysroot.empty()},
           &debugRequest);
     }
     auto &module = backend.module;

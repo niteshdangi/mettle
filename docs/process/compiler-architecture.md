@@ -324,6 +324,10 @@ do not create a file/cache entry per function. Normal builds support independent
 objects in both profiles. Cross-package optimization is explicit and optional;
 its additional dependency edges participate in invalidation. The future native
 backend consumes the same verified concrete IR through the pipeline boundary.
+The LLVM adapter may omit the Linux hosted entry wrapper only when the lowered
+reachable call graph has no runtime, foreign, indirect or unwinding calls and
+no static or external-library initialization can require teardown. Unknown
+effects, sanitizers and custom link environments retain the runtime entry.
 Eligible Linux release executables optimize the entry and outlined code with
 the same LLVM O2 pipeline in separate contexts. A local definition referenced
 across that boundary keeps a single body and receives a stable hidden symbol.

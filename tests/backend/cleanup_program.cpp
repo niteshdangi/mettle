@@ -84,10 +84,57 @@ ir::Function destructor(std::string name, Type type, int observer, int panicTag,
   fixture.returnUnit();
   return std::move(fixture.function);
 }
+
+bool entryLowering() {
+  for (int scenario = 0; scenario < 6; ++scenario) {
+    ir::Program program;
+    program.types = std::make_shared<TypeStore>();
+    if (scenario == 2)
+      program.functions.push_back(
+          external("entry_probe", Type::I32,
+                   {parameter("value", Type::I32, ParameterMode::Value)}));
+    else {
+      Fixture callee("entry_probe", Type::I32,
+                     {parameter("value", Type::I32, ParameterMode::Value)}, 1);
+      auto value = callee.emit(ir::Op::Load, Type::I32, {}, {0, {}});
+      auto one = callee.constant(1);
+      auto result =
+          callee.emit(ir::Op::Binary, Type::I32, {value, one}, {}, -1, 0, "+");
+      callee.function.blocks[0].exit = {ir::Exit::Return, result};
+      program.functions.push_back(std::move(callee.function));
+    }
+    Fixture entry("main", Type::I32);
+    auto value = entry.constant(41);
+    auto result = entry.emit(ir::Op::Call, Type::I32, {value}, {}, 0);
+    entry.function.blocks[0].exit = {ir::Exit::Return, result};
+    program.functions.push_back(std::move(entry.function));
+    if (scenario == 3)
+      program.libraries.push_back("entry_probe");
+    Diagnostics diagnostics;
+    auto verified = pipeline::admit(std::move(program), diagnostics);
+    if (!verified) {
+      std::cerr << "entry probe failed IR admission\n";
+      return false;
+    }
+    llvm::LLVMContext context;
+    backend::CodegenPartition partition;
+    partition.forceRuntimeEntry = scenario == 4;
+    auto module = backend::lower(*verified, context, scenario == 1, {}, false,
+                                 nullptr, scenario == 5, false, partition);
+    if (llvm::verifyModule(*module, &llvm::errs()) ||
+        bool(module->getFunction("mettle_rt_main")) != (scenario != 0)) {
+      std::cerr << "incorrect runtime entry for scenario " << scenario << '\n';
+      return false;
+    }
+  }
+  return true;
+}
 } // namespace
 
 int main(int argc, char **) {
   using namespace mettle;
+  if (!entryLowering())
+    return 1;
   auto types = std::make_shared<TypeStore>();
   auto leaf = types->declareProduct("Leaf", false);
   auto resource = types->declareProduct("Resource", false);

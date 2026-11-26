@@ -354,13 +354,17 @@ public:
     builder.SetInsertPoint(llvm::BasicBlock::Create(context, "entry", entry));
     for (std::size_t i = 0; i < functions.size(); ++i)
       if (program.functions[i].name == "main") {
+        std::vector<llvm::Value *> arguments;
+        if (program.functions[i].trackCaller)
+          arguments.push_back(callerSite(program.functions[i].span));
+        if (canEnterWithoutRuntime(*functions[i])) {
+          builder.CreateRet(builder.CreateCall(functions[i], arguments));
+          break;
+        }
         auto *callback = lowering.callback("mettle.main");
         auto saved = builder.saveIP();
         builder.SetInsertPoint(
             llvm::BasicBlock::Create(context, "entry", callback));
-        std::vector<llvm::Value *> arguments;
-        if (program.functions[i].trackCaller)
-          arguments.push_back(callerSite(program.functions[i].span));
         auto *result = builder.CreateCall(functions[i], arguments);
         builder.CreateStore(result, callback->getArg(0));
         builder.CreateRetVoid();
@@ -409,6 +413,38 @@ private:
   std::map<Type, int> coroutineStates;
   std::map<int, std::unique_ptr<CleanupFrame>> coroutineFrames;
   std::set<int> buildingFrames;
+
+  bool canEnterWithoutRuntime(const llvm::Function &entry) const {
+    if (partition.forceRuntimeEntry || sanitizeAddress || sanitizeThread ||
+        !module->getTargetTriple().isOSLinux() || !program.libraries.empty() ||
+        !program.statics.empty() || !module->getModuleInlineAsm().empty())
+      return false;
+    std::vector<const llvm::Function *> pending{&entry};
+    std::set<const llvm::Function *> visited;
+    while (!pending.empty()) {
+      const auto *function = pending.back();
+      pending.pop_back();
+      if (!visited.insert(function).second)
+        continue;
+      if (function->isDeclaration() || function->isInterposable() ||
+          function->hasPersonalityFn())
+        return false;
+      for (const auto &block : *function)
+        for (const auto &instruction : block)
+          if (const auto *call = llvm::dyn_cast<llvm::CallBase>(&instruction)) {
+            const auto *callee = call->getCalledFunction();
+            if (!llvm::isa<llvm::CallInst>(call) || !callee)
+              return false;
+            if (callee->isIntrinsic()) {
+              if (!callee->doesNotThrow() || !callee->doesNotAccessMemory() ||
+                  !callee->hasFnAttribute(llvm::Attribute::WillReturn))
+                return false;
+            } else
+              pending.push_back(callee);
+          }
+    }
+    return true;
+  }
 
   bool ownsFunction(std::size_t index) const {
     if (!partition.split)

@@ -16,6 +16,7 @@ struct CodegenPartition {
   bool library = false;
   // Cached native libraries cannot refer to root-owned definitions.
   bool privateRoot = false;
+  bool forceRuntimeEntry = true;
 };
 
 std::unique_ptr<llvm::Module>
