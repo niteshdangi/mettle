@@ -2540,8 +2540,7 @@ hits, first application build measured 101.90/104.27 ms against Rust 1.99.1
 30.58/38.44 ms (0.790, 0.781–0.798). The original and semantic-edited outputs
 matched Rust; direct and external links and one- and four-logical-CPU builds
 produced identical Mettle binaries. This closes the measured P05 first-build
-gap in this engineering run, not the I14 release qualification: interval
-precision missed the 0.5-percent target. Receipts:
+gap in this engineering run, not the I14 release qualification. Receipts:
 `direct-init/entry-parallel/direct-link/exact/{auth-rust/results.json,direct.log,forced.log,single.log}`.
 
 P05 application check now streams region imports, caches authenticated type
@@ -2553,7 +2552,8 @@ With the compiler invoked directly and authenticated shipped selectors active,
 Original and semantic-edited outputs matched. The earlier launcher used
 `--library-dir`, so those check timings include editable-library invalidation
 and are not a matched before/after comparison. The measured check interval is
-below parity but still misses I14's precision target. Receipt:
+below parity; these remain engineering measurements, not release qualification.
+Receipt:
 `direct-init/entry-parallel/direct-link/exact/region-check.FYFhck/rust-confirm/results.json`.
 
 P04 checked-contract imports now propagate authenticated trust to declaration

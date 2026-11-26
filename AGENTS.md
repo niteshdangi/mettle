@@ -40,10 +40,14 @@ and dependencies. Update both with architectural changes.
   upgrade, dependency, language feature, public ABI or license decision.
 - Own resources with RAII; preserve source spans and explicit error phases.
   Never publish code recovered from an invalid tree or an unchecked IR.
-- Do not impose arbitrary restrictive limits. New or tightened limits must follow
-  established systems-language/compiler practice, with documented precedent and
-  a concrete safety, representation or resource constraint; stricter limits
-  require explicit owner approval.
+- Never introduce limits, thresholds, budgets or other restrictions in code,
+  tooling, tests, benchmarks, process or release gates unless they follow
+  established practice, with documented precedent and a concrete correctness,
+  safety, representation or resource justification. Do not invent numerical
+  acceptance thresholds or promote agent-selected policies into project
+  requirements. If a restriction is nonstandard, stricter than established
+  practice or lacks verified precedent, obtain an explicit owner decision
+  before implementing it.
 - Keep library layers `core -> no allocator/OS`, `alloc -> core`,
   `std -> alloc/core`; executor selection stays optional.
 - Add focused behavioral regression tests for changed behavior. Do not weaken

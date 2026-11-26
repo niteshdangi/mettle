@@ -21,8 +21,8 @@ Owner selection (2026-11-26): dedicated WSL2 is the Linux runner for I14
 qualification; a separate physical Linux installation is not required. Keep
 measured inputs, toolchains, caches and outputs on the WSL Linux filesystem,
 exclude competing host and guest work during measurement blocks, and record
-the host/guest configuration. Section 4's per-workload decisions, fixed sampling
-and precision requirements still apply. Earlier WSL pilot results do not
+the host/guest configuration. Section 4's per-workload decisions and fixed
+sampling requirements still apply. Earlier WSL pilot results do not
 become release evidence merely because the runner is now selected.
 
 ## 2. Benchmark definitions
@@ -84,9 +84,9 @@ sample until an unfavorable interval happens to disappear.
 - Credible slowdown: uncertainty bounds support a ratio above one. Fail and
   investigate that workload.
 - Credible improvement: bounds support a ratio below one. Record a measured win.
-- Indistinguishable: adequately precise results overlap parity. Record a tie
-  within measurement resolution, not proof of exact equality.
-- Inconclusive: noise, unstable environment, or inadequate sample precision.
+- Indistinguishable: an interval overlapping parity is not proof of a win,
+  slowdown or matching performance.
+- Inconclusive: overlapping bounds, noise or an unstable environment.
   Do not count this as a pass.
 
 Use paired log ratios of independent run-block metrics. For K predeclared primary
@@ -96,22 +96,25 @@ family-wise error without assuming independence between endpoints. The method
 assumes independent blocks with adequately behaved log-metric variation;
 unresolved dependence/heavy-tail diagnostics make a result inconclusive.
 
-The requested interval half-width is at most log(1.005), a selected 0.5-percent
-measurement-resolution target, not a measured capability or slowdown allowance.
-Use at least 16 pilot pairs across two sessions to estimate variance, then select
-and lock a fresh release sample count of at least 30 independent pairs sufficient
-for that precision using the corrected quantile. Pilot data is not release data.
+By owner decision (2026-11-26), there is no fixed percentage precision or
+interval-width acceptance threshold. Report the intervals rather than rejecting
+an otherwise supported win or slowdown solely because of their width.
+Use at least 16 pilot pairs across two sessions to assess variability, then
+select and lock a fresh release sample count of at least 30 independent pairs.
+Pilot data is not release data.
 Within-pair execution order is randomized; sessions are balanced across orders.
 Tail-latency endpoints also require enough underlying events to estimate the
 requested quantile; recording 30 tiny runs is not sufficient by itself.
 
-If the fixed release sample misses precision or assumptions, report inconclusive.
+If the fixed release sample cannot resolve the comparison or its assumptions
+do not hold, report inconclusive.
 A replacement experiment needs a new registered plan with prior results retained;
-do not extend the favorable-looking run until it passes. A measurement-resolution
-budget is not permission to accept a known systematic regression.
+do not extend the favorable-looking run until it passes. No measurement policy
+permits accepting a known systematic regression.
 
-An adequately precise runtime tie satisfies "match or beat"; a compile-time
-tie does not satisfy "beat". The comparison harness reuses the same source and
+A runtime tie requires evidence of matching performance, not merely bounds
+overlapping parity; a compile-time tie does not satisfy "beat".
+The comparison harness reuses the same source and
 output paths across repetitions, with fresh build directories each time, so
 path-dependent cache identities do not masquerade as storage instability.
 

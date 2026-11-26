@@ -30,7 +30,6 @@ ROOT = Path(__file__).resolve().parent.parent
 BENCHMARKS = ROOT / "benchmarks"
 RUST_BASELINE = json.loads((ROOT / "docs/baseline/sources.json").read_text())
 MARKER = "bench-edit-point"
-RESOLUTION = math.log(1.005)
 MOD = 1000003
 TIME_METRICS = ["runtime", "clean_build", "noop_build", "comment_edit_build",
                 "semantic_edit_build", "check", "application_build", "application_check"]
@@ -188,14 +187,14 @@ def decide(mettle, rust, endpoints, allow_tie=False):
     half = t_quantile(1.0 - alpha / 2.0, len(logs) - 1) * spread / math.sqrt(len(logs))
     lower = math.exp(mean - half)
     upper = math.exp(mean + half) if mean + half < math.log(sys.float_info.max) else None
-    if half > RESOLUTION:
-        verdict = "inconclusive"
-    elif lower > 1.0:
+    if lower > 1.0:
         verdict = "slowdown"
     elif upper is not None and upper < 1.0:
         verdict = "win"
-    else:
+    elif mean == 0.0 and spread == 0.0:
         verdict = "tie"
+    else:
+        verdict = "inconclusive"
     if verdict == "inconclusive":
         gate = "inconclusive"
     else:

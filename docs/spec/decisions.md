@@ -81,7 +81,8 @@ Implementation/verification: [implementation-plan.md §8.7](../process/implement
 - R12: tooling-and-packages.md selects manifest/resolver, cache, test/doctest,
   formatting, editor and debugger contracts.
 - R13: performance.md selects paired log-ratio intervals, family-wise error control,
-  a 0.5-percent precision target and separate pilot/release samples.
+  and separate pilot/release samples. The owner removed the fixed percentage
+  precision target on 2026-11-26; uncertainty and performance requirements remain.
 
 ## Implementation and product gates
 
