@@ -1,6 +1,6 @@
 import alloc.string.{ String, from_text }
 import alloc.vec.{ List, new }
-import core.text.Text
+import core.text.{ Text, from_utf8 }
 import std.{ fs, io, process }
 import std.io.{ ErrorKind, Reader, Writer }
 import std.macros.format
@@ -9,12 +9,14 @@ import super.sha256.Sha256
 
 pub enum BlobError {
     InvalidDigest;
+    InvalidKey;
     Corrupt;
     TooLarge;
     Io(io.Error);
     Cleanup(io.Error, io.Error)
 }
 
+pub type Entry { pub digest: String; pub bytes: List<u8> }
 pub type BuildLease { lock_file: fs.File }
 pub type MaintenanceGuard { lease_directory: PathBuf; gate: fs.File }
 
@@ -40,13 +42,14 @@ fn open_coordination(read root: Path): (PathBuf, fs.File) throws io.Error {
     try fs.create_dir_all(root)
     let canonical = try fs.canonicalize(root)
     let gate = try open_lock_file(canonical.join("native-store.lock"), true)
-    (canonical.join("native-leases"), gate)
+    (canonical, gate)
 }
 
 pub fn acquire_build_lease(read root: Path, read key: Text): BuildLease throws io.Error {
     if !valid_sha256_hex(key) { throw io.from_kind(ErrorKind.InvalidInput) }
-    let (directory, gate) = try open_coordination(root)
+    let (canonical, gate) = try open_coordination(root)
     try gate.lock_shared()
+    let directory = canonical.join("native-leases")
     try fs.create_dir_all(directory)
     let key_file = try open_lock_file(directory.join(key), true)
     try key_file.lock_shared()
@@ -54,9 +57,9 @@ pub fn acquire_build_lease(read root: Path, read key: Text): BuildLease throws i
 }
 
 pub fn try_begin_maintenance(read root: Path): MaintenanceGuard? throws io.Error {
-    let (directory, gate) = try open_coordination(root)
+    let (canonical, gate) = try open_coordination(root)
     match take capture gate.try_lock() {
-        success(_) => present(MaintenanceGuard(directory, gate)),
+        success(_) => present(MaintenanceGuard(canonical.join("native-leases"), gate)),
         failure(fs.TryLockError.WouldBlock) => none,
         failure(fs.TryLockError.Error(error)) => throw error
     }
@@ -112,6 +115,17 @@ fn valid_sha256_hex(read digest: Text): bool {
 pub fn read_blob(read root: Path, read digest: Text, maximum_bytes: usize): List<u8>? throws BlobError {
     if !valid_sha256_hex(digest) { throw BlobError.InvalidDigest }
     let path = blob_directory(root, digest).join(digest)
+    match take (try read_bounded_file(path, maximum_bytes)) {
+        present(bytes) => {
+            let actual = blob_digest(bytes.as_slice())
+            if actual.as_text() != digest { throw BlobError.Corrupt }
+            present(bytes)
+        },
+        none => none
+    }
+}
+
+fn read_bounded_file(read path: Path, maximum_bytes: usize): List<u8>? throws BlobError {
     match take capture fs.symlink_metadata(path) {
         success(metadata) => { if !metadata.is_file() { throw BlobError.Corrupt } },
         failure(error) => {
@@ -137,8 +151,6 @@ pub fn read_blob(read root: Path, read digest: Text, maximum_bytes: usize): List
         let count = try io_result(capture bounded.get_mut().read_some(mut extra))
         if count != 0usize { throw BlobError.TooLarge }
     }
-    let actual = blob_digest(bytes.as_slice())
-    if actual.as_text() != digest { throw BlobError.Corrupt }
     present(bytes)
 }
 
@@ -154,17 +166,21 @@ fn publish(read temporary: Path, read destination: Path, take file: fs.File, rea
 
 pub fn write_blob(read root: Path, read bytes: [u8]): String throws BlobError {
     let digest = blob_digest(bytes)
-    let directory = blob_directory(root, digest.as_text())
-    let destination = directory.join(digest.as_text())
+    try publish_file(blob_directory(root, digest.as_text()), digest.as_text(), bytes)
+    digest
+}
+
+fn publish_file(read directory: Path, read name: Text, read bytes: [u8]): Unit throws BlobError {
+    let destination = directory.join(name)
     try io_result(capture fs.create_dir_all(directory))
     let pid = process.id()
     var slot = 0usize
     loop {
-        let temporary = directory.join(format(f".{digest}.{pid}.{slot}.tmp"))
+        let temporary = directory.join(format(f".{name}.{pid}.{slot}.tmp"))
         match take capture fs.create_new(temporary) {
             success(file) => {
                 match take capture publish(temporary, destination, take file, bytes) {
-                    success(_) => { return digest },
+                    success(_) => { return },
                     failure(error) => {
                         match take capture fs.remove_file(temporary) {
                             success(_) => throw BlobError.Io(error),
@@ -179,6 +195,156 @@ pub fn write_blob(read root: Path, read bytes: [u8]): String throws BlobError {
             }
         }
     }
+}
+
+const ENTRY_DIGEST_END: usize = 65
+const ENTRY_BODY_BYTES: usize = ENTRY_DIGEST_END + 8
+const ENTRY_RECORD_BYTES: usize = ENTRY_BODY_BYTES + 64
+const ENTRY_VERSION: u8 = 1
+
+fn entry_directory(read root: Path, read key: Text): PathBuf {
+    root.join("entries").join(key.split_at(2usize).0)
+}
+
+fn entry_checksum(read key: Text, read body: [u8]): String {
+    var hash = Sha256()
+    hash.update(key.as_bytes())
+    hash.update(body)
+    hash.finish()
+}
+
+pub fn write_entry(read root: Path, read key: Text, read bytes: [u8]): String throws BlobError {
+    if !valid_sha256_hex(key) { throw BlobError.InvalidKey }
+    let (canonical, gate) = try io_result(capture open_coordination(root))
+    try io_result(capture gate.lock_shared())
+    let digest = try write_blob(canonical.as_path(), bytes)
+    var record = [0u8; ENTRY_RECORD_BYTES]
+    record[0] = ENTRY_VERSION
+    {
+        var destination = mut record[1..ENTRY_DIGEST_END]
+        destination.copy_from_slice(digest.as_bytes())
+    }
+    {
+        let size = (bytes.len() as u64).to_be_bytes()
+        var destination = mut record[ENTRY_DIGEST_END..ENTRY_BODY_BYTES]
+        destination.copy_from_slice(size)
+    }
+    let checksum = entry_checksum(key, record[..ENTRY_BODY_BYTES])
+    {
+        var destination = mut record[ENTRY_BODY_BYTES..]
+        destination.copy_from_slice(checksum.as_bytes())
+    }
+    try publish_file(entry_directory(canonical.as_path(), key), key, record)
+    digest
+}
+
+pub fn read_entry(read root: Path, read key: Text, maximum_bytes: usize): Entry? throws BlobError {
+    if !valid_sha256_hex(key) { throw BlobError.InvalidKey }
+    let path = entry_directory(root, key).join(key)
+    let record = match take capture read_bounded_file(path, ENTRY_RECORD_BYTES) {
+        success(present(record)) => record,
+        success(none) => { return none },
+        failure(BlobError.TooLarge) => throw BlobError.Corrupt,
+        failure(error) => throw error
+    }
+    let data = record.as_slice()
+    if data.len() != ENTRY_RECORD_BYTES || data[0] != ENTRY_VERSION { throw BlobError.Corrupt }
+    let checksum = entry_checksum(key, data[..ENTRY_BODY_BYTES])
+    if checksum.as_bytes() != data[ENTRY_BODY_BYTES..] { throw BlobError.Corrupt }
+    let digest = match from_utf8(data[1..ENTRY_DIGEST_END]) {
+        success(text) => text,
+        failure(_) => throw BlobError.Corrupt
+    }
+    if !valid_sha256_hex(digest) { throw BlobError.Corrupt }
+    var size = 0u64
+    for byte in data[ENTRY_DIGEST_END..ENTRY_BODY_BYTES] { size = (size << 8u64) | byte as u64 }
+    if size > maximum_bytes as u64 { throw BlobError.TooLarge }
+    match take capture read_blob(root, digest, size as usize) {
+        success(present(bytes)) => {
+            if bytes.len() as u64 != size { throw BlobError.Corrupt }
+            present(Entry(from_text(digest), bytes))
+        },
+        success(none) => none,
+        failure(BlobError.TooLarge) => throw BlobError.Corrupt,
+        failure(error) => throw error
+    }
+}
+
+@test
+fn entry_recovery(): Unit throws BlobError {
+    let pid = process.id()
+    let root = std.env.temp_dir().join(format(f"mettle-entry-recovery-{pid}"))
+    let first = blob_digest([1u8])
+    let key = first.as_text()
+    assert((try read_entry(root, key, 2usize)).is_none(), "absent entry must be a miss")
+    assert(!(try io_result(capture fs.try_exists(root))), "entry miss created the store")
+    match take capture read_entry(root, "../entries", 2usize) {
+        failure(BlobError.InvalidKey) => (),
+        _ => assert(false, "invalid key was not rejected")
+    }
+    let digest = try write_entry(root, key, [0u8, 255u8])
+    let result = (try read_entry(root, key, 2usize)).or_panic()
+    assert(result.digest.as_text() == digest.as_text() && result.bytes.as_slice() == [0u8, 255u8],
+        "entry did not return its verified blob")
+    match take capture read_entry(root, key, 1usize) {
+        failure(BlobError.TooLarge) => (),
+        _ => assert(false, "entry exceeded the reader's byte limit")
+    }
+    let path = entry_directory(root, key).join(key)
+    let record = try io_result(capture fs.read_bytes(path))
+    let other = blob_digest([2u8])
+    let other_directory = entry_directory(root, other.as_text())
+    try io_result(capture fs.create_dir_all(other_directory))
+    try io_result(capture fs.write(other_directory.join(other.as_text()), record.as_slice()))
+    match take capture read_entry(root, other.as_text(), 2usize) {
+        failure(BlobError.Corrupt) => (),
+        _ => assert(false, "a valid record was accepted for the wrong key")
+    }
+    let blob = blob_directory(root, digest.as_text()).join(digest.as_text())
+    try io_result(capture fs.remove_file(blob))
+    assert((try read_entry(root, key, 2usize)).is_none(), "evicted blob must produce a miss")
+    try io_result(capture fs.write(blob, [0u8, 254u8]))
+    match take capture read_entry(root, key, 2usize) {
+        failure(BlobError.Corrupt) => (),
+        _ => assert(false, "entry recovered an unverified blob")
+    }
+    try io_result(capture fs.remove_file(path))
+    try io_result(capture fs.write(path, record.as_slice()[..ENTRY_BODY_BYTES]))
+    match take capture read_entry(root, key, 2usize) {
+        failure(BlobError.Corrupt) => (),
+        _ => assert(false, "truncated entry was not rejected")
+    }
+    try io_result(capture fs.remove_dir_all(root))
+}
+
+@test
+fn entry_replacement(): Unit throws BlobError {
+    let pid = process.id()
+    let root = std.env.temp_dir().join(format(f"mettle-entry-replacement-{pid}"))
+    let identity = blob_digest([1u8])
+    let key = identity.as_text()
+    let lease = try io_result(capture acquire_build_lease(root, key))
+    let _ = try write_entry(root, key, [42u8])
+    let replacement = blob_digest([43u8])
+    let blocked = blob_directory(root, replacement.as_text()).join(replacement.as_text())
+    try io_result(capture fs.create_dir_all(blocked))
+    match take capture write_entry(root, key, [43u8]) {
+        failure(BlobError.Io(_)) => (),
+        _ => assert(false, "publication through a blocked blob path must fail")
+    }
+    let original = (try read_entry(root, key, 1usize)).or_panic()
+    assert(original.bytes.as_slice() == [42u8], "failed publication changed the prior entry")
+    {
+        let maintenance = (try io_result(capture try_begin_maintenance(root))).or_panic()
+        let live = try io_result(capture maintenance.live_keys())
+        assert(live.len() == 1 && live[0].as_text() == key, "entry write interfered with the build lease")
+    }
+    try io_result(capture fs.remove_dir(blocked))
+    let _ = try write_entry(root, key, [43u8])
+    let updated = (try read_entry(root, key, 1usize)).or_panic()
+    assert(updated.bytes.as_slice() == [43u8], "entry was not replaced")
+    core.mem.drop(take lease)
+    try io_result(capture fs.remove_dir_all(root))
 }
 
 @test
