@@ -1,4 +1,4 @@
-import alloc.string.String
+import alloc.string.{ String, from_text }
 import alloc.vec.{ List, new }
 import core.text.Text
 import std.{ fs, io, process }
@@ -15,8 +15,8 @@ pub enum BlobError {
     Cleanup(io.Error, io.Error)
 }
 
-pub type ReaderLease { root: PathBuf; lock_file: fs.File }
-pub type MaintenanceLease { root: PathBuf; lock_file: fs.File }
+pub type BuildLease { lock_file: fs.File }
+pub type MaintenanceGuard { lease_directory: PathBuf; gate: fs.File }
 
 fn io_result<T>(take result: Outcome<T, io.Error>): T throws BlobError {
     match take result {
@@ -25,53 +25,68 @@ fn io_result<T>(take result: Outcome<T, io.Error>): T throws BlobError {
     }
 }
 
-fn open_lease_file(read root: Path): fs.File throws io.Error {
+fn open_lock_file(read path: Path, create: bool): fs.File throws io.Error {
     var options = fs.open_options()
     options.set_read(true)
     options.set_write(true)
-    options.set_create(true)
+    options.set_create(create)
     options.set_mode(384u32)
-    let file = try options.open(root.join("native-store.lock"))
+    let file = try options.open(path)
     if !(try file.metadata()).is_file() { throw io.from_kind(ErrorKind.InvalidData) }
     file
 }
 
-pub fn acquire_reader(read root: Path): ReaderLease throws BlobError {
-    try io_result(capture fs.create_dir_all(root))
-    let canonical = try io_result(capture fs.canonicalize(root))
-    let file = try io_result(capture open_lease_file(canonical.as_path()))
-    try io_result(capture file.lock_shared())
-    ReaderLease(canonical, file)
+fn open_coordination(read root: Path): (PathBuf, fs.File) throws io.Error {
+    try fs.create_dir_all(root)
+    let canonical = try fs.canonicalize(root)
+    let gate = try open_lock_file(canonical.join("native-store.lock"), true)
+    (canonical.join("native-leases"), gate)
 }
 
-pub fn try_acquire_maintenance(read root: Path): MaintenanceLease? throws BlobError {
-    try io_result(capture fs.create_dir_all(root))
-    let canonical = try io_result(capture fs.canonicalize(root))
-    let file = try io_result(capture open_lease_file(canonical.as_path()))
-    match take capture file.try_lock() {
-        success(_) => present(MaintenanceLease(canonical, file)),
+pub fn acquire_build_lease(read root: Path, read key: Text): BuildLease throws io.Error {
+    if !valid_sha256_hex(key) { throw io.from_kind(ErrorKind.InvalidInput) }
+    let (directory, gate) = try open_coordination(root)
+    try gate.lock_shared()
+    try fs.create_dir_all(directory)
+    let key_file = try open_lock_file(directory.join(key), true)
+    try key_file.lock_shared()
+    BuildLease(key_file)
+}
+
+pub fn try_begin_maintenance(read root: Path): MaintenanceGuard? throws io.Error {
+    let (directory, gate) = try open_coordination(root)
+    match take capture gate.try_lock() {
+        success(_) => present(MaintenanceGuard(directory, gate)),
         failure(fs.TryLockError.WouldBlock) => none,
-        failure(fs.TryLockError.Error(error)) => throw BlobError.Io(error)
+        failure(fs.TryLockError.Error(error)) => throw error
     }
 }
 
-extend ReaderLease {
-    pub fn read_blob(read digest: Text, maximum_bytes: usize): List<u8>? throws BlobError {
-        try read_leased(self.root.as_path(), digest, maximum_bytes)
-    }
-}
-
-extend MaintenanceLease {
-    pub fn remove_blob(read digest: Text): bool throws BlobError {
-        if !valid_digest(digest) { throw BlobError.InvalidDigest }
-        let path = blob_directory(self.root.as_path(), digest).join(digest)
-        match take capture fs.remove_file(path) {
-            success(_) => true,
+extend MaintenanceGuard {
+    pub fn live_keys(): List<String> throws io.Error {
+        var live = new<String>()
+        var entries = match take capture fs.read_dir(self.lease_directory) {
+            success(entries) => entries,
             failure(error) => {
-                if error.kind().is(ErrorKind.NotFound) { return false }
-                throw BlobError.Io(error)
+                if error.kind().is(ErrorKind.NotFound) { return live }
+                throw error
             }
         }
+        while let present(entry) = try entries.next_entry() {
+            let name = entry.file_name()
+            if let present(key) = name.to_str() {
+                if valid_sha256_hex(key) {
+                    let path = entry.path()
+                    let file = try open_lock_file(path, false)
+                    match take capture file.try_lock() {
+                        success(_) => { try fs.remove_file(path) },
+                        failure(fs.TryLockError.WouldBlock) => { live.push(from_text(key)) },
+                        failure(fs.TryLockError.Error(error)) => throw error
+                    }
+                }
+            }
+        }
+        live
     }
 }
 
@@ -85,7 +100,7 @@ fn blob_directory(read root: Path, read digest: Text): PathBuf {
     root.join("blobs").join(digest.split_at(2usize).0)
 }
 
-fn valid_digest(read digest: Text): bool {
+fn valid_sha256_hex(read digest: Text): bool {
     let bytes = digest.as_bytes()
     if bytes.len() != 64usize { return false }
     for byte in bytes {
@@ -95,12 +110,7 @@ fn valid_digest(read digest: Text): bool {
 }
 
 pub fn read_blob(read root: Path, read digest: Text, maximum_bytes: usize): List<u8>? throws BlobError {
-    let lease = try acquire_reader(root)
-    try lease.read_blob(digest, maximum_bytes)
-}
-
-fn read_leased(read root: Path, read digest: Text, maximum_bytes: usize): List<u8>? throws BlobError {
-    if !valid_digest(digest) { throw BlobError.InvalidDigest }
+    if !valid_sha256_hex(digest) { throw BlobError.InvalidDigest }
     let path = blob_directory(root, digest).join(digest)
     match take capture fs.symlink_metadata(path) {
         success(metadata) => { if !metadata.is_file() { throw BlobError.Corrupt } },
@@ -144,8 +154,7 @@ fn publish(read temporary: Path, read destination: Path, take file: fs.File, rea
 
 pub fn write_blob(read root: Path, read bytes: [u8]): String throws BlobError {
     let digest = blob_digest(bytes)
-    let lease = try acquire_reader(root)
-    let directory = blob_directory(lease.root.as_path(), digest.as_text())
+    let directory = blob_directory(root, digest.as_text())
     let destination = directory.join(digest.as_text())
     try io_result(capture fs.create_dir_all(directory))
     let pid = process.id()
@@ -176,11 +185,11 @@ pub fn write_blob(read root: Path, read bytes: [u8]): String throws BlobError {
 fn blob_read_integrity(): Unit throws BlobError {
     let pid = process.id()
     let root = std.env.temp_dir().join(format(f"mettle-blob-integrity-{pid}"))
-    try io_result(capture fs.create_dir(root))
     let payload = [0u8, 255u8, 10u8]
     let digest = blob_digest(payload)
     let missing = try read_blob(root, digest.as_text(), 3usize)
     assert(missing.is_none(), "absent blob must be a miss")
+    assert(!(try io_result(capture fs.try_exists(root))), "reading a miss created the store")
     match take capture read_blob(root, "../blobs", 3usize) {
         failure(BlobError.InvalidDigest) => (),
         _ => assert(false, "invalid digest was not rejected")
@@ -230,40 +239,49 @@ fn blob_publication_failure(): Unit throws BlobError {
     assert(untouched.as_slice() == [17u8], "writer touched another staging file")
     let leaked = try io_result(capture fs.try_exists(directory.join(format(f".{digest}.{pid}.1.tmp"))))
     assert(!leaked, "failed publication left its staging file")
-    {
-        let maintenance = try try_acquire_maintenance(root)
-        assert(!maintenance.is_none(), "failed publication retained its lease")
-    }
     try io_result(capture fs.remove_dir_all(root))
 }
 
+fn fail_with_build_lease(read root: Path, read key: Text): Unit throws io.Error {
+    let _lease = try acquire_build_lease(root, key)
+    throw io.from_kind(ErrorKind.InvalidData)
+}
+
 @test
-fn lease_lifecycle(): Unit throws BlobError {
+fn lease_lifecycle(): Unit throws io.Error {
     let pid = process.id()
     let root = std.env.temp_dir().join(format(f"mettle-blob-leases-{pid}"))
-    try io_result(capture fs.create_dir(root))
-    let digest = try write_blob(root, [42u8])
-    let first = try acquire_reader(root)
-    {
-        let second = try acquire_reader(root)
-        assert((try try_acquire_maintenance(root)).is_none(), "maintenance acquired with two readers")
-        let contents = try second.read_blob(digest.as_text(), 1usize)
-        assert(contents.or_panic().as_slice() == [42u8], "leased blob changed")
+    try fs.create_dir(root)
+    let a = blob_digest([1u8])
+    let b = blob_digest([2u8])
+    let first = try acquire_build_lease(root, a.as_text())
+    let second = try acquire_build_lease(root, a.as_text())
+    match take capture fail_with_build_lease(root, b.as_text()) {
+        success(_) => assert(false, "expected a failed build"),
+        failure(error) => assert(error.kind().is(ErrorKind.InvalidData), "failed to acquire B")
     }
-    assert((try try_acquire_maintenance(root)).is_none(), "maintenance acquired with one reader")
     core.mem.drop(take first)
-    match take capture read_blob(root, digest.as_text(), 0usize) {
-        failure(BlobError.TooLarge) => (),
-        _ => assert(false, "expected a read failure while holding a lease")
-    }
     {
-        let maintenance = (try try_acquire_maintenance(root)).or_panic()
-        assert((try try_acquire_maintenance(root)).is_none(), "two maintenance leases overlapped")
-        assert(try maintenance.remove_blob(digest.as_text()), "maintenance did not remove blob")
-        assert(!(try maintenance.remove_blob(digest.as_text())), "missing blob reported as removed")
+        let maintenance = (try try_begin_maintenance(root)).or_panic()
+        assert((try try_begin_maintenance(root)).is_none(), "two maintenance guards overlapped")
+        let live = try maintenance.live_keys()
+        assert(live.len() == 1 && live[0].as_text() == a.as_text(),
+            "maintenance must protect A but not failed build B")
     }
-    assert((try read_blob(root, digest.as_text(), 1usize)).is_none(), "reader did not resume after maintenance")
-    try io_result(capture fs.remove_dir_all(root))
+    let third = try acquire_build_lease(root, b.as_text())
+    core.mem.drop(take second)
+    {
+        let maintenance = (try try_begin_maintenance(root)).or_panic()
+        let live = try maintenance.live_keys()
+        assert(live.len() == 1 && live[0].as_text() == b.as_text(), "reacquired B was not protected")
+    }
+    core.mem.drop(take third)
+    {
+        let maintenance = (try try_begin_maintenance(root)).or_panic()
+        let live = try maintenance.live_keys()
+        assert(live.is_empty(), "released build leases still prevent clean")
+    }
+    try fs.remove_dir_all(root)
 }
 
 @test
