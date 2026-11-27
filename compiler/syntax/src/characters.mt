@@ -1,3 +1,4 @@
+import alloc.vec.{ List, new }
 import mettle_foundation.{ Diagnostics, Phase, Span }
 
 fn hex(byte: u8): u32? {
@@ -5,6 +6,47 @@ fn hex(byte: u8): u32? {
     else if byte >= b'a' && byte <= b'f' { present((byte - b'a') as u32 + 10u32) }
     else if byte >= b'A' && byte <= b'F' { present((byte - b'A') as u32 + 10u32) }
     else { none }
+}
+
+pub fn constant_text(read literal: [u8], span: Span, mut diagnostics: Diagnostics, decode: bool): List<u8>? {
+    var value = new<u8>()
+    var index = 1usize
+    let end = literal.len() - 1
+    while index < end {
+        var byte = literal[index]
+        index += 1
+        if byte == b'\\' {
+            if index == end {
+                diagnostics.report(Phase.Lex, span, "incomplete text escape")
+                return none
+            }
+            let escape = literal[index]
+            index += 1
+            byte = match escape {
+                b'\\' => b'\\', b'"' => b'"', b'n' => 10u8, b'r' => 13u8, b't' => 9u8, b'0' => 0u8,
+                b'x' => {
+                    if end - index < 2 {
+                        diagnostics.report(Phase.Lex, span, "incomplete byte escape")
+                        return none
+                    }
+                    let high = hex(literal[index])
+                    let low = hex(literal[index + 1])
+                    index += 2
+                    if let present(a) = high, let present(b) = low, a < 8u32 { (a * 16u32 + b) as u8 }
+                    else {
+                        diagnostics.report(Phase.Lex, span, "text byte escape requires an ASCII value")
+                        return none
+                    }
+                },
+                _ => {
+                    diagnostics.report(Phase.Lex, span, "unsupported constant text escape")
+                    return none
+                }
+            }
+        }
+        if decode { value.push(take byte) }
+    }
+    present(take value)
 }
 
 pub fn character_value(read literal: [u8], byte: bool, span: Span, mut diagnostics: Diagnostics): u32? {
