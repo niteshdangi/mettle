@@ -903,6 +903,30 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             run([native, "check", str(app), "--no-default-features"])
             assert lock.read_bytes() != expected_lock, "suppressed features did not change the lock"
             evidence["cases"].append({"name": "package-feature-options"})
+        if selected("package-registry-check"):
+            import shutil
+
+            fixture = directory / "registry-check"
+            registry = fixture / "registry"
+            app = fixture / "registry-resolution" / "app"
+            shutil.copytree(ROOT / "packages" / "registry", registry, dirs_exist_ok=True)
+            shutil.copytree(ROOT / "packages" / "registry-resolution" / "app", app, dirs_exist_ok=True)
+            run([executable, "check", str(app)])
+            run([native, "check", str(app), "--locked"])
+            manifest = app / "package.mettle"
+            manifest.write_text(manifest.read_text().replace('registry {\n    path: "../../registry"\n}\n', ""))
+            options = ["--registry", str(registry)]
+            run([executable, "check", str(app), *options])
+            lock = app / "lock.mettle"
+            expected_lock = lock.read_bytes()
+            lock.unlink()
+            run([native, "check", str(app), *options])
+            assert lock.read_bytes() == expected_lock, "registry resolution produced a different lock"
+            (registry / "util" / "1.3.0" / "src" / "main.mt").write_text("pub fn value(): i32 { 0 }\n")
+            actual = run([native, "check", str(app), *options], 1)
+            assert "checksum mismatch for immutable package 'util' 1.3.0" in actual.stderr, actual.stderr
+            assert lock.read_bytes() == expected_lock, "immutable source drift rewrote the lock"
+            evidence["cases"].append({"name": "package-registry-check"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),

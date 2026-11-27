@@ -7,11 +7,12 @@ import std.{ env, fs, io, process }
 import std.io.Writer
 import std.macros.format
 import std.path.Path
-import super.checksum.hash_tree
+import super.checksum.{ hash_tree, hash_legacy_tree }
 import super.data.{ Data, DataError, Kind, Range }
 import super.graph.{ PackageGraph, ResolveOptions, resolve_locked, resolve_with }
 import super.inputs.{ PackageError, PackagePhase, error_at, io_result, read_data }
 import super.sha256.hex_digit
+import super.version
 
 type LockedPackage {
     name: String
@@ -26,6 +27,24 @@ type LockedPackage {
 }
 
 pub type Lock { version: u32; packages: List<LockedPackage>; indices: Map<String, usize> }
+
+pub fn preferred(read previous: Lock?): Map<String, List<version.Version>> {
+    var versions = Map<String, List<version.Version>>()
+    if let present(old) = previous {
+        for package in old.packages.as_slice() {
+            match take version.parse(package.version.as_text()) {
+                present(value) => {
+                    let name = package.name.as_text()
+                    if !versions.contains_key(name) { let _ = versions.insert(from_text(name), List<version.Version>()) }
+                    let present(items) = versions.get_mut(name) else { panic("missing preferred version list") }
+                    items.push(take value)
+                },
+                none => {}
+            }
+        }
+    }
+    versions
+}
 
 extend Data {
     fn lock_string(object: usize, read key: Text, required: bool): String throws DataError {
@@ -346,6 +365,30 @@ pub fn reconcile(read graph: PackageGraph, read root: Path, read path: Path, tak
     let current = try fresh(graph)
     let text = serialize(current)
     if let present(old) = previous {
+        for now in current.packages.as_slice() {
+            let source = now.source.as_text()
+            if !source.starts_with("registry+") { continue }
+            let id = now.id.as_text()
+            let present(index) = old.indices.get(id) else { continue }
+            let then = read old.packages[*index]
+            let release = now.version.as_text()
+            let before = then.checksum.as_text()
+            let after = now.checksum.as_text()
+            if then.source.as_text() != source || then.version.as_text() != release || before == after { continue }
+            if before.starts_with("sha256:") {
+                var migrated = false
+                for package in graph.packages.as_slice() {
+                    if package.identity.as_text() == id {
+                        let legacy = try hash_legacy_tree(package.directory.as_path())
+                        migrated = legacy.as_text() == before
+                        break
+                    }
+                }
+                if migrated { continue }
+            }
+            let name = now.name.as_text()
+            throw error_at(path, then.span, format(f"checksum mismatch for immutable package '{name}' {release}: the lock records {before} but its sources hash to {after}; either the package or lock.mettle was altered"), PackagePhase.Lock)
+        }
         let old_text = serialize(old)
         if old_text.as_text() == text.as_text() { return }
         if locked { throw changes(old, current, path) }
@@ -429,6 +472,7 @@ fn feature_fixture(read root: Path): Unit throws PackageError {
         failure(issue) => assert(issue.message.as_text().find("features change from [default] to [fancy]").is_present(),
             "wrong feature context diagnostic")
     }
+
     let unchanged = try io_result(take capture fs.read_to_string(path), root, start, PackagePhase.Io)
     assert(unchanged.as_text() == original.as_text(), "locked feature changes replaced the lock")
     options.locked = false
@@ -483,4 +527,57 @@ fn path_lock_migration_and_drift(): Unit throws PackageError {
 @test
 fn path_feature_lock_context(): Unit throws PackageError {
     try with_fixture("features", feature_fixture)
+}
+
+fn registry_fixture(read root: Path): Unit throws PackageError {
+    let start = Range(0, 0)
+    let fixture = std.path.path_from_text("tests/packages")
+    for relative in ["registry-resolution/app/package.mettle", "registry-resolution/app/src/main.mt",
+            "registry/shapes/1.2.0/package.mettle", "registry/shapes/1.2.0/src/main.mt",
+            "registry/util/1.3.0/package.mettle", "registry/util/1.3.0/src/main.mt",
+            "registry/util/1.4.0/package.mettle", "registry/util/1.4.0/src/main.mt", "registry/util/1.4.0/YANKED"] {
+        try fixture_file(root, fixture, relative)
+    }
+    let app = root.join("registry-resolution/app")
+    let lockfile = app.join("lock.mettle")
+    let chosen = try resolve_locked(app.as_path(), "main", false)
+    let shapes = read chosen.packages[chosen.packages[0].dependencies[0].package]
+    let util = read chosen.packages[shapes.dependencies[0].package]
+    assert(shapes.identity.as_text() == "shapes@1.2.0|registry+../../registry|target" &&
+        util.identity.as_text() == "util@1.3.0|registry+../../registry|target", "wrong transitive registry provenance or yanked choice")
+    let initial = try io_result(take capture fs.read_to_string(lockfile), root, start, PackagePhase.Io)
+    let previous = (try load(lockfile.as_path(), true)).or_panic()
+    let legacy = try hash_legacy_tree(util.directory.as_path())
+    let index = previous.indices.get(util.identity.as_text()).or_panic()
+    let checksum = previous.packages[*index].checksum.as_text()
+    assert(checksum == "sha256-tree-2:5ad960b760e1a46a3de0bf5f62cd521748a6a6bd2762a870d4583bed1a9c8b10",
+        "registry checksum differs from the bootstrap lock")
+    let (prefix, suffix) = initial.as_text().split_once(checksum).or_panic()
+    var legacy_lock = from_text(prefix)
+    legacy_lock.push_str(legacy.as_text())
+    legacy_lock.push_str(suffix)
+    try io_result(take capture fs.write(lockfile, legacy_lock.as_bytes()), root, start, PackagePhase.Io)
+    require_lock_failure(app.as_path(), "content changed")
+    let _ = try resolve_locked(app.as_path(), "main", false)
+
+    let marker = root.join("registry/util/1.4.0/YANKED")
+    try io_result(take capture fs.remove_file(marker), root, start, PackagePhase.Io)
+    let marker = util.directory.join("YANKED")
+    try io_result(take capture fs.write(marker, "".as_bytes()), root, start, PackagePhase.Io)
+    let _ = try resolve_locked(app.as_path(), "main", true)
+    let input = util.directory.join("data.txt")
+    try io_result(take capture fs.write(input, "changed build input\n".as_bytes()), root, start, PackagePhase.Io)
+    require_lock_failure(app.as_path(), "checksum mismatch for immutable package 'util' 1.3.0")
+    match take capture resolve_locked(app.as_path(), "main", false) {
+        success(_) => assert(false, "an unlocked resolution replaced a tampered checksum"),
+        failure(issue) => assert(issue.message.as_text().find("checksum mismatch for immutable package 'util' 1.3.0").is_present(),
+            "wrong unlocked registry checksum error")
+    }
+    let current = try io_result(take capture fs.read_to_string(lockfile), root, start, PackagePhase.Io)
+    assert(current.as_text() == initial.as_text(), "registry pin, migration or tampering changed the lock")
+}
+
+@test
+fn registry_lock_preserves_release_and_rejects_tampering(): Unit throws PackageError {
+    try with_fixture("registry", registry_fixture)
 }

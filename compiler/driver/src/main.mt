@@ -316,7 +316,7 @@ fn check_package(read directory: path.Path, read entry: Text, read options: Reso
 }
 
 fn check_usage(): i32 {
-    io.eprint("usage: mettle-selfhost check INPUT [--entry NAME] [--features a,b] [--no-default-features] [--locked|--offline|--frozen]\n")
+    io.eprint("usage: mettle-selfhost check INPUT [--entry NAME] [--features a,b] [--no-default-features] [--registry PATH] [--locked|--offline|--frozen]\n")
     2
 }
 
@@ -343,6 +343,14 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
             }
         } else if arg.same(os_str_from_text("--no-default-features")) {
             options.default_features = false
+            package_options = true
+        } else if arg.same(os_str_from_text("--registry")) {
+            position += 1usize
+            if position == args.len() { return check_usage() }
+            let registry = args[position].as_os_str()
+            let bytes = registry.as_bytes()
+            if bytes.is_empty() || bytes[0usize] == b'-' { return check_usage() }
+            options.registries.push(path.path_from_os_str(registry).to_path_buf())
             package_options = true
         } else if arg.same(os_str_from_text("--locked")) || arg.same(os_str_from_text("--frozen")) {
             options.locked = true

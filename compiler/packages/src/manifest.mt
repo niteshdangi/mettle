@@ -11,7 +11,7 @@ import super.version
 pub type Target { pub name: String; pub source: String; pub library: bool; pub span: Range }
 pub type Dependency {
     pub name: String
-    pub path: String
+    pub path: String?
     pub requirements: List<String>
     pub span: Range
     pub features: List<String>
@@ -28,6 +28,7 @@ pub type Manifest {
     pub dependencies: List<Dependency>
     pub features: Map<String, List<FeatureAction>>
     pub implicit_features: Map<String, usize>
+    pub registry: String?
 }
 
 fn valid_name(read text: Text): bool {
@@ -169,9 +170,9 @@ extend Data {
             var features = List<String>()
             var optional = false
             var default_features = true
-            let path = if node.kind.is(Kind.String) && (node.text.as_text().starts_with("./") ||
+            let path: String? = if node.kind.is(Kind.String) && (node.text.as_text().starts_with("./") ||
                 node.text.as_text().starts_with("../") || path_from_text(node.text.as_text()).is_absolute()) {
-                from_text(node.text.as_text())
+                present(from_text(node.text.as_text()))
             } else if node.kind.is(Kind.Object) {
                 var f = i + 1
                 while f < node.next {
@@ -194,22 +195,45 @@ extend Data {
                     } else if key != "path" { throw DataError(field.key_span, format(f"unknown key '{key}' in a dependency")) }
                     f = field.next
                 }
-                let present(p) = self.field(i, "path") else {
+                if let present(p) = self.field(i, "path") {
+                    present(try self.string(p, "'path'"))
+                } else {
                     if requirements.is_empty() { throw DataError(node.key_span, format(f"dependency '{name}' needs a 'path' or a 'version' requirement")) }
-                    throw DataError(node.key_span, from_text("native package resolution does not yet support registry dependencies"))
+                    none
                 }
-                try self.string(p, "'path'")
             } else {
-                let _ = try self.requirements(i, candidate)
-                throw DataError(node.key_span, from_text("native package resolution does not yet support registry dependencies"))
+                requirements = try self.requirements(i, candidate)
+                none
             }
-            if path.as_text().find_byte(0u8).is_present() {
-                throw DataError(node.span, from_text("dependency path contains a NUL byte"))
+            if let present(location) = path {
+                if location.as_text().find_byte(0u8).is_present() {
+                    throw DataError(node.span, from_text("dependency path contains a NUL byte"))
+                }
             }
             result.push(Dependency(from_text(name), take path, take requirements, node.key_span, take features, default_features, optional))
             i = node.next
         }
         result
+    }
+
+    fn registry(): String? throws DataError {
+        let present(table) = self.field(0, "registry") else { return none }
+        let node = read self.nodes[table]
+        if !node.kind.is(Kind.Object) {
+            throw DataError(node.span, from_text("[registry] must be a table with 'path'"))
+        }
+        let path = self.field(table, "path")
+        if node.next != table + 1 && (path.is_none() || node.next != table + 2) {
+            throw DataError(node.span, from_text("[registry] must be a table with 'path'"))
+        }
+        if let present(index) = path {
+            let value = try self.string(index, "'path'")
+            if value.as_text().find_byte(0u8).is_present() {
+                throw DataError(self.nodes[index].span, from_text("registry path contains a NUL byte"))
+            }
+            return present(take value)
+        }
+        none
     }
 }
 
@@ -327,5 +351,5 @@ pub fn decode(read data: Data, default_entry: bool): Manifest throws DataError {
     let targets = try data.targets(default_entry)
     let dependencies = try data.dependencies(package_name, parsed)
     let (features, implicit) = try feature_actions(data, dependencies)
-    Manifest(take name, take version_text, take parsed, span, take targets, take dependencies, take features, take implicit)
+    Manifest(take name, take version_text, take parsed, span, take targets, take dependencies, take features, take implicit, try data.registry())
 }

@@ -5,6 +5,13 @@ import super.data.alpha
 
 pub copy type Core { major: u64; minor: u64; patch: u64 }
 pub type Version { core: Core; pre: String }
+
+extend Version {
+    pub fn compatible(read other: Version): bool {
+        self.core.major == other.core.major && (self.core.major != 0 ||
+            (self.core.minor == other.core.minor && (self.core.minor != 0 || self.core.patch == other.core.patch)))
+    }
+}
 type Partial { version: Version; components: usize; wildcard: bool }
 
 fn digit(c: u8): bool { c >= b'0' && c <= b'9' }
