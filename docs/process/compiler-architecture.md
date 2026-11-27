@@ -269,7 +269,12 @@ single-name, grouped, and aliased imports bind declared modules and scalar
 functions from those roots and file modules. The bindings are private and
 preserve the separate module and value namespaces. Chained imports through
 an imported alias, glob imports, inline modules, and re-exports remain outside
-native checking. Standard library roots are not implicitly mounted yet.
+native checking. With `--library-dir PATH`, native `check` and `build` mount
+`core`, `alloc`, and `std` from `PATH/NAME/module.mt` when an active import or
+qualified reference requests one. Declared modules and package dependency
+aliases shadow these mounts. Library sources use the same canonical identities
+and file-module discovery as package sources, with no package features.
+This does not install a prelude or extend native cfg and declaration checking.
 Feature predicates select active declarations using each
 unit's package features before external modules are loaded. Ordinary builds
 ignore test and benchmark annotations, not the annotated bodies. The frontend

@@ -3,7 +3,7 @@ import alloc.string.String
 import alloc.vec.List
 import core.text.Text
 import mettle_foundation.Span
-import mettle_syntax.{ NodeId, NodeKind, Parsed, SyntaxNode }
+import mettle_syntax.{ Kind, NodeId, NodeKind, Parsed, SyntaxNode }
 import mettle_types.Scalar
 
 module cfg;
@@ -59,6 +59,22 @@ pub type ExternalModule {
     pub exported: bool
 }
 
+pub copy enum LibraryRoot { Core, Alloc, Std }
+
+extend LibraryRoot {
+    pub fn spelling(): read Text from static {
+        match self { LibraryRoot.Core => "core", LibraryRoot.Alloc => "alloc", LibraryRoot.Std => "std" }
+    }
+}
+
+fn library_root(read spelling: [u8]): LibraryRoot? {
+    let bytes = read spelling[..]
+    if bytes == b"core" { present(LibraryRoot.Core) }
+    else if bytes == b"alloc" { present(LibraryRoot.Alloc) }
+    else if bytes == b"std" { present(LibraryRoot.Std) }
+    else { none }
+}
+
 copy type Imported {
     namespace: usize?
     function: FunctionId?
@@ -101,6 +117,7 @@ type Context<region r> {
     owner: FunctionId
     declarations: read List<Declarations> from r
     mounts: read Map<List<u8>, usize> from r
+    libraries: read Map<List<u8>, usize> from r
 }
 
 extend<region r> Context<region r> {
@@ -205,6 +222,55 @@ pub fn external_modules(read source: SourceModule): List<ExternalModule> throws 
         }
     }
     result
+}
+
+pub fn library_references(read source: SourceModule): List<(LibraryRoot, Span)> {
+    let bytes = source.bytes.as_slice()
+    let parsed = read source.syntax
+    var references = List<(LibraryRoot, Span)>()
+    var seen = 0u32
+    for declaration in source.items.as_slice() {
+        let item = node(parsed, declaration.id)
+        if item.kind.is(NodeKind.Import) {
+            let path = node(parsed, child(parsed, item, declaration.offset))
+            if !path.kind.is(NodeKind.ImportPath) { continue }
+            let head = node(parsed, child(parsed, path, 0))
+            let token = parsed.tokens[head.tokens.begin as usize]
+            if let present(root) = token_library_root(bytes, token.kind, token.span) {
+                let bit = 1u32 << (root as u32)
+                if (seen & bit) == 0u32 { references.push((root, head.span)); seen |= bit }
+            }
+            continue
+        }
+        let start = if declaration.offset == 0u32 { item.tokens.begin }
+            else { node(parsed, child(parsed, item, declaration.offset - 1u32)).tokens.end }
+        var previous: LibraryRoot? = none
+        var previous_span = item.span
+        var dotted = false
+        for index in start..item.tokens.end {
+            let token = parsed.tokens[index as usize]
+            if token.kind.is(Kind.Space) || token.kind.is(Kind.Comment) || token.kind.is(Kind.Newline) { continue }
+            let dot = token.kind.is(Kind.Symbol) && read bytes[token.span.begin as usize..token.span.end as usize] == b"."
+            if dot {
+                if let present(root) = previous {
+                    let bit = 1u32 << (root as u32)
+                    if (seen & bit) == 0u32 { references.push((root, previous_span)); seen |= bit }
+                }
+            }
+            previous = if dotted { none } else { token_library_root(bytes, token.kind, token.span) }
+            previous_span = token.span
+            dotted = dot
+        }
+    }
+    references
+}
+
+fn token_library_root(read bytes: [u8], kind: Kind, span: Span): LibraryRoot? {
+    if kind.is(Kind.Word) {
+        library_root(read bytes[span.begin as usize..span.end as usize])
+    } else if kind.is(Kind.QuotedWord) {
+        library_root(read bytes[span.begin as usize + 1usize..span.end as usize - 1usize])
+    } else { none }
 }
 
 fn scalar_type(read bytes: [u8], annotation: SyntaxNode): Scalar throws CheckError {
@@ -322,6 +388,15 @@ fn imported_module(read declarations: List<Declarations>, scope: usize, read spe
     present(ModuleLink(index, false))
 }
 
+fn mounted_module(read source: SourceModule, read mounts: Map<List<u8>, usize>,
+    read libraries: Map<List<u8>, usize>, read spelling: List<u8>): usize? {
+    if let present(index) = mounts.get(spelling) { return present(*index) }
+    if !source.modules.contains_key(spelling) {
+        if let present(index) = libraries.get(spelling) { return present(*index) }
+    }
+    none
+}
+
 fn module_target<region r>(read context: Context<region r>, read body: Body, base: SyntaxNode, span: Span): usize throws CheckError {
     let parsed = read context.source.syntax
     let bytes = context.source.bytes.as_slice()
@@ -337,8 +412,8 @@ fn module_target<region r>(read context: Context<region r>, read body: Body, bas
     let from = context.owner.module_index
     var scope = from
     var relative = false
-    if let present(mount) = context.mounts.get(spelling) {
-        scope = *mount
+    if let present(mount) = mounted_module(context.source, context.mounts, context.libraries, spelling) {
+        scope = mount
     } else {
         let raw = read bytes[head.span.begin as usize..head.span.end as usize]
         if raw == b"self" || raw == b"super" {
@@ -618,7 +693,8 @@ fn binary_type(read bytes: [u8], operator: Span, lhs: Scalar, rhs: Scalar): Scal
     }
 }
 
-fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declarations throws CheckError {
+fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>,
+    read libraries: Map<List<u8>, usize>): Declarations throws CheckError {
     let bytes = source.bytes.as_slice()
     let parsed = read source.syntax
     var functions = List<Function>()
@@ -644,8 +720,8 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declar
             }
             let head = node(parsed, child(parsed, path, 0))
             let spelling = try name(bytes, parsed, head)
-            if (spelling.as_slice() == b"std" || spelling.as_slice() == b"alloc" || spelling.as_slice() == b"core") &&
-                !source.modules.contains_key(spelling) && !mounts.contains_key(spelling) {
+            if library_root(spelling.as_slice()).is_present() && !source.modules.contains_key(spelling) &&
+                mounted_module(source, mounts, libraries, spelling).is_none() {
                 throw CheckError(CheckPhase.Feature, head.span, "native semantic checking has not mounted this standard library namespace")
             }
             imports.push(declaration)
@@ -662,7 +738,8 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declar
     Declarations(take functions, take names, take parameters, Map<List<u8>, Imported>(), take imports)
 }
 
-fn import_scope(read sources: List<SourceModule>, read mounts: Map<List<u8>, usize>, from: usize,
+fn import_scope(read sources: List<SourceModule>, read mounts: Map<List<u8>, usize>,
+    read libraries: Map<List<u8>, usize>, from: usize,
     path: SyntaxNode, end: u32): usize throws CheckError {
     let source = read sources[from]
     let parsed = read source.syntax
@@ -674,8 +751,8 @@ fn import_scope(read sources: List<SourceModule>, read mounts: Map<List<u8>, usi
         let spelling = try name(bytes, parsed, component)
         let raw = read bytes[component.span.begin as usize..component.span.end as usize]
         if index == path.children.begin {
-            if let present(mount) = mounts.get(spelling) {
-                scope = *mount
+            if let present(mount) = mounted_module(source, mounts, libraries, spelling) {
+                scope = mount
                 relative = false
                 continue
             }
@@ -692,7 +769,7 @@ fn import_scope(read sources: List<SourceModule>, read mounts: Map<List<u8>, usi
 }
 
 fn import_binding(read sources: List<SourceModule>, read declarations: List<Declarations>,
-    read mounts: Map<List<u8>, usize>, from: usize, scope: usize, bare: bool,
+    read mounts: Map<List<u8>, usize>, read libraries: Map<List<u8>, usize>, from: usize, scope: usize, bare: bool,
     mut imports: Map<List<u8>, Imported>, selector: SyntaxNode, renamed: SyntaxNode?,
     origin: u32, span: Span): Unit throws CheckError {
     let source = read sources[from]
@@ -700,7 +777,7 @@ fn import_binding(read sources: List<SourceModule>, read declarations: List<Decl
     var namespace: usize? = none
     var function: FunctionId? = none
     if bare {
-        if let present(mount) = mounts.get(spelling) { namespace = present(*mount) }
+        namespace = mounted_module(source, mounts, libraries, spelling)
     }
     if namespace.is_none() {
         if let present(link) = declared_module(sources, scope, spelling) {
@@ -740,7 +817,7 @@ fn import_binding(read sources: List<SourceModule>, read declarations: List<Decl
 }
 
 fn resolve_imports(read sources: List<SourceModule>, read declarations: List<Declarations>,
-    read mounts: Map<List<u8>, usize>, from: usize): Map<List<u8>, Imported> throws CheckError {
+    read mounts: Map<List<u8>, usize>, read libraries: Map<List<u8>, usize>, from: usize): Map<List<u8>, Imported> throws CheckError {
     let parsed = read sources[from].syntax
     var imports = Map<List<u8>, Imported>()
     for declaration in declarations[from].import_items.as_slice() {
@@ -749,31 +826,32 @@ fn resolve_imports(read sources: List<SourceModule>, read declarations: List<Dec
         if item.children.end - item.children.begin > declaration.offset + 1u32 {
             let selection = node(parsed, child(parsed, item, declaration.offset + 1u32))
             if selection.kind.is(NodeKind.ImportGroup) {
-                let scope = try import_scope(sources, mounts, from, path, path.children.end)
+                let scope = try import_scope(sources, mounts, libraries, from, path, path.children.end)
                 for index in selection.children.begin..selection.children.end {
                     let entry = node(parsed, parsed.children[index as usize])
                     let renamed = if entry.children.end - entry.children.begin == 2u32 {
                         present(node(parsed, child(parsed, entry, 1)))
                     } else { none }
-                    try import_binding(sources, declarations, mounts, from, scope, false, mut imports,
+                    try import_binding(sources, declarations, mounts, libraries, from, scope, false, mut imports,
                         node(parsed, child(parsed, entry, 0)), renamed, item.span.begin, entry.span)
                 }
                 continue
             }
         }
         let end = path.children.end - 1u32
-        let scope = try import_scope(sources, mounts, from, path, end)
+        let scope = try import_scope(sources, mounts, libraries, from, path, end)
         let renamed = if item.children.end - item.children.begin > declaration.offset + 1u32 {
             present(node(parsed, child(parsed, item, declaration.offset + 1u32)))
         } else { none }
-        try import_binding(sources, declarations, mounts, from, scope, end == path.children.begin, mut imports,
+        try import_binding(sources, declarations, mounts, libraries, from, scope, end == path.children.begin, mut imports,
             node(parsed, parsed.children[end as usize]), renamed, item.span.begin, item.span)
     }
     imports
 }
 
 fn check_bodies(read sources: List<SourceModule>, module_index: usize,
-    read declarations: List<Declarations>, read mounts: Map<List<u8>, usize>): (List<Expression?>, List<usize>) throws CheckError {
+    read declarations: List<Declarations>, read mounts: Map<List<u8>, usize>,
+    read libraries: Map<List<u8>, usize>): (List<Expression?>, List<usize>) throws CheckError {
     let source = read sources[module_index]
     let parsed = read source.syntax
     let functions = read declarations[module_index].functions
@@ -783,7 +861,7 @@ fn check_bodies(read sources: List<SourceModule>, module_index: usize,
     var counts = List<usize>()
     for index in 0usize..functions.len() {
         let function = read functions[index]
-        let context = Context(read source, read sources, FunctionId(module_index, index), read declarations, read mounts)
+        let context = Context(read source, read sources, FunctionId(module_index, index), read declarations, read mounts, read libraries)
         body.symbols.clear()
         body.visible.clear()
         body.bindings.clear()
@@ -798,12 +876,12 @@ fn check_bodies(read sources: List<SourceModule>, module_index: usize,
 }
 
 pub fn check_modules(read sources: List<SourceModule>, read mounts: List<Map<List<u8>, usize>>,
-    executable: bool): List<CheckedModule> throws CheckError {
+    executable: bool, read libraries: Map<List<u8>, usize> = Map<List<u8>, usize>()): List<CheckedModule> throws CheckError {
     if sources.is_empty() { throw unsupported(Span(0, 0, 0)) }
     var declarations = List<Declarations>()
-    for source in sources.as_slice() { declarations.push(try collect(source, mounts[source.package_index])) }
+    for source in sources.as_slice() { declarations.push(try collect(source, mounts[source.package_index], libraries)) }
     for index in 0usize..sources.len() {
-        let imports = try resolve_imports(sources, declarations, mounts[sources[index].package_index], index)
+        let imports = try resolve_imports(sources, declarations, mounts[sources[index].package_index], libraries, index)
         declarations[index].imports = take imports
     }
     var entry: usize? = none
@@ -822,7 +900,7 @@ pub fn check_modules(read sources: List<SourceModule>, read mounts: List<Map<Lis
     }
     var bodies = List<(List<Expression?>, List<usize>)>()
     for index in 0usize..sources.len() {
-        bodies.push(try check_bodies(sources, index, declarations, mounts[sources[index].package_index]))
+        bodies.push(try check_bodies(sources, index, declarations, mounts[sources[index].package_index], libraries))
     }
     bodies.reverse()
     var result = List<CheckedModule>()

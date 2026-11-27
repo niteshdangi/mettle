@@ -10,7 +10,7 @@ import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
 import mettle_packages.{ PackageError, PackageGraph, PackagePhase, ResolveOptions, ResolvedPackage, resolve_with }
-import mettle_pipeline.{ CheckError, CheckPhase, CompileError, LoweringError, ModuleLink, SourceModule, active_items, check_modules, compile_modules, external_modules }
+import mettle_pipeline.{ CheckError, CheckPhase, CompileError, LibraryRoot, LoweringError, ModuleLink, SourceModule, active_items, check_modules, compile_modules, external_modules, library_references }
 import mettle_syntax.inspect.{ InspectionError, project, project_recovered }
 import mettle_backend_llvm.{ LinkError, OverflowChecks, emit_ir, link_executable }
 
@@ -186,8 +186,8 @@ fn load_module(read source: path.Path, index: usize, package_index: usize, paren
     present(SourceModule(take bytes, take parsed, Map<List<u8>, ModuleLink>(), package_index, parent, take items))
 }
 
-fn check_source(read source: path.Path, read features: List<String>): i32 throws io.Error {
-    let present(loaded) = try load_single_graph(source, features) else { return 1 }
+fn check_source(read source: path.Path, read features: List<String>, read library_dir: path.Path): i32 throws io.Error {
+    let present(loaded) = try load_single_graph(source, features, library_dir) else { return 1 }
     try check_loaded(loaded, true)
 }
 
@@ -253,9 +253,10 @@ type PackageSources {
     sources: List<SourceModule>
     paths: List<ModulePath>
     mounts: List<Map<List<u8>, usize>>
+    libraries: Map<List<u8>, usize>
 }
 
-fn load_graph(read graph: PackageGraph): PackageSources? throws io.Error {
+fn load_graph(read graph: PackageGraph, read library_dir: path.Path): PackageSources? throws io.Error {
     if !graph.build_scripts.is_empty() || !graph.macros.is_empty() {
         io.eprint("mettle: error[feature]: native compilation does not execute build scripts or procedural macros yet\n")
         return none
@@ -287,68 +288,107 @@ fn load_graph(read graph: PackageGraph): PackageSources? throws io.Error {
         sources.push(take module_source)
         source_indices.push(present(index))
     }
-    let mounts = package_mounts(graph, source_indices)
-    if !try discover_modules(mut sources, mut paths, mut seen, graph.packages.as_slice(), List<String>()) { return none }
-    present(PackageSources(take sources, take paths, take mounts))
+    var loaded = PackageSources(take sources, take paths, package_mounts(graph, source_indices), Map<List<u8>, usize>())
+    if !try discover_modules(mut loaded, mut seen, graph.packages.as_slice(), List<String>(), library_dir) { return none }
+    present(take loaded)
 }
 
-fn discover_modules(mut sources: List<SourceModule>, mut paths: List<ModulePath>,
-    mut seen: Map<path.PathBuf, Unit>, read packages: [ResolvedPackage],
-    read standalone_features: List<String>): bool throws io.Error {
+fn discover_modules(mut loaded: PackageSources, mut seen: Map<path.PathBuf, Unit>,
+    read packages: [ResolvedPackage], read standalone_features: List<String>,
+    read library_dir: path.Path): bool throws io.Error {
+    let first_library = loaded.mounts.len()
+    let mount_libraries = !library_dir.as_os_str().is_empty()
+    if mount_libraries {
+        for _ in 0usize..(LibraryRoot.Std as usize + 1usize) { loaded.mounts.push(Map<List<u8>, usize>()) }
+    }
+    let no_features = List<String>()
     var owner = 0usize
-    while owner < sources.len() {
-        let declarations = match take capture external_modules(sources[owner]) {
+    while owner < loaded.sources.len() {
+        let package_index = loaded.sources[owner].package_index
+        let features = if package_index < packages.len() { read packages[package_index].features }
+            else if packages.is_empty() && package_index == 0usize { read standalone_features }
+            else { read no_features }
+        let declarations = match take capture external_modules(loaded.sources[owner]) {
             success(declarations) => take declarations,
             failure(error) => {
-                let _ = try report_check_error(paths[owner].source.as_path(), sources[owner].bytes.as_slice(), error)
+                let _ = try report_check_error(loaded.paths[owner].source.as_path(), loaded.sources[owner].bytes.as_slice(), error)
                 return false
             }
         }
         for declaration in take declarations {
-            let owner_path = paths[owner].source.as_path()
-            if sources[owner].modules.contains_key(declaration.name) {
-                let _ = try report_check_error(owner_path, sources[owner].bytes.as_slice(),
+            let owner_path = loaded.paths[owner].source.as_path()
+            if loaded.sources[owner].modules.contains_key(declaration.name) {
+                let _ = try report_check_error(owner_path, loaded.sources[owner].bytes.as_slice(),
                     CheckError(CheckPhase.Name, declaration.span, "duplicate module"))
                 return false
             }
-            let directory = paths[owner].children.join(path.path_buf_from_bytes(declaration.name.as_slice()))
+            let directory = loaded.paths[owner].children.join(path.path_buf_from_bytes(declaration.name.as_slice()))
             var filename = declaration.name.as_slice().to_vec()
             filename.extend_from_slice(b".mt")
-            let flat = paths[owner].children.join(path.path_buf_from_bytes(filename.as_slice()))
+            let flat = loaded.paths[owner].children.join(path.path_buf_from_bytes(filename.as_slice()))
             let nested = directory.join("module.mt")
             let flat_exists = try regular_source(flat.as_path())
             let nested_exists = try regular_source(nested.as_path())
             if flat_exists == nested_exists {
                 let reason = if flat_exists { "external module matches both source paths" }
                     else { "external module source file does not exist" }
-                let _ = try report_check_error(owner_path, sources[owner].bytes.as_slice(),
+                let _ = try report_check_error(owner_path, loaded.sources[owner].bytes.as_slice(),
                     CheckError(CheckPhase.Name, declaration.span, reason))
                 return false
             }
             let source = try fs.canonicalize(if flat_exists { flat.as_path() } else { nested.as_path() })
             if seen.insert(source.to_path_buf(), ()).is_present() {
-                let _ = try report_check_error(owner_path, sources[owner].bytes.as_slice(),
+                let _ = try report_check_error(owner_path, loaded.sources[owner].bytes.as_slice(),
                     CheckError(CheckPhase.Name, declaration.span, "source file has more than one module identity"))
                 return false
             }
-            let index = sources.len()
-            let package_index = sources[owner].package_index
-            let loaded = if packages.is_empty() {
-                try load_module(source.as_path(), index, package_index, present(owner), standalone_features)
-            } else {
-                try load_module(source.as_path(), index, package_index, present(owner), packages[package_index].features)
+            let index = loaded.sources.len()
+            let present(module_source) = try load_module(source.as_path(), index, package_index, present(owner), features) else { return false }
+            let _ = loaded.sources[owner].modules.insert(take declaration.name, ModuleLink(index, declaration.exported))
+            loaded.paths.push(ModulePath(take source, take directory))
+            loaded.sources.push(take module_source)
+        }
+        if mount_libraries {
+            for (root, span) in library_references(loaded.sources[owner]) {
+                let spelling = root.spelling().as_bytes().to_vec()
+                if loaded.sources[0].modules.contains_key(spelling) || loaded.sources[owner].modules.contains_key(spelling) ||
+                    loaded.mounts[package_index].contains_key(spelling) {
+                    continue
+                }
+                let library_package = first_library + root as usize
+                let owner_path = loaded.paths[owner].source.as_path()
+                if package_index >= first_library && library_package > package_index {
+                    let _ = try report_check_error(owner_path, loaded.sources[owner].bytes.as_slice(),
+                        CheckError(CheckPhase.Name, span, "native library dependency must follow core <- alloc <- std"))
+                    return false
+                }
+                if loaded.libraries.contains_key(spelling) { continue }
+                let directory = library_dir.join(root.spelling())
+                let entry = directory.join("module.mt")
+                if !try regular_source(entry.as_path()) {
+                    let _ = try report_check_error(owner_path, loaded.sources[owner].bytes.as_slice(),
+                        CheckError(CheckPhase.Name, span, "native library root requires NAME/module.mt in --library-dir"))
+                    return false
+                }
+                let canonical = try fs.canonicalize(entry.as_path())
+                if seen.insert(canonical.to_path_buf(), ()).is_present() {
+                    let _ = try report_check_error(owner_path, loaded.sources[owner].bytes.as_slice(),
+                        CheckError(CheckPhase.Name, span, "source file has more than one module identity"))
+                    return false
+                }
+                let index = loaded.sources.len()
+                let present(module_source) = try load_module(canonical.as_path(), index, library_package, none, no_features) else { return false }
+                let _ = loaded.libraries.insert(take spelling, index)
+                loaded.paths.push(ModulePath(take canonical, take directory))
+                loaded.sources.push(take module_source)
             }
-            let present(module_source) = loaded else { return false }
-            let _ = sources[owner].modules.insert(take declaration.name, ModuleLink(index, declaration.exported))
-            paths.push(ModulePath(take source, take directory))
-            sources.push(take module_source)
         }
         owner += 1usize
     }
     true
 }
 
-fn load_single_graph(read source: path.Path, read features: List<String>): PackageSources? throws io.Error {
+fn load_single_graph(read source: path.Path, read features: List<String>, read library_dir: path.Path): PackageSources? throws io.Error {
     let present(module_source) = try load_module(source, 0, 0, none, features) else { return none }
     let canonical = try fs.canonicalize(source)
     var sources = List<SourceModule>()
@@ -358,14 +398,15 @@ fn load_single_graph(read source: path.Path, read features: List<String>): Packa
     var seen = Map<path.PathBuf, Unit>()
     let _ = seen.insert(canonical.to_path_buf(), ())
     paths.push(ModulePath(take canonical, take children))
-    if !try discover_modules(mut sources, mut paths, mut seen, List<ResolvedPackage>().as_slice(), features) { return none }
     var mounts = List<Map<List<u8>, usize>>()
     mounts.push(Map<List<u8>, usize>())
-    present(PackageSources(take sources, take paths, take mounts))
+    var loaded = PackageSources(take sources, take paths, take mounts, Map<List<u8>, usize>())
+    if !try discover_modules(mut loaded, mut seen, List<ResolvedPackage>().as_slice(), features, library_dir) { return none }
+    present(take loaded)
 }
 
 fn check_loaded(read loaded: PackageSources, executable: bool): i32 throws io.Error {
-    match take capture check_modules(loaded.sources, loaded.mounts, executable) {
+    match take capture check_modules(loaded.sources, loaded.mounts, executable, loaded.libraries) {
         failure(error) => {
             let index = error.span.source as usize
             try report_check_error(loaded.paths[index].source.as_path(), loaded.sources[index].bytes.as_slice(), error)
@@ -374,35 +415,37 @@ fn check_loaded(read loaded: PackageSources, executable: bool): i32 throws io.Er
     }
 }
 
-fn check_graph(read graph: PackageGraph): i32 throws io.Error {
-    let present(loaded) = try load_graph(graph) else { return 1 }
+fn check_graph(read graph: PackageGraph, read library_dir: path.Path): i32 throws io.Error {
+    let present(loaded) = try load_graph(graph, library_dir) else { return 1 }
     try check_loaded(loaded, !graph.packages[0].is_library)
 }
 
-fn check_input(read source: path.Path, read entry: Text, read options: ResolveOptions, package_options: bool): i32 throws io.Error {
+fn check_input(read source: path.Path, read entry: Text, read options: ResolveOptions, package_options: bool,
+    read library_dir: path.Path): i32 throws io.Error {
     if !package_input(source) {
         if package_options {
             io.eprint("mettle: error[package]: --entry, --no-default-features, --registry, --locked, --offline and --frozen need a package directory or package.mettle\n")
             return 2
         }
-        return try check_source(source, options.features)
+        return try check_source(source, options.features, library_dir)
     }
-    if source.is_dir() { return try check_package(source, entry, options) }
+    if source.is_dir() { return try check_package(source, entry, options, library_dir) }
     if let present(parent) = source.parent() {
-        if !parent.as_os_str().is_empty() { return try check_package(parent, entry, options) }
+        if !parent.as_os_str().is_empty() { return try check_package(parent, entry, options, library_dir) }
     }
-    try check_package(path.path_from_text("."), entry, options)
+    try check_package(path.path_from_text("."), entry, options, library_dir)
 }
 
-fn check_package(read directory: path.Path, read entry: Text, read options: ResolveOptions): i32 throws io.Error {
+fn check_package(read directory: path.Path, read entry: Text, read options: ResolveOptions,
+    read library_dir: path.Path): i32 throws io.Error {
     match take capture resolve_with(directory, entry, options) {
-        success(graph) => { try check_graph(graph) },
+        success(graph) => { try check_graph(graph, library_dir) },
         failure(error) => { try report_package_error(error) }
     }
 }
 
 fn check_usage(): i32 {
-    io.eprint("usage: mettle-selfhost check INPUT [--entry NAME] [--features a,b] [--no-default-features] [--registry PATH] [--locked|--offline|--frozen]\n")
+    io.eprint("usage: mettle-selfhost check INPUT [--library-dir PATH] [--entry NAME] [--features a,b] [--no-default-features] [--registry PATH] [--locked|--offline|--frozen]\n")
     2
 }
 
@@ -410,6 +453,7 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
     var position = 2usize
     var input: usize? = none
     var entry: usize? = none
+    var libraries: usize? = none
     var options = ResolveOptions()
     var package_options = false
     while position < args.len() {
@@ -419,6 +463,12 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
             if position == args.len() || entry.is_present() { return check_usage() }
             entry = present(position)
             package_options = true
+        } else if arg.same(os_str_from_text("--library-dir")) {
+            position += 1usize
+            if position == args.len() || libraries.is_present() { return check_usage() }
+            let bytes = args[position].as_os_str().as_bytes()
+            if !bytes.is_empty() && bytes[0usize] == b'-' { return check_usage() }
+            libraries = present(position)
         } else if arg.same(os_str_from_text("--features")) {
             position += 1usize
             if position == args.len() { return check_usage() }
@@ -452,12 +502,14 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
     }
     let present(index) = input else { return check_usage() }
     let source = path.path_from_os_str(args[index].as_os_str())
+    let library_dir = if let present(index) = libraries { path.path_from_os_str(args[index].as_os_str()) }
+        else { path.path_from_text("") }
     if let present(selected) = entry {
         let present(name) = args[selected].as_os_str().to_str() else { return check_usage() }
         if name.is_empty() || name.as_bytes()[0usize] == b'-' { return check_usage() }
-        return try check_input(source, name, options, package_options)
+        return try check_input(source, name, options, package_options, library_dir)
     }
-    try check_input(source, "main", options, package_options)
+    try check_input(source, "main", options, package_options, library_dir)
 }
 
 enum BuildArtifact { Llvm, Executable }
@@ -583,7 +635,7 @@ fn publish_artifact(read output: path.Path, read bytes: [u8], artifact: BuildArt
 
 fn build_llvm(read loaded: PackageSources, read output: path.Path, checks: OverflowChecks,
     artifact: BuildArtifact, read clang: path.Path): i32 throws io.Error {
-    let verified = match take capture compile_modules(loaded.sources, loaded.mounts, true) {
+    let verified = match take capture compile_modules(loaded.sources, loaded.mounts, true, loaded.libraries) {
         success(verified) => take verified,
         failure(CompileError.Check(error)) => {
             let index = error.span.source as usize
@@ -609,7 +661,7 @@ fn build_llvm(read loaded: PackageSources, read output: path.Path, checks: Overf
     try publish_artifact(output, ir.as_bytes(), artifact, clang)
 }
 
-fn load_build_input(read source: path.Path): PackageSources? throws io.Error {
+fn load_build_input(read source: path.Path, read library_dir: path.Path): PackageSources? throws io.Error {
     if package_input(source) {
         let directory = if source.is_dir() { source.to_path_buf() }
             else if let present(parent) = source.parent() {
@@ -623,13 +675,13 @@ fn load_build_input(read source: path.Path): PackageSources? throws io.Error {
             io.eprint("mettle: error[feature]: native build currently requires an executable entry\n")
             return none
         }
-        return try load_graph(graph)
+        return try load_graph(graph, library_dir)
     }
-    try load_single_graph(source, List<String>())
+    try load_single_graph(source, List<String>(), library_dir)
 }
 
 fn build_usage(): i32 {
-    io.eprint("usage: mettle-selfhost build INPUT -o OUTPUT [--emit executable|llvm] [--cc CXX] [--profile debug|release] [--overflow-checks on|off]\n")
+    io.eprint("usage: mettle-selfhost build INPUT -o OUTPUT [--library-dir PATH] [--emit executable|llvm] [--cc CXX] [--profile debug|release] [--overflow-checks on|off]\n")
     2
 }
 
@@ -638,6 +690,7 @@ fn run_build(read args: env.ArgsOs): i32 throws io.Error {
     var output: usize? = none
     var emit: BuildArtifact? = none
     var cc: usize? = none
+    var libraries: usize? = none
     var debug: bool? = none
     var override_checks: bool? = none
     var index = 2usize
@@ -657,6 +710,12 @@ fn run_build(read args: env.ArgsOs): i32 throws io.Error {
                 io.eprint("mettle: error[feature]: native build currently supports only executable and LLVM IR output\n")
                 return 1
             }
+        } else if option.same(os_str_from_text("--library-dir")) {
+            index += 1usize
+            if index == args.len() || libraries.is_present() { return build_usage() }
+            let bytes = args[index].as_os_str().as_bytes()
+            if !bytes.is_empty() && bytes[0usize] == b'-' { return build_usage() }
+            libraries = present(index)
         } else if option.same(os_str_from_text("--cc")) {
             index += 1usize
             if index == args.len() || cc.is_present() { return build_usage() }
@@ -687,7 +746,9 @@ fn run_build(read args: env.ArgsOs): i32 throws io.Error {
     let present(input_index) = input else { return build_usage() }
     let present(output_index) = output else { return build_usage() }
     let source = path.path_from_os_str(args[input_index].as_os_str())
-    let present(loaded) = try load_build_input(source) else { return 1 }
+    let library_dir = if let present(index) = libraries { path.path_from_os_str(args[index].as_os_str()) }
+        else { path.path_from_text("") }
+    let present(loaded) = try load_build_input(source, library_dir) else { return 1 }
     let checks = if override_checks.or(debug.or(true)) { OverflowChecks.On } else { OverflowChecks.Off }
     let clang = if let present(tool) = cc { path.path_from_os_str(args[tool].as_os_str()) }
         else { path.path_from_text("clang++") }

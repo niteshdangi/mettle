@@ -3,14 +3,14 @@ import alloc.vec.List
 import mettle_ir.VerifiedProgram
 import mettle_middle.lower
 
-pub import mettle_frontend.{ CheckError, CheckPhase, ModuleLink, SourceModule, active_items, check_modules, external_modules }
+pub import mettle_frontend.{ CheckError, CheckPhase, LibraryRoot, ModuleLink, SourceModule, active_items, check_modules, external_modules, library_references }
 pub import mettle_middle.LoweringError
 
 pub copy enum CompileError { Check(CheckError), Lower(LoweringError) }
 
 pub fn compile_modules(read sources: List<SourceModule>, read mounts: List<Map<List<u8>, usize>>,
-    executable: bool): VerifiedProgram throws CompileError {
-    let checked = match take capture check_modules(sources, mounts, executable) {
+    executable: bool, read libraries: Map<List<u8>, usize>): VerifiedProgram throws CompileError {
+    let checked = match take capture check_modules(sources, mounts, executable, libraries) {
         success(checked) => checked,
         failure(error) => throw CompileError.Check(error)
     }

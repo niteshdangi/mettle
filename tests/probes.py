@@ -1021,6 +1021,43 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             actual = run([native, "check", str(app)], 1)
             assert f"{math / 'main.mt'}:1:1: error[feature]" in actual.stderr and "does not support" in actual.stderr, actual.stderr
             evidence["cases"].append({"name": "package-scalar-imports"})
+        if selected("native-library-source-mounts"):
+            library = directory / "native-test-library"
+            for root in ("core", "alloc", "std"):
+                (library / root).mkdir(parents=True, exist_ok=True)
+            core = library / "core" / "module.mt"
+            std = library / "std" / "module.mt"
+            core.write_text(
+                '@cfg(feature = "app")\npub module nonexistent;\npub fn value(): i32 { 21 }\n')
+            (library / "alloc" / "module.mt").write_text("pub fn value(): i32 { core.value() }\n")
+            std.write_text("pub module numbers;\n")
+            (library / "std" / "numbers.mt").write_text("pub fn answer(): i32 { alloc.value() * 2 }\n")
+            entry = source("native-library-source-mounts",
+                           "import std.{numbers as n};\nfn main(): i32 { n.answer() }\n")
+            output = directory / "native-library-program"
+            for tool in (executable, native):
+                run([tool, "check", str(entry), "--library-dir", str(library), "--features", "app"])
+                run([tool, "build", str(entry), "-o", str(output), "--library-dir", str(library)], env=llvm_env)
+                run([str(output)], 42)
+
+            core.write_text("pub fn value(): i32 { std.numbers.answer() }\n")
+            rejected = run([native, "check", str(entry), "--library-dir", str(library)], 1)
+            assert f"{core}:1:23: error[name]" in rejected.stderr and "core <- alloc <- std" in rejected.stderr, rejected.stderr
+            std.unlink()
+            rejected = run([native, "check", str(entry), "--library-dir", str(library)], 1)
+            assert f"{entry}:1:8: error[name]" in rejected.stderr and "requires NAME/module.mt" in rejected.stderr, rejected.stderr
+            std.symlink_to(entry)
+            rejected = run([native, "check", str(entry), "--library-dir", str(library)], 1)
+            assert f"{entry}:1:8: error[name]" in rejected.stderr and "more than one module identity" in rejected.stderr, rejected.stderr
+            std.unlink()
+            entry.write_text("@cfg(false)\nimport std.{numbers};\nfn main(): i32 { 0 }\n")
+            run([native, "check", str(entry), "--library-dir", str(library)])
+            entry.write_text("module std;\nimport std.{answer};\nfn main(): i32 { answer() }\n")
+            (entry.parent / "std.mt").write_text("pub fn answer(): i32 { 42 }\n")
+            for tool in (executable, native):
+                run([tool, "check", str(entry), "--library-dir", str(library)])
+
+            evidence["cases"].append({"name": "native-library-source-mounts"})
         if selected("package-feature-options"):
             import shutil
 
