@@ -83,7 +83,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "numbers": b"1..3 1..=3 1.5e+3 2f32 3.25 1e-9 0xff 0o77 0b10 tuple.0.1 tuple. /*x*/ 0.1",
             "symbols": b"... ..= >>= <<= == != <= >= && || += -= *= /= %= &= |= ^= << >> -> => ?. ?? (){}[],;:+-*/%!=<>&|^.?@$",
             "text": b'"" "a\\\"b\\\\c" b"hello" """\n  a"b\n  """ `type`',
-            "format": b'f"plain" f"{{x}} {value}" f"{ { 1 } }" f"{f"{2}"}" f"{"}"}"',
+            "format": b'f"plain" f"{{x}} {value}" f"{ { 1 } }" f"{f"{2}"}" f"{"}"}" f"{{x}}\\\""',
             "characters": "'a' '\\n' '\\u{10ffff}' '\\u{0}' '\\u{d7ff}' '\\u{e000}' '\u00e9' '\U0001f600' b'a' b'\\xFF' b'\\0'".encode(),
         }
         invalid = {
@@ -127,14 +127,14 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             path = directory / (name + ".mt")
             path.write_bytes(data)
             reference = run([executable, "tokens", str(path)], expected)
-            actual = run([native, str(path)], expected)
-            wanted = [(token["kind"], token["begin"], token["end"])
-                      for token in json.loads(reference.stdout)["tokens"]]
-            found = [tuple(map(int, line.split())) for line in actual.stdout.splitlines()]
+            actual = run([native, "tokens", str(path)], expected)
+            wanted = json.loads(reference.stdout)["tokens"]
+            found = json.loads(actual.stdout)["tokens"]
             if found != wanted:
                 mismatch = next((i for i, pair in enumerate(zip(found, wanted)) if pair[0] != pair[1]),
                                 min(len(found), len(wanted)))
                 raise AssertionError(f"{name}: token {mismatch}: {found[mismatch:mismatch + 1]} != {wanted[mismatch:mismatch + 1]}")
+            assert actual.stdout == reference.stdout, f"{name}: token JSON output differs"
             native_diagnostics = re.findall(r"error\[(\w+)\] (\d+):(\d+) ([^\n]*)", actual.stderr)
             diagnostics = []
             for phase, begin, end, message in native_diagnostics:

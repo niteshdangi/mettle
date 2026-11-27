@@ -1,7 +1,7 @@
-import std.{ env, fs, io }
+import std.{ env, fs, io, path }
 import std.io.{ Reader, Writer }
 import alloc.vec.{ List, new }
-import mettle_syntax.{ tokenize, parse, node_name }
+import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES }
 
@@ -27,6 +27,67 @@ fn read_source(mut input: Reader, limit: usize): List<u8>? throws io.Error {
         if count == 0usize { return present(bytes) }
         bytes.extend_from_slice(chunk.split_at(count).0)
     }
+}
+
+fn load_source(read source: path.PathInput): List<u8>? throws io.Error {
+    var input = try fs.open(source)
+    let metadata = try input.metadata()
+    if metadata.is_file() && metadata.len() > SOURCE_BYTES as u64 { return none }
+    try read_source(mut input, SOURCE_BYTES)
+}
+
+fn write_token_text(mut out: Writer, read bytes: [u8], format_piece: bool): Unit throws io.Error {
+    let hex = b"0123456789abcdef"
+    var start = 0usize
+    var index = 0usize
+    var escaped = false
+    while index < bytes.len() {
+        let byte = bytes[index]
+        if format_piece && !escaped && (byte == b'{' || byte == b'}') {
+            let paired = index + 1usize < bytes.len() && bytes[index + 1usize] == byte
+            if paired || byte == b'}' {
+                let end = if paired { index + 1usize } else { index }
+                try out.write_all(read bytes[start..end])
+                index += if paired { 2usize } else { 1usize }
+                start = index
+                continue
+            }
+        }
+        escaped = byte == b'\\' && !escaped
+        if byte == b'"' || byte == b'\\' || byte < 32u8 {
+            try out.write_all(read bytes[start..index])
+            let spelling = match byte {
+                b'"' => present(b'"'), b'\\' => present(b'\\'),
+                b'\n' => present(b'n'), b'\r' => present(b'r'), b'\t' => present(b't'),
+                _ => none
+            }
+            if let present(code) = spelling {
+                try out.write_all([b'\\', code])
+            } else {
+                try out.write_all([b'\\', b'u', b'0', b'0',
+                    hex[(byte >> 4u8) as usize], hex[(byte & 15u8) as usize]])
+            }
+            start = index + 1usize
+        }
+        index += 1usize
+    }
+    try out.write_all(read bytes[start..])
+}
+
+fn write_tokens(mut out: Writer, read bytes: [u8], read tokens: [Token]): Unit throws io.Error {
+    try out.write("{\n  \"aliases\": [],\n  \"functions\": [],\n  \"products\": [],\n  \"tokens\": [")
+    var separator = false
+    for token in tokens {
+        if separator { try out.write(",") }
+        separator = true
+        let kind = reference_kind(token.kind)
+        let begin = token.span.begin
+        let end = token.span.end
+        try out.write(f"\n    {{\n      \"begin\": {begin},\n      \"end\": {end},\n      \"kind\": {kind},\n      \"text\": \"")
+        try write_token_text(mut out, read bytes[begin as usize..end as usize], token.kind.is(Kind.FormatPiece))
+        try out.write("\"\n    }")
+    }
+    try out.write("\n  ]\n}\n")
 }
 
 @test
@@ -60,10 +121,9 @@ fn source_read_chunk_limit(): Unit throws io.Error {
 fn run(): i32 throws io.Error {
     let args = env.args_os()
     let syntax = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("syntax"))
-    if args.len() != 2 && !syntax { io.eprint("usage: mettle-selfhost [syntax] SOURCE\n"); return 2 }
-    var input = try fs.open(args[if syntax { 2usize } else { 1usize }])
-    let metadata = try input.metadata()
-    let loaded = if metadata.is_file() && metadata.len() > SOURCE_BYTES as u64 { none } else { try read_source(mut input, SOURCE_BYTES) }
+    let tokens = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("tokens"))
+    if args.len() != 2 && !syntax && !tokens { io.eprint("usage: mettle-selfhost [tokens|syntax] SOURCE\n"); return 2 }
+    let loaded = try load_source(args[if syntax || tokens { 2usize } else { 1usize }])
     let present(bytes) = loaded else { io.eprint("error[limit] 0:0 source file must be smaller than 4 GiB\n"); return 1 }
     if syntax {
         let result = parse(bytes.as_slice(), 0u32)
@@ -95,6 +155,11 @@ fn run(): i32 throws io.Error {
     }
     let result = tokenize(bytes.as_slice(), 0u32)
     var out = io.buf_writer(io.stdout())
+    if tokens {
+        try write_tokens(mut out, bytes.as_slice(), result.tokens.as_slice())
+        try out.flush()
+        return report(result.diagnostics)
+    }
     for token in result.tokens.as_slice() {
         let kind = reference_kind(token.kind)
         let begin = token.span.begin
