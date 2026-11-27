@@ -23,7 +23,7 @@ type PendingBlock {
 
 copy enum Work {
     Evaluate(NodeId), Binary(NodeId), Call(NodeId, usize), Chain(NodeId, u32),
-    SelectIf(NodeId), SelectShort(NodeId, bool), SelectChain(NodeId, u32),
+    SelectIf(NodeId), SelectShort(NodeId, bool), SelectChain(NodeId, u32), WhileBody(NodeId, usize),
     Bind(NodeId), Assign(NodeId), LeaveScope(usize),
     Unit(Span), Boolean(bool, Span), Discard(Span), Enter(usize), Jump(usize)
 }
@@ -107,14 +107,18 @@ extend Builder {
         self.blocks[self.current].terminator = present(take terminator)
     }
 
+    mut fn branch(condition: usize, yes: usize, no: usize): Unit {
+        let true_edge = self.edge(yes)
+        let false_edge = self.edge(no)
+        self.close(Terminator.Branch(condition, take true_edge, take false_edge))
+    }
+
     mut fn select(yes: Work, no: Work, result: Scalar, span: Span): Unit throws LoweringError {
         let condition = try self.pop_value(span)
         let consequent = self.continuation(none, span)
         let alternative = self.continuation(none, span)
         let joined = self.continuation(present(result), span)
-        let true_edge = self.edge(consequent)
-        let false_edge = self.edge(alternative)
-        self.close(Terminator.Branch(condition.slot, take true_edge, take false_edge))
+        self.branch(condition.slot, consequent, alternative)
         self.work.push(Work.Enter(joined))
         self.work.push(Work.Jump(joined))
         self.work.push(no)
@@ -181,6 +185,14 @@ fn evaluate(mut builder: Builder, read source: SourceModule, read checked: Check
         },
         NodeKind.If => {
             builder.work.push(Work.SelectIf(id))
+            builder.work.push(Work.Evaluate(child(parsed, item, 0)))
+        },
+        NodeKind.While => {
+            let header = builder.continuation(none, span)
+            let edge = builder.edge(header)
+            builder.close(Terminator.Jump(take edge))
+            builder.enter(header)
+            builder.work.push(Work.WhileBody(id, header))
             builder.work.push(Work.Evaluate(child(parsed, item, 0)))
         },
         NodeKind.Conditions => builder.work.push(Work.Chain(id, item.children.begin)),
@@ -321,6 +333,19 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
                     Work.Evaluate(child(parsed, item, 2))
                 } else { Work.Unit(item.span) }
                 try builder.select(yes, no, fact.scalar, item.span)
+            },
+            Work.WhileBody(id, header) => {
+                let item = parsed.nodes[id.index as usize]
+                let condition = try builder.pop_value(item.span)
+                let body_block = builder.continuation(none, item.span)
+                let exit_block = builder.continuation(none, item.span)
+                builder.branch(condition.slot, body_block, exit_block)
+                builder.work.push(Work.Unit(item.span))
+                builder.work.push(Work.Enter(exit_block))
+                builder.work.push(Work.Jump(header))
+                builder.work.push(Work.Discard(item.span))
+                builder.work.push(Work.Evaluate(child(parsed, item, 1)))
+                builder.enter(body_block)
             },
             Work.SelectShort(right, and) => {
                 let at = parsed.nodes[right.index as usize].span

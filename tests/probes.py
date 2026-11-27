@@ -995,7 +995,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             result = run(command, 1, env={**llvm_env, "PATH": ""})
             assert "cannot verify or publish build output" in result.stderr, result.stderr
             assert output.read_text() == checked and not list(directory.glob(".mettle-llvm-*.tmp"))
-            path.write_text("fn main(): i32 { while false {}; 0 }\n")
+            path.write_text("fn main(): i32 { for item in 0..1 { let _ = item }; 0 }\n")
             result = run(command, 1, env=llvm_env)
             assert "error[feature]" in result.stderr and output.read_text() == checked, result.stderr
             evidence["cases"].append({"name": "build-scalar-llvm"})
@@ -1052,6 +1052,24 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
                 run([str(output)], 42)
             evidence["cases"].append({"name": "build-native-locals"})
+        if selected("build-native-while"):
+            path = source("build-native-while",
+                          "fn main(): i32 {\n"
+                          "    var i = 0\n"
+                          "    var sum = 0\n"
+                          "    while i < 4, 40 / (4 - i) > 0 {\n"
+                          "        let term = i + 1\n"
+                          "        var inner = 0\n"
+                          "        while inner < 2 { sum += term; inner += 1 }\n"
+                          "        i += 1\n"
+                          "    }\n"
+                          "    sum + 22\n"
+                          "}\n")
+            output = directory / "while-loop"
+            for compiler in (executable, native):
+                run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
+                run([str(output)], 42)
+            evidence["cases"].append({"name": "build-native-while"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
@@ -1065,6 +1083,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-condition-chain-type", "fn main(): i32 { if false, 1 { 0 } else { 1 } }", "type"),
             ("check-scalar-branch-type", "fn main(): i32 { if true { 1 }; 0 }", "type"),
             ("check-scalar-logical-type", "fn main(): i32 { if true || 1 { 0 } else { 1 } }", "type"),
+            ("check-scalar-while-condition", "fn main(): i32 { while 1 {}; 0 }", "type"),
             ("check-scalar-test-attribute", '@test\n@ignore("reason")\nfn fixture(): Unit { () }\nfn main(): i32 { 0 }', None),
             ("check-scalar-test-body-error", "@test\nfn fixture(): Unit { missing() }\nfn main(): i32 { 0 }", "name"),
             ("check-scalar-cfg-filter", '@cfg(any(feature = "disabled", false))\nmodule nonexistent\n@cfg(all(true, not(feature = "disabled")))\nfn main(): i32 { 0 }', None),

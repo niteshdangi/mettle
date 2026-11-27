@@ -391,6 +391,14 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             }
             Scalar.Bool
         },
+        NodeKind.While => {
+            if item.children.end - item.children.begin != 2u32 { throw unsupported(item.span) }
+            let condition = child(parsed, item, 0)
+            let scalar = try expression(context, mut body, condition)
+            try require_type(scalar, Scalar.Bool, item.span)
+            let _ = try expression(context, mut body, child(parsed, item, 1))
+            Scalar.Unit
+        },
         NodeKind.If => {
             let condition = child(parsed, item, 0)
             let condition_span = node(parsed, condition).span
