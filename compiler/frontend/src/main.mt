@@ -248,6 +248,16 @@ fn expression(read source: SourceModule, item: SyntaxNode, owner: FunctionId,
             }
             result
         },
+        NodeKind.Conditions => {
+            for index in item.children.begin..item.children.end {
+                let id = parsed.children[index as usize]
+                let span = node(parsed, id).span
+                if !(try value(expressions, id, span)).scalar.is(Scalar.Bool) {
+                    throw CheckError(CheckPhase.Type, span, "conditional clause must be bool")
+                }
+            }
+            Scalar.Bool
+        },
         NodeKind.If => {
             let condition = child(parsed, item, 0)
             let condition_span = node(parsed, condition).span

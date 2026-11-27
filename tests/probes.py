@@ -824,6 +824,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 ("mixed", 'copy type P { value: ptr<read i32> }\nalias A = x.Y<i32>\n'
                  'fn f() { var x: i32; x += 1 as i32; thing<T>.member<U>(arg: x); x .. }\n'
                  'fn text() { "escape: \\\\ \\" \\t"; "é" }\n'),
+                ("branches", "fn f() { if a, b { match x { -3..=0 | 2 if ready => y as i32, _ => 0 } } "
+                 "else { label outer: while check(), y as bool { break label outer } } }\n"),
             ):
                 path = source("syntax-inspection-" + name, text)
                 reference = run([executable, "syntax", str(path)])
@@ -935,8 +937,9 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-separator", "fn main(): i32 { 1__0 }", "lex"),
             ("check-scalar-parameter", "fn main(): i32 { double(21) - 42 }\nfn double(value: i32): i32 { value * 2 }", None),
             ("check-scalar-argument-type", "fn main(): i32 { double(true) }\nfn double(value: i32): i32 { value * 2 }", "type"),
-            ("check-scalar-conditional", "fn main(): i32 { if 1 < 2 && false != true { 0 } else if true { 1 } else { 2 } }", None),
+            ("check-scalar-conditional", "fn main(): i32 { if 1 < 2, false != true && true { 0 } else if true { 1 } else { 2 } }", None),
             ("check-scalar-condition-type", "fn main(): i32 { if 1 { 0 } else { 1 } }", "type"),
+            ("check-scalar-condition-chain-type", "fn main(): i32 { if false, 1 { 0 } else { 1 } }", "type"),
             ("check-scalar-branch-type", "fn main(): i32 { if true { 1 }; 0 }", "type"),
             ("check-scalar-logical-type", "fn main(): i32 { if true || 1 { 0 } else { 1 } }", "type"),
             ("check-scalar-cfg-filter", '@cfg(any(feature = "disabled", false))\nmodule nonexistent\n@cfg(all(true, not(feature = "disabled")))\nfn main(): i32 { 0 }', None),
