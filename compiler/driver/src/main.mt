@@ -91,6 +91,23 @@ fn load_source(read source: path.PathInput): List<u8>? throws io.Error {
     try read_source(mut input, SOURCE_BYTES)
 }
 
+fn package_input(read source: path.Path): bool {
+    if let present(name) = source.file_name() {
+        if name.same(std.ffi.os_str_from_text("package.mettle")) { return true }
+    }
+    source.is_dir()
+}
+
+fn report_read_error(read source: path.Path, read error: io.Error): i32 throws io.Error {
+    var out = io.buf_writer(io.stderr())
+    let message = error.message()
+    try out.write("mettle: error[io]: cannot read ")
+    try out.write_path(source)
+    try out.write_line(f": {message}")
+    try out.flush()
+    1
+}
+
 fn write_token_text(mut out: Writer, read bytes: [u8], format_piece: bool): Unit throws io.Error {
     let hex = b"0123456789abcdef"
     var start = 0usize
@@ -178,7 +195,18 @@ fn run(): i32 throws io.Error {
     let syntax = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("syntax"))
     let tokens = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("tokens"))
     if args.len() != 2 && !syntax && !tokens { io.eprint("usage: mettle-selfhost [tokens|syntax] SOURCE\n"); return 2 }
-    let loaded = try load_source(args[if syntax || tokens { 2usize } else { 1usize }])
+    let source = path.path_from_os_str(args[if syntax || tokens { 2usize } else { 1usize }].as_os_str())
+    if tokens && package_input(source) {
+        io.eprint("mettle: error[package]: only 'check', 'lint' and 'build' accept a package\n")
+        return 2
+    }
+    let loaded = match take capture load_source(source) {
+        success(content) => take content,
+        failure(error) => {
+            if tokens { return try report_read_error(source, error) }
+            throw error
+        }
+    }
     let present(bytes) = loaded else { io.eprint("error[limit] 0:0 source file must be smaller than 4 GiB\n"); return 1 }
     if syntax {
         let result = parse(bytes.as_slice(), 0u32)
@@ -213,7 +241,7 @@ fn run(): i32 throws io.Error {
     if tokens {
         try write_tokens(mut out, bytes.as_slice(), result.tokens.as_slice())
         try out.flush()
-        return try report_tokens(args[2], bytes.as_slice(), result.diagnostics)
+        return try report_tokens(source, bytes.as_slice(), result.diagnostics)
     }
     for token in result.tokens.as_slice() {
         let kind = reference_kind(token.kind)

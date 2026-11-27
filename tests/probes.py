@@ -145,6 +145,16 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             evidence["cases"].append({"name": name, "source_sha256": digest(path),
                                       "tokens": len(found), "diagnostics": len(reference_diagnostics)})
 
+        for name, path, expected in (("package-directory", directory, 2),
+                                     ("package-manifest", directory / "package.mettle", 2),
+                                     ("missing-source", directory / "missing.mt", 1)):
+            if not selected(name):
+                continue
+            reference = run([executable, "tokens", str(path)], expected)
+            actual = run([native, "tokens", str(path)], expected)
+            assert (actual.stdout, actual.stderr) == (reference.stdout, reference.stderr), name
+            evidence["cases"].append({"name": name})
+
         unicode_words = {
             "unicode-scripts": ["αβ", "cafe\u0301", "_नमस्ते", "变量", "𐐀𐐨", "𮯰"],
             "unicode-quoted": ["`λ`", "`cafe\u0301`", "`type`"],
