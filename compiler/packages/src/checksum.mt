@@ -23,6 +23,14 @@ fn under(read root: Path, read path: Path): PathBuf throws PackageError {
 }
 
 pub fn hash_tree(read root: Path): String throws PackageError {
+    try hash(root, false)
+}
+
+pub fn hash_legacy_tree(read root: Path): String throws PackageError {
+    try hash(root, true)
+}
+
+fn hash(read root: Path, legacy: bool): String throws PackageError {
     let start = Range(0, 0)
     var files = List<PathBuf>()
     var links = List<SourceLink>()
@@ -40,7 +48,7 @@ pub fn hash_tree(read root: Path): String throws PackageError {
         let basename = name.as_os_str()
         let kind = try io_result(take capture entry.file_type(), location, start, PackagePhase.Package)
         let linked = kind.is_symlink()
-        let resolved = if linked {
+        let resolved = if linked && !legacy {
             let canonical = try io_result(take capture fs.canonicalize(location), location, start, PackagePhase.Package)
             if !canonical.as_path().starts_with(root) {
                 let shown = location.display()
@@ -54,7 +62,9 @@ pub fn hash_tree(read root: Path): String throws PackageError {
             (try io_result(take capture fs.metadata(location), location, start, PackagePhase.Package)).file_type()
         } else { kind }
         if properties.is_dir() {
-            if basename.same(os_str_from_text(".git")) || (depth == 0 && basename.same(os_str_from_text("target"))) { continue }
+            if legacy {
+                if linked || basename.as_bytes()[0] == b'.' || basename.same(os_str_from_text("target")) || basename.same(os_str_from_text("build")) { continue }
+            } else if basename.same(os_str_from_text(".git")) || (depth == 0 && basename.same(os_str_from_text("target"))) { continue }
             let canonical = match take resolved {
                 present(value) => take value,
                 none => try io_result(take capture fs.canonicalize(location), location, start, PackagePhase.Package)
@@ -62,8 +72,11 @@ pub fn hash_tree(read root: Path): String throws PackageError {
             if visited.insert(take canonical) {
                 directories.push(try io_result(take capture fs.read_dir(location), location, start, PackagePhase.Package))
             }
-        } else if properties.is_file() && !basename.same(os_str_from_text("lock.mettle")) &&
-            !(depth == 0 && basename.same(os_str_from_text("YANKED"))) {
+        } else if properties.is_file() && !basename.same(os_str_from_text("lock.mettle")) {
+            if legacy {
+                let present(ext) = location.extension() else { continue }
+                if !ext.same(os_str_from_text("mt")) && !ext.same(os_str_from_text("mettle")) { continue }
+            } else if depth == 0 && basename.same(os_str_from_text("YANKED")) { continue }
             files.push(try under(root, location))
         }
     }
@@ -91,5 +104,5 @@ pub fn hash_tree(read root: Path): String throws PackageError {
     }
     let digest = hash.finish()
     let text = digest.as_text()
-    format(f"sha256-tree-2:{text}")
+    if legacy { format(f"sha256:{text}") } else { format(f"sha256-tree-2:{text}") }
 }

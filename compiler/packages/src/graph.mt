@@ -27,13 +27,14 @@ pub type ResolvedPackage {
 }
 pub type PackageGraph { pub packages: List<ResolvedPackage> }
 
-pub type ResolveOptions { pub features: List<String>; pub default_features: bool; pub locked: bool }
+pub type ResolveOptions { pub features: List<String>; pub default_features: bool; pub locked: bool; pub registries: List<PathBuf> }
 
 extend ResolveOptions {
     pub init() {
         self.features = List<String>()
         self.default_features = true
         self.locked = false
+        self.registries = List<PathBuf>()
     }
 }
 
@@ -49,6 +50,9 @@ type PackageFeatures {
     defaults: bool
 }
 type Request { parent: usize; slot: usize; forward: String? }
+type RegistryRelease { directory: PathBuf; source: String; manifest: Manifest; yanked: bool }
+copy type Choice { index: usize; count: usize }
+type Search { choices: List<Choice>; depth: usize; fatal: bool }
 type Solver {
     graph: PackageGraph
     targets: List<PackageFeatures>
@@ -104,11 +108,16 @@ fn select_entry(read manifest: Manifest, read directory: Path, read entry: Text,
     throw error(manifest_path.as_path(), manifest.span, take reason)
 }
 
-fn check_requirement(read dependency: Dependency, read candidate: version.Version, read path: Path): Unit throws PackageError {
-    if dependency.requirements.is_empty() { return }
+fn satisfies(read dependency: Dependency, read candidate: version.Version): bool {
+    if dependency.requirements.is_empty() { return true }
     for requirement in dependency.requirements.as_slice() {
-        if version.matches(requirement.as_text(), candidate) == present(true) { return }
+        if version.matches(requirement.as_text(), candidate) == present(true) { return true }
     }
+    false
+}
+
+fn check_requirement(read dependency: Dependency, read candidate: version.Version, read path: Path): Unit throws PackageError {
+    if satisfies(dependency, candidate) { return }
     let name = dependency.name.as_text()
     throw error(path, dependency.span, format(f"path dependency '{name}' does not satisfy its version requirement"))
 }
@@ -131,28 +140,132 @@ fn plan(read root: Path, read entry: Text, read options: ResolveOptions, publish
     let start = Range(0, 0)
     let root_directory = try io_result(take capture fs.canonicalize(root), root, start, PackagePhase.Package)
     let directory = root_directory.as_path()
-    let manifest = try load(directory)
-    let source = try select_entry(manifest, directory, entry, true)
     let lock_path = directory.join("lock.mettle")
     let recorded = if publish_lock { try lock.load(lock_path.as_path(), options.locked) } else { none }
+    let preferred = lock.preferred(recorded)
+    let graph = try solve(directory, entry, options, preferred)
+    if publish_lock { try lock.reconcile(graph, directory, lock_path.as_path(), take recorded, options.locked) }
+    graph
+}
+
+extend Search {
+    mut fn select(count: usize): usize {
+        if count == 1 { return 0 }
+        let depth = self.depth
+        self.depth += 1
+        if depth == self.choices.len() { self.choices.push(Choice(0, count)) }
+        self.choices[depth].index
+    }
+
+    mut fn advance(): bool {
+        self.choices.truncate(self.depth)
+        while !self.choices.is_empty() {
+            let last = self.choices.len() - 1
+            if self.choices[last].index + 1 < self.choices[last].count {
+                self.choices[last].index += 1
+                self.depth = 0
+                return true
+            }
+            let _ = self.choices.pop()
+        }
+        false
+    }
+}
+
+fn solve(read directory: Path, read entry: Text, read options: ResolveOptions,
+        read preferred: Map<String, List<version.Version>>): PackageGraph throws PackageError {
+    var search = Search(List<Choice>(), 0, false)
+    loop {
+        match take capture attempt(directory, entry, options, preferred, mut search) {
+            success(graph) => { return take graph },
+            failure(issue) => {
+                if search.fatal || !search.advance() { throw take issue }
+            }
+        }
+    }
+}
+
+fn attempt(read directory: Path, read entry: Text, read options: ResolveOptions,
+        read preferred: Map<String, List<version.Version>>, mut search: Search): PackageGraph throws PackageError {
+    let manifest = try load(directory)
+    let source = try select_entry(manifest, directory, entry, true)
+    var registries = List<PathBuf>()
+    for path in options.registries.as_slice() { registries.push(path.to_path_buf()) }
+    if let present(path) = manifest.registry { registries.push(directory.join(path.as_text())) }
     let manifest_path = directory.join("package.mettle")
     let span = manifest.span
     var solver = Solver(PackageGraph(List<ResolvedPackage>()), List<PackageFeatures>(), Map<PathBuf, usize>(), new<Request>())
-    let _ = solver.register(take manifest, take root_directory, take source, from_text("root"))
+    let _ = solver.visited.insert(directory.to_path_buf(), 0usize)
+    let _ = solver.register(take manifest, directory.to_path_buf(), take source, from_text("root"))
     try solver.enable(0, feature_queue(options.features), options.default_features, manifest_path.as_path(), span)
     loop {
         let request = match take solver.work.pop_front() {
             present(item) => take item,
             none => { break }
         }
-        try solver.resolve_edge(take request)
+        try solver.resolve_edge(take request, registries, preferred, mut search)
     }
     try solver.finish()
-    if publish_lock {
-        let root = solver.graph.packages[0].directory.as_path()
-        try lock.reconcile(solver.graph, root, lock_path.as_path(), take recorded, options.locked)
-    }
     take solver.graph
+}
+
+fn registry_releases(read root: Path, read registries: List<PathBuf>, read name: Text, read origin: Path, span: Range): List<RegistryRelease> throws PackageError {
+    var releases = List<RegistryRelease>()
+    for registry in registries.as_slice() {
+        let package = registry.join(name)
+        var entries = match take capture fs.read_dir(package) {
+            success(items) => take items,
+            failure(issue) => match issue.kind() {
+                io.ErrorKind.NotFound => { continue },
+                _ => { throw error(origin, span, issue.message()) }
+            }
+        }
+        let canonical = try io_result(take capture fs.canonicalize(registry), origin, span, PackagePhase.Package)
+        let relative = relative_to(root, canonical.as_path())
+        let present(location) = relative.to_str() else { throw error(origin, span, from_text("registry path is not valid UTF-8")) }
+        var directories = List<PathBuf>()
+        loop {
+            let present(item) = try io_result(take capture entries.next_entry(), origin, span, PackagePhase.Package) else { break }
+            let path = item.path()
+            let basename = item.file_name()
+            let present(text) = basename.as_os_str().to_str() else { continue }
+            if version.parse(text).is_none() { continue }
+            if (try io_result(take capture fs.metadata(path), origin, span, PackagePhase.Package)).is_dir() { directories.push(take path) }
+        }
+        directories.as_mut_slice().sort_unstable_by(fn(read a: PathBuf, read b: PathBuf): Ordering { a.as_os_str().cmp(b.as_os_str()) })
+        for path in directories.as_slice() {
+            let basename = path.file_name().or_panic()
+            let parsed = version.parse(basename.to_str().or_panic()).or_panic()
+            var duplicate = false
+            for release in releases.as_slice() {
+                if version.compare(release.manifest.version, parsed) == 0 { duplicate = true; break }
+            }
+            if duplicate { continue }
+            let directory = try io_result(take capture fs.canonicalize(path), origin, span, PackagePhase.Package)
+            let manifest = try load(directory.as_path())
+            let actual = manifest.name.as_text()
+            if actual != name || version.compare(manifest.version, parsed) != 0 {
+                let shown = path.display()
+                let release = manifest.version_text.as_text()
+                let input = directory.join("package.mettle")
+                throw error(input.as_path(), manifest.span, format(f"registry entry '{shown}' contains package '{actual}' {release}"))
+            }
+            let marker = directory.join("YANKED")
+            let yanked = match take capture fs.metadata(marker) {
+                success(_) => true,
+                failure(issue) => match issue.kind() {
+                    io.ErrorKind.NotFound => false,
+                    _ => { throw error(origin, span, issue.message()) }
+                }
+            }
+            releases.push(RegistryRelease(take directory, format(f"registry+{location}"), take manifest, yanked))
+        }
+    }
+    releases.as_mut_slice().sort_unstable_by(fn(read a: RegistryRelease, read b: RegistryRelease): Ordering {
+        let order = version.compare(a.manifest.version, b.manifest.version)
+        if order > 0 { Ordering.Less } else if order < 0 { Ordering.Greater } else { Ordering.Equal }
+    })
+    releases
 }
 
 fn feature_queue(read features: List<String>): Deque<String> {
@@ -175,7 +288,6 @@ extend Solver {
             if !manifest.dependencies[i].optional { self.work.push_back(Request(index, i, none)) }
             i += 1
         }
-        let _ = self.visited.insert(directory.to_path_buf(), self.graph.packages.len())
         self.graph.packages.push(ResolvedPackage(take manifest.name, take manifest.version_text, take id, take source,
             take directory, take entry.path, entry.is_library, List<DependencyEdge>(), List<String>()))
         self.targets.push(PackageFeatures(take manifest.version, take manifest.dependencies, take selected, take manifest.features,
@@ -214,7 +326,7 @@ extend Solver {
         }
     }
 
-    mut fn resolve_edge(take request: Request): Unit throws PackageError {
+    mut fn resolve_edge(take request: Request, read registries: List<PathBuf>, read preferred: Map<String, List<version.Version>>, mut search: Search): Unit throws PackageError {
         let owner = request.parent
         let slot = request.slot
         let span = self.targets[owner].dependencies[slot].span
@@ -222,7 +334,25 @@ extend Solver {
         let origin = owner_path.as_path()
         let index = match self.targets[owner].selected[slot] {
             present(chosen) => chosen,
-            none => try self.activate_dependency(owner, slot, origin, span)
+            none => {
+                let dependency = read self.targets[owner].dependencies[slot]
+                let name = from_text(dependency.name.as_text())
+                let defaults = dependency.default_features
+                let pending = feature_queue(dependency.features)
+                let target = if let present(location) = dependency.path {
+                    let path = self.graph.packages[owner].directory.join(location.as_text())
+                    match take capture self.activate_path(owner, slot, path.as_path(), origin, span) {
+                        success(index) => index,
+                        failure(issue) => { search.fatal = true; throw take issue }
+                    }
+                } else {
+                    try self.activate_registry(owner, slot, origin, span, registries, preferred, mut search)
+                }
+                self.targets[owner].selected[slot] = present(target)
+                self.graph.packages[owner].dependencies.push(DependencyEdge(take name, target, span))
+                try self.enable(target, take pending, defaults, origin, span)
+                target
+            }
         }
         match take request.forward {
             present(feature) => {
@@ -234,37 +364,83 @@ extend Solver {
         }
     }
 
-    mut fn activate_dependency(owner: usize, slot: usize, read origin: Path, span: Range): usize throws PackageError {
+    mut fn activate_path(owner: usize, slot: usize, read path: Path, read origin: Path, span: Range): usize throws PackageError {
         let dependency = read self.targets[owner].dependencies[slot]
-        let name = from_text(dependency.name.as_text())
-        let defaults = dependency.default_features
-        let pending = feature_queue(dependency.features)
-        let path = self.graph.packages[owner].directory.join(dependency.path.as_text())
+        let expected = dependency.name.as_text()
         let directory = try io_result(take capture fs.canonicalize(path), origin, span, PackagePhase.Package)
-        let index = if let present(chosen) = self.visited.get(directory) {
+        if let present(chosen) = self.visited.get(directory) {
             let actual = self.graph.packages[*chosen].name.as_text()
-            let expected = name.as_text()
             if actual != expected { throw error(origin, span, format(f"path dependency '{expected}' is the package '{actual}'")) }
             try check_requirement(dependency, self.targets[*chosen].version, origin)
-            *chosen
-        } else {
-            let child = try load(directory.as_path())
-            let actual = child.name.as_text()
-            let expected = name.as_text()
-            if actual != expected { throw error(origin, span, format(f"path dependency '{expected}' is the package '{actual}'")) }
-            try check_requirement(dependency, child.version, origin)
-            let source = try select_entry(child, directory.as_path(), "main", false)
-            let relative = relative_to(self.graph.packages[0].directory.as_path(), directory.as_path())
-            let present(relative_text) = relative.to_str() else {
-                throw error(origin, span, from_text("package path is not valid UTF-8"))
-            }
-            let source_name = format(f"path+{relative_text}")
-            self.register(take child, take directory, take source, take source_name)
+            return *chosen
         }
-        self.targets[owner].selected[slot] = present(index)
-        self.graph.packages[owner].dependencies.push(DependencyEdge(take name, index, span))
-        try self.enable(index, take pending, defaults, origin, span)
-        index
+        let child = try load(directory.as_path())
+        let actual = child.name.as_text()
+        if actual != expected { throw error(origin, span, format(f"path dependency '{expected}' is the package '{actual}'")) }
+        try check_requirement(dependency, child.version, origin)
+        let source = try select_entry(child, directory.as_path(), "main", false)
+        let relative = relative_to(self.graph.packages[0].directory.as_path(), directory.as_path())
+        let present(relative_text) = relative.to_str() else {
+            throw error(origin, span, from_text("package path is not valid UTF-8"))
+        }
+        let next = self.graph.packages.len()
+        let _ = self.visited.insert(directory.to_path_buf(), next)
+        self.register(take child, take directory, take source, format(f"path+{relative_text}"))
+    }
+
+    mut fn activate_registry(owner: usize, slot: usize, read origin: Path, span: Range, read registries: List<PathBuf>,
+            read preferred: Map<String, List<version.Version>>, mut search: Search): usize throws PackageError {
+        let dependency = read self.targets[owner].dependencies[slot]
+        let name = dependency.name.as_text()
+        if registries.is_empty() { throw error(origin, span, format(f"package '{name}' was not found: no registry is configured")) }
+        var releases = match take capture registry_releases(self.graph.packages[0].directory.as_path(), registries, name, origin, span) {
+            success(items) => take items,
+            failure(issue) => { search.fatal = true; throw take issue }
+        }
+        var preferred_releases = List<usize>()
+        var fresh = List<usize>()
+        var conflict = false
+        var index = 0usize
+        while index < releases.len() {
+            let release = read releases[index]
+            let candidate = read release.manifest.version
+            let choice = index
+            index += 1
+            if !satisfies(dependency, candidate) { continue }
+            var pin = false
+            if let present(versions) = preferred.get(name) {
+                for locked in versions.as_slice() {
+                    if version.compare(candidate, locked) == 0 { pin = true; break }
+                }
+            }
+            if release.yanked && !pin { continue }
+            var compatible = false
+            var target = 1usize
+            while target < self.graph.packages.len() {
+                let selected = read self.graph.packages[target]
+                if selected.source.as_text() == release.source.as_text() && selected.name.as_text() == name {
+                    let chosen = read self.targets[target].version
+                    if version.compare(chosen, candidate) == 0 { return target }
+                    if chosen.compatible(candidate) { compatible = true; break }
+                }
+                target += 1
+            }
+            if compatible { conflict = true; continue }
+            if pin { preferred_releases.push(choice) } else { fresh.push(choice) }
+        }
+        let count = preferred_releases.len() + fresh.len()
+        if count == 0 {
+            let message = if releases.is_empty() { format(f"package '{name}' was not found: not present in the local registries") }
+                else if conflict { format(f"no version of '{name}' satisfies all requirements") }
+                else { format(f"no available version of '{name}' satisfies its version requirement") }
+            throw error(origin, span, take message)
+        }
+        let at = search.select(count)
+        let choice = if at < preferred_releases.len() { preferred_releases[preferred_releases.len() - at - 1] }
+            else { fresh[at - preferred_releases.len()] }
+        let release = releases.remove(choice)
+        let entry = try select_entry(release.manifest, release.directory.as_path(), "main", false)
+        self.register(take release.manifest, take release.directory, take entry, take release.source)
     }
 
     mut fn finish(): Unit throws PackageError {
@@ -354,6 +530,18 @@ fn coexisting_path_versions(): Unit throws PackageError {
     let second = read graph.packages[indirect]
     assert(first.name.as_text() == "alpha" && second.name.as_text() == "alpha", "wrong dependency identity")
     assert(first.version.as_text() == "1.0.0" && second.version.as_text() == "2.0.0", "path versions were merged")
+}
+
+@test
+fn registry_backtracks_to_unify_compatible_releases(): Unit throws PackageError {
+    let graph = try resolve(std.path.path_from_text("tests/packages/resolution/app"), "main")
+    let root = read graph.packages[0]
+    let left = read graph.packages[root.dependencies[0].package]
+    let right = read graph.packages[root.dependencies[1].package]
+    let chosen = left.dependencies[0].package
+    assert(graph.packages.len() == 4 && chosen == right.dependencies[0].package, "compatible requirements did not unify")
+    assert(graph.packages[chosen].identity.as_text() == "util@1.0.0|registry+../../registry|target",
+        "the resolver did not backtrack to the shared release")
 }
 
 @test
