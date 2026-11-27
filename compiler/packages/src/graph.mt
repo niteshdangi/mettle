@@ -27,7 +27,13 @@ pub type ResolvedPackage {
 }
 pub type PackageGraph { pub packages: List<ResolvedPackage> }
 
-pub type ResolveOptions { pub features: List<String>; pub default_features: bool; pub locked: bool; pub registries: List<PathBuf> }
+pub type ResolveOptions {
+    pub features: List<String>
+    pub default_features: bool
+    pub locked: bool
+    pub registries: List<PathBuf>
+    pub include_dev: bool
+}
 
 extend ResolveOptions {
     pub init() {
@@ -35,6 +41,7 @@ extend ResolveOptions {
         self.default_features = true
         self.locked = false
         self.registries = List<PathBuf>()
+        self.include_dev = false
     }
 }
 
@@ -58,6 +65,8 @@ type Solver {
     targets: List<PackageFeatures>
     visited: Map<PathBuf, usize>
     work: Deque<Request>
+    include_dev: bool
+    root_aliases: Map<String, usize>
 }
 
 fn error(read path: Path, span: Range, take message: String): PackageError {
@@ -194,7 +203,8 @@ fn attempt(read directory: Path, read entry: Text, read options: ResolveOptions,
     if let present(path) = manifest.registry { registries.push(directory.join(path.as_text())) }
     let manifest_path = directory.join("package.mettle")
     let span = manifest.span
-    var solver = Solver(PackageGraph(List<ResolvedPackage>()), List<PackageFeatures>(), Map<PathBuf, usize>(), new<Request>())
+    var solver = Solver(PackageGraph(List<ResolvedPackage>()), List<PackageFeatures>(), Map<PathBuf, usize>(), new<Request>(),
+        options.include_dev, Map<String, usize>())
     let _ = solver.visited.insert(directory.to_path_buf(), 0usize)
     let _ = solver.register(take manifest, directory.to_path_buf(), take source, from_text("root"))
     try solver.enable(0, feature_queue(options.features), options.default_features, manifest_path.as_path(), span)
@@ -281,16 +291,21 @@ extend Solver {
         let version_text = manifest.version_text.as_text()
         let source_text = source.as_text()
         let id = format(f"{name}@{version_text}|{source_text}|target")
+        var dependencies = take manifest.dependencies
+        if index == 0 && self.include_dev {
+            var development = take manifest.dev_dependencies
+            dependencies.append(mut development)
+        }
         var selected = List<usize?>()
-        selected.resize(manifest.dependencies.len(), none)
+        selected.resize(dependencies.len(), none)
         var i = 0usize
-        while i < manifest.dependencies.len() {
-            if !manifest.dependencies[i].optional { self.work.push_back(Request(index, i, none)) }
+        while i < dependencies.len() {
+            if !dependencies[i].optional { self.work.push_back(Request(index, i, none)) }
             i += 1
         }
         self.graph.packages.push(ResolvedPackage(take manifest.name, take manifest.version_text, take id, take source,
             take directory, take entry.path, entry.is_library, List<DependencyEdge>(), List<String>()))
-        self.targets.push(PackageFeatures(take manifest.version, take manifest.dependencies, take selected, take manifest.features,
+        self.targets.push(PackageFeatures(take manifest.version, take dependencies, take selected, take manifest.features,
             take manifest.implicit_features, Set<String>(), false))
         index
     }
@@ -339,17 +354,35 @@ extend Solver {
                 let name = from_text(dependency.name.as_text())
                 let defaults = dependency.default_features
                 let pending = feature_queue(dependency.features)
-                let target = if let present(location) = dependency.path {
+                let root_dev = owner == 0 && self.include_dev
+                let selected = if root_dev {
+                    match self.root_aliases.get(name.as_text()) {
+                        present(index) => present(self.graph.packages[owner].dependencies[*index].package),
+                        none => none
+                    }
+                } else { none }
+                let target: usize = if let present(location) = dependency.path {
                     let path = self.graph.packages[owner].directory.join(location.as_text())
                     match take capture self.activate_path(owner, slot, path.as_path(), origin, span) {
                         success(index) => index,
                         failure(issue) => { search.fatal = true; throw take issue }
                     }
                 } else {
-                    try self.activate_registry(owner, slot, origin, span, registries, preferred, mut search)
+                    try self.activate_registry(owner, slot, origin, span, registries, preferred, selected, mut search)
+                }
+                if let present(existing) = selected {
+                    if existing != target {
+                        let dependency_name = name.as_text()
+                        throw error(origin, span, format(f"conflicting requirements for dependency alias '{dependency_name}'"))
+                    }
+                } else {
+                    if root_dev {
+                        let edge = self.graph.packages[owner].dependencies.len()
+                        let _ = self.root_aliases.insert(from_text(name.as_text()), edge)
+                    }
+                    self.graph.packages[owner].dependencies.push(DependencyEdge(take name, target, span))
                 }
                 self.targets[owner].selected[slot] = present(target)
-                self.graph.packages[owner].dependencies.push(DependencyEdge(take name, target, span))
                 try self.enable(target, take pending, defaults, origin, span)
                 target
             }
@@ -389,7 +422,7 @@ extend Solver {
     }
 
     mut fn activate_registry(owner: usize, slot: usize, read origin: Path, span: Range, read registries: List<PathBuf>,
-            read preferred: Map<String, List<version.Version>>, mut search: Search): usize throws PackageError {
+            read preferred: Map<String, List<version.Version>>, selected: usize?, mut search: Search): usize throws PackageError {
         let dependency = read self.targets[owner].dependencies[slot]
         let name = dependency.name.as_text()
         if registries.is_empty() { throw error(origin, span, format(f"package '{name}' was not found: no registry is configured")) }
@@ -414,6 +447,12 @@ extend Solver {
                 }
             }
             if release.yanked && !pin { continue }
+            if let present(target) = selected {
+                let existing = read self.graph.packages[target]
+                if existing.source.as_text() == release.source.as_text() &&
+                    existing.version.as_text() == release.manifest.version_text.as_text() { return target }
+                continue
+            }
             var compatible = false
             var target = 1usize
             while target < self.graph.packages.len() {
@@ -430,7 +469,8 @@ extend Solver {
         }
         let count = preferred_releases.len() + fresh.len()
         if count == 0 {
-            let message = if releases.is_empty() { format(f"package '{name}' was not found: not present in the local registries") }
+            let message = if selected.is_present() { format(f"conflicting requirements for dependency alias '{name}'") }
+                else if releases.is_empty() { format(f"package '{name}' was not found: not present in the local registries") }
                 else if conflict { format(f"no version of '{name}' satisfies all requirements") }
                 else { format(f"no available version of '{name}' satisfies its version requirement") }
             throw error(origin, span, take message)

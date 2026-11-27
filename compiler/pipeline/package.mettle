@@ -4,5 +4,7 @@ kind: "library"
 dependencies {
     "mettle-foundation": "../foundation"
     "mettle-frontend": "../frontend"
+    "mettle-ir": "../ir"
+    "mettle-middle": "../middle"
     "mettle-syntax": "../syntax"
 }
