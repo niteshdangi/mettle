@@ -18,9 +18,12 @@ pub type Function {
     pub body: NodeId
     pub result: Scalar
     pub parameters: List<Scalar>
+    pub exported: bool
 }
 
-pub copy enum Binding { Function(usize), Parameter(usize) }
+pub copy type FunctionId { pub module_index: usize; pub index: usize }
+
+pub copy enum Binding { Function(FunctionId), Parameter(usize) }
 
 pub copy type Expression {
     pub scalar: Scalar
@@ -30,7 +33,25 @@ pub copy type Expression {
 pub type CheckedModule {
     pub functions: List<Function>
     pub expressions: List<Expression?>
-    pub entry: usize
+    pub entry: usize?
+}
+
+pub type SourceModule {
+    pub bytes: List<u8>
+    pub syntax: Parsed
+    pub modules: Map<List<u8>, usize>
+    pub package_index: usize
+}
+
+pub type ExternalModule {
+    pub name: List<u8>
+    pub span: Span
+}
+
+type Declarations {
+    functions: List<Function>
+    names: Map<List<u8>, usize>
+    locals: List<Map<List<u8>, usize>>
 }
 
 fn unsupported(span: Span): CheckError {
@@ -52,6 +73,28 @@ fn name(read bytes: [u8], read parsed: Parsed, item: SyntaxNode): List<u8> throw
     identifier
 }
 
+fn root_node(read parsed: Parsed): SyntaxNode throws CheckError {
+    let present(root_id) = parsed.root else { throw unsupported(Span(0, 0, 0)) }
+    let root = node(parsed, root_id)
+    if parsed.diagnostics.error_count != 0 { throw unsupported(root.span) }
+    root
+}
+
+pub fn external_modules(read bytes: [u8], read parsed: Parsed): List<ExternalModule> throws CheckError {
+    let root = try root_node(parsed)
+    var result = List<ExternalModule>()
+    for index in root.children.begin..root.children.end {
+        let item = node(parsed, parsed.children[index as usize])
+        if !item.kind.is(NodeKind.ModuleDeclaration) { continue }
+        let identifier = node(parsed, child(parsed, item, 0))
+        if item.children.end - item.children.begin != 1u32 || !identifier.kind.is(NodeKind.Name) {
+            throw unsupported(item.span)
+        }
+        result.push(ExternalModule(try name(bytes, parsed, identifier), item.span))
+    }
+    result
+}
+
 fn scalar_type(read bytes: [u8], annotation: SyntaxNode): Scalar throws CheckError {
     if !annotation.kind.is(NodeKind.TypeName) || annotation.children.end - annotation.children.begin != 1u32 {
         throw unsupported(annotation.span)
@@ -68,6 +111,9 @@ fn signature(read bytes: [u8], read parsed: Parsed, id: NodeId): (List<u8>, Func
     if !item.kind.is(NodeKind.Function) { throw unsupported(item.span) }
     let first = node(parsed, child(parsed, item, 0))
     let offset = if first.kind.is(NodeKind.Visibility) { 1u32 } else { 0u32 }
+    if offset != 0u32 && read bytes[first.span.begin as usize..first.span.end as usize] != b"pub" {
+        throw unsupported(first.span)
+    }
     if item.children.end - item.children.begin != offset + 4u32 { throw unsupported(item.span) }
     let identifier = node(parsed, child(parsed, item, offset))
     let parameters = node(parsed, child(parsed, item, offset + 1u32))
@@ -93,7 +139,7 @@ fn signature(read bytes: [u8], read parsed: Parsed, id: NodeId): (List<u8>, Func
         types.push(try scalar_type(bytes, node(parsed, child(parsed, parameter, 1))))
     }
     let result = try scalar_type(bytes, annotation)
-    (try name(bytes, parsed, identifier), Function(id, body, result, take types), take locals)
+    (try name(bytes, parsed, identifier), Function(id, body, result, take types, offset != 0u32), take locals)
 }
 
 fn integer(read bytes: [u8], span: Span): Scalar throws CheckError {
@@ -128,10 +174,19 @@ fn value(read expressions: List<Expression?>, id: NodeId, span: Span): Expressio
     result
 }
 
-fn expression(read bytes: [u8], read parsed: Parsed, item: SyntaxNode,
-    read functions: List<Function>, read names: Map<List<u8>, usize>, owner: usize,
-    read locals: Map<List<u8>, usize>,
+fn module_target(read source: SourceModule, read mounts: Map<List<u8>, usize>, read spelling: List<u8>): usize? {
+    if let present(index) = source.modules.get(spelling) { return present(*index) }
+    if let present(index) = mounts.get(spelling) { return present(*index) }
+    none
+}
+
+fn expression(read source: SourceModule, item: SyntaxNode, owner: FunctionId,
+    read declarations: List<Declarations>, read mounts: Map<List<u8>, usize>,
     read expressions: List<Expression?>): Expression? throws CheckError {
+    let bytes = source.bytes.as_slice()
+    let parsed = read source.syntax
+    let scope = read declarations[owner.module_index]
+    let locals = read scope.locals[owner.index]
     let scalar = match item.kind {
         NodeKind.Integer => try integer(read bytes[item.span.begin as usize..item.span.end as usize], item.span),
         NodeKind.Boolean => Scalar.Bool,
@@ -140,7 +195,7 @@ fn expression(read bytes: [u8], read parsed: Parsed, item: SyntaxNode,
             let identifier = try name(bytes, parsed, item)
             let present(index) = locals.get(identifier) else { return none }
             let index = *index
-            return present(Expression(functions[owner].parameters[index], present(Binding.Parameter(index))))
+            return present(Expression(scope.functions[owner.index].parameters[index], present(Binding.Parameter(index))))
         },
         NodeKind.Group => (try value(expressions, child(parsed, item, 0), item.span)).scalar,
         NodeKind.Block => {
@@ -155,16 +210,34 @@ fn expression(read bytes: [u8], read parsed: Parsed, item: SyntaxNode,
         NodeKind.Call => {
             let callee = node(parsed, child(parsed, item, 0))
             let arguments = node(parsed, child(parsed, item, 1))
-            if !callee.kind.is(NodeKind.Name) { throw unsupported(item.span) }
-            let identifier = try name(bytes, parsed, callee)
-            if locals.get(identifier).is_present() {
+            var module_index = owner.module_index
+            var identifier_node = callee
+            if callee.kind.is(NodeKind.Field) {
+                let base = node(parsed, child(parsed, callee, 0))
+                if !base.kind.is(NodeKind.Name) { throw unsupported(callee.span) }
+                let namespace = try name(bytes, parsed, base)
+                if locals.get(namespace).is_present() { throw unsupported(callee.span) }
+                let present(target) = module_target(source, mounts, namespace) else {
+                    throw unsupported(base.span)
+                }
+                module_index = target
+                identifier_node = node(parsed, child(parsed, callee, 1))
+            } else if !callee.kind.is(NodeKind.Name) {
+                throw unsupported(callee.span)
+            }
+            let identifier = try name(bytes, parsed, identifier_node)
+            if callee.kind.is(NodeKind.Name) && locals.get(identifier).is_present() {
                 throw CheckError(CheckPhase.Type, callee.span, "scalar parameter is not callable")
             }
-            let present(id) = names.get(identifier) else {
+            let target = read declarations[module_index]
+            let present(id) = target.names.get(identifier) else {
                 throw CheckError(CheckPhase.Name, callee.span, "unresolved function")
             }
             let id = *id
-            let signature = read functions[id]
+            let signature = read target.functions[id]
+            if module_index != owner.module_index && !signature.exported {
+                throw CheckError(CheckPhase.Name, callee.span, "function is private")
+            }
             if arguments.children.end - arguments.children.begin != signature.parameters.len() as u32 {
                 throw CheckError(CheckPhase.Type, item.span, "function argument count does not match its parameters")
             }
@@ -176,7 +249,7 @@ fn expression(read bytes: [u8], read parsed: Parsed, item: SyntaxNode,
                     throw CheckError(CheckPhase.Type, span, "argument does not match the parameter type")
                 }
             }
-            return present(Expression(signature.result, present(Binding.Function(id))))
+            return present(Expression(signature.result, present(Binding.Function(FunctionId(module_index, id)))))
         },
         NodeKind.Binary => {
             let present(operation) = item.operation else { throw unsupported(item.span) }
@@ -198,31 +271,48 @@ fn expression(read bytes: [u8], read parsed: Parsed, item: SyntaxNode,
     present(Expression(scalar, none))
 }
 
-pub fn check_module(read bytes: [u8], read parsed: Parsed): CheckedModule throws CheckError {
-    let present(root_id) = parsed.root else { throw unsupported(Span(0, 0, 0)) }
-    let root = node(parsed, root_id)
-    if parsed.diagnostics.error_count != 0 { throw unsupported(root.span) }
+fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declarations throws CheckError {
+    let bytes = source.bytes.as_slice()
+    let parsed = read source.syntax
+    let root = try root_node(parsed)
     var functions = List<Function>()
     var names = Map<List<u8>, usize>()
     var locals = List<Map<List<u8>, usize>>()
-    var entry: usize? = none
+    var imports = Map<List<u8>, Unit>()
     for index in root.children.begin..root.children.end {
         let id = parsed.children[index as usize]
+        let item = node(parsed, id)
+        if item.kind.is(NodeKind.ModuleDeclaration) || item.kind.is(NodeKind.Import) {
+            if item.children.end - item.children.begin != 1u32 { throw unsupported(item.span) }
+            var identifier = node(parsed, child(parsed, item, 0))
+            if item.kind.is(NodeKind.Import) {
+                if !identifier.kind.is(NodeKind.ImportPath) || identifier.children.end - identifier.children.begin != 1u32 {
+                    throw unsupported(item.span)
+                }
+                identifier = node(parsed, child(parsed, identifier, 0))
+            }
+            let spelling = try name(bytes, parsed, identifier)
+            if !module_target(source, mounts, spelling).is_present() { throw unsupported(item.span) }
+            if item.kind.is(NodeKind.Import) && imports.insert(take spelling, ()).is_present() {
+                throw CheckError(CheckPhase.Name, identifier.span, "duplicate import")
+            }
+            continue
+        }
         let (identifier, function, scope) = try signature(bytes, parsed, id)
         let position = functions.len()
-        if identifier.as_slice() == b"main" { entry = present(position) }
         if names.insert(take identifier, position).is_present() {
-            throw CheckError(CheckPhase.Name, node(parsed, id).span, "duplicate function")
+            throw CheckError(CheckPhase.Name, item.span, "duplicate function")
         }
         functions.push(take function)
         locals.push(take scope)
     }
-    let present(main) = entry else {
-        throw CheckError(CheckPhase.Name, Span(root.span.source, 0, 0), "missing entry function 'main'")
-    }
-    if !functions[main].result.is(Scalar.I32) || !functions[main].parameters.is_empty() {
-        throw CheckError(CheckPhase.Type, node(parsed, functions[main].declaration).span, "entry function must have no parameters and return i32")
-    }
+    Declarations(take functions, take names, take locals)
+}
+
+fn check_bodies(read source: SourceModule, module_index: usize,
+    read declarations: List<Declarations>, read mounts: Map<List<u8>, usize>): List<Expression?> throws CheckError {
+    let parsed = read source.syntax
+    let functions = read declarations[module_index].functions
     var expressions = List<Expression?>()
     for index in 0usize..functions.len() {
         let function = read functions[index]
@@ -230,7 +320,7 @@ pub fn check_module(read bytes: [u8], read parsed: Parsed): CheckedModule throws
         while expressions.len() <= function.body.index as usize {
             let item = parsed.nodes[expressions.len()]
             let fact = if item.span.begin < body.span.begin { none }
-                else { try expression(bytes, parsed, item, functions, names, index, locals[index], expressions) }
+                else { try expression(source, item, FunctionId(module_index, index), declarations, mounts, expressions) }
             expressions.push(fact)
         }
         let result = try value(expressions, function.body, body.span)
@@ -239,5 +329,36 @@ pub fn check_module(read bytes: [u8], read parsed: Parsed): CheckedModule throws
         }
     }
     while expressions.len() < parsed.nodes.len() { expressions.push(none) }
-    CheckedModule(take functions, take expressions, main)
+    expressions
+}
+
+pub fn check_modules(read sources: List<SourceModule>, read mounts: List<Map<List<u8>, usize>>,
+    executable: bool): List<CheckedModule> throws CheckError {
+    if sources.is_empty() { throw unsupported(Span(0, 0, 0)) }
+    var declarations = List<Declarations>()
+    for source in sources.as_slice() { declarations.push(try collect(source, mounts[source.package_index])) }
+    var entry: usize? = none
+    if executable {
+        let parsed = read sources[0].syntax
+        let present(main) = declarations[0].names.get(b"main".to_vec()) else {
+            let root = try root_node(parsed)
+            throw CheckError(CheckPhase.Name, Span(root.span.source, 0, 0), "missing entry function 'main'")
+        }
+        let index = *main
+        let function = read declarations[0].functions[index]
+        if !function.result.is(Scalar.I32) || !function.parameters.is_empty() {
+            throw CheckError(CheckPhase.Type, node(parsed, function.declaration).span, "entry function must have no parameters and return i32")
+        }
+        entry = present(index)
+    }
+    var expressions = List<List<Expression?>>()
+    for index in 0usize..sources.len() {
+        expressions.push(try check_bodies(sources[index], index, declarations, mounts[sources[index].package_index]))
+    }
+    expressions.reverse()
+    var result = List<CheckedModule>()
+    for scope in take declarations {
+        result.push(CheckedModule(take scope.functions, expressions.pop().or_panic(), if result.is_empty() { entry } else { none }))
+    }
+    result
 }

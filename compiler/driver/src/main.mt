@@ -2,12 +2,13 @@ import std.{ env, fs, io, path }
 import std.ffi.os_str_from_text
 import std.io.{ Reader, Writer }
 import alloc.vec.{ List, new }
+import alloc.hash_map.Map
 import core.text.Text
 import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
-import mettle_packages.{ PackageError, PackagePhase, resolve_locked }
-import mettle_pipeline.{ Analysis, CheckError, CheckPhase, analyze_source }
+import mettle_packages.{ PackageError, PackageGraph, PackagePhase, resolve_locked }
+import mettle_pipeline.{ CheckError, CheckPhase, SourceModule, check_modules, external_modules }
 
 fn phase_name(phase: Phase): read Text from static {
     match phase { Phase.Lex => "lex", Phase.Parse => "parse", Phase.Feature => "feature", Phase.Limit => "limit" }
@@ -140,26 +141,141 @@ fn report_check_error(read source: path.Path, error: CheckError): i32 throws io.
     1
 }
 
-fn check_source(read source: path.Path, package: bool): i32 throws io.Error {
+fn load_module(read source: path.Path, index: usize, package_index: usize): SourceModule? throws io.Error {
+    if index > 4294967295usize {
+        io.eprint("error[limit]: source indices exceed the 32-bit span representation\n")
+        return none
+    }
     let loaded = match take capture load_source(source) {
         success(content) => take content,
-        failure(error) => { return try report_read_error(source, error) }
+        failure(error) => {
+            let _ = try report_read_error(source, error)
+            return none
+        }
     }
     let present(bytes) = loaded else {
         io.eprint("error[limit] 0:0 source file must be smaller than 4 GiB\n")
-        return 1
+        return none
     }
-    if package {
-        let parsed = parse(bytes.as_slice(), 0u32)
-        let status = try report_source(source, bytes.as_slice(), parsed.diagnostics)
-        if status != 0 { return status }
-        io.eprint("mettle: error[feature]: native package semantic checking is not implemented\n")
-        return 1
+    let parsed = parse(bytes.as_slice(), index as u32)
+    if try report_source(source, bytes.as_slice(), parsed.diagnostics) != 0 { return none }
+    present(SourceModule(take bytes, take parsed, Map<List<u8>, usize>(), package_index))
+}
+
+fn check_source(read source: path.Path): i32 throws io.Error {
+    let present(module_source) = try load_module(source, 0, 0) else { return 1 }
+    var modules = List<SourceModule>()
+    modules.push(take module_source)
+    var mounts = List<Map<List<u8>, usize>>()
+    mounts.push(Map<List<u8>, usize>())
+    match take capture check_modules(modules, mounts, true) {
+        failure(error) => { try report_check_error(source, error) },
+        success(_) => 0
     }
-    match take analyze_source(bytes.as_slice(), 0u32) {
-        Analysis.SyntaxErrors(diagnostics) => { try report_source(source, bytes.as_slice(), diagnostics) },
-        Analysis.SemanticError(error) => { try report_check_error(source, error) },
-        Analysis.Checked(_) => 0
+}
+
+fn mount_name(read name: Text): List<u8> {
+    var bytes = name.as_bytes().to_vec()
+    for index in 0usize..bytes.len() {
+        if bytes[index] == b'-' { bytes[index] = b'_' }
+    }
+    bytes
+}
+
+fn package_mounts(read graph: PackageGraph): List<Map<List<u8>, usize>> {
+    var mounts = List<Map<List<u8>, usize>>()
+    var roots = Map<List<u8>, usize?>()
+    for index in 0usize..graph.packages.len() {
+        let package = read graph.packages[index]
+        let name = mount_name(package.name.as_text())
+        if roots.contains_key(name) { let _ = roots.insert(take name, none) }
+        else { let _ = roots.insert(take name, present(index)) }
+        var aliases = Map<List<u8>, usize>()
+        let _ = aliases.insert(mount_name(package.name.as_text()), index)
+        for edge in package.dependencies.as_slice() {
+            let _ = aliases.insert(mount_name(edge.name.as_text()), edge.package)
+        }
+        mounts.push(take aliases)
+    }
+    for root in roots {
+        if let present(index) = root.value {
+            if !mounts[0].contains_key(root.key) {
+                let _ = mounts[0].insert(root.key.as_slice().to_vec(), index)
+            }
+        }
+    }
+    mounts
+}
+
+fn regular_source(read source: path.Path): bool throws io.Error {
+    match take capture fs.metadata(source) {
+        success(info) => info.is_file(),
+        failure(error) => match error.kind() {
+            io.ErrorKind.NotFound | io.ErrorKind.NotADirectory => false,
+            _ => { throw error }
+        }
+    }
+}
+
+type ModulePath {
+    source: path.PathBuf
+    children: path.PathBuf
+}
+
+fn check_graph(read graph: PackageGraph): i32 throws io.Error {
+    var sources = List<SourceModule>()
+    var paths = List<ModulePath>()
+    var seen = Map<path.PathBuf, Unit>()
+    let mounts = package_mounts(graph)
+    for package in graph.packages.as_slice() {
+        let source = package.entry.as_path()
+        if seen.insert(source.to_path_buf(), ()).is_present() {
+            io.eprint("error[name]: source file has more than one module identity\n")
+            return 1
+        }
+        let index = sources.len()
+        let present(module_source) = try load_module(source, index, index) else { return 1 }
+        paths.push(ModulePath(source.to_path_buf(), source.parent().or_panic().to_path_buf()))
+        sources.push(take module_source)
+    }
+    var owner = 0usize
+    while owner < sources.len() {
+        let declarations = match take capture external_modules(sources[owner].bytes.as_slice(), sources[owner].syntax) {
+            success(declarations) => take declarations,
+            failure(error) => { return try report_check_error(paths[owner].source.as_path(), error) }
+        }
+        for declaration in take declarations {
+            let owner_path = paths[owner].source.as_path()
+            if sources[owner].modules.contains_key(declaration.name) {
+                return try report_check_error(owner_path, CheckError(CheckPhase.Name, declaration.span, "duplicate module"))
+            }
+            let directory = paths[owner].children.join(path.path_buf_from_bytes(declaration.name.as_slice()))
+            var filename = declaration.name.as_slice().to_vec()
+            filename.extend_from_slice(b".mt")
+            let flat = paths[owner].children.join(path.path_buf_from_bytes(filename.as_slice()))
+            let nested = directory.join("module.mt")
+            let flat_exists = try regular_source(flat.as_path())
+            let nested_exists = try regular_source(nested.as_path())
+            if flat_exists == nested_exists {
+                let reason = if flat_exists { "external module matches both source paths" }
+                    else { "external module source file does not exist" }
+                return try report_check_error(owner_path, CheckError(CheckPhase.Name, declaration.span, reason))
+            }
+            let source = try fs.canonicalize(if flat_exists { flat.as_path() } else { nested.as_path() })
+            if seen.insert(source.to_path_buf(), ()).is_present() {
+                return try report_check_error(owner_path, CheckError(CheckPhase.Name, declaration.span, "source file has more than one module identity"))
+            }
+            let index = sources.len()
+            let present(module_source) = try load_module(source.as_path(), index, sources[owner].package_index) else { return 1 }
+            let _ = sources[owner].modules.insert(take declaration.name, take index)
+            paths.push(ModulePath(take source, take directory))
+            sources.push(take module_source)
+        }
+        owner += 1usize
+    }
+    match take capture check_modules(sources, mounts, !graph.is_library) {
+        failure(error) => { try report_check_error(paths[error.span.source as usize].source.as_path(), error) },
+        success(_) => 0
     }
 }
 
@@ -169,7 +285,7 @@ fn check_input(read source: path.Path, read entry: Text, locked: bool, package_o
             io.eprint("mettle: error[package]: --entry, --no-default-features, --registry, --locked, --offline and --frozen need a package directory or package.mettle\n")
             return 2
         }
-        return try check_source(source, false)
+        return try check_source(source)
     }
     if source.is_dir() { return try check_package(source, entry, locked) }
     if let present(parent) = source.parent() {
@@ -180,7 +296,7 @@ fn check_input(read source: path.Path, read entry: Text, locked: bool, package_o
 
 fn check_package(read directory: path.Path, read entry: Text, locked: bool): i32 throws io.Error {
     match take capture resolve_locked(directory, entry, locked) {
-        success(graph) => { try check_source(graph.packages[0].entry.as_path(), true) },
+        success(graph) => { try check_graph(graph) },
         failure(error) => { try report_package_error(error) }
     }
 }

@@ -259,6 +259,12 @@ The self-hosted compiler uses independently compiled Mettle packages in
 `compiler/`. Modules control source organization and visibility; packages control
 dependency/API boundaries; declaration queries and code-generation batches
 control rebuild work. A package is not an indivisible recompilation unit.
+
+For native scalar checking, the driver supplies parsed source units and their
+package mounts; it discovers declared external files and keeps their canonical
+source identities. The frontend collects signatures across all supplied units
+before checking bodies. Checked calls carry a module and function index, not a
+source spelling, and expression facts remain indexed by the owning syntax unit.
 The C++ component table above describes the bootstrap implementation; it does
 not prescribe one Mettle package per C++ component.
 

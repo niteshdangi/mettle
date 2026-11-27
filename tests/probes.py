@@ -842,6 +842,37 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             actual = run([native, "check", str(package)], 1)
             assert "units/package.mettle" in actual.stderr and "error[" in actual.stderr, actual.stderr
             evidence["cases"].append({"name": "package-entry-syntax"})
+        if selected("package-scalar-check"):
+            import shutil
+
+            fixture = directory / "scalar-path-dependency"
+            shutil.copytree(ROOT / "packages" / "path-dependency", fixture, dirs_exist_ok=True)
+            app = fixture / "app"
+            math = fixture / "mathlib"
+            external = math / "src" / "twice.mt"
+            for package in (app, math):
+                run([executable, "check", str(package)])
+                actual = run([native, "check", str(package), "--locked"])
+                assert not actual.stdout and not actual.stderr, actual.stderr
+            original = external.read_text()
+            nested = external.parent / "twice"
+            nested.mkdir(exist_ok=True)
+            (nested / "module.mt").write_text(original)
+            for tool in (executable, native):
+                actual = run([tool, "check", str(app)], 1)
+                assert "error[name]" in actual.stderr and "external module" in actual.stderr, actual.stderr
+            external.unlink()
+            for tool in (executable, native):
+                run([tool, "check", str(app)])
+            for definition, phase, origin in (
+                ("fn double(x: i32): i32 { x * 2 }", "name", math / "src" / "main.mt"),
+                ("pub fn double(x: i32): i32 { true }", "type", nested / "module.mt"),
+            ):
+                (nested / "module.mt").write_text(definition)
+                for tool in (executable, native):
+                    actual = run([tool, "check", str(app)], 1)
+                    assert f"error[{phase}]" in actual.stderr and str(origin) in actual.stderr, actual.stderr
+            evidence["cases"].append({"name": "package-scalar-check"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),

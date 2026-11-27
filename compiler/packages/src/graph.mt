@@ -22,7 +22,7 @@ pub type ResolvedPackage {
     pub entry: PathBuf
     pub dependencies: List<DependencyEdge>
 }
-pub type PackageGraph { pub packages: List<ResolvedPackage> }
+pub type PackageGraph { pub packages: List<ResolvedPackage>; pub is_library: bool }
 
 type Frame { index: usize; next: usize; dependencies: List<Dependency> }
 type Visit { index: usize; version: version.Version }
@@ -53,7 +53,7 @@ fn load(read directory: Path): Manifest throws PackageError {
     }
 }
 
-fn entry_path(read manifest: Manifest, read directory: Path, read entry: Text, root: bool): PathBuf throws PackageError {
+fn entry_path(read manifest: Manifest, read directory: Path, read entry: Text, root: bool): (PathBuf, bool) throws PackageError {
     let manifest_path = directory.join("package.mettle")
     for target in manifest.targets.as_slice() {
         if (root && target.name.as_text() == entry) || (!root && target.library) {
@@ -64,7 +64,8 @@ fn entry_path(read manifest: Manifest, read directory: Path, read entry: Text, r
                 let name = target.source.as_text()
                 throw error(manifest_path.as_path(), target.span, format(f"source entry '{name}' is not a regular file"))
             }
-            return try io_result(take capture fs.canonicalize(source_path), manifest_path.as_path(), target.span, PackagePhase.Package)
+            let canonical = try io_result(take capture fs.canonicalize(source_path), manifest_path.as_path(), target.span, PackagePhase.Package)
+            return (take canonical, target.library)
         }
     }
     let name = manifest.name.as_text()
@@ -88,8 +89,8 @@ pub fn resolve(read root: Path, read entry: Text): PackageGraph throws PackageEr
     let root_directory = try io_result(take capture fs.canonicalize(root), root, start, PackagePhase.Package)
     let directory = root_directory.as_path()
     let manifest = try load(directory)
-    let source = try entry_path(manifest, directory, entry, true)
-    try build_graph(directory, take manifest, take source)
+    let (source, library) = try entry_path(manifest, directory, entry, true)
+    try build_graph(directory, take manifest, take source, library)
 }
 
 pub fn resolve_locked(read root: Path, read entry: Text, locked: bool): PackageGraph throws PackageError {
@@ -97,15 +98,15 @@ pub fn resolve_locked(read root: Path, read entry: Text, locked: bool): PackageG
     let root_directory = try io_result(take capture fs.canonicalize(root), root, start, PackagePhase.Package)
     let directory = root_directory.as_path()
     let manifest = try load(directory)
-    let source = try entry_path(manifest, directory, entry, true)
+    let (source, library) = try entry_path(manifest, directory, entry, true)
     let path = directory.join("lock.mettle")
     let recorded = try lock.load(path.as_path(), locked)
-    let graph = try build_graph(directory, take manifest, take source)
+    let graph = try build_graph(directory, take manifest, take source, library)
     try lock.reconcile(graph, directory, path.as_path(), take recorded, locked)
     graph
 }
 
-fn build_graph(read root_directory: Path, take manifest: Manifest, take source: PathBuf): PackageGraph throws PackageError {
+fn build_graph(read root_directory: Path, take manifest: Manifest, take source: PathBuf, library: bool): PackageGraph throws PackageError {
     var visits = Map<PathBuf, Visit>()
     let _ = visits.insert(root_directory.to_path_buf(), Visit(0, take manifest.version))
     var packages = List<ResolvedPackage>()
@@ -149,7 +150,7 @@ fn build_graph(read root_directory: Path, take manifest: Manifest, take source: 
         let actual = child.name.as_text()
         if actual != name { throw error(declared_by, dependency.span, format(f"path dependency '{name}' is the package '{actual}'")) }
         try check_requirement(dependency, child.version, declared_by)
-        let source = try entry_path(child, directory.as_path(), "main", false)
+        let (source, _) = try entry_path(child, directory.as_path(), "main", false)
         let relative = relative_to(root_directory, directory.as_path())
         let present(relative_text) = relative.to_str() else {
             throw error(declared_by, dependency.span, from_text("package path is not valid UTF-8"))
@@ -164,7 +165,7 @@ fn build_graph(read root_directory: Path, take manifest: Manifest, take source: 
         packages.push(ResolvedPackage(take child.name, take child.version_text, take identity, take lock_source, take directory, take source, List<DependencyEdge>()))
         work.push(Frame(index, 0, take child.dependencies))
     }
-    PackageGraph(take packages)
+    PackageGraph(take packages, library)
 }
 
 @test
