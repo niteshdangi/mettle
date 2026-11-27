@@ -297,6 +297,7 @@ std::unique_ptr<Node> Parser::block() {
     auto before = position;
     auto savedNesting = nesting;
     auto savedExpressionLevel = genericExpressionLevel;
+    auto savedAwaitTemporaries = awaitTemporaries;
     try {
       auto statement = stmt();
       bool separated = false;
@@ -312,6 +313,7 @@ std::unique_ptr<Node> Parser::block() {
       parens = 0;
       nesting = savedNesting;
       genericExpressionLevel = savedExpressionLevel;
+      awaitTemporaries = savedAwaitTemporaries;
       if (position == before && peek().kind != TokenKind::End && !is("}"))
         ++position;
       // Resume after the statement that failed, not inside its open braces.

@@ -503,7 +503,24 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 assert sum(node[0] == "await" for node in nodes) == 1, actual.stdout
                 assert actual.stderr.count("`await` is only valid inside an async function body") == 1, actual.stderr
             assert f"error[{'parse' if name.startswith('recovery') else 'feature'}]" in actual.stderr, actual.stderr
+            if name.startswith("recovery"):
+                reference = run([executable, "syntax", str(path)], 1)
+                projected = run([native, "syntax", str(path)], 1)
+                assert projected.stdout == reference.stdout, name
+                assert "error[parse]" in projected.stderr, projected.stderr
             evidence["cases"].append({"name": name, "source_sha256": digest(path)})
+
+        for name, text in (
+            ("syntax-recovery-lexical", "fn keep() { 1 }\n~\n"),
+            ("syntax-recovery-await-numbering", "async fn f() { await task() garbage; await other() }\n"),
+        ):
+            if selected(name):
+                path = source(name, text)
+                reference = run([executable, "syntax", str(path)], 1)
+                actual = run([native, "syntax", str(path)], 1)
+                assert actual.stdout == reference.stdout and actual.stderr == reference.stderr, (
+                    name, actual.stderr, reference.stderr)
+                evidence["cases"].append({"name": name, "source_sha256": digest(path)})
 
         bad_text = (('"\\q"', "invalid text escape"),
                     ('"\\x80"', "text byte escape requires two hexadecimal digits no greater than 7f"),

@@ -10,7 +10,7 @@ import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
 import mettle_packages.{ PackageError, PackageGraph, PackagePhase, ResolveOptions, resolve_with }
 import mettle_pipeline.{ CheckError, CheckPhase, SourceModule, active_items, check_modules, external_modules }
-import mettle_syntax.inspect.{ InspectionError, project }
+import mettle_syntax.inspect.{ InspectionError, project, project_recovered }
 
 module inspection;
 
@@ -459,25 +459,33 @@ fn run(): i32 throws io.Error {
     let present(bytes) = loaded else { io.eprint("error[limit] 0:0 source file must be smaller than 4 GiB\n"); return 1 }
     if syntax {
         let parsed = parse(bytes.as_slice(), 0u32)
-        if parsed.diagnostics.error_count != 0usize {
-            return try report_source(source, bytes.as_slice(), parsed.diagnostics)
+        let recovered = parsed.diagnostics.error_count != 0usize
+        let projected = if recovered {
+            capture project_recovered(parsed, bytes.as_slice())
+        } else {
+            capture project(parsed, bytes.as_slice())
         }
-        let view = match take capture project(parsed, bytes.as_slice()) {
+        let view = match take projected {
             success(view) => take view,
-            failure(InspectionError.Unsupported(_, span)) => {
-                var diagnostics = Diagnostics()
-                diagnostics.report(Phase.Feature, span, "native inspection does not support this syntax yet")
-                return try report_source(source, bytes.as_slice(), diagnostics)
-            },
-            failure(InspectionError.InvalidTree) => {
-                io.eprint("mettle: error[internal]: cannot inspect a valid native syntax tree\n")
-                return 1
+            failure(error) => {
+                if recovered { return try report_source(source, bytes.as_slice(), parsed.diagnostics) }
+                match error {
+                    InspectionError.Unsupported(_, span) => {
+                        var diagnostics = Diagnostics()
+                        diagnostics.report(Phase.Feature, span, "native inspection does not support this syntax yet")
+                        return try report_source(source, bytes.as_slice(), diagnostics)
+                    },
+                    InspectionError.InvalidTree => {
+                        io.eprint("mettle: error[internal]: cannot inspect a valid native syntax tree\n")
+                        return 1
+                    }
+                }
             }
         }
         var out = io.buf_writer(io.stdout())
         try inspection.write_inspection(mut out, view)
         try out.flush()
-        return 0
+        return try report_source(source, bytes.as_slice(), parsed.diagnostics)
     }
     if syntax_tree {
         let result = parse(bytes.as_slice(), 0u32)

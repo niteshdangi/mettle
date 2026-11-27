@@ -68,7 +68,7 @@ packages: [
         version: "0.1.0"
         id: "mettle-syntax@0.1.0|path+../syntax|target"
         source: "path+../syntax"
-        checksum: "sha256-tree-2:6b11ce7c2ad8cc6be2ad7ce9bae95eea4df1dc0e42d6c233aaeddace6a6f9862"
+        checksum: "sha256-tree-2:cd5b6d5c546a940c275540e4a8159c19636c77a0fd2298dfa199105d5bb1fc0c"
         features: []
         dependencies: ["mettle-foundation@0.1.0|path+../foundation|target"]
     }
