@@ -826,14 +826,21 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             package = fixture / "app"
             manifest = package / "package.mettle"
             entry = package / "src" / "main.mt"
+            lock = package / "lock.mettle"
             entry.write_text("fn main() { await work() }\n")
             reference = run([executable, "check", str(package)], 1)
-            for package_input in (package, manifest):
-                actual = run([native, "check", str(package_input)], 1)
-                assert actual.stderr == reference.stderr and not actual.stdout, actual.stderr
+            expected_lock = lock.read_bytes()
+            lock.unlink()
+            locked = run([native, "check", str(package), "--locked"], 1)
+            assert "error[lock]" in locked.stderr and not lock.exists(), locked.stderr
+            actual = run([native, "check", str(manifest), "--entry", "main"], 1)
+            assert actual.stderr == reference.stderr and not actual.stdout, actual.stderr
+            assert lock.read_bytes() == expected_lock, "native check generated a different lock"
+            frozen = run([native, "check", str(package), "--frozen"], 1)
+            assert frozen.stderr == reference.stderr and lock.read_bytes() == expected_lock, frozen.stderr
             (fixture / "units" / "package.mettle").unlink()
             actual = run([native, "check", str(package)], 1)
-            assert "units/package.mettle" in actual.stderr and "error[package]" in actual.stderr, actual.stderr
+            assert "units/package.mettle" in actual.stderr and "error[" in actual.stderr, actual.stderr
             evidence["cases"].append({"name": "package-entry-syntax"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),

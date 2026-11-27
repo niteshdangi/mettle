@@ -1,11 +1,12 @@
 import std.{ env, fs, io, path }
+import std.ffi.os_str_from_text
 import std.io.{ Reader, Writer }
 import alloc.vec.{ List, new }
 import core.text.Text
 import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
-import mettle_packages.{ PackageError, resolve }
+import mettle_packages.{ PackageError, PackagePhase, resolve_locked }
 import mettle_pipeline.{ Analysis, CheckError, CheckPhase, analyze_source }
 
 fn phase_name(phase: Phase): read Text from static {
@@ -116,7 +117,11 @@ fn report_package_error(read error: PackageError): i32 throws io.Error {
     let begin = error.begin
     let end = error.end
     let message = error.message.as_text()
-    try out.write_line(f":{begin}:{end}: error[package]: {message}")
+    let phase = match error.phase {
+        PackagePhase.Manifest => "manifest", PackagePhase.Package => "package",
+        PackagePhase.Lock => "lock", PackagePhase.Io => "io"
+    }
+    try out.write_line(f":{begin}:{end}: error[{phase}]: {message}")
     try out.flush()
     1
 }
@@ -158,20 +163,66 @@ fn check_source(read source: path.Path, package: bool): i32 throws io.Error {
     }
 }
 
-fn check_input(read source: path.Path): i32 throws io.Error {
-    if !package_input(source) { return try check_source(source, false) }
-    if source.is_dir() { return try check_package(source) }
-    if let present(parent) = source.parent() {
-        if !parent.as_os_str().is_empty() { return try check_package(parent) }
+fn check_input(read source: path.Path, read entry: Text, locked: bool, package_options: bool): i32 throws io.Error {
+    if !package_input(source) {
+        if package_options {
+            io.eprint("mettle: error[package]: --entry, --no-default-features, --registry, --locked, --offline and --frozen need a package directory or package.mettle\n")
+            return 2
+        }
+        return try check_source(source, false)
     }
-    try check_package(path.path_from_text("."))
+    if source.is_dir() { return try check_package(source, entry, locked) }
+    if let present(parent) = source.parent() {
+        if !parent.as_os_str().is_empty() { return try check_package(parent, entry, locked) }
+    }
+    try check_package(path.path_from_text("."), entry, locked)
 }
 
-fn check_package(read directory: path.Path): i32 throws io.Error {
-    match take capture resolve(directory, "main") {
+fn check_package(read directory: path.Path, read entry: Text, locked: bool): i32 throws io.Error {
+    match take capture resolve_locked(directory, entry, locked) {
         success(graph) => { try check_source(graph.packages[0].entry.as_path(), true) },
         failure(error) => { try report_package_error(error) }
     }
+}
+
+fn check_usage(): i32 {
+    io.eprint("usage: mettle-selfhost check INPUT [--entry NAME] [--locked|--offline|--frozen]\n")
+    2
+}
+
+fn run_check(read args: env.ArgsOs): i32 throws io.Error {
+    var position = 2usize
+    var input: usize? = none
+    var entry: usize? = none
+    var locked = false
+    var package_options = false
+    while position < args.len() {
+        let arg = args[position].as_os_str()
+        if arg.same(os_str_from_text("--entry")) {
+            position += 1usize
+            if position == args.len() || entry.is_present() { return check_usage() }
+            entry = present(position)
+            package_options = true
+        } else if arg.same(os_str_from_text("--locked")) || arg.same(os_str_from_text("--frozen")) {
+            locked = true
+            package_options = true
+        } else if arg.same(os_str_from_text("--offline")) {
+            package_options = true
+        } else {
+            let bytes = arg.as_bytes()
+            if (!bytes.is_empty() && bytes[0usize] == b'-') || input.is_present() { return check_usage() }
+            input = present(position)
+        }
+        position += 1usize
+    }
+    let present(index) = input else { return check_usage() }
+    let source = path.path_from_os_str(args[index].as_os_str())
+    if let present(selected) = entry {
+        let present(name) = args[selected].as_os_str().to_str() else { return check_usage() }
+        if name.is_empty() || name.as_bytes()[0usize] == b'-' { return check_usage() }
+        return try check_input(source, name, locked, package_options)
+    }
+    try check_input(source, "main", locked, package_options)
 }
 
 fn write_token_text(mut out: Writer, read bytes: [u8], format_piece: bool): Unit throws io.Error {
@@ -258,15 +309,16 @@ fn source_read_chunk_limit(): Unit throws io.Error {
 
 fn run(): i32 throws io.Error {
     let args = env.args_os()
+    if args.len() >= 2 && args[1].as_os_str().same(os_str_from_text("check")) {
+        return try run_check(args)
+    }
     let syntax = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("syntax"))
     let tokens = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("tokens"))
-    let check = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("check"))
-    if args.len() != 2 && !syntax && !tokens && !check {
+    if args.len() != 2 && !syntax && !tokens {
         io.eprint("usage: mettle-selfhost [tokens|syntax|check] INPUT\n")
         return 2
     }
     let source = path.path_from_os_str(args[if args.len() == 3 { 2usize } else { 1usize }].as_os_str())
-    if check { return try check_input(source) }
     if tokens && package_input(source) {
         io.eprint("mettle: error[package]: only 'check', 'lint' and 'build' accept a package\n")
         return 2
