@@ -13,15 +13,18 @@ pub copy type CheckError {
     pub message: read Text from static
 }
 
-pub copy type Function {
+pub type Function {
     pub declaration: NodeId
     pub body: NodeId
     pub result: Scalar
+    pub parameters: List<Scalar>
 }
+
+pub copy enum Binding { Function(usize), Parameter(usize) }
 
 pub copy type Expression {
     pub scalar: Scalar
-    pub callee: usize?
+    pub binding: Binding?
 }
 
 pub type CheckedModule {
@@ -49,7 +52,18 @@ fn name(read bytes: [u8], read parsed: Parsed, item: SyntaxNode): List<u8> throw
     identifier
 }
 
-fn signature(read bytes: [u8], read parsed: Parsed, id: NodeId): (List<u8>, Function) throws CheckError {
+fn scalar_type(read bytes: [u8], annotation: SyntaxNode): Scalar throws CheckError {
+    if !annotation.kind.is(NodeKind.TypeName) || annotation.children.end - annotation.children.begin != 1u32 {
+        throw unsupported(annotation.span)
+    }
+    let spelling = read bytes[annotation.span.begin as usize..annotation.span.end as usize]
+    if spelling == "i32".as_bytes() { Scalar.I32 }
+    else if spelling == "bool".as_bytes() { Scalar.Bool }
+    else if spelling == "Unit".as_bytes() { Scalar.Unit }
+    else { throw unsupported(annotation.span) }
+}
+
+fn signature(read bytes: [u8], read parsed: Parsed, id: NodeId): (List<u8>, Function, Map<List<u8>, usize>) throws CheckError {
     let item = node(parsed, id)
     if !item.kind.is(NodeKind.Function) { throw unsupported(item.span) }
     let first = node(parsed, child(parsed, item, 0))
@@ -60,16 +74,26 @@ fn signature(read bytes: [u8], read parsed: Parsed, id: NodeId): (List<u8>, Func
     let annotation = node(parsed, child(parsed, item, offset + 2u32))
     let body = child(parsed, item, offset + 3u32)
     if (!identifier.kind.is(NodeKind.Name) || !parameters.kind.is(NodeKind.Parameters)
-        || parameters.children.begin != parameters.children.end || !annotation.kind.is(NodeKind.TypeName)
-        || annotation.children.end - annotation.children.begin != 1u32 || !node(parsed, body).kind.is(NodeKind.Block)) {
+        || !node(parsed, body).kind.is(NodeKind.Block)) {
         throw unsupported(item.span)
     }
-    let type_name = read bytes[annotation.span.begin as usize..annotation.span.end as usize]
-    let scalar = if type_name == "i32".as_bytes() { Scalar.I32 }
-        else if type_name == "bool".as_bytes() { Scalar.Bool }
-        else if type_name == "Unit".as_bytes() { Scalar.Unit }
-        else { throw unsupported(annotation.span) }
-    (try name(bytes, parsed, identifier), Function(id, body, scalar))
+    var types = List<Scalar>()
+    var locals = Map<List<u8>, usize>()
+    for index in parameters.children.begin..parameters.children.end {
+        let parameter = node(parsed, parsed.children[index as usize])
+        if !parameter.kind.is(NodeKind.Parameter) || parameter.children.end - parameter.children.begin != 2u32 {
+            throw unsupported(parameter.span)
+        }
+        let binding = node(parsed, child(parsed, parameter, 0))
+        if !binding.kind.is(NodeKind.Name) { throw unsupported(binding.span) }
+        let spelling = try name(bytes, parsed, binding)
+        if locals.insert(take spelling, types.len()).is_present() {
+            throw CheckError(CheckPhase.Name, binding.span, "duplicate parameter")
+        }
+        types.push(try scalar_type(bytes, node(parsed, child(parsed, parameter, 1))))
+    }
+    let result = try scalar_type(bytes, annotation)
+    (try name(bytes, parsed, identifier), Function(id, body, result, take types), take locals)
 }
 
 fn integer(read bytes: [u8], span: Span): Scalar throws CheckError {
@@ -105,12 +129,19 @@ fn value(read expressions: List<Expression?>, id: NodeId, span: Span): Expressio
 }
 
 fn expression(read bytes: [u8], read parsed: Parsed, item: SyntaxNode,
-    read functions: List<Function>, read names: Map<List<u8>, usize>,
+    read functions: List<Function>, read names: Map<List<u8>, usize>, owner: usize,
+    read locals: Map<List<u8>, usize>,
     read expressions: List<Expression?>): Expression? throws CheckError {
     let scalar = match item.kind {
         NodeKind.Integer => try integer(read bytes[item.span.begin as usize..item.span.end as usize], item.span),
         NodeKind.Boolean => Scalar.Bool,
         NodeKind.Unit => Scalar.Unit,
+        NodeKind.Name => {
+            let identifier = try name(bytes, parsed, item)
+            let present(index) = locals.get(identifier) else { return none }
+            let index = *index
+            return present(Expression(functions[owner].parameters[index], present(Binding.Parameter(index))))
+        },
         NodeKind.Group => (try value(expressions, child(parsed, item, 0), item.span)).scalar,
         NodeKind.Block => {
             var result = Scalar.Unit
@@ -124,15 +155,28 @@ fn expression(read bytes: [u8], read parsed: Parsed, item: SyntaxNode,
         NodeKind.Call => {
             let callee = node(parsed, child(parsed, item, 0))
             let arguments = node(parsed, child(parsed, item, 1))
-            if !callee.kind.is(NodeKind.Name) || arguments.children.begin != arguments.children.end {
-                throw unsupported(item.span)
-            }
+            if !callee.kind.is(NodeKind.Name) { throw unsupported(item.span) }
             let identifier = try name(bytes, parsed, callee)
+            if locals.get(identifier).is_present() {
+                throw CheckError(CheckPhase.Type, callee.span, "scalar parameter is not callable")
+            }
             let present(id) = names.get(identifier) else {
                 throw CheckError(CheckPhase.Name, callee.span, "unresolved function")
             }
             let id = *id
-            return present(Expression(functions[id].result, present(id)))
+            let signature = read functions[id]
+            if arguments.children.end - arguments.children.begin != signature.parameters.len() as u32 {
+                throw CheckError(CheckPhase.Type, item.span, "function argument count does not match its parameters")
+            }
+            for index in 0usize..signature.parameters.len() {
+                let argument = child(parsed, arguments, index as u32)
+                let span = node(parsed, argument).span
+                let actual = try value(expressions, argument, span)
+                if !actual.scalar.is(signature.parameters[index]) {
+                    throw CheckError(CheckPhase.Type, span, "argument does not match the parameter type")
+                }
+            }
+            return present(Expression(signature.result, present(Binding.Function(id))))
         },
         NodeKind.Binary => {
             let present(operation) = item.operation else { throw unsupported(item.span) }
@@ -160,34 +204,40 @@ pub fn check_module(read bytes: [u8], read parsed: Parsed): CheckedModule throws
     if parsed.diagnostics.error_count != 0 { throw unsupported(root.span) }
     var functions = List<Function>()
     var names = Map<List<u8>, usize>()
+    var locals = List<Map<List<u8>, usize>>()
     var entry: usize? = none
     for index in root.children.begin..root.children.end {
         let id = parsed.children[index as usize]
-        let (identifier, function) = try signature(bytes, parsed, id)
+        let (identifier, function, scope) = try signature(bytes, parsed, id)
         let position = functions.len()
         if identifier.as_slice() == b"main" { entry = present(position) }
         if names.insert(take identifier, position).is_present() {
             throw CheckError(CheckPhase.Name, node(parsed, id).span, "duplicate function")
         }
-        functions.push(function)
+        functions.push(take function)
+        locals.push(take scope)
     }
     let present(main) = entry else {
         throw CheckError(CheckPhase.Name, Span(root.span.source, 0, 0), "missing entry function 'main'")
     }
-    if !functions[main].result.is(Scalar.I32) {
+    if !functions[main].result.is(Scalar.I32) || !functions[main].parameters.is_empty() {
         throw CheckError(CheckPhase.Type, node(parsed, functions[main].declaration).span, "entry function must have no parameters and return i32")
     }
     var expressions = List<Expression?>()
-    for item in parsed.nodes.as_slice() {
-        let fact = try expression(bytes, parsed, item, functions, names, expressions)
-        expressions.push(fact)
-    }
-    for function in functions.as_slice() {
+    for index in 0usize..functions.len() {
+        let function = read functions[index]
         let body = node(parsed, function.body)
+        while expressions.len() <= function.body.index as usize {
+            let item = parsed.nodes[expressions.len()]
+            let fact = if item.span.begin < body.span.begin { none }
+                else { try expression(bytes, parsed, item, functions, names, index, locals[index], expressions) }
+            expressions.push(fact)
+        }
         let result = try value(expressions, function.body, body.span)
         if !result.scalar.is(function.result) {
             throw CheckError(CheckPhase.Type, body.span, "function body does not match its declared result type")
         }
     }
+    while expressions.len() < parsed.nodes.len() { expressions.push(none) }
     CheckedModule(take functions, take expressions, main)
 }

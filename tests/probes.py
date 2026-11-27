@@ -848,6 +848,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-unresolved-call", "fn main(): i32 { missing() }", "name"),
             ("check-scalar-overflow", "fn main(): i32 { 2147483648 }", "type"),
             ("check-scalar-separator", "fn main(): i32 { 1__0 }", "lex"),
+            ("check-scalar-parameter", "fn main(): i32 { double(21) - 42 }\nfn double(value: i32): i32 { value * 2 }", None),
+            ("check-scalar-argument-type", "fn main(): i32 { double(true) }\nfn double(value: i32): i32 { value * 2 }", "type"),
         ):
             if not selected(name):
                 continue
