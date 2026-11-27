@@ -966,10 +966,101 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([tool, "build", str(standalone), "-o", str(output)], env=llvm_env)
                 run([str(output)], 42)
             for declaration in ("pub module inline_module {}", "pub import mathlib.twice",
-                                "import mathlib.twice", "type Product {}"):
+                                "import mathlib.twice.*", "type Product {}"):
                 entry.write_text(f"{declaration}\nfn main(): i32 {{ 0 }}\n")
                 reject(entry, "1:1", "does not support", (native,), "feature")
             evidence["cases"].append({"name": "package-file-module-visibility"})
+        if selected("package-scalar-imports"):
+            import shutil
+
+            fixture = directory / "scalar-imports"
+            shutil.copytree(ROOT / "packages" / "path-dependency", fixture, dirs_exist_ok=True)
+            app = fixture / "app"
+            entry = app / "src" / "main.mt"
+            math = fixture / "mathlib" / "src"
+            (math / "main.mt").write_text(
+                "import units;\npub module twice;\n"
+                "import twice.double as private_alias;\n"
+                "pub fn answer(): i32 { private_alias(units.base()) }\n")
+            (math / "twice.mt").write_text(
+                "pub fn double(x: i32): i32 { x * 2 }\nfn hidden(): i32 { 0 }\n")
+            imports = ("import mathlib as numbers;\n"
+                       "import mathlib.{twice as metric, answer as metric, answer as metric};\n"
+                       "import mathlib.twice.double as direct;\n")
+            entry.write_text(imports +
+                             "fn imported(flag: bool): i32 { direct(if flag { return 28 } else { 14 }) }\n"
+                             "fn main(): i32 { if imported(true) != 28 { return 0 }; "
+                             "numbers.answer() + metric() + metric.double(7) + imported(false) - 84 }\n")
+            output = directory / "scalar-import-program"
+            for tool in (executable, native):
+                run([tool, "check", str(app)])
+                run([tool, "build", str(app), "-o", str(output)], env=llvm_env)
+                run([str(output)], 42)
+
+            for text, location, phase, message in (
+                ("import mathlib.answer as choose;\nimport mathlib.twice.double as choose;\nfn main(): i32 { 0 }",
+                 "2:1", "name", r"duplicate explicit (import )?binding"),
+                ("import mathlib.answer as choose;\nfn choose(): i32 { 0 }\nfn main(): i32 { choose() }",
+                 "1:1", "name", r"duplicate explicit (import )?binding"),
+                ("import mathlib.twice.hidden as steal;\nfn main(): i32 { 0 }",
+                 "1:1", "name", r"unresolved.*import"),
+                ("fn main(): i32 { mathlib.private_alias(21) }",
+                 "1:18", "name", r"inaccessible function|import is private"),
+                (imports + "fn main(): i32 { let metric = 0; metric() }",
+                 "4:34", "type", "expression is not callable"),
+            ):
+                entry.write_text(text + "\n")
+                for tool in (executable, native):
+                    result = run([tool, "check", str(app)], 1)
+                    line = next((line for line in result.stderr.splitlines()
+                                 if f"{entry}:{location}: error[{phase}]" in line), "")
+                    assert re.search(message, line), result.stderr
+            entry.write_text("import std.{fs};\nfn main(): i32 { 0 }\n")
+            actual = run([native, "check", str(app)], 1)
+            assert f"{entry}:1:8: error[feature]" in actual.stderr and "has not mounted" in actual.stderr, actual.stderr
+            entry.write_text("import mathlib.{Widget as make};\nfn main(): i32 { 0 }\n")
+            (math / "main.mt").write_text("pub type Widget {}\n")
+            run([executable, "check", str(app)])
+            actual = run([native, "check", str(app)], 1)
+            assert f"{math / 'main.mt'}:1:1: error[feature]" in actual.stderr and "does not support" in actual.stderr, actual.stderr
+            evidence["cases"].append({"name": "package-scalar-imports"})
+        if selected("native-library-source-mounts"):
+            library = directory / "native-test-library"
+            for root in ("core", "alloc", "std"):
+                (library / root).mkdir(parents=True, exist_ok=True)
+            core = library / "core" / "module.mt"
+            std = library / "std" / "module.mt"
+            core.write_text(
+                '@cfg(feature = "app")\npub module nonexistent;\npub fn value(): i32 { 21 }\n')
+            (library / "alloc" / "module.mt").write_text("pub fn value(): i32 { core.value() }\n")
+            std.write_text("pub module numbers;\n")
+            (library / "std" / "numbers.mt").write_text("pub fn answer(): i32 { alloc.value() * 2 }\n")
+            entry = source("native-library-source-mounts",
+                           "import std.{numbers as n};\nfn main(): i32 { n.answer() }\n")
+            output = directory / "native-library-program"
+            for tool in (executable, native):
+                run([tool, "check", str(entry), "--library-dir", str(library), "--features", "app"])
+                run([tool, "build", str(entry), "-o", str(output), "--library-dir", str(library)], env=llvm_env)
+                run([str(output)], 42)
+
+            core.write_text("pub fn value(): i32 { std.numbers.answer() }\n")
+            rejected = run([native, "check", str(entry), "--library-dir", str(library)], 1)
+            assert f"{core}:1:23: error[name]" in rejected.stderr and "core <- alloc <- std" in rejected.stderr, rejected.stderr
+            std.unlink()
+            rejected = run([native, "check", str(entry), "--library-dir", str(library)], 1)
+            assert f"{entry}:1:8: error[name]" in rejected.stderr and "requires NAME/module.mt" in rejected.stderr, rejected.stderr
+            std.symlink_to(entry)
+            rejected = run([native, "check", str(entry), "--library-dir", str(library)], 1)
+            assert f"{entry}:1:8: error[name]" in rejected.stderr and "more than one module identity" in rejected.stderr, rejected.stderr
+            std.unlink()
+            entry.write_text("@cfg(false)\nimport std.{numbers};\nfn main(): i32 { 0 }\n")
+            run([native, "check", str(entry), "--library-dir", str(library)])
+            entry.write_text("module std;\nimport std.{answer};\nfn main(): i32 { answer() }\n")
+            (entry.parent / "std.mt").write_text("pub fn answer(): i32 { 42 }\n")
+            for tool in (executable, native):
+                run([tool, "check", str(entry), "--library-dir", str(library)])
+
+            evidence["cases"].append({"name": "native-library-source-mounts"})
         if selected("package-feature-options"):
             import shutil
 
@@ -1181,6 +1272,50 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
                 run([str(output)], 42)
             evidence["cases"].append({"name": "build-native-loop-transfer"})
+        if selected("build-native-unsigned"):
+            path = source("build-native-unsigned",
+                          "fn adjust(n: u8, flag: bool): u8 {\n"
+                          "    var value: u8 = if flag { n } else { 0xff }\n"
+                          "    value -= 1u8\n"
+                          "    value *= 2\n"
+                          "    return value + 2\n"
+                          "}\n"
+                          "fn main(): i32 {\n"
+                          "    let quotient = 0xffff_ffffu32 / 2\n"
+                          "    let inferred = 2147483646 + 1\n"
+                          "    let remainder = 0xffff_ffffu32 % 256\n"
+                          "    let wide: usize = 18446744073709551615\n"
+                          "    let high = 2147483648u32\n"
+                          "    if 2147483648 <= high, quotient == inferred, remainder == 255,\n"
+                          "        wide / 2 == 9223372036854775807usize, wide % 256 == 255,\n"
+                          "        high as i32 as usize == 18446744071562067968usize,\n"
+                          "        high as usize == 2147483648, wide as u8 as u32 == 255 {\n"
+                          "        adjust(21, true) as i32\n"
+                          "    } else { 0 }\n"
+                          "}\n")
+            output = directory / "unsigned"
+            for compiler in (executable, native):
+                for profile in ("debug", "release"):
+                    run([compiler, "build", str(path), "-o", str(output), "--profile", profile], env=llvm_env)
+                    run([str(output)], 42)
+            evidence["cases"].append({"name": "build-native-unsigned", "source_sha256": digest(path)})
+        if selected("build-native-unsigned-checks"):
+            output = directory / "unsigned-checks"
+            for case, scalar, operator, lhs, rhs, wrapping in (
+                ("add", "u8", "+", 255, 1, 0),
+                ("sub", "u32", "-", 1, 4294967295, 2),
+                ("mul", "usize", "*", 18446744073709551615, 2, 254),
+                ("div-zero", "u32", "/", 17, 0, "trap"),
+                ("rem-zero", "usize", "%", 17, 0, "trap"),
+            ):
+                path = source("unsigned-" + case,
+                              f"fn op(a: {scalar}, b: {scalar}): {scalar} {{ a {operator} b }}\n"
+                              f"fn main(): i32 {{ op({lhs}, {rhs}) as i32 }}\n")
+                for profile, checks, expected in (("release", "on", "trap"), ("debug", "off", wrapping)):
+                    run([native, "build", str(path), "-o", str(output), "--profile", profile,
+                         "--overflow-checks", checks], env=llvm_env)
+                    run([str(output)], expected)
+            evidence["cases"].append({"name": "build-native-unsigned-checks"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
@@ -1188,6 +1323,11 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-unresolved-call", "fn main(): i32 { missing() }", "name"),
             ("check-scalar-overflow", "fn main(): i32 { 2147483648 }", "type"),
             ("check-scalar-separator", "fn main(): i32 { 1__0 }", "lex"),
+            ("check-scalar-u8-context-overflow", "fn small(): u8 { 256 }\nfn main(): i32 { 0 }", "type"),
+            ("check-scalar-u32-suffix-overflow", "fn main(): i32 { 4294967296u32 as i32 }", "type"),
+            ("check-scalar-usize-suffix-overflow", "fn main(): i32 { 18446744073709551616usize as i32 }", "type"),
+            ("check-scalar-cast-literal-default", "fn main(): i32 { (4294967295 as u32) as i32 }", "type"),
+            ("check-scalar-unsigned-mixed", "fn main(): i32 { (1u8 + 2u32) as i32 }", "type"),
             ("check-scalar-parameter", "fn main(): i32 { double(21) - 42 }\nfn double(value: i32): i32 { value * 2 }", None),
             ("check-scalar-argument-type", "fn main(): i32 { double(true) }\nfn double(value: i32): i32 { value * 2 }", "type"),
             ("check-scalar-conditional", "fn main(): i32 { if 1 < 2, false != true && true { 0 } else if true { 1 } else { 2 } }", None),

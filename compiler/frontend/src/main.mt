@@ -3,7 +3,7 @@ import alloc.string.String
 import alloc.vec.List
 import core.text.Text
 import mettle_foundation.Span
-import mettle_syntax.{ NodeId, NodeKind, Parsed, SyntaxNode }
+import mettle_syntax.{ Kind, NodeId, NodeKind, Parsed, SyntaxNode }
 import mettle_types.Scalar
 
 module cfg;
@@ -32,6 +32,7 @@ pub copy enum Binding { Function(FunctionId), Parameter(usize), Local(usize), Lo
 pub copy type Expression {
     pub scalar: Scalar?
     pub binding: Binding?
+    pub integer: u64?
 }
 
 pub type CheckedModule {
@@ -59,14 +60,44 @@ pub type ExternalModule {
     pub exported: bool
 }
 
+pub copy enum LibraryRoot { Core, Alloc, Std }
+
+extend LibraryRoot {
+    pub fn spelling(): read Text from static {
+        match self { LibraryRoot.Core => "core", LibraryRoot.Alloc => "alloc", LibraryRoot.Std => "std" }
+    }
+}
+
+fn library_root(read spelling: [u8]): LibraryRoot? {
+    let bytes = read spelling[..]
+    if bytes == b"core" { present(LibraryRoot.Core) }
+    else if bytes == b"alloc" { present(LibraryRoot.Alloc) }
+    else if bytes == b"std" { present(LibraryRoot.Std) }
+    else { none }
+}
+
+copy type Imported {
+    namespace: usize?
+    function: FunctionId?
+    namespace_origin: u32
+    function_origin: u32
+}
+
 type Declarations {
     functions: List<Function>
     names: Map<List<u8>, usize>
     parameters: List<Map<List<u8>, usize>>
+    imports: Map<List<u8>, Imported>
+    import_items: List<ActiveItem>
 }
 
+copy enum ValueType { Concrete(Scalar), Integer(usize) }
+copy type Fact { scalar: ValueType?; binding: Binding? }
+copy type IntegerType { parent: usize; size: usize; scalar: Scalar? }
+type IntegerTypes { entries: List<IntegerType> }
+
 copy type Local {
-    scalar: Scalar?
+    scalar: ValueType?
     binding: Binding
     writable: bool
 }
@@ -79,12 +110,14 @@ copy type Shadow {
 copy type LoopScope {
     id: NodeId
     label_node: NodeId?
-    result: Scalar?
+    result: ValueType?
     exits: bool
 }
 
 type Body {
-    expressions: List<Expression?>
+    expressions: List<Fact?>
+    integers: IntegerTypes
+    literals: List<(NodeId, u128)>
     symbols: Map<List<u8>, usize>
     visible: List<usize>
     bindings: List<Local>
@@ -95,12 +128,78 @@ type Body {
     local_count: usize
 }
 
+extend IntegerTypes {
+    mut fn fresh(): ValueType {
+        let index = self.entries.len()
+        self.entries.push(IntegerType(index, 1usize, none))
+        ValueType.Integer(index)
+    }
+
+    mut fn root_of(index: usize): usize {
+        var root = index
+        while self.entries[root].parent != root {
+            let parent = self.entries[root].parent
+            let grandparent = self.entries[parent].parent
+            self.entries[root].parent = grandparent
+            root = grandparent
+        }
+        root
+    }
+
+    mut fn known(value: ValueType): Scalar? {
+        match value {
+            ValueType.Concrete(scalar) => present(scalar),
+            ValueType.Integer(index) => {
+                let root = self.root_of(index)
+                self.entries[root].scalar
+            }
+        }
+    }
+
+    mut fn constrain_integer(index: usize, scalar: Scalar): bool {
+        if scalar.integer_width() == 0u32 { return false }
+        let root = self.root_of(index)
+        if let present(previous) = self.entries[root].scalar { return previous.is(scalar) }
+        self.entries[root].scalar = present(scalar)
+        true
+    }
+
+    mut fn unify(left: ValueType, right: ValueType): bool {
+        match (left, right) {
+            (ValueType.Concrete(a), ValueType.Concrete(b)) => a.is(b),
+            (ValueType.Concrete(scalar), ValueType.Integer(index)) => self.constrain_integer(index, scalar),
+            (ValueType.Integer(index), ValueType.Concrete(scalar)) => self.constrain_integer(index, scalar),
+            (ValueType.Integer(a), ValueType.Integer(b)) => {
+                var a_root = self.root_of(a)
+                var b_root = self.root_of(b)
+                if a_root == b_root { return true }
+                if self.entries[a_root].size < self.entries[b_root].size {
+                    let swap = a_root
+                    a_root = b_root
+                    b_root = swap
+                }
+                let a_type = self.entries[a_root].scalar
+                let b_type = self.entries[b_root].scalar
+                if let present(a_scalar) = a_type, let present(b_scalar) = b_type, !a_scalar.is(b_scalar) {
+                    return false
+                }
+                self.entries[b_root].parent = a_root
+                let size = self.entries[b_root].size
+                self.entries[a_root].size += size
+                if a_type.is_none() { self.entries[a_root].scalar = b_type }
+                true
+            }
+        }
+    }
+}
+
 type Context<region r> {
     source: read SourceModule from r
     sources: read List<SourceModule> from r
     owner: FunctionId
     declarations: read List<Declarations> from r
     mounts: read Map<List<u8>, usize> from r
+    libraries: read Map<List<u8>, usize> from r
 }
 
 extend<region r> Context<region r> {
@@ -112,7 +211,7 @@ extend<region r> Context<region r> {
         let scope = read self.declarations[self.owner.module_index]
         let present(index) = scope.parameters[self.owner.index].get(spelling) else { return none }
         let index = *index
-        present(Local(present(scope.functions[self.owner.index].parameters[index]), Binding.Parameter(index), false))
+        present(Local(present(ValueType.Concrete(scope.functions[self.owner.index].parameters[index])), Binding.Parameter(index), false))
     }
 }
 
@@ -207,14 +306,63 @@ pub fn external_modules(read source: SourceModule): List<ExternalModule> throws 
     result
 }
 
+pub fn library_references(read source: SourceModule): List<(LibraryRoot, Span)> {
+    let bytes = source.bytes.as_slice()
+    let parsed = read source.syntax
+    var references = List<(LibraryRoot, Span)>()
+    var seen = 0u32
+    for declaration in source.items.as_slice() {
+        let item = node(parsed, declaration.id)
+        if item.kind.is(NodeKind.Import) {
+            let path = node(parsed, child(parsed, item, declaration.offset))
+            if !path.kind.is(NodeKind.ImportPath) { continue }
+            let head = node(parsed, child(parsed, path, 0))
+            let token = parsed.tokens[head.tokens.begin as usize]
+            if let present(root) = token_library_root(bytes, token.kind, token.span) {
+                let bit = 1u32 << (root as u32)
+                if (seen & bit) == 0u32 { references.push((root, head.span)); seen |= bit }
+            }
+            continue
+        }
+        let start = if declaration.offset == 0u32 { item.tokens.begin }
+            else { node(parsed, child(parsed, item, declaration.offset - 1u32)).tokens.end }
+        var previous: LibraryRoot? = none
+        var previous_span = item.span
+        var dotted = false
+        for index in start..item.tokens.end {
+            let token = parsed.tokens[index as usize]
+            if token.kind.is(Kind.Space) || token.kind.is(Kind.Comment) || token.kind.is(Kind.Newline) { continue }
+            let dot = token.kind.is(Kind.Symbol) && read bytes[token.span.begin as usize..token.span.end as usize] == b"."
+            if dot {
+                if let present(root) = previous {
+                    let bit = 1u32 << (root as u32)
+                    if (seen & bit) == 0u32 { references.push((root, previous_span)); seen |= bit }
+                }
+            }
+            previous = if dotted { none } else { token_library_root(bytes, token.kind, token.span) }
+            previous_span = token.span
+            dotted = dot
+        }
+    }
+    references
+}
+
+fn token_library_root(read bytes: [u8], kind: Kind, span: Span): LibraryRoot? {
+    if kind.is(Kind.Word) {
+        library_root(read bytes[span.begin as usize..span.end as usize])
+    } else if kind.is(Kind.QuotedWord) {
+        library_root(read bytes[span.begin as usize + 1usize..span.end as usize - 1usize])
+    } else { none }
+}
+
 fn scalar_type(read bytes: [u8], annotation: SyntaxNode): Scalar throws CheckError {
     if !annotation.kind.is(NodeKind.TypeName) || annotation.children.end - annotation.children.begin != 1u32 {
         throw unsupported(annotation.span)
     }
     let spelling = read bytes[annotation.span.begin as usize..annotation.span.end as usize]
-    if spelling == "i32".as_bytes() { Scalar.I32 }
-    else if spelling == "bool".as_bytes() { Scalar.Bool }
-    else if spelling == "Unit".as_bytes() { Scalar.Unit }
+    if let present(scalar) = integer_type(spelling) { scalar }
+    else if spelling == b"bool" { Scalar.Bool }
+    else if spelling == b"Unit" { Scalar.Unit }
     else { throw unsupported(annotation.span) }
 }
 
@@ -255,31 +403,64 @@ fn signature(read bytes: [u8], read parsed: Parsed, declaration: ActiveItem): (L
     (try name(bytes, parsed, identifier), Function(declaration.id, body, result, take types, exported, 0usize), take locals)
 }
 
-fn integer(read bytes: [u8], span: Span): Scalar throws CheckError {
-    var magnitude = 0u32
+fn integer_type(read spelling: [u8]): Scalar? {
+    if read spelling == b"i32" { present(Scalar.I32) }
+    else if read spelling == b"u8" { present(Scalar.U8) }
+    else if read spelling == b"u32" { present(Scalar.U32) }
+    else if read spelling == b"usize" { present(Scalar.Usize) }
+    else { none }
+}
+
+fn integer(read bytes: [u8], span: Span): (Scalar?, u128) throws CheckError {
+    var position = 0usize
+    var radix = 10u128
+    if bytes.len() >= 2usize && bytes[0] == b'0' {
+        radix = match bytes[1] {
+            b'x' => 16u128, b'o' => 8u128, b'b' => 2u128, _ => 10u128
+        }
+        if radix != 10u128 { position = 2usize }
+    }
+    var magnitude = 0u128
     var needs_digit = true
-    var overflow = false
-    for byte in bytes {
+    var has_digit = false
+    let maximum = 340282366920938463463374607431768211455u128
+    let limit = maximum / radix
+    let last_digit = maximum % radix
+    while position < bytes.len() {
+        let byte = bytes[position]
         if byte == b'_' {
-            if needs_digit {
+            if radix == 10u128 && needs_digit {
                 throw CheckError(CheckPhase.Lex, span, "numeric separators must occur between digits")
             }
             needs_digit = true
+            position += 1usize
             continue
         }
-        if byte < b'0' || byte > b'9' { throw unsupported(span) }
-        let digit = (byte - b'0') as u32
-        if magnitude > (2147483647u32 - digit) / 10u32 { overflow = true }
-        if !overflow {
-            magnitude = magnitude * 10u32 + digit
+        let digit = if byte >= b'0' && byte <= b'9' { (byte - b'0') as u128 }
+            else if radix == 16u128 && byte >= b'a' && byte <= b'f' { (byte - b'a') as u128 + 10u128 }
+            else if radix == 16u128 && byte >= b'A' && byte <= b'F' { (byte - b'A') as u128 + 10u128 }
+            else { break }
+        if digit >= radix { throw CheckError(CheckPhase.Lex, span, "malformed integer literal") }
+        if magnitude > limit || (magnitude == limit && digit > last_digit) {
+            throw CheckError(CheckPhase.Type, span, "integer literal exceeds 128 bits")
         }
+        magnitude = magnitude * radix + digit
         needs_digit = false
+        has_digit = true
+        position += 1usize
     }
-    if needs_digit {
+    if radix == 10u128 && needs_digit {
         throw CheckError(CheckPhase.Lex, span, "numeric separators must occur between digits")
     }
-    if overflow { throw CheckError(CheckPhase.Type, span, "integer literal is outside the i32 range") }
-    Scalar.I32
+    if !has_digit { throw CheckError(CheckPhase.Lex, span, "integer literal requires digits") }
+    if position == bytes.len() { return (none, magnitude) }
+    let suffix = read bytes[position..bytes.len()]
+    if let present(scalar) = integer_type(suffix) { return (present(scalar), magnitude) }
+    if suffix == b"i8" || suffix == b"i16" || suffix == b"i64" || suffix == b"i128" ||
+        suffix == b"isize" || suffix == b"u16" || suffix == b"u64" || suffix == b"u128" {
+        throw unsupported(span)
+    }
+    throw CheckError(CheckPhase.Lex, span, "malformed integer literal")
 }
 
 fn inside_module(read sources: List<SourceModule>, from: usize, boundary: usize): bool {
@@ -289,6 +470,46 @@ fn inside_module(read sources: List<SourceModule>, from: usize, boundary: usize)
         scope = parent
     }
     true
+}
+
+fn declared_module(read sources: List<SourceModule>, scope: usize, read spelling: List<u8>): ModuleLink? {
+    let present(link) = sources[scope].modules.get(spelling) else { return none }
+    present(*link)
+}
+
+fn visible_module(read sources: List<SourceModule>, scope: usize, from: usize, link: ModuleLink): bool {
+    link.exported || inside_module(sources, from, scope)
+}
+
+fn module_step(read sources: List<SourceModule>, scope: usize, from: usize,
+    link: ModuleLink?, span: Span): usize throws CheckError {
+    let present(link) = link else { throw CheckError(CheckPhase.Name, span, "unresolved module") }
+    if !visible_module(sources, scope, from, link) {
+        throw CheckError(CheckPhase.Name, span, "module is private")
+    }
+    link.index
+}
+
+fn parent_scope(read sources: List<SourceModule>, scope: usize, span: Span): usize throws CheckError {
+    let present(parent) = sources[scope].parent else {
+        throw CheckError(CheckPhase.Name, span, "'super' escapes the package root")
+    }
+    parent
+}
+
+fn imported_module(read declarations: List<Declarations>, scope: usize, read spelling: List<u8>): ModuleLink? {
+    let present(imported) = declarations[scope].imports.get(spelling) else { return none }
+    let present(index) = imported.namespace else { return none }
+    present(ModuleLink(index, false))
+}
+
+fn mounted_module(read source: SourceModule, read mounts: Map<List<u8>, usize>,
+    read libraries: Map<List<u8>, usize>, read spelling: List<u8>): usize? {
+    if let present(index) = mounts.get(spelling) { return present(*index) }
+    if !source.modules.contains_key(spelling) {
+        if let present(index) = libraries.get(spelling) { return present(*index) }
+    }
+    none
 }
 
 fn module_target<region r>(read context: Context<region r>, read body: Body, base: SyntaxNode, span: Span): usize throws CheckError {
@@ -306,8 +527,8 @@ fn module_target<region r>(read context: Context<region r>, read body: Body, bas
     let from = context.owner.module_index
     var scope = from
     var relative = false
-    if let present(mount) = context.mounts.get(spelling) {
-        scope = *mount
+    if let present(mount) = mounted_module(context.source, context.mounts, context.libraries, spelling) {
+        scope = mount
     } else {
         let raw = read bytes[head.span.begin as usize..head.span.end as usize]
         if raw == b"self" || raw == b"super" {
@@ -319,23 +540,40 @@ fn module_target<region r>(read context: Context<region r>, read body: Body, bas
     }
     while let present(component) = components.pop() {
         if relative && read bytes[component.span.begin as usize..component.span.end as usize] == b"super" {
-            let present(parent) = context.sources[scope].parent else {
-                throw CheckError(CheckPhase.Name, span, "'super' escapes the package root")
-            }
-            scope = parent
+            scope = try parent_scope(context.sources, scope, span)
             continue
         }
         relative = false
         let name = try name(bytes, parsed, component)
-        let present(link) = context.sources[scope].modules.get(name) else {
-            throw CheckError(CheckPhase.Name, span, "unresolved module")
+        let link = if let present(link) = declared_module(context.sources, scope, name) {
+            present(link)
+        } else {
+            imported_module(context.declarations, scope, name)
         }
-        if !link.exported && !inside_module(context.sources, from, scope) {
-            throw CheckError(CheckPhase.Name, span, "module is private")
-        }
-        scope = link.index
+        scope = try module_step(context.sources, scope, from, link, span)
     }
     scope
+}
+
+fn function_target<region r>(read context: Context<region r>, scope: usize,
+    read spelling: List<u8>, span: Span): FunctionId throws CheckError {
+    let declarations = read context.declarations[scope]
+    let from = context.owner.module_index
+    if let present(index) = declarations.names.get(spelling) {
+        if !declarations.functions[*index].exported && !inside_module(context.sources, from, scope) {
+            throw CheckError(CheckPhase.Name, span, "function is private")
+        }
+        return FunctionId(scope, *index)
+    }
+    if let present(imported) = declarations.imports.get(spelling) {
+        if let present(target) = imported.function {
+            if !inside_module(context.sources, from, scope) {
+                throw CheckError(CheckPhase.Name, span, "import is private")
+            }
+            return FunctionId(target.module_index, target.index)
+        }
+    }
+    throw CheckError(CheckPhase.Name, span, "unresolved function")
 }
 
 fn operator_span(read parsed: Parsed, item: SyntaxNode): Span throws CheckError {
@@ -343,13 +581,19 @@ fn operator_span(read parsed: Parsed, item: SyntaxNode): Span throws CheckError 
     parsed.tokens[operation as usize].span
 }
 
-fn require_type(value: Scalar?, expected: Scalar, span: Span): Unit throws CheckError {
+fn require_type(mut body: Body, value: ValueType?, expected: ValueType, span: Span): Unit throws CheckError {
     let present(actual) = value else { return }
-    if actual.is(expected) { return }
-    let message = match expected {
-        Scalar.I32 => if actual.is(Scalar.Bool) { "expected i32, found bool" } else { "expected i32, found Unit" },
-        Scalar.Bool => if actual.is(Scalar.I32) { "expected bool, found i32" } else { "expected bool, found Unit" },
-        Scalar.Unit => if actual.is(Scalar.I32) { "expected Unit, found i32" } else { "expected Unit, found bool" }
+    if body.integers.unify(actual, expected) { return }
+    let expected = if let present(scalar) = body.integers.known(expected) { scalar } else { Scalar.I32 }
+    let found = if let present(scalar) = body.integers.known(actual) { scalar } else { Scalar.I32 }
+    let message = match (expected, found) {
+        (Scalar.I32, Scalar.Bool) => "expected i32, found bool",
+        (Scalar.I32, Scalar.Unit) => "expected i32, found Unit",
+        (Scalar.Bool, Scalar.I32) => "expected bool, found i32",
+        (Scalar.Bool, Scalar.Unit) => "expected bool, found Unit",
+        (Scalar.Unit, Scalar.I32) => "expected Unit, found i32",
+        (Scalar.Unit, Scalar.Bool) => "expected Unit, found bool",
+        _ => "scalar type does not match the expected type"
     }
     throw CheckError(CheckPhase.Type, span, message)
 }
@@ -399,15 +643,30 @@ pub fn literal_condition(read source: SourceModule, id: NodeId): bool? {
     present(source.bytes[item.span.begin as usize] == b't')
 }
 
-fn expression<region r>(read context: Context<region r>, mut body: Body, id: NodeId, reachable: bool): Scalar? throws CheckError {
+fn expression<region r>(read context: Context<region r>, mut body: Body, id: NodeId, reachable: bool): ValueType? throws CheckError {
     let bytes = context.source.bytes.as_slice()
     let parsed = read context.source.syntax
     let item = node(parsed, id)
     var binding: Binding? = none
     let scalar = match item.kind {
-        NodeKind.Integer => present(try integer(read bytes[item.span.begin as usize..item.span.end as usize], item.span)),
-        NodeKind.Boolean => present(Scalar.Bool),
-        NodeKind.Unit => present(Scalar.Unit),
+        NodeKind.Integer => {
+            let (suffix, magnitude) = try integer(read bytes[item.span.begin as usize..item.span.end as usize], item.span)
+            body.literals.push((id, magnitude))
+            present(if let present(scalar) = suffix { ValueType.Concrete(scalar) } else { body.integers.fresh() })
+        },
+        NodeKind.Boolean => present(ValueType.Concrete(Scalar.Bool)),
+        NodeKind.Unit => present(ValueType.Concrete(Scalar.Unit)),
+        NodeKind.Cast => {
+            let source = try expression(context, mut body, child(parsed, item, 0), reachable)
+            let target = try scalar_type(bytes, node(parsed, child(parsed, item, 1)))
+            if target.integer_width() == 0u32 { throw unsupported(item.span) }
+            if let present(value) = source {
+                if let present(scalar) = body.integers.known(value), scalar.integer_width() == 0u32 {
+                    throw unsupported(item.span)
+                }
+                present(ValueType.Concrete(target))
+            } else { none }
+        },
         NodeKind.Name => {
             let identifier = try name(bytes, parsed, item)
             let present(found) = context.resolve(body, identifier) else {
@@ -422,12 +681,12 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
         NodeKind.Group => try expression(context, mut body, child(parsed, item, 0), reachable),
         NodeKind.Block => {
             let mark = body.shadows.len()
-            var result = present(Scalar.Unit)
+            var result = present(ValueType.Concrete(Scalar.Unit))
             for index in item.children.begin..item.children.end {
                 let id = parsed.children[index as usize]
                 let scalar = try expression(context, mut body, id, reachable && result.is_present())
                 if result.is_present() {
-                    result = if scalar.is_present() && node(parsed, id).semicolon { present(Scalar.Unit) } else { scalar }
+                    result = if scalar.is_present() && node(parsed, id).semicolon { present(ValueType.Concrete(Scalar.Unit)) } else { scalar }
                 }
             }
             while body.shadows.len() > mark {
@@ -454,8 +713,8 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             if !wildcard { body.local_count += 1usize }
             let actual = try expression(context, mut body, initializer, reachable)
             let scalar = if let present(expected) = annotation {
-                try require_type(actual, expected, item.span)
-                present(expected)
+                try require_type(mut body, actual, ValueType.Concrete(expected), item.span)
+                present(ValueType.Concrete(expected))
             } else { actual }
             if !wildcard {
                 let identifier = try name(bytes, parsed, pattern)
@@ -469,7 +728,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 body.visible[symbol] = body.bindings.len()
                 binding = present(Binding.Local(index))
             }
-            if actual.is_present() { present(Scalar.Unit) } else { none }
+            if actual.is_present() { present(ValueType.Concrete(Scalar.Unit)) } else { none }
         },
         NodeKind.Assign => {
             let operator = try operator_span(parsed, item)
@@ -488,8 +747,8 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 throw CheckError(CheckPhase.Name, target.span, "unresolved value")
             }
             if let present(expected) = found.scalar {
-                try require_type(actual, expected, item.span)
-                if !simple && !expected.is(Scalar.I32) {
+                try require_type(mut body, actual, expected, item.span)
+                if !simple, let present(scalar) = body.integers.known(expected), scalar.integer_width() == 0u32 {
                     throw CheckError(CheckPhase.Type, item.span, "operator is not available for this scalar type")
                 }
             } else if actual.is_present() {
@@ -500,19 +759,21 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             }
             var place = lhs
             while node(parsed, place).kind.is(NodeKind.Group) {
-                body.expressions[place.index as usize] = present(Expression(found.scalar, none))
+                body.expressions[place.index as usize] = present(Fact(found.scalar, none))
                 place = child(parsed, node(parsed, place), 0)
             }
-            body.expressions[place.index as usize] = present(Expression(found.scalar, present(found.binding)))
+            body.expressions[place.index as usize] = present(Fact(found.scalar, present(found.binding)))
             binding = present(found.binding)
-            if actual.is_present() && found.scalar.is_present() { present(Scalar.Unit) } else { none }
+            if actual.is_present() && found.scalar.is_present() { present(ValueType.Concrete(Scalar.Unit)) } else { none }
         },
         NodeKind.Return => {
             let actual = if item.children.begin == item.children.end {
-                present(Scalar.Unit)
+                present(ValueType.Concrete(Scalar.Unit))
             } else { try expression(context, mut body, child(parsed, item, 0), reachable) }
             let expected = context.declarations[context.owner.module_index].functions[context.owner.index].result
-            if reachable && body.loop_isolation.is_none() { try require_type(actual, expected, item.span) }
+            if reachable && body.loop_isolation.is_none() {
+                try require_type(mut body, actual, ValueType.Concrete(expected), item.span)
+            }
             none
         },
         NodeKind.Conditions => {
@@ -523,7 +784,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 let id = parsed.children[index as usize]
                 let span = node(parsed, id).span
                 let clause = try expression(context, mut body, id, reachable && active)
-                if let present(value) = clause, !value.is(Scalar.Bool) {
+                if let present(value) = clause, !body.integers.unify(value, ValueType.Concrete(Scalar.Bool)) {
                     throw CheckError(CheckPhase.Type, span, "conditional clause must be bool")
                 }
                 if active {
@@ -533,7 +794,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                     can_skip = can_skip || literal != present(true)
                 }
             }
-            if completes { present(Scalar.Bool) } else { none }
+            if completes { present(ValueType.Concrete(Scalar.Bool)) } else { none }
         },
         NodeKind.While | NodeKind.Loop => {
             let label_node = loop_label(parsed, item)
@@ -541,11 +802,12 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             let conditional = item.kind.is(NodeKind.While)
             let isolation = body.loop_isolation
             if !reachable { body.loop_isolation = present(body.loops.len()) }
-            body.loops.push(LoopScope(id, label_node, if conditional { present(Scalar.Unit) } else { none }, false))
+            let result = if conditional { present(ValueType.Concrete(Scalar.Unit)) } else { none }
+            body.loops.push(LoopScope(id, label_node, result, false))
             let (condition_completes, literal) = if conditional {
                 let condition = child(parsed, item, offset)
                 let scalar = try expression(context, mut body, condition, true)
-                try require_type(scalar, Scalar.Bool, item.span)
+                try require_type(mut body, scalar, ValueType.Concrete(Scalar.Bool), item.span)
                 (scalar.is_present(), literal_condition(context.source, condition))
             } else { (true, present(true)) }
             let _ = try expression(context, mut body, parsed.children[(item.children.end - 1u32) as usize],
@@ -561,10 +823,11 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             if item.kind.is(NodeKind.Break) {
                 let offset = if label_node.is_present() { 1u32 } else { 0u32 }
                 let actual = if item.children.begin + offset == item.children.end {
-                    present(Scalar.Unit)
+                    present(ValueType.Concrete(Scalar.Unit))
                 } else { try expression(context, mut body, child(parsed, item, offset), reachable) }
-                if let present(expected) = body.loops[target].result {
-                    try require_type(actual, expected, item.span)
+                let expected = body.loops[target].result
+                if let present(value) = expected {
+                    try require_type(mut body, actual, value, item.span)
                 } else { body.loops[target].result = actual }
                 let isolation = body.loop_isolation
                 if reachable && actual.is_present() && target >= isolation.or(0usize) {
@@ -577,7 +840,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             let condition = child(parsed, item, 0)
             let condition_span = node(parsed, condition).span
             let condition_type = try expression(context, mut body, condition, reachable)
-            if let present(value) = condition_type, !value.is(Scalar.Bool) {
+            if let present(value) = condition_type, !body.integers.unify(value, ValueType.Concrete(Scalar.Bool)) {
                 throw CheckError(CheckPhase.Type, condition_span, "if condition must be bool")
             }
             let consequent = child(parsed, item, 1)
@@ -587,8 +850,8 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             let result = try expression(context, mut body, consequent, live && literal != present(false))
             let alternative = if item.children.end - item.children.begin == 3u32 {
                 try expression(context, mut body, child(parsed, item, 2), live && literal != present(true))
-            } else { present(Scalar.Unit) }
-            if let present(left) = result, let present(right) = alternative, !left.is(right) {
+            } else { present(ValueType.Concrete(Scalar.Unit)) }
+            if let present(left) = result, let present(right) = alternative, !body.integers.unify(left, right) {
                 throw CheckError(CheckPhase.Type, consequent_span, "if branches must have the same result type")
             }
             if condition_type.is_none() || (literal == present(true) && result.is_none()) ||
@@ -611,15 +874,8 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             if callee.kind.is(NodeKind.Name) && context.resolve(body, identifier).is_present() {
                 throw CheckError(CheckPhase.Type, callee.span, "expression is not callable")
             }
-            let target = read context.declarations[module_index]
-            let present(id) = target.names.get(identifier) else {
-                throw CheckError(CheckPhase.Name, callee.span, "unresolved function")
-            }
-            let id = *id
-            let signature = read target.functions[id]
-            if !signature.exported && !inside_module(context.sources, context.owner.module_index, module_index) {
-                throw CheckError(CheckPhase.Name, callee.span, "function is private")
-            }
+            let target = try function_target(context, module_index, identifier, callee.span)
+            let signature = read context.declarations[target.module_index].functions[target.index]
             if arguments.children.end - arguments.children.begin != signature.parameters.len() as u32 {
                 throw CheckError(CheckPhase.Type, item.span, "function argument count does not match its parameters")
             }
@@ -628,13 +884,13 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 let argument = child(parsed, arguments, index as u32)
                 let span = node(parsed, argument).span
                 let actual = try expression(context, mut body, argument, reachable && completes)
-                if let present(value) = actual, !value.is(signature.parameters[index]) {
+                if let present(value) = actual, !body.integers.unify(value, ValueType.Concrete(signature.parameters[index])) {
                     throw CheckError(CheckPhase.Type, span, "argument does not match the parameter type")
                 }
                 completes = completes && actual.is_present()
             }
-            binding = present(Binding.Function(FunctionId(module_index, id)))
-            if completes { present(signature.result) } else { none }
+            binding = present(Binding.Function(target))
+            if completes { present(ValueType.Concrete(signature.result)) } else { none }
         },
         NodeKind.Binary => {
             let mark = body.binary.len()
@@ -649,18 +905,18 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 let nested = body.binary.pop().or_panic()
                 let binary = node(parsed, nested)
                 lhs = try binary_rhs(context, mut body, binary, lhs, reachable)
-                body.expressions[nested.index as usize] = present(Expression(lhs, none))
+                body.expressions[nested.index as usize] = present(Fact(lhs, none))
             }
             try binary_rhs(context, mut body, item, lhs, reachable)
         },
         _ => { throw unsupported(item.span) }
     }
-    body.expressions[id.index as usize] = present(Expression(scalar, binding))
+    body.expressions[id.index as usize] = present(Fact(scalar, binding))
     scalar
 }
 
 fn binary_rhs<region r>(read context: Context<region r>, mut body: Body, item: SyntaxNode,
-    lhs: Scalar?, reachable: bool): Scalar? throws CheckError {
+    lhs: ValueType?, reachable: bool): ValueType? throws CheckError {
     let bytes = context.source.bytes.as_slice()
     let parsed = read context.source.syntax
     let operator = try operator_span(parsed, item)
@@ -670,38 +926,49 @@ fn binary_rhs<region r>(read context: Context<region r>, mut body: Body, item: S
     let skips = literal == present(spelling == b"||")
     let rhs = try expression(context, mut body, child(parsed, item, 1), reachable && lhs.is_present() && !skips)
     if logical {
-        let left_bool = if let present(left) = lhs { left.is(Scalar.Bool) } else { true }
-        let right_bool = if let present(right) = rhs { right.is(Scalar.Bool) } else { true }
+        let left_bool = if let present(left) = lhs { body.integers.unify(left, ValueType.Concrete(Scalar.Bool)) } else { true }
+        let right_bool = if let present(right) = rhs { body.integers.unify(right, ValueType.Concrete(Scalar.Bool)) } else { true }
         if !left_bool || !right_bool {
             throw CheckError(CheckPhase.Type, operator, "logical operands must both be bool")
         }
         if literal.is_present() && !skips && rhs.is_none() { none } else { lhs }
     } else if spelling == b"==" || spelling == b"!=" || spelling == b"<" ||
               spelling == b"<=" || spelling == b">" || spelling == b">=" {
-        if let present(left) = lhs, let present(right) = rhs, !left.is(right) {
-            throw CheckError(CheckPhase.Type, operator, "comparison operands must have the same type")
+        if let present(left) = lhs, let present(right) = rhs {
+            if !body.integers.unify(left, right) {
+                throw CheckError(CheckPhase.Type, operator, "comparison operands must have the same type")
+            }
+            return present(ValueType.Concrete(Scalar.Bool))
         }
-        if lhs.is_present() && rhs.is_present() { present(Scalar.Bool) } else { none }
+        none
     } else if spelling == b"+" || spelling == b"-" || spelling == b"*" ||
               spelling == b"/" || spelling == b"%" {
-        let left_integer = if let present(left) = lhs { left.is(Scalar.I32) } else { true }
-        let right_integer = if let present(right) = rhs { right.is(Scalar.I32) } else { true }
-        if !left_integer || !right_integer {
-            throw CheckError(CheckPhase.Type, operator, "arithmetic operands must both be i32")
+        if let present(left) = lhs, let present(scalar) = body.integers.known(left), scalar.integer_width() == 0u32 {
+            throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
         }
-        if lhs.is_present() && rhs.is_present() { present(Scalar.I32) } else { none }
+        if let present(right) = rhs, let present(scalar) = body.integers.known(right), scalar.integer_width() == 0u32 {
+            throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
+        }
+        if let present(left) = lhs, let present(right) = rhs {
+            if !body.integers.unify(left, right) {
+                throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
+            }
+            return lhs
+        }
+        none
     } else {
         throw unsupported(operator)
     }
 }
 
-fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declarations throws CheckError {
+fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>,
+    read libraries: Map<List<u8>, usize>): Declarations throws CheckError {
     let bytes = source.bytes.as_slice()
     let parsed = read source.syntax
     var functions = List<Function>()
     var names = Map<List<u8>, usize>()
     var parameters = List<Map<List<u8>, usize>>()
-    var imports = Map<List<u8>, Unit>()
+    var imports = List<ActiveItem>()
     for declaration in source.items.as_slice() {
         let item = node(parsed, declaration.id)
         if item.kind.is(NodeKind.ModuleDeclaration) {
@@ -710,17 +977,22 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declar
             continue
         }
         if item.kind.is(NodeKind.Import) {
-            if item.children.end - item.children.begin != declaration.offset + 1u32 { throw unsupported(item.span) }
             let path = node(parsed, child(parsed, item, declaration.offset))
-            if !path.kind.is(NodeKind.ImportPath) || path.children.end - path.children.begin != 1u32 {
-                throw unsupported(item.span)
+            if !path.kind.is(NodeKind.ImportPath) { throw unsupported(item.span) }
+            if item.children.end - item.children.begin > declaration.offset + 1u32 {
+                let selection = node(parsed, child(parsed, item, declaration.offset + 1u32))
+                if !selection.kind.is(NodeKind.ImportAlias) &&
+                    (!selection.kind.is(NodeKind.ImportGroup) || selection.children.begin == selection.children.end) {
+                    throw unsupported(item.span)
+                }
             }
-            let identifier = node(parsed, child(parsed, path, 0))
-            let spelling = try name(bytes, parsed, identifier)
-            if !source.modules.contains_key(spelling) && !mounts.contains_key(spelling) { throw unsupported(item.span) }
-            if imports.insert(take spelling, ()).is_present() {
-                throw CheckError(CheckPhase.Name, identifier.span, "duplicate import")
+            let head = node(parsed, child(parsed, path, 0))
+            let spelling = try name(bytes, parsed, head)
+            if library_root(spelling.as_slice()).is_present() && !source.modules.contains_key(spelling) &&
+                mounted_module(source, mounts, libraries, spelling).is_none() {
+                throw CheckError(CheckPhase.Feature, head.span, "native semantic checking has not mounted this standard library namespace")
             }
+            imports.push(declaration)
             continue
         }
         let (identifier, function, scope) = try signature(bytes, parsed, declaration)
@@ -731,40 +1003,188 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declar
         functions.push(take function)
         parameters.push(take scope)
     }
-    Declarations(take functions, take names, take parameters)
+    Declarations(take functions, take names, take parameters, Map<List<u8>, Imported>(), take imports)
+}
+
+fn import_scope(read sources: List<SourceModule>, read mounts: Map<List<u8>, usize>,
+    read libraries: Map<List<u8>, usize>, from: usize,
+    path: SyntaxNode, end: u32): usize throws CheckError {
+    let source = read sources[from]
+    let parsed = read source.syntax
+    let bytes = source.bytes.as_slice()
+    var scope = from
+    var relative = true
+    for index in path.children.begin..end {
+        let component = node(parsed, parsed.children[index as usize])
+        let spelling = try name(bytes, parsed, component)
+        let raw = read bytes[component.span.begin as usize..component.span.end as usize]
+        if index == path.children.begin {
+            if let present(mount) = mounted_module(source, mounts, libraries, spelling) {
+                scope = mount
+                relative = false
+                continue
+            }
+            if raw == b"self" { continue }
+        }
+        if relative && raw == b"super" {
+            scope = try parent_scope(sources, scope, path.span)
+            continue
+        }
+        relative = false
+        scope = try module_step(sources, scope, from, declared_module(sources, scope, spelling), path.span)
+    }
+    scope
+}
+
+fn import_binding(read sources: List<SourceModule>, read declarations: List<Declarations>,
+    read mounts: Map<List<u8>, usize>, read libraries: Map<List<u8>, usize>, from: usize, scope: usize, bare: bool,
+    mut imports: Map<List<u8>, Imported>, selector: SyntaxNode, renamed: SyntaxNode?,
+    origin: u32, span: Span): Unit throws CheckError {
+    let source = read sources[from]
+    let spelling = try name(source.bytes.as_slice(), source.syntax, selector)
+    var namespace: usize? = none
+    var function: FunctionId? = none
+    if bare {
+        namespace = mounted_module(source, mounts, libraries, spelling)
+    }
+    if namespace.is_none() {
+        if let present(link) = declared_module(sources, scope, spelling) {
+            if visible_module(sources, scope, from, link) { namespace = present(link.index) }
+        }
+    }
+    let accessible = inside_module(sources, from, scope)
+    if let present(index) = declarations[scope].names.get(spelling) {
+        if accessible || declarations[scope].functions[*index].exported {
+            function = present(FunctionId(scope, *index))
+        }
+    }
+    if namespace.is_none() && function.is_none() {
+        throw CheckError(CheckPhase.Name, span, "unresolved or inaccessible import")
+    }
+    let bound = if let present(renaming) = renamed {
+        try name(source.bytes.as_slice(), source.syntax, node(source.syntax, child(source.syntax, renaming, 0)))
+    } else { take spelling }
+    var binding = if let present(previous) = imports.get(bound) { *previous } else { Imported(none, none, 0u32, 0u32) }
+    if let present(target) = namespace {
+        let conflict = if let present(prior) = binding.namespace {
+            binding.namespace_origin != origin || prior != target
+        } else { source.modules.contains_key(bound) }
+        if conflict { throw CheckError(CheckPhase.Name, span, "duplicate explicit import binding") }
+        binding.namespace = present(target)
+        binding.namespace_origin = origin
+    }
+    if let present(target) = function {
+        let conflict = if let present(prior) = binding.function {
+            binding.function_origin != origin || prior.module_index != target.module_index || prior.index != target.index
+        } else { declarations[from].names.contains_key(bound) }
+        if conflict { throw CheckError(CheckPhase.Name, span, "duplicate explicit import binding") }
+        binding.function = present(FunctionId(target.module_index, target.index))
+        binding.function_origin = origin
+    }
+    let _ = imports.insert(take bound, take binding)
+}
+
+fn resolve_imports(read sources: List<SourceModule>, read declarations: List<Declarations>,
+    read mounts: Map<List<u8>, usize>, read libraries: Map<List<u8>, usize>, from: usize): Map<List<u8>, Imported> throws CheckError {
+    let parsed = read sources[from].syntax
+    var imports = Map<List<u8>, Imported>()
+    for declaration in declarations[from].import_items.as_slice() {
+        let item = node(parsed, declaration.id)
+        let path = node(parsed, child(parsed, item, declaration.offset))
+        if item.children.end - item.children.begin > declaration.offset + 1u32 {
+            let selection = node(parsed, child(parsed, item, declaration.offset + 1u32))
+            if selection.kind.is(NodeKind.ImportGroup) {
+                let scope = try import_scope(sources, mounts, libraries, from, path, path.children.end)
+                for index in selection.children.begin..selection.children.end {
+                    let entry = node(parsed, parsed.children[index as usize])
+                    let renamed = if entry.children.end - entry.children.begin == 2u32 {
+                        present(node(parsed, child(parsed, entry, 1)))
+                    } else { none }
+                    try import_binding(sources, declarations, mounts, libraries, from, scope, false, mut imports,
+                        node(parsed, child(parsed, entry, 0)), renamed, item.span.begin, entry.span)
+                }
+                continue
+            }
+        }
+        let end = path.children.end - 1u32
+        let scope = try import_scope(sources, mounts, libraries, from, path, end)
+        let renamed = if item.children.end - item.children.begin > declaration.offset + 1u32 {
+            present(node(parsed, child(parsed, item, declaration.offset + 1u32)))
+        } else { none }
+        try import_binding(sources, declarations, mounts, libraries, from, scope, end == path.children.begin, mut imports,
+            node(parsed, parsed.children[end as usize]), renamed, item.span.begin, item.span)
+    }
+    imports
 }
 
 fn check_bodies(read sources: List<SourceModule>, module_index: usize,
-    read declarations: List<Declarations>, read mounts: Map<List<u8>, usize>): (List<Expression?>, List<usize>) throws CheckError {
+    read declarations: List<Declarations>, read mounts: Map<List<u8>, usize>,
+    read libraries: Map<List<u8>, usize>): (List<Expression?>, List<usize>) throws CheckError {
     let source = read sources[module_index]
     let parsed = read source.syntax
     let functions = read declarations[module_index].functions
-    var body = Body(List<Expression?>(), Map<List<u8>, usize>(), List<usize>(), List<Local>(), List<Shadow>(),
-        List<NodeId>(), List<LoopScope>(), none, 0usize)
+    var body = Body(List<Fact?>(), IntegerTypes(List<IntegerType>()), List<(NodeId, u128)>(),
+        Map<List<u8>, usize>(), List<usize>(), List<Local>(), List<Shadow>(), List<NodeId>(),
+        List<LoopScope>(), none, 0usize)
     body.expressions.reserve_exact(parsed.nodes.len())
     for _ in 0usize..parsed.nodes.len() { body.expressions.push(none) }
     var counts = List<usize>()
     for index in 0usize..functions.len() {
         let function = read functions[index]
-        let context = Context(read source, read sources, FunctionId(module_index, index), read declarations, read mounts)
+        let context = Context(read source, read sources, FunctionId(module_index, index), read declarations, read mounts, read libraries)
         body.symbols.clear()
         body.visible.clear()
         body.bindings.clear()
         body.local_count = 0usize
         let result = try expression(context, mut body, function.body, true)
-        if let present(value) = result, !value.is(function.result) {
+        if let present(value) = result, !body.integers.unify(value, ValueType.Concrete(function.result)) {
             throw CheckError(CheckPhase.Type, node(parsed, function.body).span, "function body does not match its declared result type")
         }
         counts.push(body.local_count)
     }
-    (take body.expressions, take counts)
+    var integers = take body.integers
+    let drafts = take body.expressions
+    let literals = take body.literals
+    var expressions = List<Expression?>()
+    expressions.reserve_exact(parsed.nodes.len())
+    for draft in take drafts {
+        let expression = if let present(fact) = draft {
+            let scalar = if let present(value) = fact.scalar {
+                if let present(known) = integers.known(value) { present(known) } else { present(Scalar.I32) }
+            } else { none }
+            present(Expression(scalar, fact.binding, none))
+        } else { none }
+        expressions.push(expression)
+    }
+    for (id, magnitude) in take literals {
+        let expression = expressions[id.index as usize]
+        let present(fact) = expression else { panic("missing checked literal") }
+        let present(scalar) = fact.scalar else { panic("missing checked literal type") }
+        let width = if scalar.is(Scalar.I32) { 31u32 } else { scalar.integer_width() }
+        if magnitude >> width != 0u128 {
+            let message = match scalar {
+                Scalar.I32 => "integer literal is outside the i32 range",
+                Scalar.U8 => "integer literal is outside the u8 range",
+                Scalar.U32 => "integer literal is outside the u32 range",
+                Scalar.Usize => "integer literal is outside the usize range",
+                _ => panic("literal inferred as a non-integer")
+            }
+            throw CheckError(CheckPhase.Type, node(parsed, id).span, message)
+        }
+        expressions[id.index as usize] = present(Expression(present(scalar), fact.binding, present(magnitude as u64)))
+    }
+    (take expressions, take counts)
 }
 
 pub fn check_modules(read sources: List<SourceModule>, read mounts: List<Map<List<u8>, usize>>,
-    executable: bool): List<CheckedModule> throws CheckError {
+    executable: bool, read libraries: Map<List<u8>, usize> = Map<List<u8>, usize>()): List<CheckedModule> throws CheckError {
     if sources.is_empty() { throw unsupported(Span(0, 0, 0)) }
     var declarations = List<Declarations>()
-    for source in sources.as_slice() { declarations.push(try collect(source, mounts[source.package_index])) }
+    for source in sources.as_slice() { declarations.push(try collect(source, mounts[source.package_index], libraries)) }
+    for index in 0usize..sources.len() {
+        let imports = try resolve_imports(sources, declarations, mounts[sources[index].package_index], libraries, index)
+        declarations[index].imports = take imports
+    }
     var entry: usize? = none
     if executable {
         let parsed = read sources[0].syntax
@@ -781,7 +1201,7 @@ pub fn check_modules(read sources: List<SourceModule>, read mounts: List<Map<Lis
     }
     var bodies = List<(List<Expression?>, List<usize>)>()
     for index in 0usize..sources.len() {
-        bodies.push(try check_bodies(sources, index, declarations, mounts[sources[index].package_index]))
+        bodies.push(try check_bodies(sources, index, declarations, mounts[sources[index].package_index], libraries))
     }
     bodies.reverse()
     var result = List<CheckedModule>()

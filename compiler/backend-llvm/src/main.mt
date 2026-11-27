@@ -18,7 +18,7 @@ pub copy enum EmitError {
 }
 
 copy enum Value {
-    Integer(i32), Boolean(bool), Parameter(usize), BlockParameter(usize, usize), Register(usize), Unit
+    Integer(u64), Boolean(bool), Parameter(usize), BlockParameter(usize, usize), Register(usize), Unit
 }
 
 copy type Incoming { block: usize; alternate: bool }
@@ -26,7 +26,9 @@ type BlockInfo { base: usize; last_guard: usize?; incoming: List<Incoming> }
 
 fn llvm_type(scalar: Scalar): read Text from static {
     match scalar {
-        Scalar.I32 => "i32",
+        Scalar.I32 | Scalar.U32 => "i32",
+        Scalar.U8 => "i8",
+        Scalar.Usize => "i64",
         Scalar.Bool => "i1",
         Scalar.Unit => "void"
     }
@@ -51,10 +53,9 @@ fn append_value(mut out: String, value: Value): Unit {
     }
 }
 
-fn append_operands(mut out: String, left: Value, right: Value, checked_call: bool): Unit {
+fn append_operands(mut out: String, left: Value, right: Value): Unit {
     append_value(mut out, left)
-    if checked_call { out.push_str(", i32 ") }
-    else { out.push_str(", ") }
+    out.push_str(", ")
     append_value(mut out, right)
 }
 
@@ -63,47 +64,56 @@ fn append_guard(mut out: String, index: usize): Unit {
     append_format(mut out, f"checked{index}:\n")
 }
 
-fn append_division(mut out: String, index: usize, read opcode: Text,
+fn append_division(mut out: String, index: usize, operation: Arithmetic, scalar: Scalar,
     left: Value, right: Value): Unit {
-    append_format(mut out, f"  %zero{index} = icmp eq i32 ")
-    append_value(mut out, right)
-    append_format(mut out, f", 0\n  %min{index} = icmp eq i32 ")
-    append_value(mut out, left)
-    append_format(mut out, f", -2147483648\n  %negone{index} = icmp eq i32 ")
-    append_value(mut out, right)
-    append_format(mut out, f", -1\n  %edge{index} = and i1 %min{index}, %negone{index}\n")
-    append_format(mut out, f"  %bad{index} = or i1 %zero{index}, %edge{index}\n")
+    let ty = llvm_type(scalar)
+    let signed = scalar.is(Scalar.I32)
+    let divide = if let Arithmetic.Divide = operation { true } else { false }
+    let opcode = if signed { if divide { "sdiv" } else { "srem" } }
+        else { if divide { "udiv" } else { "urem" } }
+    if signed {
+        append_format(mut out, f"  %zero{index} = icmp eq i32 ")
+        append_value(mut out, right)
+        append_format(mut out, f", 0\n  %min{index} = icmp eq i32 ")
+        append_value(mut out, left)
+        append_format(mut out, f", -2147483648\n  %negone{index} = icmp eq i32 ")
+        append_value(mut out, right)
+        append_format(mut out, f", -1\n  %edge{index} = and i1 %min{index}, %negone{index}\n")
+        append_format(mut out, f"  %bad{index} = or i1 %zero{index}, %edge{index}\n")
+    } else {
+        append_format(mut out, f"  %bad{index} = icmp eq {ty} ")
+        append_value(mut out, right)
+        out.push_str(", 0\n")
+    }
     append_guard(mut out, index)
-    append_format(mut out, f"  %v{index} = {opcode} i32 ")
-    append_operands(mut out, left, right, false)
+    append_format(mut out, f"  %v{index} = {opcode} {ty} ")
+    append_operands(mut out, left, right)
     out.push_str("\n")
 }
 
-fn append_arithmetic(mut out: String, index: usize, operation: Arithmetic,
+fn append_arithmetic(mut out: String, index: usize, operation: Arithmetic, scalar: Scalar,
     left: Value, right: Value, checks: OverflowChecks): Unit {
     let opcode = match operation {
         Arithmetic.Add => "add",
         Arithmetic.Subtract => "sub",
         Arithmetic.Multiply => "mul",
-        Arithmetic.Divide => { return append_division(mut out, index, "sdiv", left, right) },
-        Arithmetic.Remainder => { return append_division(mut out, index, "srem", left, right) }
+        Arithmetic.Divide | Arithmetic.Remainder =>
+            { return append_division(mut out, index, operation, scalar, left, right) }
     }
+    let ty = llvm_type(scalar)
     if let OverflowChecks.On = checks {
-        append_format(mut out, f"  %pair{index} = call ")
-        out.push_str("{ i32, i1 } @llvm.")
-        append_format(mut out, f"s{opcode}.with.overflow.i32(i32 ")
-        append_operands(mut out, left, right, true)
-        append_format(mut out, f")\n  %bad{index} = extractvalue ")
-        out.push_str("{ i32, i1 } ")
-        append_format(mut out, f"%pair{index}, 1\n")
+        let sign = if scalar.is(Scalar.I32) { "s" } else { "u" }
+        append_format(mut out, f"  %pair{index} = call {{ {ty}, i1 }} @llvm.{sign}{opcode}.with.overflow.{ty}({ty} ")
+        append_value(mut out, left)
+        append_format(mut out, f", {ty} ")
+        append_value(mut out, right)
+        append_format(mut out, f")\n  %bad{index} = extractvalue {{ {ty}, i1 }} %pair{index}, 1\n")
         append_guard(mut out, index)
-        append_format(mut out, f"  %v{index} = extractvalue ")
-        out.push_str("{ i32, i1 } ")
-        append_format(mut out, f"%pair{index}, 0\n")
+        append_format(mut out, f"  %v{index} = extractvalue {{ {ty}, i1 }} %pair{index}, 0\n")
         return
     }
-    append_format(mut out, f"  %v{index} = {opcode} i32 ")
-    append_operands(mut out, left, right, false)
+    append_format(mut out, f"  %v{index} = {opcode} {ty} ")
+    append_operands(mut out, left, right)
     out.push_str("\n")
 }
 
@@ -127,7 +137,7 @@ fn append_compare(mut out: String, index: usize, comparison: Comparison, scalar:
     }
     let ty = llvm_type(scalar)
     append_format(mut out, f"  %v{index} = icmp {predicate} {ty} ")
-    append_operands(mut out, left, right, false)
+    append_operands(mut out, left, right)
     out.push_str("\n")
 }
 
@@ -135,7 +145,7 @@ fn value_at(read block: Block, block_id: usize, base: usize, index: usize): Valu
     if index < block.parameters.len() { return Value.BlockParameter(block_id, index) }
     let instruction = index - block.parameters.len()
     match read block.instructions[instruction].operation {
-        Operation.Integer(number) => Value.Integer(number),
+        Operation.Integer(_, number) => Value.Integer(number),
         Operation.Boolean(flag) => Value.Boolean(flag),
         Operation.Unit => Value.Unit,
         Operation.Parameter(parameter) => Value.Parameter(parameter),
@@ -143,7 +153,8 @@ fn value_at(read block: Block, block_id: usize, base: usize, index: usize): Valu
             if scalar.is(Scalar.Unit) { Value.Boolean(unit_comparison(comparison)) }
             else { Value.Register(base + instruction) }
         },
-        Operation.Arithmetic(_, _, _) | Operation.Call(_, _) => Value.Register(base + instruction)
+        Operation.Arithmetic(_, _, _, _) | Operation.Cast(_, _, _) | Operation.Call(_, _) =>
+            Value.Register(base + instruction)
     }
 }
 
@@ -154,7 +165,7 @@ fn plan_blocks(read function: Function, checks: OverflowChecks): List<BlockInfo>
         var last_guard: usize? = none
         for index in 0usize..block.instructions.len() {
             match read block.instructions[index].operation {
-                Operation.Arithmetic(operation, _, _) => match (operation, checks) {
+                Operation.Arithmetic(operation, _, _, _) => match (operation, checks) {
                     (Arithmetic.Divide, _) | (Arithmetic.Remainder, _) | (_, OverflowChecks.On) =>
                         { last_guard = present(base + index) },
                     _ => {}
@@ -254,10 +265,20 @@ fn append_block(mut out: String, read program: Program, read block: Block, block
         let index = base + offset
         let instruction = read block.instructions[offset]
         match read instruction.operation {
-            Operation.Integer(_) | Operation.Boolean(_) | Operation.Unit | Operation.Parameter(_) => {},
-            Operation.Arithmetic(operation, left, right) => {
-                append_arithmetic(mut out, index, operation,
+            Operation.Integer(_, _) | Operation.Boolean(_) | Operation.Unit | Operation.Parameter(_) => {},
+            Operation.Arithmetic(operation, scalar, left, right) => {
+                append_arithmetic(mut out, index, operation, scalar,
                     value_at(block, block_id, base, left), value_at(block, block_id, base, right), checks)
+            },
+            Operation.Cast(source, target, operand) => {
+                let from = llvm_type(source)
+                let to = llvm_type(target)
+                let opcode = if source.integer_width() > target.integer_width() { "trunc" }
+                    else if source.integer_width() == target.integer_width() { "bitcast" }
+                    else if source.is(Scalar.I32) { "sext" } else { "zext" }
+                append_format(mut out, f"  %v{index} = {opcode} {from} ")
+                append_value(mut out, value_at(block, block_id, base, operand))
+                append_format(mut out, f" to {to}\n")
             },
             Operation.Compare(comparison, scalar, left, right) => {
                 if !scalar.is(Scalar.Unit) {
@@ -330,9 +351,13 @@ pub fn emit_ir(read verified: VerifiedProgram, checks: OverflowChecks): String t
     let function_index = entry.index
     if can_panic {
         if let OverflowChecks.On = checks {
-            out.push_str("declare { i32, i1 } @llvm.sadd.with.overflow.i32(i32, i32)\n")
-            out.push_str("declare { i32, i1 } @llvm.ssub.with.overflow.i32(i32, i32)\n")
-            out.push_str("declare { i32, i1 } @llvm.smul.with.overflow.i32(i32, i32)\n")
+            for scalar in [Scalar.I32, Scalar.U8, Scalar.U32, Scalar.Usize] {
+                let ty = llvm_type(scalar)
+                let sign = if scalar.is(Scalar.I32) { "s" } else { "u" }
+                for opcode in ["add", "sub", "mul"] {
+                    append_format(mut out, f"declare {{ {ty}, i1 }} @llvm.{sign}{opcode}.with.overflow.{ty}({ty}, {ty})\n")
+                }
+            }
         }
         out.push_str("declare void @mettle_rt_panic(i32) noreturn\n")
         out.push_str("declare i32 @mettle_rt_main(ptr, ptr)\n\n")

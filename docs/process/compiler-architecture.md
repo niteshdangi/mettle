@@ -264,8 +264,17 @@ For native scalar checking, the driver supplies parsed source units and their
 package mounts; it discovers declared external files and keeps their canonical
 source identities. File-module edges record visibility: private edges are
 traversable only from the declaring module and its descendants. Nested scalar
-call paths use the caller's package mounts only at the path head. Inline modules,
-restricted visibility modifiers, and re-exports remain outside native checking.
+call paths use the caller's package mounts only at the path head. Explicit
+single-name, grouped, and aliased imports bind declared modules and scalar
+functions from those roots and file modules. The bindings are private and
+preserve the separate module and value namespaces. Chained imports through
+an imported alias, glob imports, inline modules, and re-exports remain outside
+native checking. With `--library-dir PATH`, native `check` and `build` mount
+`core`, `alloc`, and `std` from `PATH/NAME/module.mt` when an active import or
+qualified reference requests one. Declared modules and package dependency
+aliases shadow these mounts. Library sources use the same canonical identities
+and file-module discovery as package sources, with no package features.
+This does not install a prelude or extend native cfg and declaration checking.
 Feature predicates select active declarations using each
 unit's package features before external modules are loaded. Ordinary builds
 ignore test and benchmark annotations, not the annotated bodies. The frontend
@@ -273,6 +282,10 @@ collects signatures across all supplied units
 before checking bodies. Checked calls carry a module and function index, not a
 source spelling; initialized scalar locals carry function-local binding
 identities. Expression facts remain indexed by the owning syntax unit.
+The native integer subset is `i32`, `u8`, `u32`, and hosted 64-bit `usize`.
+Unsuffixed literals resolve against their integer constraints before falling
+back to `i32`. Checked literals carry their bits; arithmetic and explicit
+integer casts preserve logical scalar types in IR, including at equal widths.
 Public syntax inspection projects the native tree into the reference JSON
 shape; the frontend continues to consume the original lossless tree.
 Native scalar lowering emits blocks with ordered local value definitions and

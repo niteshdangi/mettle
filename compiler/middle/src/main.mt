@@ -30,7 +30,7 @@ type PendingBlock {
 }
 
 copy enum Work {
-    Evaluate(NodeId), Binary(NodeId), Call(NodeId, usize), Chain(NodeId, u32),
+    Evaluate(NodeId), Binary(NodeId), Cast(NodeId), Call(NodeId, usize), Chain(NodeId, u32),
     SelectIf(NodeId), SelectShort(NodeId, bool), SelectChain(NodeId, u32),
     LoopBody(NodeId, NodeId?), LoopEnd(Span), Transfer(NodeId),
     Bind(NodeId), Assign(NodeId), Return(Span), LeaveScope(usize),
@@ -174,7 +174,7 @@ fn binary(read spelling: [u8], left: Value, right: Value, span: Span): Operation
         b'/' => Arithmetic.Divide, b'%' => Arithmetic.Remainder,
         _ => { throw LoweringError.Unsupported(span) }
     }
-    Operation.Arithmetic(operation, a, b)
+    Operation.Arithmetic(operation, scalar, a, b)
 }
 
 fn operator(read source: SourceModule, item: SyntaxNode): read [u8] from source throws LoweringError {
@@ -259,11 +259,13 @@ fn evaluate(mut builder: Builder, read source: SourceModule, read checked: Check
             }
         },
         NodeKind.Integer => {
-            var integer = 0i32
-            for digit in source.bytes.as_slice()[span.begin as usize..span.end as usize] {
-                if digit != b'_' { integer = integer * 10i32 + (digit - b'0') as i32 }
-            }
-            builder.emit(Operation.Integer(integer), Scalar.I32, span)
+            let present(scalar) = fact.scalar else { throw LoweringError.Inconsistent(span) }
+            let present(bits) = fact.integer else { throw LoweringError.Inconsistent(span) }
+            builder.emit(Operation.Integer(scalar, bits), scalar, span)
+        },
+        NodeKind.Cast => {
+            builder.work.push(Work.Cast(id))
+            builder.work.push(Work.Evaluate(child(parsed, item, 0)))
         },
         NodeKind.Boolean => builder.emit(Operation.Boolean(source.bytes[span.begin as usize] == b't'), Scalar.Bool, span),
         NodeKind.Unit => builder.emit(Operation.Unit, Scalar.Unit, span),
@@ -377,6 +379,13 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
                 let present(scalar) = fact.scalar else { throw LoweringError.Inconsistent(item.span) }
                 let operation = try binary(try operator(source, item), left, right, item.span)
                 builder.emit(take operation, scalar, item.span)
+            },
+            Work.Cast(id) => {
+                let span = parsed.nodes[id.index as usize].span
+                let operand = try builder.pop_value(span)
+                let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(span) }
+                let present(target) = fact.scalar else { throw LoweringError.Inconsistent(span) }
+                builder.emit(Operation.Cast(operand.scalar, target, operand.slot), target, span)
             },
             Work.Call(id, count) => {
                 let item = parsed.nodes[id.index as usize]
@@ -552,11 +561,11 @@ fn cross_module_scalar_call(): Unit throws LoweringError {
         _ => core.panic.panic("expected a direct return")
     }
     let (call, right) = match read main.instructions[returned].operation {
-        Operation.Arithmetic(Arithmetic.Subtract, call, right) => (call, right),
+        Operation.Arithmetic(Arithmetic.Subtract, Scalar.I32, call, right) => (call, right),
         _ => core.panic.panic("expected subtraction at the return")
     }
     match read main.instructions[right].operation {
-        Operation.Integer(42) => (),
+        Operation.Integer(Scalar.I32, 42) => (),
         _ => core.panic.panic("expected integer right operand 42")
     }
     let argument = match read main.instructions[call].operation {
@@ -568,7 +577,7 @@ fn cross_module_scalar_call(): Unit throws LoweringError {
         _ => core.panic.panic("expected a resolved call")
     }
     match read main.instructions[argument].operation {
-        Operation.Integer(21) => (),
+        Operation.Integer(Scalar.I32, 21) => (),
         _ => core.panic.panic("expected integer argument 21")
     }
 }

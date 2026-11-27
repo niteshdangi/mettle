@@ -23,7 +23,7 @@ packages: [
         version: "0.1.0"
         id: "mettle-types@0.1.0|path+../types|target"
         source: "path+../types"
-        checksum: "sha256-tree-2:e33039bfac2034f7695b6fd7ce75fdc070e11e2af5df7583d7958ecfbfbfbf02"
+        checksum: "sha256-tree-2:6519ca7902ac5caf059c3aca1e3389fe4205a30cbac0d4e02a45698018bad06d"
         features: []
         dependencies: []
     }
