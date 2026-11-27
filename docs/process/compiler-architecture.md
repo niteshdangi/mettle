@@ -266,10 +266,10 @@ source identities. File-module edges record visibility: private edges are
 traversable only from the declaring module and its descendants. Nested scalar
 call paths use the caller's package mounts only at the path head. Explicit
 single-name, grouped, and aliased imports bind declared modules and scalar
-functions from those roots and file modules. The bindings are private and
-preserve the separate module and value namespaces. Chained imports through
-an imported alias, glob imports, inline modules, and re-exports remain outside
-native checking. With `--library-dir PATH`, native `check` and `build` mount
+functions from those roots and file modules. The bindings preserve the separate
+module and value namespaces; `pub import` re-exports public targets without
+creating new declaration identities. Glob imports and inline modules remain
+outside native checking. With `--library-dir PATH`, native `check` and `build` mount
 `core`, `alloc`, and `std` from `PATH/NAME/module.mt` when an active import or
 qualified reference requests one. Declared modules and package dependency
 aliases shadow these mounts. Library sources use the same canonical identities

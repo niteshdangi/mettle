@@ -965,7 +965,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([tool, "check", str(standalone)])
                 run([tool, "build", str(standalone), "-o", str(output)], env=llvm_env)
                 run([str(output)], 42)
-            for declaration in ("pub module inline_module {}", "pub import mathlib.twice",
+            for declaration in ("pub module inline_module {}", "pub import mathlib.twice.*",
                                 "import mathlib.twice.*", "type Product {}"):
                 entry.write_text(f"{declaration}\nfn main(): i32 {{ 0 }}\n")
                 reject(entry, "1:1", "does not support", (native,), "feature")
@@ -1021,6 +1021,58 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             actual = run([native, "check", str(app)], 1)
             assert f"{math / 'main.mt'}:1:1: error[feature]" in actual.stderr and "does not support" in actual.stderr, actual.stderr
             evidence["cases"].append({"name": "package-scalar-imports"})
+        if selected("package-scalar-reexports"):
+            library = directory / "reexport-library"
+            for root in ("core", "std"):
+                (library / root).mkdir(parents=True, exist_ok=True)
+            (library / "core" / "module.mt").write_text(
+                "pub module values;\npub fn answer(): i32 { values.answer() }\n")
+            (library / "core" / "values.mt").write_text("pub fn answer(): i32 { 42 }\n")
+            root = library / "std" / "module.mt"
+            root.write_text("module facade;\npub import facade.{value, values};\n"
+                            "pub import core.answer as direct;\n"
+                            "import direct as private_alias;\npub import private_alias as promoted;\n"
+                            "pub import values.answer as chained;\n")
+            facade = root.with_name("facade.mt")
+            facade.write_text("pub import core.{answer as value, values};\n")
+            entry = source("package-scalar-reexports",
+                           "import std.{value as chosen, values as numbers};\n"
+                           "fn main(): i32 { chosen() + numbers.answer() + std.direct() + std.promoted() + std.chained() - 168 }\n")
+            options = ["--library-dir", str(library)]
+            output = directory / "scalar-reexport-program"
+            for tool in (executable, native):
+                run([tool, "check", str(entry), *options])
+                run([tool, "build", str(entry), "-o", str(output), *options], env=llvm_env)
+                run([str(output)], 42)
+
+            root.write_text("pub import core.answer as item;\nimport core.values as item;\n")
+            entry.write_text("fn main(): i32 { std.item() }\n")
+            for tool in (executable, native):
+                run([tool, "check", str(entry), *options])
+            entry.write_text("import std.item.answer;\nfn main(): i32 { std.item() }\n")
+            for tool in (executable, native):
+                result = run([tool, "check", str(entry), *options], 1)
+                assert f"{entry}:1:1: error[name]: unresolved" in result.stderr, result.stderr
+
+            for text in ("fn hidden(): i32 { 0 }\npub import hidden as leaking;\n",
+                         "module facade;\npub import facade as leaking;\n"):
+                root.write_text(text + "pub fn value(): i32 { 42 }\n")
+                entry.write_text("fn main(): i32 { std.value() }\n")
+                for tool in (executable, native):
+                    result = run([tool, "check", str(entry), *options], 1)
+                    assert f"{root}:2:5: error[name]" in result.stderr or (
+                        f"{root}:2:1: error[name]" in result.stderr), result.stderr
+                    assert "cannot reexport private or restricted item" in result.stderr, result.stderr
+            root.write_text("pub import second as first;\npub import first as second;\n")
+            for tool in (executable, native):
+                result = run([tool, "check", str(entry), *options], 1)
+                assert re.search(rf"{re.escape(str(root))}:1:(1|5): error\[name\]: unresolved.*import", result.stderr), result.stderr
+            root.write_text("pub import core.answer as value;\npub import core.answer as value;\n")
+            for tool in (executable, native):
+                result = run([tool, "check", str(entry), *options], 1)
+                assert re.search(rf"{re.escape(str(root))}:2:(1|5): error\[name\]: duplicate explicit",
+                                 result.stderr), result.stderr
+            evidence["cases"].append({"name": "package-scalar-reexports"})
         if selected("native-library-source-mounts"):
             library = directory / "native-test-library"
             for root in ("core", "alloc", "std"):
