@@ -12,7 +12,7 @@ extend BodyContext { fn is(other: BodyContext): bool { (self as u32) == (other a
 copy type Position { token: usize; offset: u32 }
 copy type Look { token: Token; index: usize; next: Position }
 copy type Anchor { token: usize; begin: u32 }
-copy type Checkpoint { pending: usize; nodes: usize; children: usize; depth: usize; suppressed: usize; generic_level: usize; header_level: usize? }
+copy type Checkpoint { pending: usize; nodes: usize; children: usize; depth: usize; suppressed: usize; generic_level: usize; header_level: usize?; async_body: bool }
 
 type Parser<region r> {
     bytes: read [u8] from r
@@ -25,6 +25,7 @@ type Parser<region r> {
     suppressed: usize
     generic_level: usize
     header_level: usize?
+    async_body: bool
     pending: List<NodeId>
     rejected_applications: List<u8>
     application_stack: List<usize>
@@ -82,7 +83,7 @@ extend<region r> Parser<region r> {
         true
     }
     fn anchor(): Anchor { Anchor(self.look.index, self.look.token.span.begin) }
-    fn checkpoint(): Checkpoint { Checkpoint(self.pending.len(), self.result.nodes.len(), self.result.children.len(), self.depth, self.suppressed, self.generic_level, self.header_level) }
+    fn checkpoint(): Checkpoint { Checkpoint(self.pending.len(), self.result.nodes.len(), self.result.children.len(), self.depth, self.suppressed, self.generic_level, self.header_level, self.async_body) }
     mut fn followed_by(read text: Text): bool {
         let position = self.position
         let look = self.look
@@ -633,6 +634,7 @@ extend<region r> Parser<region r> {
         self.suppressed = saved.suppressed
         self.generic_level = saved.generic_level
         self.header_level = saved.header_level
+        self.async_body = saved.async_body
         self.position = position
         self.look = look
         self.last_end = last_end
@@ -870,8 +872,16 @@ extend<region r> Parser<region r> {
     mut fn closure(): Unit throws Failure {
         let start = self.anchor()
         let mark = self.pending.len()
-        if self.at("async") { try self.declaration_modifier(); self.newlines() }
-        if self.at("{") { try self.block(); try self.finish(NodeKind.Closure, start, mark, none); return }
+        let asynchronous = self.at("async")
+        let enclosing_async = self.async_body
+        self.async_body = asynchronous
+        if asynchronous { try self.declaration_modifier(); self.newlines() }
+        if self.at("{") {
+            try self.block()
+            self.async_body = enclosing_async
+            try self.finish(NodeKind.Closure, start, mark, none)
+            return
+        }
         if self.at("take") { try self.declaration_modifier() }
         let operation = self.look.index as u32
         try self.expect("fn", "expected 'fn'")
@@ -896,6 +906,7 @@ extend<region r> Parser<region r> {
         try self.effect()
         self.newlines()
         try self.function_body(false)
+        self.async_body = enclosing_async
         try self.finish(NodeKind.Closure, start, mark, present(operation))
     }
     mut fn token_tree(): Unit throws Failure {
@@ -985,6 +996,9 @@ extend<region r> Parser<region r> {
             try self.finish(variant, start, mark, present(operation))
         } else if self.at("try") || self.at("capture") || self.at("throw") || self.at("await") {
             let form = if self.at("try") { NodeKind.Try } else if self.at("capture") { NodeKind.Capture } else if self.at("throw") { NodeKind.Throw } else { NodeKind.Await }
+            if form.is(NodeKind.Await) && !self.async_body {
+                try self.fail("`await` is only valid inside an async function body", Phase.Parse)
+            }
             self.advance()
             self.newlines()
             try self.expression(if form.is(NodeKind.Throw) { 1usize } else { 13usize })
@@ -1204,6 +1218,7 @@ extend<region r> Parser<region r> {
             self.suppressed = saved.suppressed
             self.generic_level = saved.generic_level
             self.header_level = saved.header_level
+            self.async_body = saved.async_body
             self.position = position
             self.look = look
             self.last_end = last_end
@@ -1290,6 +1305,7 @@ extend<region r> Parser<region r> {
         self.suppressed = saved.suppressed
         self.generic_level = saved.generic_level
         self.header_level = saved.header_level
+        self.async_body = saved.async_body
         self.refresh()
         if self.look.index == start.token && !self.look.token.kind.is(Kind.End) && !(block && self.at("}")) { self.advance() }
         var open = 0usize
@@ -1385,7 +1401,8 @@ extend<region r> Parser<region r> {
     mut fn function(start: Anchor, mark: usize, context: BodyContext): Unit throws Failure {
         if self.at("unsafe") { try self.declaration_modifier() }
         if self.at("const") { try self.declaration_modifier() }
-        if self.at("async") {
+        let asynchronous = self.at("async")
+        if asynchronous {
             let modifier = self.anchor()
             let modifier_mark = self.pending.len()
             let operation = self.look.index as u32
@@ -1460,7 +1477,10 @@ extend<region r> Parser<region r> {
             try self.end_item("expected a function declaration separator")
         } else {
             if context.is(BodyContext.Foreign) { try self.fail("foreign declarations cannot have bodies", Phase.Parse) }
+            let enclosing_async = self.async_body
+            self.async_body = asynchronous
             try self.function_body(constructor)
+            self.async_body = enclosing_async
             try self.finish(if constructor { NodeKind.Constructor } else { NodeKind.Function }, start, mark, none)
         }
     }
@@ -1891,7 +1911,7 @@ extend<region r> Parser<region r> {
 pub fn parse(read bytes: [u8], source: u32): Parsed {
     let lexed = tokenize(bytes, source)
     let first = lexed.tokens[0usize]
-    var parser = Parser(read bytes, source, Position(0usize, 0u32), Look(first, 0usize, Position(0usize, 0u32)), 0u32, 0usize, 0usize, 0usize, 0usize, none, new<NodeId>(), new<u8>(), new<usize>(), new<u8>(), Parsed(lexed.tokens, new<SyntaxNode>(), new<NodeId>(), none, lexed.diagnostics))
+    var parser = Parser(read bytes, source, Position(0usize, 0u32), Look(first, 0usize, Position(0usize, 0u32)), 0u32, 0usize, 0usize, 0usize, 0usize, none, false, new<NodeId>(), new<u8>(), new<usize>(), new<u8>(), Parsed(lexed.tokens, new<SyntaxNode>(), new<NodeId>(), none, lexed.diagnostics))
     if parser.result.diagnostics.error_count == 0 {
         parser.refresh()
         let _ = capture parser.program()

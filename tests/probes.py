@@ -443,6 +443,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "generic-empty-application": "fn main() { factory<>(value) }",
             "generic-after-call": "fn main() { factory<T>() < U > (value) }",
             "pointer-expression-missing-projection": "fn main() { ptr<read i32> }",
+            "await-sync-body": "fn inspect() { await work() }",
+            "await-sync-closure": "async fn outer() { let inner = fn() { await work() }; await work() }",
             "import-path-missing": "import",
             "import-alias-missing": "import dep as",
             "import-empty-group": "import dep.{}",
@@ -474,7 +476,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             assert found[1] == wanted[3], (name, found[0], wanted[0])
             if not name.startswith("depth"):
                 assert (str(line), str(column)) == wanted.group(1, 2), (name, found[0], wanted[0])
-            if name == "pointer-expression-missing-projection":
+            if name in {"pointer-expression-missing-projection", "await-sync-body", "await-sync-closure"}:
                 assert found[4] == wanted[4], (found[0], wanted[0])
             evidence["cases"].append({"name": name, "phase": found[1], "source_sha256": digest(path)})
 
@@ -482,6 +484,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                            "recovery-type": "fn main() {\nlet a: [u8;] = x;\nlet b: ptr<i32> = x;\n42\n}\nfn after() { 7 }",
                            "recovery-generic": "fn main() {\nlet a: List<region> = x;\nlet b: fn(): = x;\n42\n}\nfn after() { 7 }",
                            "recovery-application": "fn main() {\nlet a = factory<type Item = >();\nlet b = (factory<T>\n + other);\n42\n}\nfn after() { 7 }",
+                           "recovery-await": "async fn outer() {\nlet broken = fn(,) {};\nawait work();\n42\n}\nfn after() { await work(); 7 }",
                            "recovery-module": "module broken { import dep as; import missing fn inside() { 42 } }\nfn after() { 7 }",
                            "recovery-product": "type Product { one: ; two: }\nfn after() { 42 }"}.items():
             if not selected(name):
@@ -494,6 +497,9 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             if name.startswith("recovery"):
                 assert sum(node[0] == "function" for node in nodes) == (1 if name == "recovery-product" else 2)
                 assert any(node[0] == "integer" and path.read_bytes()[node[1]:node[2]] == b"42" for node in nodes)
+            if name == "recovery-await":
+                assert sum(node[0] == "await" for node in nodes) == 1, actual.stdout
+                assert actual.stderr.count("`await` is only valid inside an async function body") == 1, actual.stderr
             assert f"error[{'parse' if name.startswith('recovery') else 'feature'}]" in actual.stderr, actual.stderr
             evidence["cases"].append({"name": name, "source_sha256": digest(path)})
 
@@ -540,7 +546,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "grouped-projection": ("fn inspect() { (read T from r).(Trait).member; ([T; N]).(Trait).member }", {"type-projection": 2, "type-group": 2, "type-borrow": 1}),
             "pointer-projection": ("fn inspect() { ptr<read i32>.(Trait).member(); ptr<mut ptr<read i32>>.(Trait).member; ptr < other }", {"type-projection": 2, "type-pointer": 3, "call": 1, "binary": 1}),
             "header-range": ("fn inspect() { match 1.. { _ => 0 }; for x in 1.. {} }", {"match": 1, "for": 1, "range": 2}),
-            "nested-async": ("fn inspect() { async fn inner() { await work() }; async fn(x) => x }", {"function": 2, "closure": 1}),
+            "nested-async": ("fn inspect() { async fn inner() { await work() }; async fn(x) => await x }", {"function": 2, "closure": 1, "await": 2}),
             "sources-path": ("fn inspect(value: read T from package.region_name) {}", {"type-sources": 1}),
             "contextual-copy": ("fn inspect() { core.ptr.copy(a, b, n) }", {"field": 2}),
         }
