@@ -949,6 +949,17 @@ extend<region r> Parser<region r> {
         self.advance()
         try self.finish(NodeKind.Interpolation, start, mark, none)
     }
+    mut fn pointer_type_ahead(): bool {
+        if !self.at("ptr") { return false }
+        let position = self.position
+        let look = self.look
+        self.position = look.next
+        self.refresh()
+        let pointer = self.at("<") && (self.followed_by("read") || self.followed_by("mut"))
+        self.position = position
+        self.look = look
+        pointer
+    }
     mut fn primary(): Unit throws Failure {
         let start = self.anchor()
         let mark = self.pending.len()
@@ -995,6 +1006,12 @@ extend<region r> Parser<region r> {
             try self.finish(NodeKind.Unary, start, mark, present(operation))
         } else if self.at("{") { try self.block() }
         else if self.at("if") || self.at("while") || self.at("loop") || self.at("for") || self.at("label") { try self.control() }
+        else if self.pointer_type_ahead() {
+            try self.type_name(false)
+            if !self.result.nodes[self.pending[mark].index as usize].kind.is(NodeKind.TypeProjection) {
+                try self.fail("expected an interface member after a pointer or slice type", Phase.Parse)
+            }
+        }
         else if (self.at("[") || self.at("(")) && self.compound_projection() { try self.type_name(false) }
         else if self.consume("(") {
             self.suppressed += 1
