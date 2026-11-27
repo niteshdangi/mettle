@@ -6,6 +6,7 @@ module sha256;
 module inputs;
 module checksum;
 module lock;
+module git;
 
 pub import graph.{ resolve, resolve_locked, resolve_with, ResolveOptions, PackageGraph, ResolvedPackage, DependencyEdge, PlannedScript, PlannedMacro }
 pub import inputs.{ PackageError, PackagePhase }

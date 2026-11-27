@@ -8,6 +8,7 @@ import std.{ fs, io }
 import std.macros.format
 import std.path.{ Path, PathBuf }
 import super.data.Range
+import super.git
 import super.inputs.{ PackageError, PackagePhase, error_at, io_result, read_data, relative_to }
 import super.lock
 import super.manifest.{ Manifest, Dependency, FeatureAction, Program, MacroDecl, decode }
@@ -25,6 +26,7 @@ pub type ResolvedPackage {
     pub is_host: bool
     pub dependencies: List<DependencyEdge>
     pub features: List<String>
+    pub git_selectors: List<String>
 }
 pub type PlannedScript { pub package: usize; pub source: PathBuf }
 pub type PlannedMacro { pub package: usize; pub name: String; pub source: PathBuf; pub api: u32 }
@@ -40,6 +42,8 @@ pub type ResolveOptions {
     pub locked: bool
     pub registries: List<PathBuf>
     pub include_dev: bool
+    pub offline: bool
+    pub cache_dir: PathBuf?
 }
 
 extend ResolveOptions {
@@ -49,6 +53,8 @@ extend ResolveOptions {
         self.locked = false
         self.registries = List<PathBuf>()
         self.include_dev = false
+        self.offline = false
+        self.cache_dir = none
     }
 }
 
@@ -76,6 +82,9 @@ type Solver {
     targets: List<PackageFeatures>
     target_paths: Map<PathBuf, usize>
     host_paths: Map<PathBuf, usize>
+    git_targets: Map<String, usize>
+    git_hosts: Map<String, usize>
+    git_roots: List<usize>
     work: Deque<Request>
     include_dev: bool
 }
@@ -164,7 +173,7 @@ fn plan(read root: Path, read entry: Text, read options: ResolveOptions, publish
     let lock_path = directory.join("lock.mettle")
     let recorded = if publish_lock { try lock.load(lock_path.as_path(), options.locked) } else { none }
     let preferred = lock.preferred(recorded)
-    let graph = try solve(directory, entry, options, preferred)
+    let graph = try solve(directory, entry, options, preferred, recorded)
     if publish_lock { try lock.reconcile(graph, directory, lock_path.as_path(), take recorded, options.locked) }
     graph
 }
@@ -194,10 +203,10 @@ extend Search {
 }
 
 fn solve(read directory: Path, read entry: Text, read options: ResolveOptions,
-        read preferred: Map<String, List<version.Version>>): PackageGraph throws PackageError {
+        read preferred: Map<String, List<version.Version>>, read recorded: lock.Lock?): PackageGraph throws PackageError {
     var search = Search(List<Choice>(), 0, false)
     loop {
-        match take capture attempt(directory, entry, options, preferred, mut search) {
+        match take capture attempt(directory, entry, options, preferred, recorded, mut search) {
             success(graph) => { return take graph },
             failure(issue) => {
                 if search.fatal || !search.advance() { throw take issue }
@@ -207,7 +216,7 @@ fn solve(read directory: Path, read entry: Text, read options: ResolveOptions,
 }
 
 fn attempt(read directory: Path, read entry: Text, read options: ResolveOptions,
-        read preferred: Map<String, List<version.Version>>, mut search: Search): PackageGraph throws PackageError {
+        read preferred: Map<String, List<version.Version>>, read recorded: lock.Lock?, mut search: Search): PackageGraph throws PackageError {
     let manifest = try load(directory)
     let source = try select_entry(manifest, directory, entry, true)
     var registries = List<PathBuf>()
@@ -216,7 +225,8 @@ fn attempt(read directory: Path, read entry: Text, read options: ResolveOptions,
     let manifest_path = directory.join("package.mettle")
     let span = manifest.span
     var solver = Solver(PackageGraph(List<ResolvedPackage>(), List<PlannedScript>(), List<PlannedMacro>()),
-        List<PackageFeatures>(), Map<PathBuf, usize>(), Map<PathBuf, usize>(), new<Request>(), options.include_dev)
+        List<PackageFeatures>(), Map<PathBuf, usize>(), Map<PathBuf, usize>(), Map<String, usize>(), Map<String, usize>(),
+        List<usize>(), new<Request>(), options.include_dev)
     let _ = solver.target_paths.insert(directory.to_path_buf(), 0usize)
     let _ = solver.register(take manifest, directory.to_path_buf(), take source, from_text("root"), false)
     try solver.enable(0, feature_queue(options.features), options.default_features, manifest_path.as_path(), span)
@@ -225,7 +235,7 @@ fn attempt(read directory: Path, read entry: Text, read options: ResolveOptions,
             present(item) => take item,
             none => { break }
         }
-        try solver.resolve_edge(take request, registries, preferred, mut search)
+        try solver.resolve_edge(take request, registries, preferred, options, recorded, mut search)
     }
     let ordered = try solver.finish()
     match take capture solver.plan_tools(ordered) {
@@ -348,7 +358,7 @@ extend Solver {
         var selected = List<usize?>()
         selected.resize(dependencies.len() * 2, none)
         self.graph.packages.push(ResolvedPackage(take manifest.name, take manifest.version_text, take id, take source,
-            take directory, take entry.path, entry.is_library, host, List<DependencyEdge>(), List<String>()))
+            take directory, take entry.path, entry.is_library, host, List<DependencyEdge>(), List<String>(), List<String>()))
         self.targets.push(PackageFeatures(take manifest.version, take dependencies, take selected, take manifest.features,
             take manifest.implicit_features, Set<String>(), false, take manifest.build_script, take manifest.macros,
             Map<String, usize>(), Map<String, usize>()))
@@ -388,7 +398,8 @@ extend Solver {
         }
     }
 
-    mut fn resolve_edge(take request: Request, read registries: List<PathBuf>, read preferred: Map<String, List<version.Version>>, mut search: Search): Unit throws PackageError {
+    mut fn resolve_edge(take request: Request, read registries: List<PathBuf>, read preferred: Map<String, List<version.Version>>,
+            read options: ResolveOptions, read recorded: lock.Lock?, mut search: Search): Unit throws PackageError {
         let owner = request.parent
         let slot = request.slot
         let host = request.host
@@ -403,6 +414,7 @@ extend Solver {
                 let name = from_text(dependency.name.as_text())
                 let defaults = dependency.default_features
                 let pending = feature_queue(dependency.features)
+                let git_selector = if let present(source) = dependency.git { present(from_text(source.selector.as_text())) } else { none }
                 let existing_edge = if host { self.targets[owner].host_aliases.get(name.as_text()) }
                     else { self.targets[owner].target_aliases.get(name.as_text()) }
                 let selected = match existing_edge {
@@ -412,6 +424,11 @@ extend Solver {
                 let target: usize = if let present(location) = dependency.path {
                     let path = self.graph.packages[owner].directory.join(location.as_text())
                     match take capture self.activate_path(owner, slot, host, path.as_path(), origin, span) {
+                        success(index) => index,
+                        failure(issue) => { search.fatal = true; throw take issue }
+                    }
+                } else if dependency.git.is_present() {
+                    match take capture self.activate_git(owner, slot, host, origin, span, options, recorded) {
                         success(index) => index,
                         failure(issue) => { search.fatal = true; throw take issue }
                     }
@@ -428,6 +445,16 @@ extend Solver {
                     if host { let _ = self.targets[owner].host_aliases.insert(from_text(name.as_text()), edge) }
                     else { let _ = self.targets[owner].target_aliases.insert(from_text(name.as_text()), edge) }
                     self.graph.packages[owner].dependencies.push(DependencyEdge(take name, target, host, span))
+                }
+                match take git_selector {
+                    present(selector) => {
+                        var seen = false
+                        for existing in self.graph.packages[target].git_selectors.as_slice() {
+                            if existing.as_text() == selector.as_text() { seen = true; break }
+                        }
+                        if !seen { self.graph.packages[target].git_selectors.push(take selector) }
+                    },
+                    none => {}
                 }
                 self.targets[owner].selected[selection] = present(target)
                 try self.enable(target, take pending, defaults, origin, span)
@@ -464,10 +491,68 @@ extend Solver {
         let present(relative_text) = relative.to_str() else {
             throw error(origin, span, from_text("package path is not valid UTF-8"))
         }
+        let source_name = try self.path_source(directory.as_path(), relative_text, origin, span)
         let next = self.graph.packages.len()
         if host { let _ = self.host_paths.insert(directory.to_path_buf(), next) }
         else { let _ = self.target_paths.insert(directory.to_path_buf(), next) }
-        self.register(take child, take directory, take source, format(f"path+{relative_text}"), host)
+        self.register(take child, take directory, take source, take source_name, host)
+    }
+
+    fn path_source(read directory: Path, read relative_text: Text, read origin: Path, span: Range): String throws PackageError {
+        var best: usize? = none
+        var length = 0usize
+        for index in self.git_roots.as_slice() {
+            let root = self.graph.packages[index].directory.as_path()
+            if root.as_bytes().len() > length && directory.starts_with(root) {
+                best = present(index)
+                length = root.as_bytes().len()
+            }
+        }
+        if let present(index) = best {
+            let root = read self.graph.packages[index]
+            let source = root.source.as_text()
+            let relative = relative_to(root.directory.as_path(), directory)
+            let present(path) = relative.to_str() else { throw error(origin, span, from_text("package path is not valid UTF-8")) }
+            return format(f"path+{source}/{path}")
+        }
+        format(f"path+{relative_text}")
+    }
+
+    mut fn activate_git(owner: usize, slot: usize, host: bool, read origin: Path, span: Range,
+            read options: ResolveOptions, read recorded: lock.Lock?): usize throws PackageError {
+        let dependency = read self.targets[owner].dependencies[slot]
+        if let present(spec) = dependency.git {
+            let name = dependency.name.as_text()
+            let url = spec.url.as_text()
+            let selector = spec.selector.as_text()
+            let prefix = format(f"git+{url}#")
+            let pinned_commit = if options.offline { lock.git_commit(recorded, name, prefix.as_text(), selector) } else { from_text("") }
+            let checkout = try git.checkout(options.cache_dir, options.offline, url, selector, pinned_commit.as_text(), origin, span)
+            let commit = checkout.commit.as_text()
+            let source = format(f"git+{url}#{commit}")
+            let existing = if host { self.git_hosts.get(source.as_text()) } else { self.git_targets.get(source.as_text()) }
+            if let present(index) = existing {
+                let actual = self.graph.packages[*index].name.as_text()
+                if actual != name { throw error(origin, span, format(f"git dependency '{name}' at '{url}' is the package '{actual}'")) }
+                if !satisfies(dependency, self.targets[*index].version) {
+                    throw error(origin, span, format(f"git dependency '{name}' does not satisfy its version requirement"))
+                }
+                return *index
+            }
+            let manifest = try load(checkout.directory.as_path())
+            let actual = manifest.name.as_text()
+            if actual != name { throw error(origin, span, format(f"git dependency '{name}' at '{url}' is the package '{actual}'")) }
+            if !satisfies(dependency, manifest.version) {
+                throw error(origin, span, format(f"git dependency '{name}' does not satisfy its version requirement"))
+            }
+            let entry = try select_entry(manifest, checkout.directory.as_path(), "main", false)
+            self.git_roots.push(self.graph.packages.len())
+            let index = self.graph.packages.len()
+            if host { let _ = self.git_hosts.insert(from_text(source.as_text()), index) }
+            else { let _ = self.git_targets.insert(from_text(source.as_text()), index) }
+            return self.register(take manifest, take checkout.directory, take entry, take source, host)
+        }
+        panic("expected a Git dependency")
     }
 
     mut fn activate_registry(owner: usize, slot: usize, host: bool, read origin: Path, span: Range, read registries: List<PathBuf>,
@@ -544,6 +629,9 @@ extend Solver {
                 }
             })
             self.graph.packages[i].features.as_mut_slice().sort_unstable_by(fn(read a: String, read b: String): Ordering {
+                a.as_text().cmp(b.as_text())
+            })
+            self.graph.packages[i].git_selectors.as_mut_slice().sort_unstable_by(fn(read a: String, read b: String): Ordering {
                 a.as_text().cmp(b.as_text())
             })
             i += 1

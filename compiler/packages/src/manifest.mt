@@ -9,9 +9,11 @@ import super.data.{ Data, DataError, Kind, Range }
 import super.version
 
 pub type Target { pub name: String; pub source: String; pub library: bool; pub span: Range }
+pub type GitDependency { pub url: String; pub selector: String }
 pub type Dependency {
     pub name: String
     pub path: String?
+    pub git: GitDependency?
     pub requirements: List<String>
     pub span: Range
     pub features: List<String>
@@ -176,11 +178,14 @@ extend Data {
             var features = List<String>()
             var optional = false
             var default_features = true
+            var git: GitDependency? = none
             let path: String? = if node.kind.is(Kind.String) && (node.text.as_text().starts_with("./") ||
                 node.text.as_text().starts_with("../") || path_from_text(node.text.as_text()).is_absolute()) {
                 present(from_text(node.text.as_text()))
             } else if node.kind.is(Kind.Object) {
                 var f = i + 1
+                var selector = from_text("HEAD")
+                var selected = false
                 while f < node.next {
                     let field = read self.nodes[f]
                     let key = field.key.as_text()
@@ -196,15 +201,30 @@ extend Data {
                         if !field.kind.is(Kind.Boolean) { throw DataError(field.span, format(f"'{key}' must be a boolean")) }
                         let value = field.text.as_text() == "true"
                         if key == "optional" { optional = value } else { default_features = value }
-                    } else if key == "git" || key == "rev" || key == "tag" || key == "branch" {
-                        throw DataError(field.key_span, format(f"native package resolution does not yet support dependency '{key}'"))
+                    } else if key == "rev" || key == "tag" || key == "branch" {
+                        if selected { throw DataError(node.key_span, from_text("a git dependency may specify only one of 'rev', 'tag' or 'branch'")) }
+                        let value = try self.string(f, key)
+                        let revision = value.as_text()
+                        if revision.find_byte(0u8).is_present() { throw DataError(field.span, from_text("git selector contains a NUL byte")) }
+                        selector = format(f"{key}={revision}")
+                        selected = true
+                    } else if key == "git" {
+                        if !field.kind.is(Kind.String) { throw DataError(field.span, from_text("'git' must be a string")) }
                     } else if key != "path" { throw DataError(field.key_span, format(f"unknown key '{key}' in a dependency")) }
                     f = field.next
                 }
+                if let present(index) = self.field(i, "git") {
+                    let url = try self.string(index, "'git'")
+                    if url.is_empty() || url.as_text().find_byte(0u8).is_present() {
+                        throw DataError(self.nodes[index].span, from_text("'git' must be nonempty and contain no NUL bytes"))
+                    }
+                    git = present(GitDependency(take url, take selector))
+                } else if selected { throw DataError(node.key_span, from_text("'rev', 'tag' and 'branch' require 'git'")) }
                 if let present(p) = self.field(i, "path") {
+                    if git.is_present() { throw DataError(node.key_span, from_text("a dependency cannot specify both 'path' and 'git'")) }
                     present(try self.string(p, "'path'"))
                 } else {
-                    if requirements.is_empty() { throw DataError(node.key_span, format(f"dependency '{name}' needs a 'path' or a 'version' requirement")) }
+                    if requirements.is_empty() && git.is_none() { throw DataError(node.key_span, format(f"dependency '{name}' needs a 'path' or a 'version' requirement")) }
                     none
                 }
             } else {
@@ -216,7 +236,7 @@ extend Data {
                     throw DataError(node.span, from_text("dependency path contains a NUL byte"))
                 }
             }
-            result.push(Dependency(from_text(name), take path, take requirements, node.key_span, take features, default_features, optional))
+            result.push(Dependency(from_text(name), take path, take git, take requirements, node.key_span, take features, default_features, optional))
             i = node.next
         }
         result

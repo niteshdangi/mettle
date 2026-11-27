@@ -28,6 +28,20 @@ type LockedPackage {
 
 pub type Lock { version: u32; packages: List<LockedPackage>; indices: Map<String, usize> }
 
+pub fn git_commit(read previous: Lock?, read name: Text, read prefix: Text, read selector: Text): String {
+    if let present(lock) = previous {
+        for package in lock.packages.as_slice() {
+            if package.name.as_text() != name { continue }
+            if let present(commit) = package.source.as_text().strip_prefix(read prefix) {
+                for recorded in package.git_selectors.as_slice() {
+                    if recorded.as_text() == selector { return from_text(commit) }
+                }
+            }
+        }
+    }
+    new()
+}
+
 pub fn preferred(read previous: Lock?): Map<String, List<version.Version>> {
     var versions = Map<String, List<version.Version>>()
     if let present(old) = previous {
@@ -154,9 +168,11 @@ fn fresh(read graph: PackageGraph): Lock throws PackageError {
         for edge in package.dependencies.as_slice() {
             dependencies.push(from_text(graph.packages[edge.package].identity.as_text()))
         }
+        var selectors = List<String>()
+        for selector in package.git_selectors.as_slice() { selectors.push(from_text(selector.as_text())) }
         packages.push(LockedPackage(from_text(package.name.as_text()), from_text(package.version.as_text()),
             from_text(package.identity.as_text()), from_text(package.source.as_text()), take checksum,
-            take features, take dependencies, List<String>(), Range(0, 0)))
+            take features, take dependencies, take selectors, Range(0, 0)))
     }
     {
         var entries = packages.as_mut_slice()
@@ -293,13 +309,15 @@ fn changes(read old: Lock, read current: Lock, read path: Path): PackageError {
             let after = describe_list(now.dependencies)
             detail.push_str(format(f"; package '{name}' dependencies change from {before} to {after}").as_text())
         }
-        if !then.git_selectors.is_empty() {
+        let different_selectors = then.git_selectors.as_slice() != now.git_selectors.as_slice()
+        if different_selectors {
             let before = describe_list(then.git_selectors)
-            detail.push_str(format(f"; package '{name}' Git selectors change from {before} to []").as_text())
+            let after = describe_list(now.git_selectors)
+            detail.push_str(format(f"; package '{name}' Git selectors change from {before} to {after}").as_text())
         }
         if span.is_none() && (then.name.as_text() != name || then.version.as_text() != version ||
             then.source.as_text() != now.source.as_text() || then.checksum.as_text() != now.checksum.as_text() ||
-            different_features || different_dependencies || !then.git_selectors.is_empty()) {
+            different_features || different_dependencies || different_selectors) {
             span = present(then.span)
         }
     }
@@ -367,7 +385,7 @@ pub fn reconcile(read graph: PackageGraph, read root: Path, read path: Path, tak
     if let present(old) = previous {
         for now in current.packages.as_slice() {
             let source = now.source.as_text()
-            if !source.starts_with("registry+") { continue }
+            if !source.starts_with("registry+") && !source.starts_with("git+") { continue }
             let id = now.id.as_text()
             let present(index) = old.indices.get(id) else { continue }
             let then = read old.packages[*index]
@@ -724,4 +742,100 @@ fn host_script_plan_is_dependency_first(): Unit throws PackageError {
     let scripts = read graph.build_scripts
     assert(scripts.len() == 2 && scripts[1].package == 0 && graph.packages[scripts[0].package].is_host,
         "host dependency script must precede the root script")
+}
+
+fn fixture_git(read repository: Path, read operation: Text, read argument: Text, read value: Text = ""): Unit throws PackageError {
+    var git = process.command_text("git")
+    git.current_dir(repository)
+    for option in ["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false"] {
+        git.arg_text(option)
+    }
+    git.arg_text(operation)
+    git.arg_text(argument)
+    if !value.is_empty() { git.arg_text(value) }
+    let output = try io_result(take capture git.output(), repository, Range(0, 0), PackagePhase.Package)
+    if !output.status.succeeded() {
+        let detail = alloc.string.from_utf8_lossy(output.stderr.as_slice())
+        let message = detail.as_text()
+        throw error_at(repository, Range(0, 0), format(f"fixture git command failed: {message}"), PackagePhase.Package)
+    }
+}
+
+fn require_git_failure(read app: Path, read options: ResolveOptions, read reason: Text): Unit {
+    match take capture resolve_with(app, "main", options) {
+        success(_) => assert(false, "Git resolution should have failed"),
+        failure(issue) => assert(issue.message.as_text().find(read reason).is_present(), "wrong Git resolution error")
+    }
+}
+
+fn git_fixture(read root: Path): Unit throws PackageError {
+    let start = Range(0, 0)
+    let fixture = std.path.path_from_text("tests/packages/driver-contracts/git-script")
+    for relative in ["app/package.mettle", "app/src/main.mt", "repository/package.mettle", "repository/src/main.mt",
+            "repository/build.mt", "repository/macros/git_value.mt", "repository/nested/helper/package.mettle",
+            "repository/nested/helper/src/main.mt", "repository/nested/helper/build.mt", "repository/spec.txt"] {
+        try fixture_file(root, fixture, relative)
+    }
+    let repository = root.join("repository")
+    let directory = repository.as_path()
+    let repository_manifest = repository.join("package.mettle")
+    let text = try io_result(take capture fs.read_to_string(repository_manifest), root, start, PackagePhase.Io)
+    let (before, after) = text.as_text().split_once("    outside { path: \"../outside\" }\n").or_panic()
+    var input = from_text(before)
+    input.push_str(after)
+    try io_result(take capture fs.write(repository_manifest, input.as_bytes()), root, start, PackagePhase.Io)
+    try fixture_git(directory, "init", "-b", "main")
+    try fixture_git(directory, "config", "user.name", "Mettle fixture")
+    try fixture_git(directory, "config", "user.email", "fixture@example.invalid")
+    try fixture_git(directory, "add", ".")
+    try fixture_git(directory, "commit", "-m", "first fixture revision")
+    try fixture_git(directory, "tag", "first")
+
+    let app = root.join("app")
+    let manifest = app.join("package.mettle")
+    let template = try io_result(take capture fs.read_to_string(manifest), root, start, PackagePhase.Io)
+    let (before, after) = template.as_text().split_once("__GIT_URL__").or_panic()
+    let url = repository.to_str().or_panic()
+    let quoted = format(f"{before}{url}{after}")
+    try io_result(take capture fs.write(manifest, quoted.as_bytes()), root, start, PackagePhase.Io)
+    var options = ResolveOptions()
+    options.cache_dir = present(root.join("cache"))
+    options.offline = true
+    require_git_failure(app.as_path(), options, "offline mode has no cached repository")
+    options.offline = false
+    let graph = try resolve_with(app.as_path(), "main", options)
+    let package = read graph.packages[graph.packages[0].dependencies[0].package]
+    let provenance = package.source.as_text()
+    assert(package.git_selectors.len() == 1 && package.git_selectors[0].as_text() == "branch=main", "branch selector was not tracked")
+    let expected = format(f"path+{provenance}/nested/helper")
+    assert(package.dependencies.len() == 2 && graph.packages[package.dependencies[0].package].source.as_text() == expected.as_text() &&
+        graph.packages[package.dependencies[1].package].source.as_text() == expected.as_text(), "nested host/target Git path depends on the cache location")
+    let lockfile = app.join("lock.mettle")
+    let initial = try io_result(take capture fs.read_to_string(lockfile), root, start, PackagePhase.Io)
+    assert(initial.as_text().find("git_selectors: [\"branch=main\"]").is_present(), "lock omitted Git selector provenance")
+
+    try io_result(take capture fs.write(repository.join("spec.txt"), "second revision".as_bytes()), root, start, PackagePhase.Io)
+    try fixture_git(directory, "add", "spec.txt")
+    try fixture_git(directory, "commit", "-m", "second fixture revision")
+    options.locked = true
+    require_git_failure(app.as_path(), options, "--locked forbids changing it")
+    options.offline = true
+    let frozen = try resolve_with(app.as_path(), "main", options)
+    assert(frozen.packages[frozen.packages[0].dependencies[0].package].source.as_text() == provenance,
+        "offline resolution used the updated branch rather than its locked commit")
+
+    let (before, after) = quoted.as_text().split_once("branch: \"main\"").or_panic()
+    let changed = format(f"{before}tag: \"first\"{after}")
+    try io_result(take capture fs.write(manifest, changed.as_bytes()), root, start, PackagePhase.Io)
+    require_git_failure(app.as_path(), options, "Git selectors change from [branch=main] to [tag=first]")
+    try io_result(take capture fs.write(manifest, quoted.as_bytes()), root, start, PackagePhase.Io)
+    try io_result(take capture fs.write(package.directory.join("untracked.txt"), "dirty".as_bytes()), root, start, PackagePhase.Io)
+    require_git_failure(app.as_path(), options, "cached checkout contains modified or untracked files")
+    let unchanged = try io_result(take capture fs.read_to_string(lockfile), root, start, PackagePhase.Io)
+    assert(unchanged.as_text() == initial.as_text(), "Git errors altered the lock")
+}
+
+@test
+fn git_revisions_lock_provenance_and_never_fetch_offline(): Unit throws PackageError {
+    try with_fixture("git", git_fixture)
 }
