@@ -910,6 +910,10 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-separator", "fn main(): i32 { 1__0 }", "lex"),
             ("check-scalar-parameter", "fn main(): i32 { double(21) - 42 }\nfn double(value: i32): i32 { value * 2 }", None),
             ("check-scalar-argument-type", "fn main(): i32 { double(true) }\nfn double(value: i32): i32 { value * 2 }", "type"),
+            ("check-scalar-conditional", "fn main(): i32 { if 1 < 2 && false != true { 0 } else if true { 1 } else { 2 } }", None),
+            ("check-scalar-condition-type", "fn main(): i32 { if 1 { 0 } else { 1 } }", "type"),
+            ("check-scalar-branch-type", "fn main(): i32 { if true { 1 }; 0 }", "type"),
+            ("check-scalar-logical-type", "fn main(): i32 { if true || 1 { 0 } else { 1 } }", "type"),
         ):
             if not selected(name):
                 continue

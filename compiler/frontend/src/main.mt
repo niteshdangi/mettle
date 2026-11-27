@@ -207,6 +207,24 @@ fn expression(read source: SourceModule, item: SyntaxNode, owner: FunctionId,
             }
             result
         },
+        NodeKind.If => {
+            let condition = child(parsed, item, 0)
+            let condition_span = node(parsed, condition).span
+            if !(try value(expressions, condition, condition_span)).scalar.is(Scalar.Bool) {
+                throw CheckError(CheckPhase.Type, condition_span, "if condition must be bool")
+            }
+            let consequent = child(parsed, item, 1)
+            let consequent_span = node(parsed, consequent).span
+            let result = (try value(expressions, consequent, consequent_span)).scalar
+            let alternative = if item.children.end - item.children.begin == 3u32 {
+                let id = child(parsed, item, 2)
+                (try value(expressions, id, node(parsed, id).span)).scalar
+            } else { Scalar.Unit }
+            if !result.is(alternative) {
+                throw CheckError(CheckPhase.Type, consequent_span, "if branches must have the same result type")
+            }
+            result
+        },
         NodeKind.Call => {
             let callee = node(parsed, child(parsed, item, 0))
             let arguments = node(parsed, child(parsed, item, 1))
@@ -254,17 +272,29 @@ fn expression(read source: SourceModule, item: SyntaxNode, owner: FunctionId,
         NodeKind.Binary => {
             let present(operation) = item.operation else { throw unsupported(item.span) }
             let operator = parsed.tokens[operation as usize].span
-            if operator.end - operator.begin != 1u32 { throw unsupported(operator) }
-            match bytes[operator.begin as usize] {
-                b'+' | b'-' | b'*' | b'/' | b'%' => (),
-                _ => { throw unsupported(operator) }
+            let spelling = read bytes[operator.begin as usize..operator.end as usize]
+            let lhs = (try value(expressions, child(parsed, item, 0), item.span)).scalar
+            let rhs = (try value(expressions, child(parsed, item, 1), item.span)).scalar
+            if spelling == b"&&" || spelling == b"||" {
+                if !lhs.is(Scalar.Bool) || !rhs.is(Scalar.Bool) {
+                    throw CheckError(CheckPhase.Type, operator, "logical operands must both be bool")
+                }
+                Scalar.Bool
+            } else if spelling == b"==" || spelling == b"!=" || spelling == b"<" ||
+                      spelling == b"<=" || spelling == b">" || spelling == b">=" {
+                if !lhs.is(rhs) {
+                    throw CheckError(CheckPhase.Type, operator, "comparison operands must have the same type")
+                }
+                Scalar.Bool
+            } else if spelling == b"+" || spelling == b"-" || spelling == b"*" ||
+                      spelling == b"/" || spelling == b"%" {
+                if !lhs.is(Scalar.I32) || !rhs.is(Scalar.I32) {
+                    throw CheckError(CheckPhase.Type, operator, "arithmetic operands must both be i32")
+                }
+                Scalar.I32
+            } else {
+                throw unsupported(operator)
             }
-            let lhs = try value(expressions, child(parsed, item, 0), item.span)
-            let rhs = try value(expressions, child(parsed, item, 1), item.span)
-            if !lhs.scalar.is(Scalar.I32) || !rhs.scalar.is(Scalar.I32) {
-                throw CheckError(CheckPhase.Type, operator, "arithmetic operands must both be i32")
-            }
-            Scalar.I32
         },
         _ => { return none }
     }
