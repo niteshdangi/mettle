@@ -4,7 +4,10 @@
 `VerifiedProgram` with an entry point. Function IDs are local to the artifact;
 the only exported symbol is hosted `main`. Calls preserve instruction order,
 use `i32` and `i1` for scalar values, and erase `Unit` operands without erasing
-the calls that produced them.
+the calls that produced them. Non-`Unit` block parameters become phi nodes;
+guarded predecessors enter those phis from their final continuation. Ordered
+comparisons are signed for `i32`, unsigned for `bool`, and treat `Unit` as
+equal to itself.
 
 With `OverflowChecks.Off`, add, subtract and multiply wrap at 32 bits.
 With `OverflowChecks.On`, signed overflow panics. Signed division and
