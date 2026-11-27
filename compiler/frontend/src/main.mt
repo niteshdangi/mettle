@@ -32,6 +32,7 @@ pub copy enum Binding { Function(FunctionId), Parameter(usize), Local(usize) }
 pub copy type Expression {
     pub scalar: Scalar?
     pub binding: Binding?
+    pub integer: u64?
 }
 
 pub type CheckedModule {
@@ -61,8 +62,13 @@ type Declarations {
     parameters: List<Map<List<u8>, usize>>
 }
 
+copy enum ValueType { Concrete(Scalar), Integer(usize) }
+copy type Fact { scalar: ValueType?; binding: Binding? }
+copy type IntegerType { parent: usize; size: usize; scalar: Scalar? }
+type IntegerTypes { entries: List<IntegerType> }
+
 copy type Local {
-    scalar: Scalar?
+    scalar: ValueType?
     binding: Binding
     writable: bool
 }
@@ -73,13 +79,80 @@ copy type Shadow {
 }
 
 type Body {
-    expressions: List<Expression?>
+    expressions: List<Fact?>
+    integers: IntegerTypes
+    literals: List<(NodeId, u128)>
     symbols: Map<List<u8>, usize>
     visible: List<usize>
     bindings: List<Local>
     shadows: List<Shadow>
     binary: List<NodeId>
     local_count: usize
+}
+
+extend IntegerTypes {
+    mut fn fresh(): ValueType {
+        let index = self.entries.len()
+        self.entries.push(IntegerType(index, 1usize, none))
+        ValueType.Integer(index)
+    }
+
+    mut fn root_of(index: usize): usize {
+        var root = index
+        while self.entries[root].parent != root {
+            let parent = self.entries[root].parent
+            let grandparent = self.entries[parent].parent
+            self.entries[root].parent = grandparent
+            root = grandparent
+        }
+        root
+    }
+
+    mut fn known(value: ValueType): Scalar? {
+        match value {
+            ValueType.Concrete(scalar) => present(scalar),
+            ValueType.Integer(index) => {
+                let root = self.root_of(index)
+                self.entries[root].scalar
+            }
+        }
+    }
+
+    mut fn constrain_integer(index: usize, scalar: Scalar): bool {
+        if scalar.integer_width() == 0u32 { return false }
+        let root = self.root_of(index)
+        if let present(previous) = self.entries[root].scalar { return previous.is(scalar) }
+        self.entries[root].scalar = present(scalar)
+        true
+    }
+
+    mut fn unify(left: ValueType, right: ValueType): bool {
+        match (left, right) {
+            (ValueType.Concrete(a), ValueType.Concrete(b)) => a.is(b),
+            (ValueType.Concrete(scalar), ValueType.Integer(index)) => self.constrain_integer(index, scalar),
+            (ValueType.Integer(index), ValueType.Concrete(scalar)) => self.constrain_integer(index, scalar),
+            (ValueType.Integer(a), ValueType.Integer(b)) => {
+                var a_root = self.root_of(a)
+                var b_root = self.root_of(b)
+                if a_root == b_root { return true }
+                if self.entries[a_root].size < self.entries[b_root].size {
+                    let swap = a_root
+                    a_root = b_root
+                    b_root = swap
+                }
+                let a_type = self.entries[a_root].scalar
+                let b_type = self.entries[b_root].scalar
+                if let present(a_scalar) = a_type, let present(b_scalar) = b_type, !a_scalar.is(b_scalar) {
+                    return false
+                }
+                self.entries[b_root].parent = a_root
+                let size = self.entries[b_root].size
+                self.entries[a_root].size += size
+                if a_type.is_none() { self.entries[a_root].scalar = b_type }
+                true
+            }
+        }
+    }
 }
 
 type Context<region r> {
@@ -98,7 +171,7 @@ extend<region r> Context<region r> {
         let scope = read self.declarations[self.owner.module_index]
         let present(index) = scope.parameters[self.owner.index].get(spelling) else { return none }
         let index = *index
-        present(Local(present(scope.functions[self.owner.index].parameters[index]), Binding.Parameter(index), false))
+        present(Local(present(ValueType.Concrete(scope.functions[self.owner.index].parameters[index])), Binding.Parameter(index), false))
     }
 }
 
@@ -188,9 +261,9 @@ fn scalar_type(read bytes: [u8], annotation: SyntaxNode): Scalar throws CheckErr
         throw unsupported(annotation.span)
     }
     let spelling = read bytes[annotation.span.begin as usize..annotation.span.end as usize]
-    if spelling == "i32".as_bytes() { Scalar.I32 }
-    else if spelling == "bool".as_bytes() { Scalar.Bool }
-    else if spelling == "Unit".as_bytes() { Scalar.Unit }
+    if let present(scalar) = integer_type(spelling) { scalar }
+    else if spelling == b"bool" { Scalar.Bool }
+    else if spelling == b"Unit" { Scalar.Unit }
     else { throw unsupported(annotation.span) }
 }
 
@@ -231,31 +304,64 @@ fn signature(read bytes: [u8], read parsed: Parsed, declaration: ActiveItem): (L
     (try name(bytes, parsed, identifier), Function(declaration.id, body, result, take types, exported, 0usize), take locals)
 }
 
-fn integer(read bytes: [u8], span: Span): Scalar throws CheckError {
-    var magnitude = 0u32
+fn integer_type(read spelling: [u8]): Scalar? {
+    if read spelling == b"i32" { present(Scalar.I32) }
+    else if read spelling == b"u8" { present(Scalar.U8) }
+    else if read spelling == b"u32" { present(Scalar.U32) }
+    else if read spelling == b"usize" { present(Scalar.Usize) }
+    else { none }
+}
+
+fn integer(read bytes: [u8], span: Span): (Scalar?, u128) throws CheckError {
+    var position = 0usize
+    var radix = 10u128
+    if bytes.len() >= 2usize && bytes[0] == b'0' {
+        radix = match bytes[1] {
+            b'x' => 16u128, b'o' => 8u128, b'b' => 2u128, _ => 10u128
+        }
+        if radix != 10u128 { position = 2usize }
+    }
+    var magnitude = 0u128
     var needs_digit = true
-    var overflow = false
-    for byte in bytes {
+    var has_digit = false
+    let maximum = 340282366920938463463374607431768211455u128
+    let limit = maximum / radix
+    let last_digit = maximum % radix
+    while position < bytes.len() {
+        let byte = bytes[position]
         if byte == b'_' {
-            if needs_digit {
+            if radix == 10u128 && needs_digit {
                 throw CheckError(CheckPhase.Lex, span, "numeric separators must occur between digits")
             }
             needs_digit = true
+            position += 1usize
             continue
         }
-        if byte < b'0' || byte > b'9' { throw unsupported(span) }
-        let digit = (byte - b'0') as u32
-        if magnitude > (2147483647u32 - digit) / 10u32 { overflow = true }
-        if !overflow {
-            magnitude = magnitude * 10u32 + digit
+        let digit = if byte >= b'0' && byte <= b'9' { (byte - b'0') as u128 }
+            else if radix == 16u128 && byte >= b'a' && byte <= b'f' { (byte - b'a') as u128 + 10u128 }
+            else if radix == 16u128 && byte >= b'A' && byte <= b'F' { (byte - b'A') as u128 + 10u128 }
+            else { break }
+        if digit >= radix { throw CheckError(CheckPhase.Lex, span, "malformed integer literal") }
+        if magnitude > limit || (magnitude == limit && digit > last_digit) {
+            throw CheckError(CheckPhase.Type, span, "integer literal exceeds 128 bits")
         }
+        magnitude = magnitude * radix + digit
         needs_digit = false
+        has_digit = true
+        position += 1usize
     }
-    if needs_digit {
+    if radix == 10u128 && needs_digit {
         throw CheckError(CheckPhase.Lex, span, "numeric separators must occur between digits")
     }
-    if overflow { throw CheckError(CheckPhase.Type, span, "integer literal is outside the i32 range") }
-    Scalar.I32
+    if !has_digit { throw CheckError(CheckPhase.Lex, span, "integer literal requires digits") }
+    if position == bytes.len() { return (none, magnitude) }
+    let suffix = read bytes[position..bytes.len()]
+    if let present(scalar) = integer_type(suffix) { return (present(scalar), magnitude) }
+    if suffix == b"i8" || suffix == b"i16" || suffix == b"i64" || suffix == b"i128" ||
+        suffix == b"isize" || suffix == b"u16" || suffix == b"u64" || suffix == b"u128" {
+        throw unsupported(span)
+    }
+    throw CheckError(CheckPhase.Lex, span, "malformed integer literal")
 }
 
 fn module_target(read source: SourceModule, read mounts: Map<List<u8>, usize>, read spelling: List<u8>): usize? {
@@ -269,13 +375,19 @@ fn operator_span(read parsed: Parsed, item: SyntaxNode): Span throws CheckError 
     parsed.tokens[operation as usize].span
 }
 
-fn require_type(value: Scalar?, expected: Scalar, span: Span): Unit throws CheckError {
+fn require_type(mut body: Body, value: ValueType?, expected: ValueType, span: Span): Unit throws CheckError {
     let present(actual) = value else { return }
-    if actual.is(expected) { return }
-    let message = match expected {
-        Scalar.I32 => if actual.is(Scalar.Bool) { "expected i32, found bool" } else { "expected i32, found Unit" },
-        Scalar.Bool => if actual.is(Scalar.I32) { "expected bool, found i32" } else { "expected bool, found Unit" },
-        Scalar.Unit => if actual.is(Scalar.I32) { "expected Unit, found i32" } else { "expected Unit, found bool" }
+    if body.integers.unify(actual, expected) { return }
+    let expected = if let present(scalar) = body.integers.known(expected) { scalar } else { Scalar.I32 }
+    let found = if let present(scalar) = body.integers.known(actual) { scalar } else { Scalar.I32 }
+    let message = match (expected, found) {
+        (Scalar.I32, Scalar.Bool) => "expected i32, found bool",
+        (Scalar.I32, Scalar.Unit) => "expected i32, found Unit",
+        (Scalar.Bool, Scalar.I32) => "expected bool, found i32",
+        (Scalar.Bool, Scalar.Unit) => "expected bool, found Unit",
+        (Scalar.Unit, Scalar.I32) => "expected Unit, found i32",
+        (Scalar.Unit, Scalar.Bool) => "expected Unit, found bool",
+        _ => "scalar type does not match the expected type"
     }
     throw CheckError(CheckPhase.Type, span, message)
 }
@@ -298,15 +410,30 @@ pub fn literal_condition(read source: SourceModule, id: NodeId): bool? {
     present(source.bytes[item.span.begin as usize] == b't')
 }
 
-fn expression<region r>(read context: Context<region r>, mut body: Body, id: NodeId, reachable: bool): Scalar? throws CheckError {
+fn expression<region r>(read context: Context<region r>, mut body: Body, id: NodeId, reachable: bool): ValueType? throws CheckError {
     let bytes = context.source.bytes.as_slice()
     let parsed = read context.source.syntax
     let item = node(parsed, id)
     var binding: Binding? = none
     let scalar = match item.kind {
-        NodeKind.Integer => present(try integer(read bytes[item.span.begin as usize..item.span.end as usize], item.span)),
-        NodeKind.Boolean => present(Scalar.Bool),
-        NodeKind.Unit => present(Scalar.Unit),
+        NodeKind.Integer => {
+            let (suffix, magnitude) = try integer(read bytes[item.span.begin as usize..item.span.end as usize], item.span)
+            body.literals.push((id, magnitude))
+            present(if let present(scalar) = suffix { ValueType.Concrete(scalar) } else { body.integers.fresh() })
+        },
+        NodeKind.Boolean => present(ValueType.Concrete(Scalar.Bool)),
+        NodeKind.Unit => present(ValueType.Concrete(Scalar.Unit)),
+        NodeKind.Cast => {
+            let source = try expression(context, mut body, child(parsed, item, 0), reachable)
+            let target = try scalar_type(bytes, node(parsed, child(parsed, item, 1)))
+            if target.integer_width() == 0u32 { throw unsupported(item.span) }
+            if let present(value) = source {
+                if let present(scalar) = body.integers.known(value), scalar.integer_width() == 0u32 {
+                    throw unsupported(item.span)
+                }
+                present(ValueType.Concrete(target))
+            } else { none }
+        },
         NodeKind.Name => {
             let identifier = try name(bytes, parsed, item)
             let present(found) = context.resolve(body, identifier) else {
@@ -321,12 +448,12 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
         NodeKind.Group => try expression(context, mut body, child(parsed, item, 0), reachable),
         NodeKind.Block => {
             let mark = body.shadows.len()
-            var result = present(Scalar.Unit)
+            var result = present(ValueType.Concrete(Scalar.Unit))
             for index in item.children.begin..item.children.end {
                 let id = parsed.children[index as usize]
                 let scalar = try expression(context, mut body, id, reachable && result.is_present())
                 if result.is_present() {
-                    result = if scalar.is_present() && node(parsed, id).semicolon { present(Scalar.Unit) } else { scalar }
+                    result = if scalar.is_present() && node(parsed, id).semicolon { present(ValueType.Concrete(Scalar.Unit)) } else { scalar }
                 }
             }
             while body.shadows.len() > mark {
@@ -353,8 +480,8 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             if !wildcard { body.local_count += 1usize }
             let actual = try expression(context, mut body, initializer, reachable)
             let scalar = if let present(expected) = annotation {
-                try require_type(actual, expected, item.span)
-                present(expected)
+                try require_type(mut body, actual, ValueType.Concrete(expected), item.span)
+                present(ValueType.Concrete(expected))
             } else { actual }
             if !wildcard {
                 let identifier = try name(bytes, parsed, pattern)
@@ -368,7 +495,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 body.visible[symbol] = body.bindings.len()
                 binding = present(Binding.Local(index))
             }
-            if actual.is_present() { present(Scalar.Unit) } else { none }
+            if actual.is_present() { present(ValueType.Concrete(Scalar.Unit)) } else { none }
         },
         NodeKind.Assign => {
             let operator = try operator_span(parsed, item)
@@ -387,8 +514,8 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 throw CheckError(CheckPhase.Name, target.span, "unresolved value")
             }
             if let present(expected) = found.scalar {
-                try require_type(actual, expected, item.span)
-                if !simple && !expected.is(Scalar.I32) {
+                try require_type(mut body, actual, expected, item.span)
+                if !simple, let present(scalar) = body.integers.known(expected), scalar.integer_width() == 0u32 {
                     throw CheckError(CheckPhase.Type, item.span, "operator is not available for this scalar type")
                 }
             } else if actual.is_present() {
@@ -399,19 +526,19 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             }
             var place = lhs
             while node(parsed, place).kind.is(NodeKind.Group) {
-                body.expressions[place.index as usize] = present(Expression(found.scalar, none))
+                body.expressions[place.index as usize] = present(Fact(found.scalar, none))
                 place = child(parsed, node(parsed, place), 0)
             }
-            body.expressions[place.index as usize] = present(Expression(found.scalar, present(found.binding)))
+            body.expressions[place.index as usize] = present(Fact(found.scalar, present(found.binding)))
             binding = present(found.binding)
-            if actual.is_present() && found.scalar.is_present() { present(Scalar.Unit) } else { none }
+            if actual.is_present() && found.scalar.is_present() { present(ValueType.Concrete(Scalar.Unit)) } else { none }
         },
         NodeKind.Return => {
             let actual = if item.children.begin == item.children.end {
-                present(Scalar.Unit)
+                present(ValueType.Concrete(Scalar.Unit))
             } else { try expression(context, mut body, child(parsed, item, 0), reachable) }
             let expected = context.declarations[context.owner.module_index].functions[context.owner.index].result
-            if reachable { try require_type(actual, expected, item.span) }
+            if reachable { try require_type(mut body, actual, ValueType.Concrete(expected), item.span) }
             none
         },
         NodeKind.Conditions => {
@@ -422,7 +549,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 let id = parsed.children[index as usize]
                 let span = node(parsed, id).span
                 let clause = try expression(context, mut body, id, reachable && active)
-                if let present(value) = clause, !value.is(Scalar.Bool) {
+                if let present(value) = clause, !body.integers.unify(value, ValueType.Concrete(Scalar.Bool)) {
                     throw CheckError(CheckPhase.Type, span, "conditional clause must be bool")
                 }
                 if active {
@@ -432,23 +559,23 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                     can_skip = can_skip || literal != present(true)
                 }
             }
-            if completes { present(Scalar.Bool) } else { none }
+            if completes { present(ValueType.Concrete(Scalar.Bool)) } else { none }
         },
         NodeKind.While => {
             if item.children.end - item.children.begin != 2u32 { throw unsupported(item.span) }
             let condition = child(parsed, item, 0)
             let scalar = try expression(context, mut body, condition, reachable)
-            try require_type(scalar, Scalar.Bool, item.span)
+            try require_type(mut body, scalar, ValueType.Concrete(Scalar.Bool), item.span)
             let literal = literal_condition(context.source, condition)
             let _ = try expression(context, mut body, child(parsed, item, 1),
                 reachable && scalar.is_present() && literal != present(false))
-            if scalar.is_present() && literal != present(true) { present(Scalar.Unit) } else { none }
+            if scalar.is_present() && literal != present(true) { present(ValueType.Concrete(Scalar.Unit)) } else { none }
         },
         NodeKind.If => {
             let condition = child(parsed, item, 0)
             let condition_span = node(parsed, condition).span
             let condition_type = try expression(context, mut body, condition, reachable)
-            if let present(value) = condition_type, !value.is(Scalar.Bool) {
+            if let present(value) = condition_type, !body.integers.unify(value, ValueType.Concrete(Scalar.Bool)) {
                 throw CheckError(CheckPhase.Type, condition_span, "if condition must be bool")
             }
             let consequent = child(parsed, item, 1)
@@ -458,8 +585,8 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             let result = try expression(context, mut body, consequent, live && literal != present(false))
             let alternative = if item.children.end - item.children.begin == 3u32 {
                 try expression(context, mut body, child(parsed, item, 2), live && literal != present(true))
-            } else { present(Scalar.Unit) }
-            if let present(left) = result, let present(right) = alternative, !left.is(right) {
+            } else { present(ValueType.Concrete(Scalar.Unit)) }
+            if let present(left) = result, let present(right) = alternative, !body.integers.unify(left, right) {
                 throw CheckError(CheckPhase.Type, consequent_span, "if branches must have the same result type")
             }
             if condition_type.is_none() || (literal == present(true) && result.is_none()) ||
@@ -506,13 +633,13 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 let argument = child(parsed, arguments, index as u32)
                 let span = node(parsed, argument).span
                 let actual = try expression(context, mut body, argument, reachable && completes)
-                if let present(value) = actual, !value.is(signature.parameters[index]) {
+                if let present(value) = actual, !body.integers.unify(value, ValueType.Concrete(signature.parameters[index])) {
                     throw CheckError(CheckPhase.Type, span, "argument does not match the parameter type")
                 }
                 completes = completes && actual.is_present()
             }
             binding = present(Binding.Function(FunctionId(module_index, id)))
-            if completes { present(signature.result) } else { none }
+            if completes { present(ValueType.Concrete(signature.result)) } else { none }
         },
         NodeKind.Binary => {
             let mark = body.binary.len()
@@ -527,18 +654,18 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 let nested = body.binary.pop().or_panic()
                 let binary = node(parsed, nested)
                 lhs = try binary_rhs(context, mut body, binary, lhs, reachable)
-                body.expressions[nested.index as usize] = present(Expression(lhs, none))
+                body.expressions[nested.index as usize] = present(Fact(lhs, none))
             }
             try binary_rhs(context, mut body, item, lhs, reachable)
         },
         _ => { throw unsupported(item.span) }
     }
-    body.expressions[id.index as usize] = present(Expression(scalar, binding))
+    body.expressions[id.index as usize] = present(Fact(scalar, binding))
     scalar
 }
 
 fn binary_rhs<region r>(read context: Context<region r>, mut body: Body, item: SyntaxNode,
-    lhs: Scalar?, reachable: bool): Scalar? throws CheckError {
+    lhs: ValueType?, reachable: bool): ValueType? throws CheckError {
     let bytes = context.source.bytes.as_slice()
     let parsed = read context.source.syntax
     let operator = try operator_span(parsed, item)
@@ -548,26 +675,36 @@ fn binary_rhs<region r>(read context: Context<region r>, mut body: Body, item: S
     let skips = literal == present(spelling == b"||")
     let rhs = try expression(context, mut body, child(parsed, item, 1), reachable && lhs.is_present() && !skips)
     if logical {
-        let left_bool = if let present(left) = lhs { left.is(Scalar.Bool) } else { true }
-        let right_bool = if let present(right) = rhs { right.is(Scalar.Bool) } else { true }
+        let left_bool = if let present(left) = lhs { body.integers.unify(left, ValueType.Concrete(Scalar.Bool)) } else { true }
+        let right_bool = if let present(right) = rhs { body.integers.unify(right, ValueType.Concrete(Scalar.Bool)) } else { true }
         if !left_bool || !right_bool {
             throw CheckError(CheckPhase.Type, operator, "logical operands must both be bool")
         }
         if literal.is_present() && !skips && rhs.is_none() { none } else { lhs }
     } else if spelling == b"==" || spelling == b"!=" || spelling == b"<" ||
               spelling == b"<=" || spelling == b">" || spelling == b">=" {
-        if let present(left) = lhs, let present(right) = rhs, !left.is(right) {
-            throw CheckError(CheckPhase.Type, operator, "comparison operands must have the same type")
+        if let present(left) = lhs, let present(right) = rhs {
+            if !body.integers.unify(left, right) {
+                throw CheckError(CheckPhase.Type, operator, "comparison operands must have the same type")
+            }
+            return present(ValueType.Concrete(Scalar.Bool))
         }
-        if lhs.is_present() && rhs.is_present() { present(Scalar.Bool) } else { none }
+        none
     } else if spelling == b"+" || spelling == b"-" || spelling == b"*" ||
               spelling == b"/" || spelling == b"%" {
-        let left_integer = if let present(left) = lhs { left.is(Scalar.I32) } else { true }
-        let right_integer = if let present(right) = rhs { right.is(Scalar.I32) } else { true }
-        if !left_integer || !right_integer {
-            throw CheckError(CheckPhase.Type, operator, "arithmetic operands must both be i32")
+        if let present(left) = lhs, let present(scalar) = body.integers.known(left), scalar.integer_width() == 0u32 {
+            throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
         }
-        if lhs.is_present() && rhs.is_present() { present(Scalar.I32) } else { none }
+        if let present(right) = rhs, let present(scalar) = body.integers.known(right), scalar.integer_width() == 0u32 {
+            throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
+        }
+        if let present(left) = lhs, let present(right) = rhs {
+            if !body.integers.unify(left, right) {
+                throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
+            }
+            return lhs
+        }
+        none
     } else {
         throw unsupported(operator)
     }
@@ -613,7 +750,8 @@ fn check_bodies(read source: SourceModule, module_index: usize,
     read declarations: List<Declarations>, read mounts: Map<List<u8>, usize>): (List<Expression?>, List<usize>) throws CheckError {
     let parsed = read source.syntax
     let functions = read declarations[module_index].functions
-    var body = Body(List<Expression?>(), Map<List<u8>, usize>(), List<usize>(), List<Local>(), List<Shadow>(), List<NodeId>(), 0usize)
+    var body = Body(List<Fact?>(), IntegerTypes(List<IntegerType>()), List<(NodeId, u128)>(),
+        Map<List<u8>, usize>(), List<usize>(), List<Local>(), List<Shadow>(), List<NodeId>(), 0usize)
     body.expressions.reserve_exact(parsed.nodes.len())
     for _ in 0usize..parsed.nodes.len() { body.expressions.push(none) }
     var counts = List<usize>()
@@ -625,12 +763,43 @@ fn check_bodies(read source: SourceModule, module_index: usize,
         body.bindings.clear()
         body.local_count = 0usize
         let result = try expression(context, mut body, function.body, true)
-        if let present(value) = result, !value.is(function.result) {
+        if let present(value) = result, !body.integers.unify(value, ValueType.Concrete(function.result)) {
             throw CheckError(CheckPhase.Type, node(parsed, function.body).span, "function body does not match its declared result type")
         }
         counts.push(body.local_count)
     }
-    (take body.expressions, take counts)
+    var integers = take body.integers
+    let drafts = take body.expressions
+    let literals = take body.literals
+    var expressions = List<Expression?>()
+    expressions.reserve_exact(parsed.nodes.len())
+    for draft in take drafts {
+        let expression = if let present(fact) = draft {
+            let scalar = if let present(value) = fact.scalar {
+                if let present(known) = integers.known(value) { present(known) } else { present(Scalar.I32) }
+            } else { none }
+            present(Expression(scalar, fact.binding, none))
+        } else { none }
+        expressions.push(expression)
+    }
+    for (id, magnitude) in take literals {
+        let expression = expressions[id.index as usize]
+        let present(fact) = expression else { panic("missing checked literal") }
+        let present(scalar) = fact.scalar else { panic("missing checked literal type") }
+        let width = if scalar.is(Scalar.I32) { 31u32 } else { scalar.integer_width() }
+        if magnitude >> width != 0u128 {
+            let message = match scalar {
+                Scalar.I32 => "integer literal is outside the i32 range",
+                Scalar.U8 => "integer literal is outside the u8 range",
+                Scalar.U32 => "integer literal is outside the u32 range",
+                Scalar.Usize => "integer literal is outside the usize range",
+                _ => panic("literal inferred as a non-integer")
+            }
+            throw CheckError(CheckPhase.Type, node(parsed, id).span, message)
+        }
+        expressions[id.index as usize] = present(Expression(present(scalar), fact.binding, present(magnitude as u64)))
+    }
+    (take expressions, take counts)
 }
 
 pub fn check_modules(read sources: List<SourceModule>, read mounts: List<Map<List<u8>, usize>>,

@@ -8,10 +8,11 @@ pub copy enum Arithmetic { Add, Subtract, Multiply, Divide, Remainder }
 pub copy enum Comparison { Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual }
 
 pub enum Operation {
-    Integer(i32), Boolean(bool), Unit,
+    Integer(Scalar, u64), Boolean(bool), Unit,
     Parameter(usize),
-    Arithmetic(Arithmetic, usize, usize),
+    Arithmetic(Arithmetic, Scalar, usize, usize),
     Compare(Comparison, Scalar, usize, usize),
+    Cast(Scalar, Scalar, usize),
     Call(FunctionId, List<usize>)
 }
 
@@ -71,19 +72,32 @@ fn verify_block(read program: Program, read function: Function, read block: Bloc
     for instruction in block.instructions.as_slice() {
         let span = instruction.span
         let result = match read instruction.operation {
-            Operation.Integer(_) => Scalar.I32,
+            Operation.Integer(scalar, bits) => {
+                let width = scalar.integer_width()
+                if width == 0u32 || (width < 64u32 && bits >> width != 0u64) {
+                    throw InvalidIr(Violation.Operand, span)
+                }
+                scalar
+            },
             Operation.Boolean(_) => Scalar.Bool,
             Operation.Unit => Scalar.Unit,
             Operation.Parameter(index) => {
                 if index >= function.parameters.len() { throw InvalidIr(Violation.Parameter, span) }
                 function.parameters[index]
             },
-            Operation.Arithmetic(_, left, right) => {
+            Operation.Arithmetic(_, scalar, left, right) => {
                 if left >= values.len() || right >= values.len() ||
-                    !values[left].is(Scalar.I32) || !values[right].is(Scalar.I32) {
+                    scalar.integer_width() == 0u32 || !values[left].is(scalar) || !values[right].is(scalar) {
                     throw InvalidIr(Violation.Operand, span)
                 }
-                Scalar.I32
+                scalar
+            },
+            Operation.Cast(source, target, operand) => {
+                if operand >= values.len() || !values[operand].is(source) ||
+                    source.integer_width() == 0u32 || target.integer_width() == 0u32 {
+                    throw InvalidIr(Violation.Operand, span)
+                }
+                target
             },
             Operation.Compare(_, scalar, left, right) => {
                 if left >= values.len() || right >= values.len() ||
@@ -176,8 +190,8 @@ pub fn verify(take program: Program): VerifiedProgram throws InvalidIr {
 fn reject_forward_value(): Unit {
     let span = Span(1, 2, 3)
     var instructions = List<Instruction>()
-    instructions.push(Instruction(Operation.Arithmetic(Arithmetic.Add, 1, 1), span))
-    instructions.push(Instruction(Operation.Integer(2), span))
+    instructions.push(Instruction(Operation.Arithmetic(Arithmetic.Add, Scalar.I32, 1, 1), span))
+    instructions.push(Instruction(Operation.Integer(Scalar.I32, 2), span))
     var blocks = List<Block>()
     blocks.push(Block(List<Scalar>(), take instructions, Terminator.Return(0), span))
     var functions = List<Function>()
@@ -209,4 +223,26 @@ fn reject_cross_block_argument_type(): Unit {
         core.panic.panic("verifier admitted a bool on an i32 block parameter edge")
     }
     let Violation.EdgeArguments = error.violation else { core.panic.panic("incorrect edge diagnostic") }
+}
+
+@test
+fn reject_invalid_integer_representation(): Unit {
+    let span = Span(1, 2, 3)
+    for operation in alloc.vec.from_array([
+        Operation.Integer(Scalar.U8, 256),
+        Operation.Arithmetic(Arithmetic.Add, Scalar.U32, 0, 0),
+        Operation.Cast(Scalar.I32, Scalar.U32, 0),
+        Operation.Cast(Scalar.U8, Scalar.Bool, 0)
+    ]) {
+        let instructions = alloc.vec.from_array([
+            Instruction(Operation.Integer(Scalar.U8, 255), span),
+            Instruction(take operation, span)
+        ])
+        let blocks = alloc.vec.from_array([Block(List<Scalar>(), take instructions, Terminator.Return(0), span)])
+        let functions = alloc.vec.from_array([Function(List<Scalar>(), Scalar.U8, take blocks, span)])
+        let failure(error) = capture verify(Program(alloc.vec.from_array([Module(take functions)]), none)) else {
+            core.panic.panic("verifier admitted inconsistent integer IR")
+        }
+        let Violation.Operand = error.violation else { core.panic.panic("incorrect integer operand diagnostic") }
+    }
 }

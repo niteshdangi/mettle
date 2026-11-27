@@ -1100,6 +1100,50 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
                 run([str(output)], 42)
             evidence["cases"].append({"name": "build-native-return"})
+        if selected("build-native-unsigned"):
+            path = source("build-native-unsigned",
+                          "fn adjust(n: u8, flag: bool): u8 {\n"
+                          "    var value: u8 = if flag { n } else { 0xff }\n"
+                          "    value -= 1u8\n"
+                          "    value *= 2\n"
+                          "    return value + 2\n"
+                          "}\n"
+                          "fn main(): i32 {\n"
+                          "    let quotient = 0xffff_ffffu32 / 2\n"
+                          "    let inferred = 2147483646 + 1\n"
+                          "    let remainder = 0xffff_ffffu32 % 256\n"
+                          "    let wide: usize = 18446744073709551615\n"
+                          "    let high = 2147483648u32\n"
+                          "    if 2147483648 <= high, quotient == inferred, remainder == 255,\n"
+                          "        wide / 2 == 9223372036854775807usize, wide % 256 == 255,\n"
+                          "        high as i32 as usize == 18446744071562067968usize,\n"
+                          "        high as usize == 2147483648, wide as u8 as u32 == 255 {\n"
+                          "        adjust(21, true) as i32\n"
+                          "    } else { 0 }\n"
+                          "}\n")
+            output = directory / "unsigned"
+            for compiler in (executable, native):
+                for profile in ("debug", "release"):
+                    run([compiler, "build", str(path), "-o", str(output), "--profile", profile], env=llvm_env)
+                    run([str(output)], 42)
+            evidence["cases"].append({"name": "build-native-unsigned", "source_sha256": digest(path)})
+        if selected("build-native-unsigned-checks"):
+            output = directory / "unsigned-checks"
+            for case, scalar, operator, lhs, rhs, wrapping in (
+                ("add", "u8", "+", 255, 1, 0),
+                ("sub", "u32", "-", 1, 4294967295, 2),
+                ("mul", "usize", "*", 18446744073709551615, 2, 254),
+                ("div-zero", "u32", "/", 17, 0, "trap"),
+                ("rem-zero", "usize", "%", 17, 0, "trap"),
+            ):
+                path = source("unsigned-" + case,
+                              f"fn op(a: {scalar}, b: {scalar}): {scalar} {{ a {operator} b }}\n"
+                              f"fn main(): i32 {{ op({lhs}, {rhs}) as i32 }}\n")
+                for profile, checks, expected in (("release", "on", "trap"), ("debug", "off", wrapping)):
+                    run([native, "build", str(path), "-o", str(output), "--profile", profile,
+                         "--overflow-checks", checks], env=llvm_env)
+                    run([str(output)], expected)
+            evidence["cases"].append({"name": "build-native-unsigned-checks"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
@@ -1107,6 +1151,11 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-unresolved-call", "fn main(): i32 { missing() }", "name"),
             ("check-scalar-overflow", "fn main(): i32 { 2147483648 }", "type"),
             ("check-scalar-separator", "fn main(): i32 { 1__0 }", "lex"),
+            ("check-scalar-u8-context-overflow", "fn small(): u8 { 256 }\nfn main(): i32 { 0 }", "type"),
+            ("check-scalar-u32-suffix-overflow", "fn main(): i32 { 4294967296u32 as i32 }", "type"),
+            ("check-scalar-usize-suffix-overflow", "fn main(): i32 { 18446744073709551616usize as i32 }", "type"),
+            ("check-scalar-cast-literal-default", "fn main(): i32 { (4294967295 as u32) as i32 }", "type"),
+            ("check-scalar-unsigned-mixed", "fn main(): i32 { (1u8 + 2u32) as i32 }", "type"),
             ("check-scalar-parameter", "fn main(): i32 { double(21) - 42 }\nfn double(value: i32): i32 { value * 2 }", None),
             ("check-scalar-argument-type", "fn main(): i32 { double(true) }\nfn double(value: i32): i32 { value * 2 }", "type"),
             ("check-scalar-conditional", "fn main(): i32 { if 1 < 2, false != true && true { 0 } else if true { 1 } else { 2 } }", None),

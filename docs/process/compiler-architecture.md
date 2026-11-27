@@ -269,6 +269,10 @@ collects signatures across all supplied units
 before checking bodies. Checked calls carry a module and function index, not a
 source spelling; initialized scalar locals carry function-local binding
 identities. Expression facts remain indexed by the owning syntax unit.
+The native integer subset is `i32`, `u8`, `u32`, and hosted 64-bit `usize`.
+Unsuffixed literals resolve against their integer constraints before falling
+back to `i32`. Checked literals carry their bits; arithmetic and explicit
+integer casts preserve logical scalar types in IR, including at equal widths.
 Public syntax inspection projects the native tree into the reference JSON
 shape; the frontend continues to consume the original lossless tree.
 Native scalar lowering emits blocks with ordered local value definitions and

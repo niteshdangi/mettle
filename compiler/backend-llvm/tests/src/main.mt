@@ -65,8 +65,8 @@ fn emit_cross_module(left: i32, bias: i32, checks: OverflowChecks): i32 {
     entry_ops.push(Instruction(Operation.Boolean(true), span))
     entry_ops.push(Instruction(Operation.Call(FunctionId(1, 0), from_array([0usize])), span))
     entry_ops.push(Instruction(Operation.Call(FunctionId(1, 1), List<usize>()), span))
-    entry_ops.push(Instruction(Operation.Integer(left), span))
-    entry_ops.push(Instruction(Operation.Integer(2), span))
+    entry_ops.push(Instruction(Operation.Integer(Scalar.I32, left as u32 as u64), span))
+    entry_ops.push(Instruction(Operation.Integer(Scalar.I32, 2), span))
     entry_ops.push(Instruction(Operation.Call(FunctionId(1, 2), from_array([2usize, 3, 1, 4])), span))
 
     var bool_ops = List<Instruction>()
@@ -76,10 +76,10 @@ fn emit_cross_module(left: i32, bias: i32, checks: OverflowChecks): i32 {
     var scalar_ops = List<Instruction>()
     scalar_ops.push(Instruction(Operation.Parameter(1), span))
     scalar_ops.push(Instruction(Operation.Parameter(3), span))
-    scalar_ops.push(Instruction(Operation.Arithmetic(Arithmetic.Add, 0, 1), span))
-    scalar_ops.push(Instruction(Operation.Arithmetic(Arithmetic.Multiply, 2, 1), span))
-    scalar_ops.push(Instruction(Operation.Integer(bias), span))
-    scalar_ops.push(Instruction(Operation.Arithmetic(Arithmetic.Subtract, 3, 4), span))
+    scalar_ops.push(Instruction(Operation.Arithmetic(Arithmetic.Add, Scalar.I32, 0, 1), span))
+    scalar_ops.push(Instruction(Operation.Arithmetic(Arithmetic.Multiply, Scalar.I32, 2, 1), span))
+    scalar_ops.push(Instruction(Operation.Integer(Scalar.I32, bias as u32 as u64), span))
+    scalar_ops.push(Instruction(Operation.Arithmetic(Arithmetic.Subtract, Scalar.I32, 3, 4), span))
 
     var entry = List<Function>()
     entry.push(straight_line(List<Scalar>(), Scalar.I32, take entry_ops, 5, span))
@@ -107,18 +107,18 @@ fn write_artifact(take input: Program, checks: OverflowChecks): i32 {
 fn arithmetic(operation: Arithmetic, left: i32, right: i32, checks: OverflowChecks): i32 {
     let span = Span(1, 0, 1)
     var entry_ops = List<Instruction>()
-    entry_ops.push(Instruction(Operation.Integer(left), span))
-    entry_ops.push(Instruction(Operation.Integer(right), span))
+    entry_ops.push(Instruction(Operation.Integer(Scalar.I32, left as u32 as u64), span))
+    entry_ops.push(Instruction(Operation.Integer(Scalar.I32, right as u32 as u64), span))
     entry_ops.push(Instruction(Operation.Call(FunctionId(1, 0), from_array([0usize, 1])), span))
     var helper_ops = List<Instruction>()
     helper_ops.push(Instruction(Operation.Parameter(0), span))
     helper_ops.push(Instruction(Operation.Parameter(1), span))
-    helper_ops.push(Instruction(Operation.Arithmetic(operation, 0, 1), span))
+    helper_ops.push(Instruction(Operation.Arithmetic(operation, Scalar.I32, 0, 1), span))
     let returned = match operation {
         Arithmetic.Divide | Arithmetic.Remainder => 2usize,
         _ => {
-            helper_ops.push(Instruction(Operation.Integer(1000000000), span))
-            helper_ops.push(Instruction(Operation.Arithmetic(Arithmetic.Divide, 2, 3), span))
+            helper_ops.push(Instruction(Operation.Integer(Scalar.I32, 1000000000), span))
+            helper_ops.push(Instruction(Operation.Arithmetic(Arithmetic.Divide, Scalar.I32, 2, 3), span))
             4usize
         }
     }
@@ -136,21 +136,21 @@ fn guarded_join(checks: OverflowChecks): i32 {
         Instruction(Operation.Boolean(false), span),
         Instruction(Operation.Boolean(true), span),
         Instruction(Operation.Compare(Comparison.Less, Scalar.Bool, 0, 1), span),
-        Instruction(Operation.Integer(38), span),
-        Instruction(Operation.Integer(43), span),
+        Instruction(Operation.Integer(Scalar.I32, 38), span),
+        Instruction(Operation.Integer(Scalar.I32, 43), span),
         Instruction(Operation.Unit, span)
     ]), Terminator.Branch(2, Edge(1, from_array([3usize, 5])), Edge(2, from_array([4usize, 5]))), span)
     let guarded = Block(from_array([Scalar.I32, Scalar.Unit]), from_array([
-        Instruction(Operation.Integer(2), span),
-        Instruction(Operation.Arithmetic(Arithmetic.Add, 0, 2), span),
-        Instruction(Operation.Integer(1), span),
-        Instruction(Operation.Arithmetic(Arithmetic.Divide, 3, 4), span),
+        Instruction(Operation.Integer(Scalar.I32, 2), span),
+        Instruction(Operation.Arithmetic(Arithmetic.Add, Scalar.I32, 0, 2), span),
+        Instruction(Operation.Integer(Scalar.I32, 1), span),
+        Instruction(Operation.Arithmetic(Arithmetic.Divide, Scalar.I32, 3, 4), span),
         Instruction(Operation.Compare(Comparison.GreaterEqual, Scalar.Unit, 1, 1), span)
     ]), Terminator.Branch(6, Edge(3, from_array([5usize, 1])), Edge(2, from_array([0usize, 1]))), span)
     let alternate = Block(from_array([Scalar.I32, Scalar.Unit]), List<Instruction>(),
         Terminator.Jump(Edge(3, from_array([0usize, 1]))), span)
     let junction = Block(from_array([Scalar.I32, Scalar.Unit]), from_array([
-        Instruction(Operation.Integer(42), span),
+        Instruction(Operation.Integer(Scalar.I32, 42), span),
         Instruction(Operation.Compare(Comparison.Less, Scalar.I32, 0, 2), span)
     ]), Terminator.Branch(3, Edge(1, from_array([0usize, 1])), Edge(4, from_array([0usize]))), span)
     let exit = Block(from_array([Scalar.I32]), List<Instruction>(), Terminator.Return(0), span)
