@@ -1,6 +1,7 @@
-import std.{ env, fs, io, path }
+import std.{ env, fs, io, path, process }
 import std.ffi.os_str_from_text
 import std.io.{ Reader, Writer }
+import std.macros.format
 import alloc.vec.{ List, new }
 import alloc.hash_map.Map
 import alloc.string.{ String, from_text }
@@ -9,8 +10,9 @@ import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
 import mettle_packages.{ PackageError, PackageGraph, PackagePhase, ResolveOptions, resolve_with }
-import mettle_pipeline.{ CheckError, CheckPhase, SourceModule, active_items, check_modules, external_modules }
+import mettle_pipeline.{ CheckError, CheckPhase, CompileError, LoweringError, SourceModule, active_items, check_modules, compile_modules, external_modules }
 import mettle_syntax.inspect.{ InspectionError, project, project_recovered }
+import mettle_backend_llvm.{ OverflowChecks, emit_ir }
 
 module inspection;
 
@@ -415,6 +417,151 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
     try check_input(source, "main", options, package_options)
 }
 
+fn stage_llvm(take file: fs.File, read temporary: path.Path, read output: path.Path,
+    read bytes: [u8]): bool throws io.Error {
+    {
+        var handle = take file
+        try handle.write_all(bytes)
+        try handle.sync_all()
+    }
+    var verifier = process.command_text("llvm-as")
+    verifier.arg_text("--disable-output")
+    verifier.arg(temporary.as_os_str())
+    if !(try verifier.status()).succeeded() { return false }
+    try fs.rename(temporary, output)
+    true
+}
+
+fn publish_llvm(read output: path.Path, read bytes: [u8]): i32 throws io.Error {
+    let present(filename) = output.file_name() else {
+        io.eprint("mettle: error[io]: LLVM output must be a file path\n")
+        return 1
+    }
+    let parent = output.parent().or_panic()
+    let directory = if parent.as_os_str().is_empty() { path.path_from_text(".") } else { parent }
+    let pid = process.id()
+    var nonce = 0u64
+    loop {
+        let name = format(f".mettle-llvm-{pid}-{nonce}.tmp")
+        nonce += 1u64
+        if filename.same(os_str_from_text(name.as_text())) { continue }
+        let temporary = directory.join(name.as_text())
+        let file = match take capture fs.create_new(temporary) {
+            success(file) => take file,
+            failure(error) => {
+                if error.kind().is(io.ErrorKind.AlreadyExists) { continue }
+                throw error
+            }
+        }
+        let result = capture stage_llvm(take file, temporary.as_path(), output, bytes)
+        if let success(true) = result { return 0 }
+        match take capture fs.remove_file(temporary) {
+            success(_) => {},
+            failure(error) => {
+                let reason = error.message()
+                io.eprint(f"mettle: error[io]: cannot remove staged LLVM output: {reason}\n")
+            }
+        }
+        match take result {
+            failure(error) => {
+                let reason = error.message()
+                io.eprint(f"mettle: error[io]: cannot verify or publish LLVM output: {reason}\n")
+            },
+            success(_) => io.eprint("mettle: error[backend]: LLVM rejected the generated module\n")
+        }
+        return 1
+    }
+}
+
+fn build_llvm(read source: path.Path, read output: path.Path, checks: OverflowChecks): i32 throws io.Error {
+    let present(module_source) = try load_module(source, 0, 0, List<String>()) else { return 1 }
+    var sources = List<SourceModule>()
+    sources.push(take module_source)
+    var mounts = List<Map<List<u8>, usize>>()
+    mounts.push(Map<List<u8>, usize>())
+    let verified = match take capture compile_modules(sources, mounts, true) {
+        success(verified) => take verified,
+        failure(CompileError.Check(error)) => {
+            return try report_check_error(source, sources[0].bytes.as_slice(), error)
+        },
+        failure(CompileError.Lower(LoweringError.Unsupported(span))) => {
+            return try report_check_error(source, sources[0].bytes.as_slice(),
+                CheckError(CheckPhase.Feature, span, "native lowering does not support this construct yet"))
+        },
+        failure(CompileError.Lower(_)) => {
+            io.eprint("mettle: error[internal]: lowering did not produce valid IR\n")
+            return 1
+        }
+    }
+    let ir = match take capture emit_ir(verified, checks) {
+        success(ir) => take ir,
+        failure(_) => {
+            io.eprint("mettle: error[backend]: cannot emit the verified program as hosted LLVM IR\n")
+            return 1
+        }
+    }
+    try publish_llvm(output, ir.as_bytes())
+}
+
+fn build_usage(): i32 {
+    io.eprint("usage: mettle-selfhost build INPUT --emit llvm -o OUTPUT [--profile debug|release] [--overflow-checks on|off]\n")
+    2
+}
+
+fn run_build(read args: env.ArgsOs): i32 throws io.Error {
+    var input: usize? = none
+    var output: usize? = none
+    var emit = false
+    var debug: bool? = none
+    var override_checks: bool? = none
+    var index = 2usize
+    while index < args.len() {
+        let option = args[index].as_os_str()
+        if option.same(os_str_from_text("-o")) {
+            index += 1usize
+            if index == args.len() || output.is_present() { return build_usage() }
+            output = present(index)
+        } else if option.same(os_str_from_text("--emit")) {
+            index += 1usize
+            if index == args.len() || emit { return build_usage() }
+            if !args[index].as_os_str().same(os_str_from_text("llvm")) {
+                io.eprint("mettle: error[feature]: native build currently supports only LLVM IR output\n")
+                return 1
+            }
+            emit = true
+        } else if option.same(os_str_from_text("--profile")) {
+            index += 1usize
+            if index == args.len() || debug.is_present() { return build_usage() }
+            let profile = args[index].as_os_str()
+            if profile.same(os_str_from_text("debug")) { debug = present(true) }
+            else if profile.same(os_str_from_text("release")) { debug = present(false) }
+            else { return build_usage() }
+        } else if option.same(os_str_from_text("--overflow-checks")) {
+            index += 1usize
+            if index == args.len() || override_checks.is_present() { return build_usage() }
+            let value = args[index].as_os_str()
+            if value.same(os_str_from_text("on")) { override_checks = present(true) }
+            else if value.same(os_str_from_text("off")) { override_checks = present(false) }
+            else { return build_usage() }
+        } else {
+            let bytes = option.as_bytes()
+            if bytes.is_empty() || bytes[0usize] == b'-' || input.is_present() { return build_usage() }
+            input = present(index)
+        }
+        index += 1usize
+    }
+    let present(input_index) = input else { return build_usage() }
+    let present(output_index) = output else { return build_usage() }
+    if !emit { return build_usage() }
+    let source = path.path_from_os_str(args[input_index].as_os_str())
+    if package_input(source) {
+        io.eprint("mettle: error[feature]: native LLVM emission currently requires a standalone source file\n")
+        return 1
+    }
+    let checks = if override_checks.or(debug.or(true)) { OverflowChecks.On } else { OverflowChecks.Off }
+    try build_llvm(source, path.path_from_os_str(args[output_index].as_os_str()), checks)
+}
+
 fn write_tokens(mut out: Writer, read bytes: [u8], read tokens: [Token]): Unit throws io.Error {
     try out.write("{\n  \"aliases\": [],\n  \"functions\": [],\n  \"products\": [],\n  \"tokens\": [")
     var separator = false
@@ -463,6 +610,9 @@ fn run(): i32 throws io.Error {
     let args = env.args_os()
     if args.len() >= 2 && args[1].as_os_str().same(os_str_from_text("check")) {
         return try run_check(args)
+    }
+    if args.len() >= 2 && args[1].as_os_str().same(os_str_from_text("build")) {
+        return try run_build(args)
     }
     let syntax = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("syntax"))
     let syntax_tree = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("syntax-tree"))

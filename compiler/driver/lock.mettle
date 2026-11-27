@@ -7,7 +7,16 @@ packages: [
         id: "mettle-driver@0.1.0|root|target"
         source: "root"
         features: []
-        dependencies: ["mettle-foundation@0.1.0|path+../foundation|target", "mettle-packages@0.1.0|path+../packages|target", "mettle-pipeline@0.1.0|path+../pipeline|target", "mettle-syntax@0.1.0|path+../syntax|target"]
+        dependencies: ["mettle-backend-llvm@0.1.0|path+../backend-llvm|target", "mettle-foundation@0.1.0|path+../foundation|target", "mettle-packages@0.1.0|path+../packages|target", "mettle-pipeline@0.1.0|path+../pipeline|target", "mettle-syntax@0.1.0|path+../syntax|target"]
+    }
+    {
+        name: "mettle-backend-llvm"
+        version: "0.1.0"
+        id: "mettle-backend-llvm@0.1.0|path+../backend-llvm|target"
+        source: "path+../backend-llvm"
+        checksum: "sha256-tree-2:47c7fc6b9a448b3d22d792abd2009d27721011676fbafd110f45276e014e0788"
+        features: []
+        dependencies: ["mettle-foundation@0.1.0|path+../foundation|target", "mettle-ir@0.1.0|path+../ir|target", "mettle-types@0.1.0|path+../types|target"]
     }
     {
         name: "mettle-foundation"
@@ -59,7 +68,7 @@ packages: [
         version: "0.1.0"
         id: "mettle-pipeline@0.1.0|path+../pipeline|target"
         source: "path+../pipeline"
-        checksum: "sha256-tree-2:b52fb1ee754d589486886103825d9d1f4d0f57854886a77ccf9d775dafe5904a"
+        checksum: "sha256-tree-2:271d77d22d313fb79621d805182063428814fb23b934dd668908b0c177d80340"
         features: []
         dependencies: ["mettle-foundation@0.1.0|path+../foundation|target", "mettle-frontend@0.1.0|path+../frontend|target", "mettle-ir@0.1.0|path+../ir|target", "mettle-middle@0.1.0|path+../middle|target", "mettle-syntax@0.1.0|path+../syntax|target"]
     }

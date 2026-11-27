@@ -273,6 +273,11 @@ Native scalar lowering emits straight-line functions with ordered value
 definitions and resolved calls. The IR verifier checks operand availability,
 call signatures and returns before exposing an immutable verified program.
 Branching and owned values are not admitted by this straight-line lowering.
+`mettle-selfhost build INPUT --emit llvm -o OUTPUT` emits the standalone scalar
+subset. It consumes verified IR and runs the pinned `llvm-as` from `PATH` before
+atomically publishing the output. `--profile` defaults to `debug`, with
+`--overflow-checks on|off` overriding the profile. Package builds and executable
+emission are not wired to the native driver yet.
 The C++ component table above describes the bootstrap implementation; it does
 not prescribe one Mettle package per C++ component.
 

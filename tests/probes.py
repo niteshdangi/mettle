@@ -977,6 +977,26 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             assert actual.stderr.split(": error[", 1)[0] == reference.stderr.split(": error[", 1)[0], actual.stderr
             assert actual.stderr.splitlines()[1:] == ["\tmissing()", "\t^"], actual.stderr
             evidence["cases"].append({"name": "check-scalar-source-location"})
+        if selected("build-scalar-llvm"):
+            llvm = Path(os.environ.get("LLVM_BIN", ROOT.parent / ".tools" / "linux-x86_64" / "llvm" / "bin"))
+            env = {**os.environ, "PATH": os.pathsep.join((str(llvm), os.environ.get("PATH", "")))}
+            path = source("build-scalar-llvm", "fn twice(n: i32): i32 { n + n }\nfn main(): i32 { twice(21) }\n")
+            output = directory / "scalar.ll"
+            program = directory / "scalar-program"
+            command = [native, "build", str(path), "--emit", "llvm", "-o", str(output)]
+            run(command + ["--profile", "release"], env=env)
+            run([str(llvm / "clang"), "-Wno-override-module", str(output), "-o", str(program)])
+            run([str(program)], 42)
+            run(command + ["--profile", "release", "--overflow-checks", "on"], env=env)
+            checked = output.read_text()
+            assert "@llvm.sadd.with.overflow.i32" in checked and "@mettle_rt_panic" in checked, checked
+            result = run(command, 1, env={**env, "PATH": ""})
+            assert "cannot verify or publish LLVM output" in result.stderr, result.stderr
+            assert output.read_text() == checked and not list(directory.glob(".mettle-llvm-*.tmp"))
+            path.write_text("fn main(): i32 { if true { 1 } else { 0 } }\n")
+            result = run(command, 1, env=env)
+            assert "error[feature]" in result.stderr and output.read_text() == checked, result.stderr
+            evidence["cases"].append({"name": "build-scalar-llvm"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
