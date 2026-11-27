@@ -263,15 +263,19 @@ control rebuild work. A package is not an indivisible recompilation unit.
 For native scalar checking, the driver supplies parsed source units and their
 package mounts; it discovers declared external files and keeps their canonical
 source identities. Feature predicates select active declarations using each
-unit's package features before external modules are loaded. The frontend
+unit's package features before external modules are loaded. Ordinary builds
+ignore test and benchmark annotations, not the annotated bodies. The frontend
 collects signatures across all supplied units
 before checking bodies. Checked calls carry a module and function index, not a
-source spelling, and expression facts remain indexed by the owning syntax unit.
+source spelling; initialized scalar locals carry function-local binding
+identities. Expression facts remain indexed by the owning syntax unit.
 Public syntax inspection projects the native tree into the reference JSON
 shape; the frontend continues to consume the original lossless tree.
 Native scalar lowering emits blocks with ordered local value definitions and
-explicit arguments on control-flow edges. Condition chains and short-circuit
-operators branch before evaluating the next operand. The IR verifier checks
+explicit arguments on control-flow edges. Assignments replace the current SSA
+value of a scalar local; joins merge live local values and pending expression
+operands independently. Condition chains and short-circuit operators branch
+before evaluating the next operand. The IR verifier checks
 operands, edge arguments, reachability, call signatures and returns before
 exposing an immutable verified program. Owned values are not admitted yet.
 `mettle-selfhost build INPUT -o OUTPUT` compiles scalar standalone files and

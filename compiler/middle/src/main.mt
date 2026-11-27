@@ -13,6 +13,7 @@ fn child(read parsed: Parsed, parent: SyntaxNode, index: usize): NodeId {
 }
 
 copy type Value { slot: usize; scalar: Scalar }
+copy type LocalValue { id: usize; value: Value }
 type PendingBlock {
     parameters: List<Scalar>
     instructions: List<Instruction>
@@ -23,6 +24,7 @@ type PendingBlock {
 copy enum Work {
     Evaluate(NodeId), Binary(NodeId), Call(NodeId, usize), Chain(NodeId, u32),
     SelectIf(NodeId), SelectShort(NodeId, bool), SelectChain(NodeId, u32),
+    Bind(NodeId), Assign(NodeId), LeaveScope(usize),
     Unit(Span), Boolean(bool, Span), Discard(Span), Enter(usize), Jump(usize)
 }
 
@@ -30,6 +32,8 @@ type Builder {
     blocks: List<PendingBlock>
     current: usize
     values: List<Value>
+    locals: List<LocalValue>
+    local_indices: List<usize?>
     work: List<Work>
 }
 
@@ -41,7 +45,9 @@ extend Builder {
     }
 
     mut fn continuation(tail: Scalar?, span: Span): usize {
-        var parameters = with_capacity<Scalar>(self.values.len() + (if tail.is_present() { 1usize } else { 0usize }))
+        var parameters = with_capacity<Scalar>(self.locals.len() + self.values.len() +
+            (if tail.is_present() { 1usize } else { 0usize }))
+        for binding in self.locals.as_slice() { parameters.push(binding.value.scalar) }
         for value in self.values.as_slice() { parameters.push(value.scalar) }
         if let present(scalar) = tail { parameters.push(scalar) }
         self.add_block(take parameters, span)
@@ -50,9 +56,31 @@ extend Builder {
     mut fn enter(index: usize): Unit {
         self.current = index
         self.values.clear()
+        for position in 0usize..self.locals.len() { self.locals[position].value.slot = position }
         let parameters = read self.blocks[index].parameters
-        for position in 0usize..parameters.len() {
+        for position in self.locals.len()..parameters.len() {
             self.values.push(Value(position, parameters[position]))
+        }
+    }
+
+    fn local_position(id: usize, span: Span): usize throws LoweringError {
+        if id >= self.local_indices.len() { throw LoweringError.Inconsistent(span) }
+        let present(position) = self.local_indices[id] else { throw LoweringError.Inconsistent(span) }
+        position
+    }
+
+    mut fn bind(id: usize, value: Value, span: Span): Unit throws LoweringError {
+        if id >= self.local_indices.len() || self.local_indices[id].is_present() {
+            throw LoweringError.Inconsistent(span)
+        }
+        self.local_indices[id] = present(self.locals.len())
+        self.locals.push(LocalValue(id, value))
+    }
+
+    mut fn leave_scope(size: usize): Unit {
+        while self.locals.len() > size {
+            let binding = self.locals.pop().or_panic()
+            self.local_indices[binding.id] = none
         }
     }
 
@@ -69,7 +97,8 @@ extend Builder {
     }
 
     fn edge(index: usize): Edge {
-        var arguments = List<usize>()
+        var arguments = with_capacity<usize>(self.locals.len() + self.values.len())
+        for binding in self.locals.as_slice() { arguments.push(binding.value.slot) }
         for value in self.values.as_slice() { arguments.push(value.slot) }
         Edge(index, take arguments)
     }
@@ -137,6 +166,7 @@ fn evaluate(mut builder: Builder, read source: SourceModule, read checked: Check
             let first = item.children.begin
             let last = item.children.end
             var position = last
+            builder.work.push(Work.LeaveScope(builder.locals.len()))
             if first == last || parsed.nodes[parsed.children[(last - 1u32) as usize].index as usize].semicolon {
                 builder.work.push(Work.Unit(span))
             }
@@ -183,9 +213,24 @@ fn evaluate(mut builder: Builder, read source: SourceModule, read checked: Check
         },
         NodeKind.Boolean => builder.emit(Operation.Boolean(source.bytes[span.begin as usize] == b't'), Scalar.Bool, span),
         NodeKind.Unit => builder.emit(Operation.Unit, Scalar.Unit, span),
+        NodeKind.Binding => {
+            builder.work.push(Work.Bind(id))
+            builder.work.push(Work.Evaluate(parsed.children[(item.children.end - 1u32) as usize]))
+        },
+        NodeKind.Assign => {
+            builder.work.push(Work.Assign(id))
+            builder.work.push(Work.Evaluate(child(parsed, item, 1)))
+        },
         NodeKind.Name => {
-            let present(Binding.Parameter(parameter)) = fact.binding else { throw LoweringError.Inconsistent(span) }
-            builder.emit(Operation.Parameter(parameter), fact.scalar, span)
+            match fact.binding {
+                present(Binding.Parameter(parameter)) => builder.emit(Operation.Parameter(parameter), fact.scalar, span),
+                present(Binding.Local(id)) => {
+                    let position = try builder.local_position(id, span)
+                    let value = builder.locals[position].value
+                    builder.values.push(value)
+                },
+                _ => { throw LoweringError.Inconsistent(span) }
+            }
         },
         _ => { throw LoweringError.Unsupported(span) }
     }
@@ -194,7 +239,9 @@ fn evaluate(mut builder: Builder, read source: SourceModule, read checked: Check
 fn lower_function(read source: SourceModule, read checked: CheckedModule, read signature: frontend.Function): Function throws LoweringError {
     let parsed = read source.syntax
     let span = parsed.nodes[signature.body.index as usize].span
-    var builder = Builder(List<PendingBlock>(), 0usize, List<Value>(), List<Work>())
+    var local_indices = List<usize?>()
+    local_indices.resize(signature.local_count, none)
+    var builder = Builder(List<PendingBlock>(), 0usize, List<Value>(), List<LocalValue>(), take local_indices, List<Work>())
     let _ = builder.add_block(List<Scalar>(), span)
     builder.work.push(Work.Evaluate(signature.body))
     while let present(task) = builder.work.pop() {
@@ -203,6 +250,35 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
             Work.Unit(at) => builder.emit(Operation.Unit, Scalar.Unit, at),
             Work.Boolean(value, at) => builder.emit(Operation.Boolean(value), Scalar.Bool, at),
             Work.Discard(at) => { let _ = try builder.pop_value(at) },
+            Work.LeaveScope(size) => builder.leave_scope(size),
+            Work.Bind(id) => {
+                let at = parsed.nodes[id.index as usize].span
+                let value = try builder.pop_value(at)
+                let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(at) }
+                match fact.binding {
+                    present(Binding.Local(slot)) => { try builder.bind(slot, value, at) },
+                    none => {},
+                    _ => { throw LoweringError.Inconsistent(at) }
+                }
+                builder.emit(Operation.Unit, Scalar.Unit, at)
+            },
+            Work.Assign(id) => {
+                let item = parsed.nodes[id.index as usize]
+                let at = item.span
+                let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(at) }
+                let present(Binding.Local(slot)) = fact.binding else { throw LoweringError.Inconsistent(at) }
+                let position = try builder.local_position(slot, at)
+                let right = try builder.pop_value(at)
+                let spelling = try operator(source, item)
+                let value = if spelling == b"=" { right } else {
+                    let left = builder.locals[position].value
+                    let operation = try binary(read spelling[0usize..spelling.len() - 1usize], left, right, at)
+                    builder.emit(take operation, left.scalar, at)
+                    try builder.pop_value(at)
+                }
+                builder.locals[position].value = value
+                builder.emit(Operation.Unit, Scalar.Unit, at)
+            },
             Work.Enter(block) => builder.enter(block),
             Work.Jump(block) => {
                 let edge = builder.edge(block)
@@ -258,7 +334,7 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
         }
     }
     let returned = try builder.pop_value(span)
-    if !builder.values.is_empty() { throw LoweringError.Inconsistent(span) }
+    if !builder.values.is_empty() || !builder.locals.is_empty() { throw LoweringError.Inconsistent(span) }
     builder.close(Terminator.Return(returned.slot))
     var blocks = List<Block>()
     for pending in take builder.blocks {

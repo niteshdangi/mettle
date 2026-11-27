@@ -1032,6 +1032,26 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             run([native, "build", str(path), "-o", str(output)], env=llvm_env)
             run([str(output)], 42)
             evidence["cases"].append({"name": "build-native-control-flow"})
+        if selected("build-native-locals"):
+            path = source("build-native-locals",
+                          "fn add(a: i32, b: i32): i32 { a + b }\n"
+                          "fn main(): i32 {\n"
+                          "    var n: i32 = 1\n"
+                          "    n += if true { n = 20; 2 } else { 40 }\n"
+                          "    let result = add(n, if true {\n"
+                          "        n = 19\n"
+                          "        let n = 20\n"
+                          "        let _ = n\n"
+                          "        n\n"
+                          "    } else { 0 })\n"
+                          "    if n == 19 { n = 20 }\n"
+                          "    if n == 20 { result } else { 0 }\n"
+                          "}\n")
+            output = directory / "locals"
+            for compiler in (executable, native):
+                run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
+                run([str(output)], 42)
+            evidence["cases"].append({"name": "build-native-locals"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
@@ -1045,6 +1065,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-condition-chain-type", "fn main(): i32 { if false, 1 { 0 } else { 1 } }", "type"),
             ("check-scalar-branch-type", "fn main(): i32 { if true { 1 }; 0 }", "type"),
             ("check-scalar-logical-type", "fn main(): i32 { if true || 1 { 0 } else { 1 } }", "type"),
+            ("check-scalar-test-attribute", '@test\n@ignore("reason")\nfn fixture(): Unit { () }\nfn main(): i32 { 0 }', None),
+            ("check-scalar-test-body-error", "@test\nfn fixture(): Unit { missing() }\nfn main(): i32 { 0 }", "name"),
             ("check-scalar-cfg-filter", '@cfg(any(feature = "disabled", false))\nmodule nonexistent\n@cfg(all(true, not(feature = "disabled")))\nfn main(): i32 { 0 }', None),
             ("check-scalar-cfg-invalid", "@cfg(any(true, invalid))\nfn unused(): i32 { 0 }\nfn main(): i32 { 0 }", "attribute"),
         ):
