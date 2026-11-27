@@ -28,7 +28,8 @@ pub copy enum NodeKind {
         Match, Arm, Guard, Condition, Conditions, For, Label, LetElse, Closure,
         NamedArgument, OptionalField, Projection, Unsafe, Await, Try, Capture, Throw,
         None, Present, Success, Failure, Owner, Interpolation, FormatPiece, FormatHole,
-        MacroInvocation
+        MacroInvocation, Assembly, AssemblyOperand, AssemblyRegister,
+        AssemblyOptions, AssemblyClobberAbi, AssemblyDiscard
 }
 extend NodeKind {
     pub fn is(other: NodeKind): bool { (self as u32) == (other as u32) }
@@ -120,6 +121,9 @@ pub fn node_name(kind: NodeKind): read Text from static {
         NodeKind.Failure => "failure", NodeKind.Owner => "owner",
         NodeKind.Interpolation => "interpolation",
         NodeKind.FormatPiece => "format-piece", NodeKind.FormatHole => "format-hole",
-        NodeKind.MacroInvocation => "macro-invocation"
+        NodeKind.MacroInvocation => "macro-invocation",
+        NodeKind.Assembly => "assembly", NodeKind.AssemblyOperand => "assembly-operand",
+        NodeKind.AssemblyRegister => "assembly-register", NodeKind.AssemblyOptions => "assembly-options",
+        NodeKind.AssemblyClobberAbi => "assembly-clobber-abi", NodeKind.AssemblyDiscard => "assembly-discard"
     }
 }

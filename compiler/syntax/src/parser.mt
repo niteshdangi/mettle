@@ -1,9 +1,10 @@
+import alloc.hash_map.set_new
 import alloc.vec.{ List, new }
 import core.text.Text
 import mettle_foundation.{ Span, Diagnostics, Phase }
 import super.lexer.tokenize
 import super.token.{ Token, Kind }
-import super.characters.validate_text
+import super.characters.{ constant_text, validate_text }
 import super.tree.{ NodeId, IndexRange, NodeKind, SyntaxNode, Parsed }
 
 copy type Failure {}
@@ -927,6 +928,95 @@ extend<region r> Parser<region r> {
         try self.expect(close, "unterminated token tree")
         try self.finish(NodeKind.TokenTree, start, mark, none)
         self.depth -= 1
+    }
+    mut fn assembly_name(): Token throws Failure {
+        if !self.name_token() { try self.fail("expected an identifier", Phase.Parse) }
+        let token = self.look.token
+        try self.leaf(NodeKind.Name)
+        token
+    }
+    mut fn assembly_text(decode: bool): List<u8> throws Failure {
+        if !self.look.token.kind.is(Kind.Text) { try self.fail("expected a constant text literal", Phase.Parse) }
+        let span = self.look.token.span
+        let decoded = constant_text(read self.bytes[span.begin as usize..span.end as usize], span, mut self.result.diagnostics, decode)
+        let present(value) = take decoded else { throw Failure() }
+        try self.leaf(NodeKind.Text)
+        value
+    }
+    mut fn assembly_list(options: bool): Unit throws Failure {
+        let start = self.anchor()
+        let mark = self.pending.len()
+        self.advance()
+        try self.expect("(", "expected '('")
+        var seen = set_new<List<u8>>()
+        while !self.at(")") {
+            let value = if options {
+                let token = try self.assembly_name()
+                let trim = if token.kind.is(Kind.QuotedWord) { 1usize } else { 0usize }
+                self.bytes[token.span.begin as usize + trim..token.span.end as usize - trim].to_vec()
+            } else { try self.assembly_text(true) }
+            if !seen.insert(take value) { try self.fail("duplicate assembly option or clobber ABI", Phase.Parse) }
+            if !self.consume(",") { break }
+        }
+        try self.expect(")", "expected ')'")
+        try self.finish(if options { NodeKind.AssemblyOptions } else { NodeKind.AssemblyClobberAbi }, start, mark, none)
+    }
+    mut fn assembly_operand(): Unit throws Failure {
+        let start = self.anchor()
+        let mark = self.pending.len()
+        if self.followed_by("=") {
+            let _ = try self.assembly_name()
+            try self.expect("=", "expected '='")
+        }
+        if !self.look.token.kind.is(Kind.Word) { try self.fail("expected an assembly operand mode", Phase.Parse) }
+        let operation = self.look.index as u32
+        let immediate = self.at("const") || self.at("sym")
+        let input = self.at("in") || self.at("inout") || self.at("inlateout")
+        let output = !self.at("in")
+        let register = input || self.at("out") || self.at("lateout")
+        self.advance()
+        if immediate { try self.expression(1usize) }
+        else {
+            if !register { try self.fail("unknown assembly operand mode", Phase.Parse) }
+            let register_start = self.anchor()
+            let register_mark = self.pending.len()
+            try self.expect("(", "expected '('")
+            if self.look.token.kind.is(Kind.Text) { let _ = try self.assembly_text(false) }
+            else { let _ = try self.assembly_name() }
+            try self.expect(")", "expected ')'")
+            try self.finish(NodeKind.AssemblyRegister, register_start, register_mark, none)
+            if input { try self.expression(1usize) }
+            if output && (!input || self.consume("=>")) {
+                if self.at("_") { try self.leaf(NodeKind.AssemblyDiscard) }
+                else { try self.expression(1usize) }
+            }
+        }
+        try self.finish(NodeKind.AssemblyOperand, start, mark, present(operation))
+    }
+    mut fn assembly_arguments(): Unit throws Failure {
+        let start = self.anchor()
+        try self.expect("(", "expected '('")
+        self.suppressed += 1
+        self.refresh()
+        var operands = false
+        while !self.at(")") && !self.look.token.kind.is(Kind.End) {
+            if self.look.token.kind.is(Kind.Text) {
+                if operands { try self.fail("assembly templates must precede operands", Phase.Parse) }
+                let _ = try self.assembly_text(false)
+            } else {
+                operands = true
+                if self.at("options") || self.at("clobber_abi") {
+                    let options = self.at("options")
+                    try self.assembly_list(options)
+                } else { try self.assembly_operand() }
+            }
+            if !self.consume(",") { break }
+        }
+        try self.close(")", "expected ')'")
+        self.newlines()
+        if !self.look.token.kind.is(Kind.End) { try self.fail("unexpected token after assembly arguments", Phase.Parse) }
+        try self.finish(NodeKind.Assembly, start, 0usize, none)
+        self.result.root = present(self.pending[0usize])
     }
     mut fn interpolation(): Unit throws Failure {
         let start = self.anchor()
@@ -1908,15 +1998,42 @@ extend<region r> Parser<region r> {
     }
 }
 
-pub fn parse(read bytes: [u8], source: u32): Parsed {
-    let lexed = tokenize(bytes, source)
+fn parse_source(read bytes: [u8], source: u32, assembly: Span?, async_body: bool): Parsed {
+    let lexed = if let present(arguments) = assembly {
+        if arguments.begin > arguments.end || arguments.end as usize > bytes.len() {
+            var diagnostics = Diagnostics()
+            diagnostics.report(Phase.Parse, arguments, "assembly argument span is outside the source")
+            return Parsed(new<Token>(), new<SyntaxNode>(), new<NodeId>(), none, take diagnostics)
+        }
+        var range_tokens = tokenize(read bytes[arguments.begin as usize..arguments.end as usize], source)
+        for index in 0usize..range_tokens.tokens.len() {
+            range_tokens.tokens[index].span.begin += arguments.begin
+            range_tokens.tokens[index].span.end += arguments.begin
+        }
+        for index in 0usize..range_tokens.diagnostics.issues.len() {
+            range_tokens.diagnostics.issues[index].span.begin += arguments.begin
+            range_tokens.diagnostics.issues[index].span.end += arguments.begin
+        }
+        range_tokens
+    } else { tokenize(bytes, source) }
     let first = lexed.tokens[0usize]
-    var parser = Parser(read bytes, source, Position(0usize, 0u32), Look(first, 0usize, Position(0usize, 0u32)), 0u32, 0usize, 0usize, 0usize, 0usize, none, false, new<NodeId>(), new<u8>(), new<usize>(), new<u8>(), Parsed(lexed.tokens, new<SyntaxNode>(), new<NodeId>(), none, lexed.diagnostics))
+    var parser = Parser(read bytes, source, Position(0usize, 0u32), Look(first, 0usize, Position(0usize, 0u32)), 0u32, 0usize, 0usize, 0usize, 0usize, none, async_body, new<NodeId>(), new<u8>(), new<usize>(), new<u8>(), Parsed(lexed.tokens, new<SyntaxNode>(), new<NodeId>(), none, lexed.diagnostics))
     if parser.result.diagnostics.error_count == 0 {
         parser.refresh()
-        let _ = capture parser.program()
+        if assembly.is_present() {
+            if (capture parser.assembly_arguments()).is_failure() {
+                parser.result.nodes.clear()
+                parser.result.children.clear()
+            }
+        } else { let _ = capture parser.program() }
     }
     parser.result
+}
+
+pub fn parse(read bytes: [u8], source: u32): Parsed { parse_source(bytes, source, none, false) }
+
+pub fn parse_assembly_arguments(read bytes: [u8], arguments: Span, async_body: bool): Parsed {
+    parse_source(bytes, arguments.source, present(arguments), async_body)
 }
 
 @test
@@ -1959,4 +2076,42 @@ fn structured_statement_syntax(): Unit {
     let malformed = parse("fn invalid() { continue 2 }".as_bytes(), 0u32)
     assert(malformed.diagnostics.error_count == 1usize, "invalid continue value accepted")
     assert((malformed.diagnostics.issues[0usize].phase as u32) == (Phase.Parse as u32), "invalid continue value became an unsupported feature")
+}
+
+@test
+fn assembly_argument_structure(): Unit {
+    let bytes = "asm!(\"nop\", first = in(reg) call(1, 2), tied = inout(\"rax\") x, split = inlateout(reg) y => target, lateout(reg) _, amount = const 4 + 2, sym value, options(nomem,), clobber_abi(\"C\",),)".as_bytes()
+    let parsed = parse_assembly_arguments(bytes, Span(7u32, 4u32, bytes.len() as u32), false)
+    assert(parsed.diagnostics.error_count == 0usize, "assembly arguments rejected")
+    let present(id) = parsed.root else { core.panic.panic("assembly root missing") }
+    let root = parsed.nodes[id.index as usize]
+    assert(root.kind.is(NodeKind.Assembly) && root.span.source == 7u32 && root.span.begin == 4u32 && root.span.end == bytes.len() as u32, "assembly source span changed")
+    let start = root.children.begin as usize
+    let tied = parsed.nodes[parsed.children[start + 2].index as usize]
+    let split = parsed.nodes[parsed.children[start + 3].index as usize]
+    let late = parsed.nodes[parsed.children[start + 4].index as usize]
+    let discarded = parsed.nodes[parsed.children[late.children.end as usize - 1].index as usize]
+    assert(tied.kind.is(NodeKind.AssemblyOperand) && tied.children.end - tied.children.begin == 3u32, "same-place inout has a separate output")
+    assert(split.kind.is(NodeKind.AssemblyOperand) && split.children.end - split.children.begin == 4u32, "split inout lost its output")
+    assert(discarded.kind.is(NodeKind.AssemblyDiscard), "discard output lost")
+}
+
+@test
+fn assembly_argument_diagnostics(): Unit {
+    for (source, phase, at, message) in [
+        ("asm!(\"nop\", strange(reg) 0)", Phase.Parse, 19u32, "unknown assembly operand mode"),
+        ("asm!(in(reg) 1, \"nop\")", Phase.Parse, 16u32, "assembly templates must precede operands"),
+        ("asm!(options(raw, `raw`))", Phase.Parse, 23u32, "duplicate assembly option or clobber ABI"),
+        ("asm!(clobber_abi(\"C\", \"\\x43\"))", Phase.Parse, 28u32, "duplicate assembly option or clobber ABI"),
+        ("asm!(\"\\q\")", Phase.Lex, 5u32, "unsupported constant text escape"),
+        ("asm!(\"nop\", value =)", Phase.Parse, 19u32, "expected an assembly operand mode"),
+    ] {
+        let bytes = source.as_bytes()
+        let parsed = parse_assembly_arguments(bytes, Span(7u32, 4u32, bytes.len() as u32), false)
+        assert(parsed.diagnostics.error_count == 1usize && !parsed.root.is_present() && parsed.nodes.is_empty(), "invalid assembly produced syntax")
+        let issue = parsed.diagnostics.issues[0usize]
+        assert((issue.phase as u32) == (phase as u32) && issue.span.source == 7u32 && issue.span.begin == at && issue.message == message, "wrong assembly diagnostic")
+    }
+    let ordinary = parse("macro asm {}; fn inspect() { asm!{ not assembly grammar } }".as_bytes(), 0u32)
+    assert(ordinary.diagnostics.error_count == 0usize, "ordinary macro was parsed as assembly")
 }
