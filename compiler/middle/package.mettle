@@ -1,0 +1,10 @@
+name: "mettle-middle"
+version: "0.1.0"
+kind: "library"
+dependencies {
+    "mettle-foundation": "../foundation"
+    "mettle-frontend": "../frontend"
+    "mettle-ir": "../ir"
+    "mettle-syntax": "../syntax"
+    "mettle-types": "../types"
+}

@@ -269,6 +269,10 @@ before checking bodies. Checked calls carry a module and function index, not a
 source spelling, and expression facts remain indexed by the owning syntax unit.
 Public syntax inspection projects the native tree into the reference JSON
 shape; the frontend continues to consume the original lossless tree.
+Native scalar lowering emits straight-line functions with ordered value
+definitions and resolved calls. The IR verifier checks operand availability,
+call signatures and returns before exposing an immutable verified program.
+Branching and owned values are not admitted by this straight-line lowering.
 The C++ component table above describes the bootstrap implementation; it does
 not prescribe one Mettle package per C++ component.
 
