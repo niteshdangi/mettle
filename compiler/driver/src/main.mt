@@ -12,7 +12,7 @@ import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
 import mettle_packages.{ PackageError, PackageGraph, PackagePhase, ResolveOptions, resolve_with }
 import mettle_pipeline.{ CheckError, CheckPhase, CompileError, LoweringError, SourceModule, active_items, check_modules, compile_modules, external_modules }
 import mettle_syntax.inspect.{ InspectionError, project, project_recovered }
-import mettle_backend_llvm.{ OverflowChecks, emit_ir }
+import mettle_backend_llvm.{ LinkError, OverflowChecks, emit_ir, link_executable }
 
 module inspection;
 
@@ -255,10 +255,16 @@ type ModulePath {
     children: path.PathBuf
 }
 
-fn check_graph(read graph: PackageGraph): i32 throws io.Error {
+type PackageSources {
+    sources: List<SourceModule>
+    paths: List<ModulePath>
+    mounts: List<Map<List<u8>, usize>>
+}
+
+fn load_graph(read graph: PackageGraph): PackageSources? throws io.Error {
     if !graph.build_scripts.is_empty() || !graph.macros.is_empty() {
-        io.eprint("mettle: error[feature]: native checking does not execute build scripts or procedural macros yet\n")
-        return 1
+        io.eprint("mettle: error[feature]: native compilation does not execute build scripts or procedural macros yet\n")
+        return none
     }
     var sources = List<SourceModule>()
     var paths = List<ModulePath>()
@@ -274,15 +280,15 @@ fn check_graph(read graph: PackageGraph): i32 throws io.Error {
             present(entry) => entry.as_path(),
             none => {
                 io.eprint("mettle: error[internal]: selected target package has no source entry\n")
-                return 1
+                return none
             }
         }
         if seen.insert(source.to_path_buf(), ()).is_present() {
             io.eprint("error[name]: source file has more than one module identity\n")
-            return 1
+            return none
         }
         let index = sources.len()
-        let present(module_source) = try load_module(source, index, package_index, package.features) else { return 1 }
+        let present(module_source) = try load_module(source, index, package_index, package.features) else { return none }
         paths.push(ModulePath(source.to_path_buf(), source.parent().or_panic().to_path_buf()))
         sources.push(take module_source)
         source_indices.push(present(index))
@@ -292,13 +298,17 @@ fn check_graph(read graph: PackageGraph): i32 throws io.Error {
     while owner < sources.len() {
         let declarations = match take capture external_modules(sources[owner]) {
             success(declarations) => take declarations,
-            failure(error) => { return try report_check_error(paths[owner].source.as_path(), sources[owner].bytes.as_slice(), error) }
+            failure(error) => {
+                let _ = try report_check_error(paths[owner].source.as_path(), sources[owner].bytes.as_slice(), error)
+                return none
+            }
         }
         for declaration in take declarations {
             let owner_path = paths[owner].source.as_path()
             if sources[owner].modules.contains_key(declaration.name) {
-                return try report_check_error(owner_path, sources[owner].bytes.as_slice(),
+                let _ = try report_check_error(owner_path, sources[owner].bytes.as_slice(),
                     CheckError(CheckPhase.Name, declaration.span, "duplicate module"))
+                return none
             }
             let directory = paths[owner].children.join(path.path_buf_from_bytes(declaration.name.as_slice()))
             var filename = declaration.name.as_slice().to_vec()
@@ -310,27 +320,35 @@ fn check_graph(read graph: PackageGraph): i32 throws io.Error {
             if flat_exists == nested_exists {
                 let reason = if flat_exists { "external module matches both source paths" }
                     else { "external module source file does not exist" }
-                return try report_check_error(owner_path, sources[owner].bytes.as_slice(), CheckError(CheckPhase.Name, declaration.span, reason))
+                let _ = try report_check_error(owner_path, sources[owner].bytes.as_slice(),
+                    CheckError(CheckPhase.Name, declaration.span, reason))
+                return none
             }
             let source = try fs.canonicalize(if flat_exists { flat.as_path() } else { nested.as_path() })
             if seen.insert(source.to_path_buf(), ()).is_present() {
-                return try report_check_error(owner_path, sources[owner].bytes.as_slice(),
+                let _ = try report_check_error(owner_path, sources[owner].bytes.as_slice(),
                     CheckError(CheckPhase.Name, declaration.span, "source file has more than one module identity"))
+                return none
             }
             let index = sources.len()
             let package_index = sources[owner].package_index
             let present(module_source) = try load_module(source.as_path(), index, package_index,
-                graph.packages[package_index].features) else { return 1 }
+                graph.packages[package_index].features) else { return none }
             let _ = sources[owner].modules.insert(take declaration.name, take index)
             paths.push(ModulePath(take source, take directory))
             sources.push(take module_source)
         }
         owner += 1usize
     }
-    match take capture check_modules(sources, mounts, !graph.packages[0].is_library) {
+    present(PackageSources(take sources, take paths, take mounts))
+}
+
+fn check_graph(read graph: PackageGraph): i32 throws io.Error {
+    let present(loaded) = try load_graph(graph) else { return 1 }
+    match take capture check_modules(loaded.sources, loaded.mounts, !graph.packages[0].is_library) {
         failure(error) => {
             let index = error.span.source as usize
-            try report_check_error(paths[index].source.as_path(), sources[index].bytes.as_slice(), error)
+            try report_check_error(loaded.paths[index].source.as_path(), loaded.sources[index].bytes.as_slice(), error)
         },
         success(_) => 0
     }
@@ -417,75 +435,138 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
     try check_input(source, "main", options, package_options)
 }
 
-fn stage_llvm(take file: fs.File, read temporary: path.Path, read output: path.Path,
-    read bytes: [u8]): bool throws io.Error {
+enum BuildArtifact { Llvm, Executable }
+
+fn find_linker(read clang: path.Path): path.PathBuf throws io.Error {
+    let parent = clang.parent()
+    if let present(directory) = parent {
+        if !directory.as_os_str().is_empty() { return clang.to_path_buf() }
+    }
+    if let present(search) = take env.var_os(os_str_from_text("PATH")) {
+        for directory in env.split_paths(search.as_os_str()) {
+            let candidate = directory.join(clang)
+            if try regular_source(candidate.as_path()) { return candidate }
+        }
+    }
+    throw io.from_kind(io.ErrorKind.NotFound)
+}
+
+fn report_link_error(take error: LinkError): Unit {
+    match take error {
+        LinkError.UnsupportedHost => io.eprint("mettle: error[feature]: native linking requires a Linux x86-64 host\n"),
+        LinkError.Io(error) => {
+            let reason = error.message()
+            io.eprint(f"mettle: error[link]: cannot link native executable: {reason}\n")
+        },
+        LinkError.Failed(status) => {
+            io.eprint(f"mettle: error[link]: native linker failed: {status}\n")
+        }
+    }
+}
+
+fn runtime_archive(): path.PathBuf throws io.Error {
+    if let present(configured) = take env.var_os(os_str_from_text("METTLE_RUNTIME")) {
+        return path.path_from_os_str(configured.as_os_str()).to_path_buf()
+    }
+    let executable = try env.current_exe()
+    executable.parent().or_panic().join("libmettle_runtime.a")
+}
+
+fn stage_artifact(read temporary: path.Path, read output: path.Path, read bytes: [u8],
+    artifact: BuildArtifact, read clang: path.Path): bool throws io.Error {
+    let ir = temporary.join("module.ll")
     {
-        var handle = take file
+        var handle = try fs.create_new(ir)
         try handle.write_all(bytes)
         try handle.sync_all()
     }
     var verifier = process.command_text("llvm-as")
     verifier.arg_text("--disable-output")
-    verifier.arg(temporary.as_os_str())
-    if !(try verifier.status()).succeeded() { return false }
-    try fs.rename(temporary, output)
+    verifier.arg(ir.as_os_str())
+    if !(try verifier.status()).succeeded() {
+        io.eprint("mettle: error[backend]: LLVM rejected the generated module\n")
+        return false
+    }
+    if let BuildArtifact.Executable = artifact {
+        let program = temporary.join("program")
+        let runtime = try runtime_archive()
+        let tool = match take capture find_linker(clang) {
+            success(tool) => take tool,
+            failure(error) => {
+                report_link_error(LinkError.Io(take error))
+                return false
+            }
+        }
+        match take capture link_executable(tool.as_path(), ir.as_path(), program.as_path(), runtime.as_path()) {
+            success(_) => {},
+            failure(error) => {
+                report_link_error(take error)
+                return false
+            }
+        }
+        try fs.rename(program, output)
+    } else {
+        try fs.rename(ir, output)
+    }
     true
 }
 
-fn publish_llvm(read output: path.Path, read bytes: [u8]): i32 throws io.Error {
+fn publish_artifact(read output: path.Path, read bytes: [u8], artifact: BuildArtifact,
+    read clang: path.Path): i32 throws io.Error {
     let present(filename) = output.file_name() else {
-        io.eprint("mettle: error[io]: LLVM output must be a file path\n")
+        io.eprint("mettle: error[io]: build output must be a file path\n")
         return 1
     }
     let parent = output.parent().or_panic()
     let directory = if parent.as_os_str().is_empty() { path.path_from_text(".") } else { parent }
     let pid = process.id()
     var nonce = 0u64
+    var builder = fs.dir_builder()
+    builder.mode(448u32)
     loop {
         let name = format(f".mettle-llvm-{pid}-{nonce}.tmp")
         nonce += 1u64
         if filename.same(os_str_from_text(name.as_text())) { continue }
         let temporary = directory.join(name.as_text())
-        let file = match take capture fs.create_new(temporary) {
-            success(file) => take file,
+        match take capture builder.create(temporary) {
+            success(_) => {},
             failure(error) => {
                 if error.kind().is(io.ErrorKind.AlreadyExists) { continue }
                 throw error
             }
         }
-        let result = capture stage_llvm(take file, temporary.as_path(), output, bytes)
-        if let success(true) = result { return 0 }
-        match take capture fs.remove_file(temporary) {
+        let result = capture stage_artifact(temporary.as_path(), output, bytes, artifact, clang)
+        let published = match read result { success(value) => value, failure(_) => false }
+        match take capture fs.remove_dir_all(temporary) {
             success(_) => {},
             failure(error) => {
                 let reason = error.message()
-                io.eprint(f"mettle: error[io]: cannot remove staged LLVM output: {reason}\n")
+                io.eprint(f"mettle: warning[io]: cannot remove staged build output: {reason}\n")
             }
         }
+        if published { return 0 }
         match take result {
             failure(error) => {
                 let reason = error.message()
-                io.eprint(f"mettle: error[io]: cannot verify or publish LLVM output: {reason}\n")
+                io.eprint(f"mettle: error[io]: cannot verify or publish build output: {reason}\n")
+                return 1
             },
-            success(_) => io.eprint("mettle: error[backend]: LLVM rejected the generated module\n")
+            success(_) => { return 1 }
         }
-        return 1
     }
 }
 
-fn build_llvm(read source: path.Path, read output: path.Path, checks: OverflowChecks): i32 throws io.Error {
-    let present(module_source) = try load_module(source, 0, 0, List<String>()) else { return 1 }
-    var sources = List<SourceModule>()
-    sources.push(take module_source)
-    var mounts = List<Map<List<u8>, usize>>()
-    mounts.push(Map<List<u8>, usize>())
-    let verified = match take capture compile_modules(sources, mounts, true) {
+fn build_llvm(read loaded: PackageSources, read output: path.Path, checks: OverflowChecks,
+    artifact: BuildArtifact, read clang: path.Path): i32 throws io.Error {
+    let verified = match take capture compile_modules(loaded.sources, loaded.mounts, true) {
         success(verified) => take verified,
         failure(CompileError.Check(error)) => {
-            return try report_check_error(source, sources[0].bytes.as_slice(), error)
+            let index = error.span.source as usize
+            return try report_check_error(loaded.paths[index].source.as_path(), loaded.sources[index].bytes.as_slice(), error)
         },
         failure(CompileError.Lower(LoweringError.Unsupported(span))) => {
-            return try report_check_error(source, sources[0].bytes.as_slice(),
+            let index = span.source as usize
+            return try report_check_error(loaded.paths[index].source.as_path(), loaded.sources[index].bytes.as_slice(),
                 CheckError(CheckPhase.Feature, span, "native lowering does not support this construct yet"))
         },
         failure(CompileError.Lower(_)) => {
@@ -500,18 +581,45 @@ fn build_llvm(read source: path.Path, read output: path.Path, checks: OverflowCh
             return 1
         }
     }
-    try publish_llvm(output, ir.as_bytes())
+    try publish_artifact(output, ir.as_bytes(), artifact, clang)
+}
+
+fn load_build_input(read source: path.Path): PackageSources? throws io.Error {
+    if package_input(source) {
+        let directory = if source.is_dir() { source.to_path_buf() }
+            else if let present(parent) = source.parent() {
+                if parent.as_os_str().is_empty() { path.path_buf_from_text(".") } else { parent.to_path_buf() }
+            } else { path.path_buf_from_text(".") }
+        let graph = match take capture resolve_with(directory.as_path(), "main", ResolveOptions()) {
+            success(graph) => take graph,
+            failure(error) => { let _ = try report_package_error(error); return none }
+        }
+        if graph.packages[0].is_library {
+            io.eprint("mettle: error[feature]: native build currently requires an executable entry\n")
+            return none
+        }
+        return try load_graph(graph)
+    }
+    let present(module_source) = try load_module(source, 0, 0, List<String>()) else { return none }
+    var sources = List<SourceModule>()
+    sources.push(take module_source)
+    var paths = List<ModulePath>()
+    paths.push(ModulePath(source.to_path_buf(), path.new_path_buf()))
+    var mounts = List<Map<List<u8>, usize>>()
+    mounts.push(Map<List<u8>, usize>())
+    present(PackageSources(take sources, take paths, take mounts))
 }
 
 fn build_usage(): i32 {
-    io.eprint("usage: mettle-selfhost build INPUT --emit llvm -o OUTPUT [--profile debug|release] [--overflow-checks on|off]\n")
+    io.eprint("usage: mettle-selfhost build INPUT -o OUTPUT [--emit executable|llvm] [--cc CXX] [--profile debug|release] [--overflow-checks on|off]\n")
     2
 }
 
 fn run_build(read args: env.ArgsOs): i32 throws io.Error {
     var input: usize? = none
     var output: usize? = none
-    var emit = false
+    var emit: BuildArtifact? = none
+    var cc: usize? = none
     var debug: bool? = none
     var override_checks: bool? = none
     var index = 2usize
@@ -523,12 +631,20 @@ fn run_build(read args: env.ArgsOs): i32 throws io.Error {
             output = present(index)
         } else if option.same(os_str_from_text("--emit")) {
             index += 1usize
-            if index == args.len() || emit { return build_usage() }
-            if !args[index].as_os_str().same(os_str_from_text("llvm")) {
-                io.eprint("mettle: error[feature]: native build currently supports only LLVM IR output\n")
+            if index == args.len() || emit.is_present() { return build_usage() }
+            let value = args[index].as_os_str()
+            if value.same(os_str_from_text("llvm")) { emit = present(BuildArtifact.Llvm) }
+            else if value.same(os_str_from_text("executable")) { emit = present(BuildArtifact.Executable) }
+            else {
+                io.eprint("mettle: error[feature]: native build currently supports only executable and LLVM IR output\n")
                 return 1
             }
-            emit = true
+        } else if option.same(os_str_from_text("--cc")) {
+            index += 1usize
+            if index == args.len() || cc.is_present() { return build_usage() }
+            let tool = args[index].as_os_str().as_bytes()
+            if tool.is_empty() || tool[0usize] == b'-' { return build_usage() }
+            cc = present(index)
         } else if option.same(os_str_from_text("--profile")) {
             index += 1usize
             if index == args.len() || debug.is_present() { return build_usage() }
@@ -552,14 +668,13 @@ fn run_build(read args: env.ArgsOs): i32 throws io.Error {
     }
     let present(input_index) = input else { return build_usage() }
     let present(output_index) = output else { return build_usage() }
-    if !emit { return build_usage() }
     let source = path.path_from_os_str(args[input_index].as_os_str())
-    if package_input(source) {
-        io.eprint("mettle: error[feature]: native LLVM emission currently requires a standalone source file\n")
-        return 1
-    }
+    let present(loaded) = try load_build_input(source) else { return 1 }
     let checks = if override_checks.or(debug.or(true)) { OverflowChecks.On } else { OverflowChecks.Off }
-    try build_llvm(source, path.path_from_os_str(args[output_index].as_os_str()), checks)
+    let clang = if let present(tool) = cc { path.path_from_os_str(args[tool].as_os_str()) }
+        else { path.path_from_text("clang++") }
+    try build_llvm(loaded, path.path_from_os_str(args[output_index].as_os_str()), checks,
+        emit.or(BuildArtifact.Executable), clang)
 }
 
 fn write_tokens(mut out: Writer, read bytes: [u8], read tokens: [Token]): Unit throws io.Error {

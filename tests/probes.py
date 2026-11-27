@@ -991,12 +991,36 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             checked = output.read_text()
             assert "@llvm.sadd.with.overflow.i32" in checked and "@mettle_rt_panic" in checked, checked
             result = run(command, 1, env={**env, "PATH": ""})
-            assert "cannot verify or publish LLVM output" in result.stderr, result.stderr
+            assert "cannot verify or publish build output" in result.stderr, result.stderr
             assert output.read_text() == checked and not list(directory.glob(".mettle-llvm-*.tmp"))
             path.write_text("fn main(): i32 { if true { 1 } else { 0 } }\n")
             result = run(command, 1, env=env)
             assert "error[feature]" in result.stderr and output.read_text() == checked, result.stderr
             evidence["cases"].append({"name": "build-scalar-llvm"})
+        if selected("build-native-executable"):
+            llvm = Path(os.environ.get("LLVM_BIN", ROOT.parent / ".tools" / "linux-x86_64" / "llvm" / "bin"))
+            runtime = os.environ.get("METTLE_RUNTIME", str(Path(executable).parent / "libmettle_runtime.a"))
+            env = {**os.environ, "PATH": os.pathsep.join((str(llvm), os.environ.get("PATH", ""))),
+                   "METTLE_RUNTIME": runtime}
+            path = source("build-native-executable", "fn twice(n: i32): i32 { n + n }\nfn main(): i32 { twice(21) }\n")
+            output = directory / "native program"
+            command = [native, "build", str(path), "-o", str(output)]
+            run(command, env=env)
+            run([str(output)], 42)
+            built = output.read_bytes()
+            result = run(command, 1, env={**env, "METTLE_RUNTIME": str(directory / "missing.a")})
+            assert "error[link]" in result.stderr and output.read_bytes() == built, result.stderr
+            assert not list(directory.glob(".mettle-llvm-*.tmp"))
+            path.write_text("fn add(n: i32): i32 { n + 1 }\nfn main(): i32 { add(2147483647) }\n")
+            run(command, env=env)
+            run([str(output)], "trap")
+            import shutil
+
+            fixture = directory / "native-path-dependency"
+            shutil.copytree(ROOT / "packages" / "path-dependency", fixture, dirs_exist_ok=True)
+            run([native, "build", str(fixture / "app"), "-o", str(output)], env=env)
+            run([str(output)])
+            evidence["cases"].append({"name": "build-native-executable"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),

@@ -1,5 +1,5 @@
 import alloc.vec.{ List, from_array }
-import mettle_backend_llvm.{ OverflowChecks, emit_ir }
+import mettle_backend_llvm.{ LinkError, OverflowChecks, emit_ir, link_executable }
 import mettle_foundation.Span
 import mettle_ir.{ Arithmetic, Function, FunctionId, Instruction, Module, Operation, Program, verify }
 import mettle_types.Scalar
@@ -7,10 +7,27 @@ import std.env
 import std.ffi.os_str_from_text
 import std.io
 import std.io.Writer
+import std.path.path_from_os_str
 
 fn main(): i32 {
     let args = env.args_os()
     if args.len() == 1 { return cross_module() }
+    if args.len() == 6 && args[1].as_os_str().same(os_str_from_text("link")) {
+        return match take capture link_executable(path_from_os_str(args[2].as_os_str()),
+            path_from_os_str(args[3].as_os_str()), path_from_os_str(args[4].as_os_str()),
+            path_from_os_str(args[5].as_os_str())) {
+            success(_) => 0,
+            failure(LinkError.Io(error)) => {
+                assert(error.kind().is(io.ErrorKind.NotFound), "expected missing Clang or runtime")
+                2
+            },
+            failure(LinkError.Failed(status)) =>
+                if let present(code) = status.code() { code }
+                else if let present(signal) = status.signal() { 128 + signal }
+                else { core.panic.panic("missing tool exit status") },
+            failure(LinkError.UnsupportedHost) => 3
+        }
+    }
     if args.len() != 3 { return 1 }
     let mode = args[1].as_os_str()
     let checks = if mode.same(os_str_from_text("on")) { OverflowChecks.On }

@@ -12,5 +12,12 @@ remainder panic on zero or `i32.MIN / -1` (including remainder) in either mode.
 Artifacts with panic paths require `mettle_rt_panic` and `mettle_rt_main`
 from `libmettle_runtime.a`, linked with the C++ driver for exception support.
 Uncaught numeric panics abort (`SIGABRT`), as in the bootstrap backend.
-Entryless programs are not supported. Target selection, LLVM verification,
-object emission and linking are not part of this API.
+Entryless programs are not supported.
+
+`link_executable(clang, input, output, runtime)` compiles staged textual LLVM IR
+and links a hosted Linux x86-64 executable. Pass the pinned Clang path (with
+`ld.lld` next to it), staged input and output paths, and `libmettle_runtime.a`.
+The Clang invocation uses C++ linkage and inherits tool diagnostics. A failed
+tool exit or signal returns `LinkError.Failed(ExitStatus)`; path and process
+errors (including a missing Clang executable or runtime archive) return
+`LinkError.Io(io.Error)`. The caller owns staging and publication.
