@@ -7,13 +7,16 @@ use `i32` and `i1` for scalar values, and erase `Unit` operands without erasing
 the calls that produced them.
 
 With `OverflowChecks.Off`, add, subtract and multiply wrap at 32 bits.
-`OverflowChecks.On` rejects these operations until checked lowering exists.
-Division and remainder are rejected in both modes. These errors retain the
-instruction span. Entryless programs are not supported. Target selection,
-LLVM verification, object emission and linking are not part of this API.
+With `OverflowChecks.On`, signed overflow panics. Signed division and
+remainder panic on zero or `i32.MIN / -1` (including remainder) in either mode.
+Artifacts with panic paths require `mettle_rt_panic` and `mettle_rt_main`
+from `libmettle_runtime.a`, linked with the C++ driver for exception support.
+Uncaught numeric panics abort (`SIGABRT`), as in the bootstrap backend.
+Entryless programs are not supported. Target selection, LLVM verification,
+object emission and linking are not part of this API.
 
-From the repository root, run the focused rejection and native artifact tests
-on Linux with the bootstrap compiler and pinned LLVM:
+From the repository root, run the cross-module artifact smoke test on Linux
+with the bootstrap compiler and pinned LLVM:
 
 ```sh
 export METTLE=/path/to/mettle LLVM_BIN=/path/to/pinned/llvm/bin

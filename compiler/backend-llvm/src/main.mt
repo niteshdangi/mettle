@@ -43,21 +43,66 @@ fn append_value(mut out: String, value: Value): Unit {
     }
 }
 
-fn arithmetic_opcode(operation: Arithmetic, checks: OverflowChecks,
-    span: Span): read Text from static throws EmitError {
+fn append_operands(mut out: String, left: Value, right: Value, checked_call: bool): Unit {
+    append_value(mut out, left)
+    if checked_call { out.push_str(", i32 ") }
+    else { out.push_str(", ") }
+    append_value(mut out, right)
+}
+
+fn append_guard(mut out: String, index: usize): Unit {
+    append_format(mut out, f"  br i1 %bad{index}, label %panic, label %checked{index}\n")
+    append_format(mut out, f"checked{index}:\n")
+}
+
+fn append_division(mut out: String, index: usize, read opcode: Text,
+    left: Value, right: Value): bool {
+    append_format(mut out, f"  %zero{index} = icmp eq i32 ")
+    append_value(mut out, right)
+    append_format(mut out, f", 0\n  %min{index} = icmp eq i32 ")
+    append_value(mut out, left)
+    append_format(mut out, f", -2147483648\n  %negone{index} = icmp eq i32 ")
+    append_value(mut out, right)
+    append_format(mut out, f", -1\n  %edge{index} = and i1 %min{index}, %negone{index}\n")
+    append_format(mut out, f"  %bad{index} = or i1 %zero{index}, %edge{index}\n")
+    append_guard(mut out, index)
+    append_format(mut out, f"  %v{index} = {opcode} i32 ")
+    append_operands(mut out, left, right, false)
+    out.push_str("\n")
+    true
+}
+
+fn append_arithmetic(mut out: String, index: usize, operation: Arithmetic,
+    left: Value, right: Value, checks: OverflowChecks): bool {
     let opcode = match operation {
         Arithmetic.Add => "add",
         Arithmetic.Subtract => "sub",
         Arithmetic.Multiply => "mul",
-        Arithmetic.Divide | Arithmetic.Remainder =>
-            throw EmitError.UnsupportedArithmetic(operation, span)
+        Arithmetic.Divide => { return append_division(mut out, index, "sdiv", left, right) },
+        Arithmetic.Remainder => { return append_division(mut out, index, "srem", left, right) }
     }
-    if let OverflowChecks.On = checks { throw EmitError.CheckedOverflow(operation, span) }
-    opcode
+    if let OverflowChecks.On = checks {
+        append_format(mut out, f"  %pair{index} = call ")
+        out.push_str("{ i32, i1 } @llvm.")
+        append_format(mut out, f"s{opcode}.with.overflow.i32(i32 ")
+        append_operands(mut out, left, right, true)
+        append_format(mut out, f")\n  %bad{index} = extractvalue ")
+        out.push_str("{ i32, i1 } ")
+        append_format(mut out, f"%pair{index}, 1\n")
+        append_guard(mut out, index)
+        append_format(mut out, f"  %v{index} = extractvalue ")
+        out.push_str("{ i32, i1 } ")
+        append_format(mut out, f"%pair{index}, 0\n")
+        return true
+    }
+    append_format(mut out, f"  %v{index} = {opcode} i32 ")
+    append_operands(mut out, left, right, false)
+    out.push_str("\n")
+    false
 }
 
 fn append_function(mut out: String, read program: Program, id: FunctionId,
-    read function: Function, checks: OverflowChecks): Unit throws EmitError {
+    read function: Function, checks: OverflowChecks): bool {
     let module_index = id.module_index
     let function_index = id.index
     let result_type = llvm_type(function.result)
@@ -71,8 +116,9 @@ fn append_function(mut out: String, read program: Program, id: FunctionId,
         let ty = llvm_type(scalar)
         append_format(mut out, f"{ty} %p{index}")
     }
-    out.push_str(") {\nentry:\n")
+    out.push_str(") uwtable {\nentry:\n")
 
+    var can_panic = false
     var values: List<Value> = with_capacity<Value>(function.instructions.len())
     for index in 0usize..function.instructions.len() {
         let instruction = read function.instructions[index]
@@ -84,12 +130,9 @@ fn append_function(mut out: String, read program: Program, id: FunctionId,
                 if function.parameters[parameter].is(Scalar.Unit) { Value.Unit }
                 else { Value.Parameter(parameter) },
             Operation.Arithmetic(operation, left, right) => {
-                let opcode = try arithmetic_opcode(operation, checks, instruction.span)
-                append_format(mut out, f"  %v{index} = {opcode} i32 ")
-                append_value(mut out, values[left])
-                out.push_str(", ")
-                append_value(mut out, values[right])
-                out.push_str("\n")
+                if append_arithmetic(mut out, index, operation, values[left], values[right], checks) {
+                    can_panic = true
+                }
                 Value.Register(index)
             },
             Operation.Call(target, arguments) => {
@@ -123,24 +166,49 @@ fn append_function(mut out: String, read program: Program, id: FunctionId,
         out.push_str(" ")
         append_value(mut out, values[function.returned])
     }
-    out.push_str("\n}\n\n")
+    out.push_str("\n")
+    if can_panic {
+        out.push_str("panic:\n  call void @mettle_rt_panic(i32 1)\n  unreachable\n")
+    }
+    out.push_str("}\n\n")
+    can_panic
 }
 
 pub fn emit_ir(read verified: VerifiedProgram, checks: OverflowChecks): String throws EmitError {
     let program = verified.program()
     let present(entry) = program.entry else { throw EmitError.MissingEntry }
     var out = new()
+    var can_panic = false
     for module_index in 0usize..program.modules.len() {
         let module_ir = read program.modules[module_index]
         for index in 0usize..module_ir.functions.len() {
-            try append_function(mut out, program, FunctionId(module_index, index),
-                module_ir.functions[index], checks)
+            if append_function(mut out, program, FunctionId(module_index, index),
+                module_ir.functions[index], checks) {
+                can_panic = true
+            }
         }
     }
     let module_index = entry.module_index
     let function_index = entry.index
-    out.push_str("define i32 @main() {\nentry:\n")
-    append_format(mut out, f"  %result = call i32 @mettle.{module_index}.{function_index}()\n")
-    out.push_str("  ret i32 %result\n}\n")
+    if can_panic {
+        if let OverflowChecks.On = checks {
+            out.push_str("declare { i32, i1 } @llvm.sadd.with.overflow.i32(i32, i32)\n")
+            out.push_str("declare { i32, i1 } @llvm.ssub.with.overflow.i32(i32, i32)\n")
+            out.push_str("declare { i32, i1 } @llvm.smul.with.overflow.i32(i32, i32)\n")
+        }
+        out.push_str("declare void @mettle_rt_panic(i32) noreturn\n")
+        out.push_str("declare i32 @mettle_rt_main(ptr, ptr)\n\n")
+        out.push_str("define internal void @mettle.entry(ptr %slot) uwtable {\nentry:\n")
+        append_format(mut out, f"  %result = call i32 @mettle.{module_index}.{function_index}()\n")
+        out.push_str("  store i32 %result, ptr %slot\n  ret void\n}\n\n")
+        out.push_str("define i32 @main() uwtable {\nentry:\n  %slot = alloca i32\n")
+        out.push_str("  store i32 0, ptr %slot\n  %status = call i32 @mettle_rt_main(ptr %slot, ptr @mettle.entry)\n")
+        out.push_str("  %result = load i32, ptr %slot\n  %failed = icmp ne i32 %status, 0\n")
+        out.push_str("  %exit = select i1 %failed, i32 %status, i32 %result\n  ret i32 %exit\n}\n")
+    } else {
+        out.push_str("define i32 @main() {\nentry:\n")
+        append_format(mut out, f"  %result = call i32 @mettle.{module_index}.{function_index}()\n")
+        out.push_str("  ret i32 %result\n}\n")
+    }
     out
 }
