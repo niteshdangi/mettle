@@ -5,6 +5,7 @@ import core.text.Text
 import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
+import mettle_packages.{ PackageError, resolve }
 
 fn phase_name(phase: Phase): read Text from static {
     match phase { Phase.Lex => "lex", Phase.Parse => "parse", Phase.Feature => "feature", Phase.Limit => "limit" }
@@ -32,7 +33,7 @@ fn write_printable(mut out: Writer, read bytes: [u8]): Unit throws io.Error {
     try out.write_all(read bytes[start..])
 }
 
-fn report_tokens(read source: path.PathInput, read bytes: [u8], read diagnostics: Diagnostics): i32 throws io.Error {
+fn report_source(read source: path.PathInput, read bytes: [u8], read diagnostics: Diagnostics): i32 throws io.Error {
     if diagnostics.error_count == 0usize { return 0 }
     let canonical = capture fs.canonicalize(source)
     let display = match read canonical {
@@ -106,6 +107,49 @@ fn report_read_error(read source: path.Path, read error: io.Error): i32 throws i
     try out.write_line(f": {message}")
     try out.flush()
     1
+}
+
+fn report_package_error(read error: PackageError): i32 throws io.Error {
+    var out = io.buf_writer(io.stderr())
+    try out.write_path(error.path)
+    let begin = error.begin
+    let end = error.end
+    let message = error.message.as_text()
+    try out.write_line(f":{begin}:{end}: error[package]: {message}")
+    try out.flush()
+    1
+}
+
+fn check_source(read source: path.Path): i32 throws io.Error {
+    let loaded = match take capture load_source(source) {
+        success(content) => take content,
+        failure(error) => { return try report_read_error(source, error) }
+    }
+    let present(bytes) = loaded else {
+        io.eprint("error[limit] 0:0 source file must be smaller than 4 GiB\n")
+        return 1
+    }
+    let parsed = parse(bytes.as_slice(), 0u32)
+    let status = try report_source(source, bytes.as_slice(), parsed.diagnostics)
+    if status != 0 { return status }
+    io.eprint("mettle: error[feature]: native semantic checking is not implemented\n")
+    1
+}
+
+fn check_input(read source: path.Path): i32 throws io.Error {
+    if !package_input(source) { return try check_source(source) }
+    if source.is_dir() { return try check_package(source) }
+    if let present(parent) = source.parent() {
+        if !parent.as_os_str().is_empty() { return try check_package(parent) }
+    }
+    try check_package(path.path_from_text("."))
+}
+
+fn check_package(read directory: path.Path): i32 throws io.Error {
+    match take capture resolve(directory, "main") {
+        success(graph) => { try check_source(graph.packages[0].entry.as_path()) },
+        failure(error) => { try report_package_error(error) }
+    }
 }
 
 fn write_token_text(mut out: Writer, read bytes: [u8], format_piece: bool): Unit throws io.Error {
@@ -194,8 +238,13 @@ fn run(): i32 throws io.Error {
     let args = env.args_os()
     let syntax = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("syntax"))
     let tokens = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("tokens"))
-    if args.len() != 2 && !syntax && !tokens { io.eprint("usage: mettle-selfhost [tokens|syntax] SOURCE\n"); return 2 }
-    let source = path.path_from_os_str(args[if syntax || tokens { 2usize } else { 1usize }].as_os_str())
+    let check = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("check"))
+    if args.len() != 2 && !syntax && !tokens && !check {
+        io.eprint("usage: mettle-selfhost [tokens|syntax|check] INPUT\n")
+        return 2
+    }
+    let source = path.path_from_os_str(args[if args.len() == 3 { 2usize } else { 1usize }].as_os_str())
+    if check { return try check_input(source) }
     if tokens && package_input(source) {
         io.eprint("mettle: error[package]: only 'check', 'lint' and 'build' accept a package\n")
         return 2
@@ -241,7 +290,7 @@ fn run(): i32 throws io.Error {
     if tokens {
         try write_tokens(mut out, bytes.as_slice(), result.tokens.as_slice())
         try out.flush()
-        return try report_tokens(source, bytes.as_slice(), result.diagnostics)
+        return try report_source(source, bytes.as_slice(), result.diagnostics)
     }
     for token in result.tokens.as_slice() {
         let kind = reference_kind(token.kind)

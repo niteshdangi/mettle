@@ -818,6 +818,23 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             if name == "comment-lookahead":
                 assert any(node[0] == "module-declaration" and data[node[1]:node[2]] == b"module remote" for node in nodes)
             evidence["cases"].append({"name": "module-" + name, "source_sha256": digest(path)})
+        if selected("package-entry-syntax"):
+            import shutil
+
+            fixture = directory / "path-dependency"
+            shutil.copytree(ROOT / "packages" / "path-dependency", fixture, dirs_exist_ok=True)
+            package = fixture / "app"
+            manifest = package / "package.mettle"
+            entry = package / "src" / "main.mt"
+            entry.write_text("fn main() { await work() }\n")
+            reference = run([executable, "check", str(package)], 1)
+            for package_input in (package, manifest):
+                actual = run([native, "check", str(package_input)], 1)
+                assert actual.stderr == reference.stderr and not actual.stdout, actual.stderr
+            (fixture / "units" / "package.mettle").unlink()
+            actual = run([native, "check", str(package)], 1)
+            assert "units/package.mettle" in actual.stderr and "error[package]" in actual.stderr, actual.stderr
+            evidence["cases"].append({"name": "package-entry-syntax"})
         if not evidence["cases"]:
             raise ValueError("no parser cases match --filter")
 
