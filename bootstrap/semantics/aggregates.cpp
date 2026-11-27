@@ -118,6 +118,7 @@ int Checker::aggregate(Node &n, bool reachable) {
     }
     auto lower = node(*n.children[0], reachable);
     auto upper = node(*n.children[1], reachable);
+    fields(false);
     inference.equal(lower, upper, n.span);
     if (inference.value(lower) != Type::Char)
       inference.equal(lower, inference.numeric(false), n.span);

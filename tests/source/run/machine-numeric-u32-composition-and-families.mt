@@ -4,11 +4,15 @@ fn increment<const N:u32>():u32 { value<{N+1}>() }
 fn classify(input:u32):i32 {
     match input { 0..=4294967295 => 42 }
 }
+copy type Bounds { begin: u32; end: u32 }
 fn main() {
     let maximum:u32 = 4294967295
     let minimum:u32 = 0
     var count = 0
     for element in 4294967294u32..=maximum { count += 1 }
+    let bounds = Bounds(2u32, 4u32)
+    var sum = 0u32
+    for element in bounds.begin..bounds.end { sum += element }
     let overflow = maximum.overflowing_add(1)
     let checked = match maximum.checked_add(1) {
         none => true, present(item) => false
@@ -23,7 +27,7 @@ fn main() {
         none => false, present(item) => item == maximum
     }
     if value() == maximum && increment<{4294967294}>() == maximum &&
-       classify(minimum) == 42 && classify(maximum) == 42 && count == 2 &&
+       classify(minimum) == 42 && classify(maximum) == 42 && count == 2 && sum == 5 &&
        overflow.0 == minimum && overflow.1 &&
        maximum.wrapping_add(1) == minimum &&
        maximum.saturating_add(1) == maximum &&
