@@ -19,6 +19,8 @@ pub type Dependency {
     pub optional: bool
 }
 pub enum FeatureAction { Local(String), Activate(usize), Forward(usize, String) }
+pub type Program { pub source: String; pub span: Range }
+pub type MacroDecl { pub name: String; pub program: Program }
 pub type Manifest {
     pub name: String
     pub version_text: String
@@ -27,6 +29,9 @@ pub type Manifest {
     pub targets: List<Target>
     pub dependencies: List<Dependency>
     pub dev_dependencies: List<Dependency>
+    pub build_dependencies: List<Dependency>
+    pub build_script: Program?
+    pub macros: List<MacroDecl>
     pub features: Map<String, List<FeatureAction>>
     pub implicit_features: Map<String, usize>
     pub registry: String?
@@ -236,6 +241,65 @@ extend Data {
         }
         none
     }
+
+    fn build_script(): Program? throws DataError {
+        let present(table) = self.field(0, "build") else { return none }
+        let node = read self.nodes[table]
+        if !node.kind.is(Kind.Object) {
+            throw DataError(node.span, from_text("[build] must be a table with 'script'"))
+        }
+        let script = self.field(table, "script")
+        if node.next != table + 1 && (script.is_none() || node.next != table + 2) {
+            throw DataError(node.span, from_text("[build] must be a table with 'script'"))
+        }
+        if let present(index) = script {
+            return present(Program(try self.string(index, "'script'"), self.nodes[index].span))
+        }
+        none
+    }
+
+    fn macros(): List<MacroDecl> throws DataError {
+        var declarations = List<MacroDecl>()
+        let present(table) = self.field(0, "macros") else { return declarations }
+        if !self.nodes[table].kind.is(Kind.Object) {
+            throw DataError(self.nodes[table].span, from_text("[macros] must be a table of macros"))
+        }
+        var index = table + 1
+        while index < self.nodes[table].next {
+            let node = read self.nodes[index]
+            let name = node.key.as_text()
+            if !valid_name(name) || name.find_byte(b'-').is_present() {
+                throw DataError(node.key_span, format(f"invalid macro name '{name}' (expected [a-z][a-z0-9_]*)"))
+            }
+            if !node.kind.is(Kind.Object) {
+                throw DataError(node.span, from_text("a macro must be a table with 'source' and 'api'"))
+            }
+            let present(source) = self.field(index, "source") else {
+                throw DataError(node.key_span, format(f"macro '{name}' needs 'source' and 'api'"))
+            }
+            let present(api) = self.field(index, "api") else {
+                throw DataError(node.key_span, format(f"macro '{name}' needs 'source' and 'api'"))
+            }
+            var field = index + 1
+            while field < node.next {
+                if field != source && field != api {
+                    let unknown = self.nodes[field].key.as_text()
+                    throw DataError(self.nodes[field].key_span, format(f"unknown key '{unknown}' in a macro"))
+                }
+                field = self.nodes[field].next
+            }
+            let major = read self.nodes[api]
+            if !major.kind.is(Kind.Integer) { throw DataError(major.span, from_text("'api' must be an integer major version")) }
+            let spelling = major.text.as_text()
+            if spelling != "1" {
+                throw DataError(major.span, format(f"unsupported macro API major version {spelling} (supported: 1)"))
+            }
+            let path = try self.string(source, "'source'")
+            if !path.is_empty() { declarations.push(MacroDecl(from_text(name), Program(take path, node.key_span))) }
+            index = node.next
+        }
+        declarations
+    }
 }
 
 fn feature_actions(read data: Data, read dependencies: List<Dependency>): (Map<String, List<FeatureAction>>, Map<String, usize>) throws DataError {
@@ -328,11 +392,12 @@ pub fn decode(read data: Data, default_entry: bool): Manifest throws DataError {
     while i < root.next {
         let node = read data.nodes[i]
         let key = node.key.as_text()
-        if key == "mettle-version" || key == "build-dependencies" || key == "build" || key == "macros" {
+        if key == "mettle-version" {
             throw DataError(node.key_span, format(f"native package resolution does not yet support '{key}'"))
         }
         if key != "name" && key != "version" && key != "description" && key != "kind" && key != "entry" &&
-            key != "emit" && key != "dependencies" && key != "dev-dependencies" && key != "registry" && key != "features" {
+            key != "emit" && key != "dependencies" && key != "dev-dependencies" && key != "registry" && key != "features" &&
+            key != "build-dependencies" && key != "build" && key != "macros" {
             throw DataError(node.key_span, format(f"unknown key '{key}' in package.mettle"))
         }
         i = node.next
@@ -355,7 +420,11 @@ pub fn decode(read data: Data, default_entry: bool): Manifest throws DataError {
     for dependency in dev_dependencies.as_slice() {
         if dependency.optional { throw DataError(dependency.span, from_text("development dependencies cannot be optional")) }
     }
+    let build_dependencies = try data.dependencies("build-dependencies", package_name, parsed)
+    for dependency in build_dependencies.as_slice() {
+        if dependency.optional { throw DataError(dependency.span, from_text("optional build-dependencies are not supported")) }
+    }
     let (features, implicit) = try feature_actions(data, dependencies)
     Manifest(take name, take version_text, take parsed, span, take targets, take dependencies, take dev_dependencies,
-        take features, take implicit, try data.registry())
+        take build_dependencies, try data.build_script(), try data.macros(), take features, take implicit, try data.registry())
 }

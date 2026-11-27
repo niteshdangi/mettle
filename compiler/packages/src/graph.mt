@@ -10,22 +10,29 @@ import std.path.{ Path, PathBuf }
 import super.data.Range
 import super.inputs.{ PackageError, PackagePhase, error_at, io_result, read_data, relative_to }
 import super.lock
-import super.manifest.{ Manifest, Dependency, FeatureAction, decode }
+import super.manifest.{ Manifest, Dependency, FeatureAction, Program, MacroDecl, decode }
 import super.version
 
-pub type DependencyEdge { pub name: String; pub package: usize; span: Range }
+pub type DependencyEdge { pub name: String; pub package: usize; pub is_host: bool; span: Range }
 pub type ResolvedPackage {
     pub name: String
     pub version: String
     pub identity: String
     pub source: String
     pub directory: PathBuf
-    pub entry: PathBuf
+    pub entry: PathBuf?
     pub is_library: bool
+    pub is_host: bool
     pub dependencies: List<DependencyEdge>
     pub features: List<String>
 }
-pub type PackageGraph { pub packages: List<ResolvedPackage> }
+pub type PlannedScript { pub package: usize; pub source: PathBuf }
+pub type PlannedMacro { pub package: usize; pub name: String; pub source: PathBuf; pub api: u32 }
+pub type PackageGraph {
+    pub packages: List<ResolvedPackage>
+    pub build_scripts: List<PlannedScript>
+    pub macros: List<PlannedMacro>
+}
 
 pub type ResolveOptions {
     pub features: List<String>
@@ -46,7 +53,7 @@ extend ResolveOptions {
 }
 
 copy type Frame { index: usize; next: usize }
-type SelectedEntry { path: PathBuf; is_library: bool }
+type SelectedEntry { path: PathBuf?; is_library: bool }
 type PackageFeatures {
     version: version.Version
     dependencies: List<Dependency>
@@ -55,18 +62,22 @@ type PackageFeatures {
     implicit: Map<String, usize>
     enabled: Set<String>
     defaults: bool
+    build_script: Program?
+    macros: List<MacroDecl>
+    target_aliases: Map<String, usize>
+    host_aliases: Map<String, usize>
 }
-type Request { parent: usize; slot: usize; forward: String? }
+type Request { parent: usize; slot: usize; host: bool; forward: String? }
 type RegistryRelease { directory: PathBuf; source: String; manifest: Manifest; yanked: bool }
 copy type Choice { index: usize; count: usize }
 type Search { choices: List<Choice>; depth: usize; fatal: bool }
 type Solver {
     graph: PackageGraph
     targets: List<PackageFeatures>
-    visited: Map<PathBuf, usize>
+    target_paths: Map<PathBuf, usize>
+    host_paths: Map<PathBuf, usize>
     work: Deque<Request>
     include_dev: bool
-    root_aliases: Map<String, usize>
 }
 
 fn error(read path: Path, span: Range, take message: String): PackageError {
@@ -107,9 +118,10 @@ fn select_entry(read manifest: Manifest, read directory: Path, read entry: Text,
                 throw error(manifest_path.as_path(), target.span, format(f"source entry '{name}' is not a regular file"))
             }
             let canonical = try io_result(take capture fs.canonicalize(source_path), manifest_path.as_path(), target.span, PackagePhase.Package)
-            return SelectedEntry(take canonical, target.library)
+            return SelectedEntry(present(take canonical), target.library)
         }
     }
+    if !root && !manifest.macros.is_empty() { return SelectedEntry(none, false) }
     let name = manifest.name.as_text()
     let reason = if !root { format(f"package '{name}' has no library entry") }
         else if entry.as_bytes() == "main".as_bytes() { format(f"package '{name}' has no source entry") }
@@ -203,10 +215,10 @@ fn attempt(read directory: Path, read entry: Text, read options: ResolveOptions,
     if let present(path) = manifest.registry { registries.push(directory.join(path.as_text())) }
     let manifest_path = directory.join("package.mettle")
     let span = manifest.span
-    var solver = Solver(PackageGraph(List<ResolvedPackage>()), List<PackageFeatures>(), Map<PathBuf, usize>(), new<Request>(),
-        options.include_dev, Map<String, usize>())
-    let _ = solver.visited.insert(directory.to_path_buf(), 0usize)
-    let _ = solver.register(take manifest, directory.to_path_buf(), take source, from_text("root"))
+    var solver = Solver(PackageGraph(List<ResolvedPackage>(), List<PlannedScript>(), List<PlannedMacro>()),
+        List<PackageFeatures>(), Map<PathBuf, usize>(), Map<PathBuf, usize>(), new<Request>(), options.include_dev)
+    let _ = solver.target_paths.insert(directory.to_path_buf(), 0usize)
+    let _ = solver.register(take manifest, directory.to_path_buf(), take source, from_text("root"), false)
     try solver.enable(0, feature_queue(options.features), options.default_features, manifest_path.as_path(), span)
     loop {
         let request = match take solver.work.pop_front() {
@@ -215,7 +227,11 @@ fn attempt(read directory: Path, read entry: Text, read options: ResolveOptions,
         }
         try solver.resolve_edge(take request, registries, preferred, mut search)
     }
-    try solver.finish()
+    let ordered = try solver.finish()
+    match take capture solver.plan_tools(ordered) {
+        success(_) => (),
+        failure(issue) => { search.fatal = true; throw take issue }
+    }
     take solver.graph
 }
 
@@ -284,34 +300,65 @@ fn feature_queue(read features: List<String>): Deque<String> {
     pending
 }
 
+fn enqueue_feature_edge(mut work: Deque<Request>, index: usize, slot: usize, host: bool, mirror: bool, forward: bool, read feature: Text): Unit {
+    work.push_back(Request(index, slot, host, none))
+    if forward { work.push_back(Request(index, slot, host, present(from_text(feature)))) }
+    if mirror {
+        work.push_back(Request(index, slot, true, none))
+        if forward { work.push_back(Request(index, slot, true, present(from_text(feature)))) }
+    }
+}
+
 extend Solver {
-    mut fn register(take manifest: Manifest, take directory: PathBuf, take entry: SelectedEntry, take source: String): usize {
+    mut fn register(take manifest: Manifest, take directory: PathBuf, take entry: SelectedEntry, take source: String, host: bool): usize {
         let index = self.graph.packages.len()
         let name = manifest.name.as_text()
         let version_text = manifest.version_text.as_text()
         let source_text = source.as_text()
-        let id = format(f"{name}@{version_text}|{source_text}|target")
+        let context = if host { "host" } else { "target" }
+        let id = format(f"{name}@{version_text}|{source_text}|{context}")
         var dependencies = take manifest.dependencies
+        let normal = dependencies.len()
+        var i = 0usize
+        while i < normal {
+            if !dependencies[i].optional { self.work.push_back(Request(index, i, host, none)) }
+            i += 1
+        }
+        var build = take manifest.build_dependencies
+        dependencies.append(mut build)
+        while i < dependencies.len() {
+            self.work.push_back(Request(index, i, true, none))
+            i += 1
+        }
         if index == 0 && self.include_dev {
             var development = take manifest.dev_dependencies
             dependencies.append(mut development)
+            while i < dependencies.len() {
+                self.work.push_back(Request(index, i, false, none))
+                i += 1
+            }
+        }
+        if !host && !manifest.macros.is_empty() {
+            i = 0
+            while i < normal {
+                if !dependencies[i].optional { self.work.push_back(Request(index, i, true, none)) }
+                i += 1
+            }
         }
         var selected = List<usize?>()
-        selected.resize(dependencies.len(), none)
-        var i = 0usize
-        while i < dependencies.len() {
-            if !dependencies[i].optional { self.work.push_back(Request(index, i, none)) }
-            i += 1
-        }
+        selected.resize(dependencies.len() * 2, none)
         self.graph.packages.push(ResolvedPackage(take manifest.name, take manifest.version_text, take id, take source,
-            take directory, take entry.path, entry.is_library, List<DependencyEdge>(), List<String>()))
+            take directory, take entry.path, entry.is_library, host, List<DependencyEdge>(), List<String>()))
         self.targets.push(PackageFeatures(take manifest.version, take dependencies, take selected, take manifest.features,
-            take manifest.implicit_features, Set<String>(), false))
+            take manifest.implicit_features, Set<String>(), false, take manifest.build_script, take manifest.macros,
+            Map<String, usize>(), Map<String, usize>()))
         index
     }
 
     mut fn enable(index: usize, take requested: Deque<String>, defaults: bool, read origin: Path, span: Range): Unit throws PackageError {
         var pending = take requested
+        let host = self.graph.packages[index].is_host
+        let mirror = !host && !self.targets[index].macros.is_empty()
         if defaults && !self.targets[index].defaults {
             self.targets[index].defaults = true
             if self.targets[index].actions.contains_key("default") { pending.push_back(from_text("default")) }
@@ -327,12 +374,12 @@ extend Solver {
                 for action in actions.as_slice() {
                     match read action {
                         FeatureAction.Local(local_feature) => pending.push_back(from_text(local_feature.as_text())),
-                        FeatureAction.Activate(slot) => self.work.push_back(Request(index, slot, none)),
-                        FeatureAction.Forward(slot, name) => self.work.push_back(Request(index, slot, present(from_text(name.as_text()))))
+                        FeatureAction.Activate(slot) => enqueue_feature_edge(mut self.work, index, slot, host, mirror, false, ""),
+                        FeatureAction.Forward(slot, feature) => enqueue_feature_edge(mut self.work, index, slot, host, mirror, true, feature.as_text())
                     }
                 }
             } else if let present(slot) = self.targets[index].implicit.get(name) {
-                self.work.push_back(Request(index, *slot, none))
+                enqueue_feature_edge(mut self.work, index, *slot, host, mirror, false, "")
             } else {
                 let package_name = self.graph.packages[index].name.as_text()
                 throw error(origin, span, format(f"package '{package_name}' has no feature '{name}'"))
@@ -344,31 +391,32 @@ extend Solver {
     mut fn resolve_edge(take request: Request, read registries: List<PathBuf>, read preferred: Map<String, List<version.Version>>, mut search: Search): Unit throws PackageError {
         let owner = request.parent
         let slot = request.slot
+        let host = request.host
+        let selection = if host { slot + self.targets[owner].dependencies.len() } else { slot }
         let span = self.targets[owner].dependencies[slot].span
         let owner_path = self.graph.packages[owner].directory.join("package.mettle")
         let origin = owner_path.as_path()
-        let index = match self.targets[owner].selected[slot] {
+        let index = match self.targets[owner].selected[selection] {
             present(chosen) => chosen,
             none => {
                 let dependency = read self.targets[owner].dependencies[slot]
                 let name = from_text(dependency.name.as_text())
                 let defaults = dependency.default_features
                 let pending = feature_queue(dependency.features)
-                let root_dev = owner == 0 && self.include_dev
-                let selected = if root_dev {
-                    match self.root_aliases.get(name.as_text()) {
-                        present(index) => present(self.graph.packages[owner].dependencies[*index].package),
-                        none => none
-                    }
-                } else { none }
+                let existing_edge = if host { self.targets[owner].host_aliases.get(name.as_text()) }
+                    else { self.targets[owner].target_aliases.get(name.as_text()) }
+                let selected = match existing_edge {
+                    present(index) => present(self.graph.packages[owner].dependencies[*index].package),
+                    none => none
+                }
                 let target: usize = if let present(location) = dependency.path {
                     let path = self.graph.packages[owner].directory.join(location.as_text())
-                    match take capture self.activate_path(owner, slot, path.as_path(), origin, span) {
+                    match take capture self.activate_path(owner, slot, host, path.as_path(), origin, span) {
                         success(index) => index,
                         failure(issue) => { search.fatal = true; throw take issue }
                     }
                 } else {
-                    try self.activate_registry(owner, slot, origin, span, registries, preferred, selected, mut search)
+                    try self.activate_registry(owner, slot, host, origin, span, registries, preferred, selected, mut search)
                 }
                 if let present(existing) = selected {
                     if existing != target {
@@ -376,13 +424,12 @@ extend Solver {
                         throw error(origin, span, format(f"conflicting requirements for dependency alias '{dependency_name}'"))
                     }
                 } else {
-                    if root_dev {
-                        let edge = self.graph.packages[owner].dependencies.len()
-                        let _ = self.root_aliases.insert(from_text(name.as_text()), edge)
-                    }
-                    self.graph.packages[owner].dependencies.push(DependencyEdge(take name, target, span))
+                    let edge = self.graph.packages[owner].dependencies.len()
+                    if host { let _ = self.targets[owner].host_aliases.insert(from_text(name.as_text()), edge) }
+                    else { let _ = self.targets[owner].target_aliases.insert(from_text(name.as_text()), edge) }
+                    self.graph.packages[owner].dependencies.push(DependencyEdge(take name, target, host, span))
                 }
-                self.targets[owner].selected[slot] = present(target)
+                self.targets[owner].selected[selection] = present(target)
                 try self.enable(target, take pending, defaults, origin, span)
                 target
             }
@@ -397,11 +444,12 @@ extend Solver {
         }
     }
 
-    mut fn activate_path(owner: usize, slot: usize, read path: Path, read origin: Path, span: Range): usize throws PackageError {
+    mut fn activate_path(owner: usize, slot: usize, host: bool, read path: Path, read origin: Path, span: Range): usize throws PackageError {
         let dependency = read self.targets[owner].dependencies[slot]
         let expected = dependency.name.as_text()
         let directory = try io_result(take capture fs.canonicalize(path), origin, span, PackagePhase.Package)
-        if let present(chosen) = self.visited.get(directory) {
+        let existing = if host { self.host_paths.get(directory) } else { self.target_paths.get(directory) }
+        if let present(chosen) = existing {
             let actual = self.graph.packages[*chosen].name.as_text()
             if actual != expected { throw error(origin, span, format(f"path dependency '{expected}' is the package '{actual}'")) }
             try check_requirement(dependency, self.targets[*chosen].version, origin)
@@ -417,11 +465,12 @@ extend Solver {
             throw error(origin, span, from_text("package path is not valid UTF-8"))
         }
         let next = self.graph.packages.len()
-        let _ = self.visited.insert(directory.to_path_buf(), next)
-        self.register(take child, take directory, take source, format(f"path+{relative_text}"))
+        if host { let _ = self.host_paths.insert(directory.to_path_buf(), next) }
+        else { let _ = self.target_paths.insert(directory.to_path_buf(), next) }
+        self.register(take child, take directory, take source, format(f"path+{relative_text}"), host)
     }
 
-    mut fn activate_registry(owner: usize, slot: usize, read origin: Path, span: Range, read registries: List<PathBuf>,
+    mut fn activate_registry(owner: usize, slot: usize, host: bool, read origin: Path, span: Range, read registries: List<PathBuf>,
             read preferred: Map<String, List<version.Version>>, selected: usize?, mut search: Search): usize throws PackageError {
         let dependency = read self.targets[owner].dependencies[slot]
         let name = dependency.name.as_text()
@@ -457,7 +506,7 @@ extend Solver {
             var target = 1usize
             while target < self.graph.packages.len() {
                 let selected = read self.graph.packages[target]
-                if selected.source.as_text() == release.source.as_text() && selected.name.as_text() == name {
+                if selected.is_host == host && selected.source.as_text() == release.source.as_text() && selected.name.as_text() == name {
                     let chosen = read self.targets[target].version
                     if version.compare(chosen, candidate) == 0 { return target }
                     if chosen.compatible(candidate) { compatible = true; break }
@@ -480,25 +529,75 @@ extend Solver {
             else { fresh[at - preferred_releases.len()] }
         let release = releases.remove(choice)
         let entry = try select_entry(release.manifest, release.directory.as_path(), "main", false)
-        self.register(take release.manifest, take release.directory, take entry, take release.source)
+        self.register(take release.manifest, take release.directory, take entry, take release.source, host)
     }
 
-    mut fn finish(): Unit throws PackageError {
+    mut fn finish(): List<usize> throws PackageError {
         var i = 0usize
         while i < self.graph.packages.len() {
             self.graph.packages[i].dependencies.as_mut_slice().sort_unstable_by(fn(read a: DependencyEdge, read b: DependencyEdge): Ordering {
-                a.name.as_text().cmp(b.name.as_text())
+                let order = a.name.as_text().cmp(b.name.as_text())
+                match order {
+                    Ordering.Equal => if a.is_host == b.is_host { Ordering.Equal }
+                        else if a.is_host { Ordering.Greater } else { Ordering.Less },
+                    _ => order
+                }
             })
             self.graph.packages[i].features.as_mut_slice().sort_unstable_by(fn(read a: String, read b: String): Ordering {
                 a.as_text().cmp(b.as_text())
             })
             i += 1
         }
-        try validate_cycles(self.graph)
+        try dependency_order(self.graph)
+    }
+
+    mut fn plan_tools(read ordered: List<usize>): Unit throws PackageError {
+        var owners = Map<String, usize>()
+        for index in ordered.as_slice() {
+            let package = read self.graph.packages[index]
+            let metadata = read self.targets[index]
+            let directory = package.directory.as_path()
+            if let present(script) = metadata.build_script {
+                let source = try tool_source(directory, script, "build script")
+                self.graph.build_scripts.push(PlannedScript(index, take source))
+            }
+            if package.is_host { continue }
+            for declaration in metadata.macros.as_slice() {
+                let name = declaration.name.as_text()
+                let source = try tool_source(directory, declaration.program, "macro source")
+                if let present(other) = owners.get(name) {
+                    let previous = self.graph.packages[*other].name.as_text()
+                    let current = package.name.as_text()
+                    let manifest = directory.join("package.mettle")
+                    throw error(manifest.as_path(), declaration.program.span, format(f"macro '{name}' is declared by both '{previous}' and '{current}'"))
+                }
+                let owner = index
+                let _ = owners.insert(from_text(name), owner)
+                self.graph.macros.push(PlannedMacro(index, from_text(name), take source, 1u32))
+            }
+        }
     }
 }
 
-fn validate_cycles(read graph: PackageGraph): Unit throws PackageError {
+fn tool_source(read directory: Path, read program: Program, read kind: Text): PathBuf throws PackageError {
+    let name = program.source.as_text()
+    let location = directory.join(name)
+    let manifest = directory.join("package.mettle")
+    let path = manifest.as_path()
+    match take capture fs.metadata(location) {
+        success(info) => {
+            if info.is_file() { return try io_result(take capture fs.canonicalize(location), path, program.span, PackagePhase.Package) }
+        },
+        failure(issue) => match issue.kind() {
+            io.ErrorKind.NotFound => (),
+            _ => { throw error(path, program.span, issue.message()) }
+        }
+    }
+    throw error(path, program.span, format(f"{kind} '{name}' does not exist"))
+}
+
+fn dependency_order(read graph: PackageGraph): List<usize> throws PackageError {
+    var ordered = List<usize>()
     var color = List<u8>()
     color.resize(graph.packages.len(), 0u8)
     color[0] = 1u8
@@ -511,6 +610,7 @@ fn validate_cycles(read graph: PackageGraph): Unit throws PackageError {
         let package = read graph.packages[node]
         if next == package.dependencies.len() {
             color[node] = 2u8
+            ordered.push(node)
             let _ = stack.pop()
             continue
         }
@@ -539,6 +639,7 @@ fn validate_cycles(read graph: PackageGraph): Unit throws PackageError {
             throw error(path.as_path(), edge.span, take message)
         }
     }
+    ordered
 }
 
 @test
@@ -552,7 +653,9 @@ fn transitive_path_graph(): Unit throws PackageError {
     let units = read graph.packages[math.dependencies[0].package]
     assert(units.name.as_text() == "units" && units.version.as_text() == "0.1.4", "incorrect transitive dependency")
     assert(!app.is_library && units.is_library, "selected target kind was discarded")
-    assert(units.entry.file_name().or_panic().same(std.ffi.os_str_from_text("main.mt")), "wrong dependency library source")
+    if let present(entry) = units.entry {
+        assert(entry.file_name().or_panic().same(std.ffi.os_str_from_text("main.mt")), "wrong dependency library source")
+    } else { assert(false, "missing dependency library source") }
     match take capture resolve(std.path.path_from_text("tests/packages/path-dependency/app"), "missing") {
         success(_) => assert(false, "undeclared entry resolved"),
         failure(issue) => assert(issue.message.as_text() == "package 'path-app' has no entry 'missing'", "wrong entry diagnostic")
