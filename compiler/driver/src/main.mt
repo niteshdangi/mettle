@@ -9,8 +9,8 @@ import core.text.Text
 import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
-import mettle_packages.{ PackageError, PackageGraph, PackagePhase, ResolveOptions, resolve_with }
-import mettle_pipeline.{ CheckError, CheckPhase, CompileError, LoweringError, SourceModule, active_items, check_modules, compile_modules, external_modules }
+import mettle_packages.{ PackageError, PackageGraph, PackagePhase, ResolveOptions, ResolvedPackage, resolve_with }
+import mettle_pipeline.{ CheckError, CheckPhase, CompileError, LoweringError, ModuleLink, SourceModule, active_items, check_modules, compile_modules, external_modules }
 import mettle_syntax.inspect.{ InspectionError, project, project_recovered }
 import mettle_backend_llvm.{ LinkError, OverflowChecks, emit_ir, link_executable }
 
@@ -157,7 +157,8 @@ fn report_check_error(read source: path.PathInput, read bytes: [u8], error: Chec
     1
 }
 
-fn load_module(read source: path.Path, index: usize, package_index: usize, read features: List<String>): SourceModule? throws io.Error {
+fn load_module(read source: path.Path, index: usize, package_index: usize, parent: usize?,
+    read features: List<String>): SourceModule? throws io.Error {
     if index > 4294967295usize {
         io.eprint("error[limit]: source indices exceed the 32-bit span representation\n")
         return none
@@ -182,19 +183,12 @@ fn load_module(read source: path.Path, index: usize, package_index: usize, read 
             return none
         }
     }
-    present(SourceModule(take bytes, take parsed, Map<List<u8>, usize>(), package_index, take items))
+    present(SourceModule(take bytes, take parsed, Map<List<u8>, ModuleLink>(), package_index, parent, take items))
 }
 
 fn check_source(read source: path.Path, read features: List<String>): i32 throws io.Error {
-    let present(module_source) = try load_module(source, 0, 0, features) else { return 1 }
-    var modules = List<SourceModule>()
-    modules.push(take module_source)
-    var mounts = List<Map<List<u8>, usize>>()
-    mounts.push(Map<List<u8>, usize>())
-    match take capture check_modules(modules, mounts, true) {
-        failure(error) => { try report_check_error(source, modules[0].bytes.as_slice(), error) },
-        success(_) => 0
-    }
+    let present(loaded) = try load_single_graph(source, features) else { return 1 }
+    try check_loaded(loaded, true)
 }
 
 fn mount_name(read name: Text): List<u8> {
@@ -288,19 +282,26 @@ fn load_graph(read graph: PackageGraph): PackageSources? throws io.Error {
             return none
         }
         let index = sources.len()
-        let present(module_source) = try load_module(source, index, package_index, package.features) else { return none }
+        let present(module_source) = try load_module(source, index, package_index, none, package.features) else { return none }
         paths.push(ModulePath(source.to_path_buf(), source.parent().or_panic().to_path_buf()))
         sources.push(take module_source)
         source_indices.push(present(index))
     }
     let mounts = package_mounts(graph, source_indices)
+    if !try discover_modules(mut sources, mut paths, mut seen, graph.packages.as_slice(), List<String>()) { return none }
+    present(PackageSources(take sources, take paths, take mounts))
+}
+
+fn discover_modules(mut sources: List<SourceModule>, mut paths: List<ModulePath>,
+    mut seen: Map<path.PathBuf, Unit>, read packages: [ResolvedPackage],
+    read standalone_features: List<String>): bool throws io.Error {
     var owner = 0usize
     while owner < sources.len() {
         let declarations = match take capture external_modules(sources[owner]) {
             success(declarations) => take declarations,
             failure(error) => {
                 let _ = try report_check_error(paths[owner].source.as_path(), sources[owner].bytes.as_slice(), error)
-                return none
+                return false
             }
         }
         for declaration in take declarations {
@@ -308,7 +309,7 @@ fn load_graph(read graph: PackageGraph): PackageSources? throws io.Error {
             if sources[owner].modules.contains_key(declaration.name) {
                 let _ = try report_check_error(owner_path, sources[owner].bytes.as_slice(),
                     CheckError(CheckPhase.Name, declaration.span, "duplicate module"))
-                return none
+                return false
             }
             let directory = paths[owner].children.join(path.path_buf_from_bytes(declaration.name.as_slice()))
             var filename = declaration.name.as_slice().to_vec()
@@ -322,36 +323,60 @@ fn load_graph(read graph: PackageGraph): PackageSources? throws io.Error {
                     else { "external module source file does not exist" }
                 let _ = try report_check_error(owner_path, sources[owner].bytes.as_slice(),
                     CheckError(CheckPhase.Name, declaration.span, reason))
-                return none
+                return false
             }
             let source = try fs.canonicalize(if flat_exists { flat.as_path() } else { nested.as_path() })
             if seen.insert(source.to_path_buf(), ()).is_present() {
                 let _ = try report_check_error(owner_path, sources[owner].bytes.as_slice(),
                     CheckError(CheckPhase.Name, declaration.span, "source file has more than one module identity"))
-                return none
+                return false
             }
             let index = sources.len()
             let package_index = sources[owner].package_index
-            let present(module_source) = try load_module(source.as_path(), index, package_index,
-                graph.packages[package_index].features) else { return none }
-            let _ = sources[owner].modules.insert(take declaration.name, take index)
+            let loaded = if packages.is_empty() {
+                try load_module(source.as_path(), index, package_index, present(owner), standalone_features)
+            } else {
+                try load_module(source.as_path(), index, package_index, present(owner), packages[package_index].features)
+            }
+            let present(module_source) = loaded else { return false }
+            let _ = sources[owner].modules.insert(take declaration.name, ModuleLink(index, declaration.exported))
             paths.push(ModulePath(take source, take directory))
             sources.push(take module_source)
         }
         owner += 1usize
     }
+    true
+}
+
+fn load_single_graph(read source: path.Path, read features: List<String>): PackageSources? throws io.Error {
+    let present(module_source) = try load_module(source, 0, 0, none, features) else { return none }
+    let canonical = try fs.canonicalize(source)
+    var sources = List<SourceModule>()
+    sources.push(take module_source)
+    var paths = List<ModulePath>()
+    let children = canonical.parent().or_panic().to_path_buf()
+    var seen = Map<path.PathBuf, Unit>()
+    let _ = seen.insert(canonical.to_path_buf(), ())
+    paths.push(ModulePath(take canonical, take children))
+    if !try discover_modules(mut sources, mut paths, mut seen, List<ResolvedPackage>().as_slice(), features) { return none }
+    var mounts = List<Map<List<u8>, usize>>()
+    mounts.push(Map<List<u8>, usize>())
     present(PackageSources(take sources, take paths, take mounts))
 }
 
-fn check_graph(read graph: PackageGraph): i32 throws io.Error {
-    let present(loaded) = try load_graph(graph) else { return 1 }
-    match take capture check_modules(loaded.sources, loaded.mounts, !graph.packages[0].is_library) {
+fn check_loaded(read loaded: PackageSources, executable: bool): i32 throws io.Error {
+    match take capture check_modules(loaded.sources, loaded.mounts, executable) {
         failure(error) => {
             let index = error.span.source as usize
             try report_check_error(loaded.paths[index].source.as_path(), loaded.sources[index].bytes.as_slice(), error)
         },
         success(_) => 0
     }
+}
+
+fn check_graph(read graph: PackageGraph): i32 throws io.Error {
+    let present(loaded) = try load_graph(graph) else { return 1 }
+    try check_loaded(loaded, !graph.packages[0].is_library)
 }
 
 fn check_input(read source: path.Path, read entry: Text, read options: ResolveOptions, package_options: bool): i32 throws io.Error {
@@ -600,14 +625,7 @@ fn load_build_input(read source: path.Path): PackageSources? throws io.Error {
         }
         return try load_graph(graph)
     }
-    let present(module_source) = try load_module(source, 0, 0, List<String>()) else { return none }
-    var sources = List<SourceModule>()
-    sources.push(take module_source)
-    var paths = List<ModulePath>()
-    paths.push(ModulePath(source.to_path_buf(), path.new_path_buf()))
-    var mounts = List<Map<List<u8>, usize>>()
-    mounts.push(Map<List<u8>, usize>())
-    present(PackageSources(take sources, take paths, take mounts))
+    try load_single_graph(source, List<String>())
 }
 
 fn build_usage(): i32 {

@@ -23,7 +23,7 @@ packages: [
         version: "0.1.0"
         id: "mettle-frontend@0.1.0|path+../frontend|target"
         source: "path+../frontend"
-        checksum: "sha256-tree-2:6ecc39ff1583b9c987d9026b87b8ac8491e9bde6efada272a2836e4f14c8fc43"
+        checksum: "sha256-tree-2:e1a1f3addd661ef07802e42711cf04fe17d5f10175cd09e51136f71dee525394"
         features: []
         dependencies: ["mettle-foundation@0.1.0|path+../foundation|target", "mettle-syntax@0.1.0|path+../syntax|target", "mettle-types@0.1.0|path+../types|target"]
     }
@@ -41,7 +41,7 @@ packages: [
         version: "0.1.0"
         id: "mettle-middle@0.1.0|path+../middle|target"
         source: "path+../middle"
-        checksum: "sha256-tree-2:ca8130c582142183ee254d01d210c5bceb1de85b51d38f2eff19f9cd07b9ee0b"
+        checksum: "sha256-tree-2:7853d3d9982576e9c35f35ee5e476d6e97a8734c6fe34562b1fcd7b2bafdb0b2"
         features: []
         dependencies: ["mettle-foundation@0.1.0|path+../foundation|target", "mettle-frontend@0.1.0|path+../frontend|target", "mettle-ir@0.1.0|path+../ir|target", "mettle-syntax@0.1.0|path+../syntax|target", "mettle-types@0.1.0|path+../types|target"]
     }

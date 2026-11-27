@@ -23,7 +23,7 @@ packages: [
         version: "0.1.0"
         id: "mettle-frontend@0.1.0|path+../frontend|target"
         source: "path+../frontend"
-        checksum: "sha256-tree-2:6ecc39ff1583b9c987d9026b87b8ac8491e9bde6efada272a2836e4f14c8fc43"
+        checksum: "sha256-tree-2:e1a1f3addd661ef07802e42711cf04fe17d5f10175cd09e51136f71dee525394"
         features: []
         dependencies: ["mettle-foundation@0.1.0|path+../foundation|target", "mettle-syntax@0.1.0|path+../syntax|target", "mettle-types@0.1.0|path+../types|target"]
     }

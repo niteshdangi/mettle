@@ -262,7 +262,11 @@ control rebuild work. A package is not an indivisible recompilation unit.
 
 For native scalar checking, the driver supplies parsed source units and their
 package mounts; it discovers declared external files and keeps their canonical
-source identities. Feature predicates select active declarations using each
+source identities. File-module edges record visibility: private edges are
+traversable only from the declaring module and its descendants. Nested scalar
+call paths use the caller's package mounts only at the path head. Inline modules,
+restricted visibility modifiers, and re-exports remain outside native checking.
+Feature predicates select active declarations using each
 unit's package features before external modules are loaded. Ordinary builds
 ignore test and benchmark annotations, not the annotated bodies. The frontend
 collects signatures across all supplied units

@@ -43,16 +43,20 @@ pub type CheckedModule {
 pub type SourceModule {
     pub bytes: List<u8>
     pub syntax: Parsed
-    pub modules: Map<List<u8>, usize>
+    pub modules: Map<List<u8>, ModuleLink>
     pub package_index: usize
+    pub parent: usize?
     pub items: List<ActiveItem>
 }
+
+pub copy type ModuleLink { pub index: usize; pub exported: bool }
 
 pub copy type ActiveItem { id: NodeId; offset: u32 }
 
 pub type ExternalModule {
     pub name: List<u8>
     pub span: Span
+    pub exported: bool
 }
 
 type Declarations {
@@ -84,6 +88,7 @@ type Body {
 
 type Context<region r> {
     source: read SourceModule from r
+    sources: read List<SourceModule> from r
     owner: FunctionId
     declarations: read List<Declarations> from r
     mounts: read Map<List<u8>, usize> from r
@@ -167,18 +172,28 @@ pub fn active_items(read bytes: [u8], read parsed: Parsed, read features: List<S
     items
 }
 
-pub fn external_modules(read source: SourceModule): List<ExternalModule> throws CheckError {
+fn external_module(read source: SourceModule, item: SyntaxNode, offset: u32): ExternalModule throws CheckError {
     let bytes = source.bytes.as_slice()
     let parsed = read source.syntax
+    let first = node(parsed, child(parsed, item, offset))
+    let exported = first.kind.is(NodeKind.Visibility)
+    if exported && read bytes[first.span.begin as usize..first.span.end as usize] != b"pub" {
+        throw unsupported(first.span)
+    }
+    let name_offset = offset + if exported { 1u32 } else { 0u32 }
+    if item.children.end - item.children.begin != name_offset + 1u32 { throw unsupported(item.span) }
+    let identifier = node(parsed, child(parsed, item, name_offset))
+    if !identifier.kind.is(NodeKind.Name) { throw unsupported(item.span) }
+    ExternalModule(try name(bytes, parsed, identifier), item.span, exported)
+}
+
+pub fn external_modules(read source: SourceModule): List<ExternalModule> throws CheckError {
     var result = List<ExternalModule>()
     for declaration in source.items.as_slice() {
-        let item = node(parsed, declaration.id)
-        if !item.kind.is(NodeKind.ModuleDeclaration) { continue }
-        let identifier = node(parsed, child(parsed, item, declaration.offset))
-        if item.children.end - item.children.begin != declaration.offset + 1u32 || !identifier.kind.is(NodeKind.Name) {
-            throw unsupported(item.span)
+        let item = node(source.syntax, declaration.id)
+        if item.kind.is(NodeKind.ModuleDeclaration) {
+            result.push(try external_module(source, item, declaration.offset))
         }
-        result.push(ExternalModule(try name(bytes, parsed, identifier), item.span))
     }
     result
 }
@@ -258,10 +273,60 @@ fn integer(read bytes: [u8], span: Span): Scalar throws CheckError {
     Scalar.I32
 }
 
-fn module_target(read source: SourceModule, read mounts: Map<List<u8>, usize>, read spelling: List<u8>): usize? {
-    if let present(index) = source.modules.get(spelling) { return present(*index) }
-    if let present(index) = mounts.get(spelling) { return present(*index) }
-    none
+fn inside_module(read sources: List<SourceModule>, from: usize, boundary: usize): bool {
+    var scope = from
+    while scope != boundary {
+        let present(parent) = sources[scope].parent else { return false }
+        scope = parent
+    }
+    true
+}
+
+fn module_target<region r>(read context: Context<region r>, read body: Body, base: SyntaxNode, span: Span): usize throws CheckError {
+    let parsed = read context.source.syntax
+    let bytes = context.source.bytes.as_slice()
+    var components = List<SyntaxNode>()
+    var head = base
+    while head.kind.is(NodeKind.Field) {
+        components.push(node(parsed, child(parsed, head, 1)))
+        head = node(parsed, child(parsed, head, 0))
+    }
+    if !head.kind.is(NodeKind.Name) { throw unsupported(span) }
+    let spelling = try name(bytes, parsed, head)
+    if context.resolve(body, spelling).is_present() { throw unsupported(span) }
+    let from = context.owner.module_index
+    var scope = from
+    var relative = false
+    if let present(mount) = context.mounts.get(spelling) {
+        scope = *mount
+    } else {
+        let raw = read bytes[head.span.begin as usize..head.span.end as usize]
+        if raw == b"self" || raw == b"super" {
+            relative = true
+            if raw == b"super" { components.push(head) }
+        } else {
+            components.push(head)
+        }
+    }
+    while let present(component) = components.pop() {
+        if relative && read bytes[component.span.begin as usize..component.span.end as usize] == b"super" {
+            let present(parent) = context.sources[scope].parent else {
+                throw CheckError(CheckPhase.Name, span, "'super' escapes the package root")
+            }
+            scope = parent
+            continue
+        }
+        relative = false
+        let name = try name(bytes, parsed, component)
+        let present(link) = context.sources[scope].modules.get(name) else {
+            throw CheckError(CheckPhase.Name, span, "unresolved module")
+        }
+        if !link.exported && !inside_module(context.sources, from, scope) {
+            throw CheckError(CheckPhase.Name, span, "module is private")
+        }
+        scope = link.index
+    }
+    scope
 }
 
 fn operator_span(read parsed: Parsed, item: SyntaxNode): Span throws CheckError {
@@ -422,14 +487,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             var module_index = context.owner.module_index
             var identifier_node = callee
             if callee.kind.is(NodeKind.Field) {
-                let base = node(parsed, child(parsed, callee, 0))
-                if !base.kind.is(NodeKind.Name) { throw unsupported(callee.span) }
-                let namespace = try name(bytes, parsed, base)
-                if context.resolve(body, namespace).is_present() { throw unsupported(callee.span) }
-                let present(target) = module_target(context.source, context.mounts, namespace) else {
-                    throw unsupported(base.span)
-                }
-                module_index = target
+                module_index = try module_target(context, body, node(parsed, child(parsed, callee, 0)), callee.span)
                 identifier_node = node(parsed, child(parsed, callee, 1))
             } else if !callee.kind.is(NodeKind.Name) {
                 throw unsupported(callee.span)
@@ -444,7 +502,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             }
             let id = *id
             let signature = read target.functions[id]
-            if module_index != context.owner.module_index && !signature.exported {
+            if !signature.exported && !inside_module(context.sources, context.owner.module_index, module_index) {
                 throw CheckError(CheckPhase.Name, callee.span, "function is private")
             }
             if arguments.children.end - arguments.children.begin != signature.parameters.len() as u32 {
@@ -519,18 +577,21 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declar
     var imports = Map<List<u8>, Unit>()
     for declaration in source.items.as_slice() {
         let item = node(parsed, declaration.id)
-        if item.kind.is(NodeKind.ModuleDeclaration) || item.kind.is(NodeKind.Import) {
+        if item.kind.is(NodeKind.ModuleDeclaration) {
+            let external = try external_module(source, item, declaration.offset)
+            if !source.modules.contains_key(external.name) { throw unsupported(item.span) }
+            continue
+        }
+        if item.kind.is(NodeKind.Import) {
             if item.children.end - item.children.begin != declaration.offset + 1u32 { throw unsupported(item.span) }
-            var identifier = node(parsed, child(parsed, item, declaration.offset))
-            if item.kind.is(NodeKind.Import) {
-                if !identifier.kind.is(NodeKind.ImportPath) || identifier.children.end - identifier.children.begin != 1u32 {
-                    throw unsupported(item.span)
-                }
-                identifier = node(parsed, child(parsed, identifier, 0))
+            let path = node(parsed, child(parsed, item, declaration.offset))
+            if !path.kind.is(NodeKind.ImportPath) || path.children.end - path.children.begin != 1u32 {
+                throw unsupported(item.span)
             }
+            let identifier = node(parsed, child(parsed, path, 0))
             let spelling = try name(bytes, parsed, identifier)
-            if !module_target(source, mounts, spelling).is_present() { throw unsupported(item.span) }
-            if item.kind.is(NodeKind.Import) && imports.insert(take spelling, ()).is_present() {
+            if !source.modules.contains_key(spelling) && !mounts.contains_key(spelling) { throw unsupported(item.span) }
+            if imports.insert(take spelling, ()).is_present() {
                 throw CheckError(CheckPhase.Name, identifier.span, "duplicate import")
             }
             continue
@@ -546,8 +607,9 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declar
     Declarations(take functions, take names, take parameters)
 }
 
-fn check_bodies(read source: SourceModule, module_index: usize,
+fn check_bodies(read sources: List<SourceModule>, module_index: usize,
     read declarations: List<Declarations>, read mounts: Map<List<u8>, usize>): (List<Expression?>, List<usize>) throws CheckError {
+    let source = read sources[module_index]
     let parsed = read source.syntax
     let functions = read declarations[module_index].functions
     var body = Body(List<Expression?>(), Map<List<u8>, usize>(), List<usize>(), List<Local>(), List<Shadow>(), List<NodeId>(), 0usize)
@@ -556,7 +618,7 @@ fn check_bodies(read source: SourceModule, module_index: usize,
     var counts = List<usize>()
     for index in 0usize..functions.len() {
         let function = read functions[index]
-        let context = Context(read source, FunctionId(module_index, index), read declarations, read mounts)
+        let context = Context(read source, read sources, FunctionId(module_index, index), read declarations, read mounts)
         body.symbols.clear()
         body.visible.clear()
         body.bindings.clear()
@@ -591,7 +653,7 @@ pub fn check_modules(read sources: List<SourceModule>, read mounts: List<Map<Lis
     }
     var bodies = List<(List<Expression?>, List<usize>)>()
     for index in 0usize..sources.len() {
-        bodies.push(try check_bodies(sources[index], index, declarations, mounts[sources[index].package_index]))
+        bodies.push(try check_bodies(sources, index, declarations, mounts[sources[index].package_index]))
     }
     bodies.reverse()
     var result = List<CheckedModule>()
@@ -608,7 +670,7 @@ fn check_test_source(read source: [u8]): (Parsed, CheckedModule) throws CheckErr
     let parsed = mettle_syntax.parse(source, 0u32)
     let items = try active_items(source, parsed, List<String>())
     var sources = List<SourceModule>()
-    sources.push(SourceModule(source.to_vec(), take parsed, Map<List<u8>, usize>(), 0usize, take items))
+    sources.push(SourceModule(source.to_vec(), take parsed, Map<List<u8>, ModuleLink>(), 0usize, none, take items))
     var mounts = List<Map<List<u8>, usize>>()
     mounts.push(Map<List<u8>, usize>())
     var checked = try check_modules(sources, mounts, false)
