@@ -907,6 +907,69 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                     actual = run([tool, "check", str(app)], 1)
                     assert f"error[{phase}]" in actual.stderr and str(origin) in actual.stderr, actual.stderr
             evidence["cases"].append({"name": "package-scalar-check"})
+        llvm = Path(os.environ.get("LLVM_BIN", ROOT.parent / ".tools" / "linux-x86_64" / "llvm" / "bin"))
+        runtime = os.environ.get("METTLE_RUNTIME", str(Path(executable).parent / "libmettle_runtime.a"))
+        llvm_env = {**os.environ, "PATH": os.pathsep.join((str(llvm), os.environ.get("PATH", ""))),
+                    "METTLE_RUNTIME": runtime}
+        if selected("package-file-module-visibility"):
+            import shutil
+
+            fixture = directory / "file-module-visibility"
+            shutil.copytree(ROOT / "packages" / "path-dependency", fixture, dirs_exist_ok=True)
+            app = fixture / "app"
+            entry = app / "src" / "main.mt"
+            math = fixture / "mathlib" / "src"
+            outer = math / "twice.mt"
+            inner = math / "twice" / "inner"
+            inner.mkdir(parents=True, exist_ok=True)
+            (inner / "module.mt").write_text(
+                "pub fn double(x: i32): i32 { super.hidden.scale(x) }\n")
+            hidden = inner.parent / "hidden.mt"
+            hidden.write_text("pub fn scale(x: i32): i32 { x * 2 }\n")
+            (math / "main.mt").write_text(
+                '@cfg(true)\npub module twice;\n@cfg(false)\npub module missing;\n'
+                'pub module sibling;\n')
+            sibling = math / "sibling.mt"
+            sibling.write_text("pub fn constant(): i32 { 0 }\n")
+            outer.write_text("pub module inner;\nmodule hidden;\n")
+            entry.write_text("fn main(): i32 { mathlib.twice.inner.double(21) }\n")
+            output = directory / "file-module-program"
+            for tool in (executable, native):
+                run([tool, "check", str(app)])
+                run([tool, "build", str(app), "-o", str(output)], env=llvm_env)
+                run([str(output)], 42)
+
+            def reject(origin, location, message, tools=(executable, native), phase="name"):
+                for tool in tools:
+                    result = run([tool, "check", str(app)], 1)
+                    line = next((line for line in result.stderr.splitlines()
+                                 if f"{origin}:{location}: error[{phase}]" in line), "")
+                    assert re.search(message, line), result.stderr
+
+            entry.write_text("fn main(): i32 { mathlib.twice.hidden.scale(21) }\n")
+            private = r"module is private|unresolved value '(mathlib|super)\.twice\.hidden'"
+            reject(entry, "1:18", private)
+            entry.write_text("fn main(): i32 { mathlib.sibling.constant() }\n")
+            sibling.write_text("pub fn constant(): i32 { super.twice.hidden.scale(21) }\n")
+            reject(sibling, "1:26", private)
+            sibling.write_text("pub fn constant(): i32 { 0 }\n")
+            outer.write_text("pub module inner;\nmodule inner;\nmodule hidden;\n")
+            reject(outer, "2:1", "duplicate module|more than one module identity")
+            outer.write_text("pub module inner;\nmodule hidden;\nmodule alias_path;\n")
+            (inner.parent / "alias_path.mt").symlink_to(hidden.name)
+            reject(outer, "3:1", "more than one module identity")
+            outer.write_text("pub module inner;\nmodule hidden;\n")
+            standalone = math / "standalone.mt"
+            standalone.write_text("module twice;\nfn main(): i32 { self.twice.inner.double(21) }\n")
+            for tool in (executable, native):
+                run([tool, "check", str(standalone)])
+                run([tool, "build", str(standalone), "-o", str(output)], env=llvm_env)
+                run([str(output)], 42)
+            for declaration in ("pub module inline_module {}", "pub import mathlib.twice",
+                                "import mathlib.twice", "type Product {}"):
+                entry.write_text(f"{declaration}\nfn main(): i32 {{ 0 }}\n")
+                reject(entry, "1:1", "does not support", (native,), "feature")
+            evidence["cases"].append({"name": "package-file-module-visibility"})
         if selected("package-feature-options"):
             import shutil
 
@@ -977,10 +1040,6 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             assert actual.stderr.split(": error[", 1)[0] == reference.stderr.split(": error[", 1)[0], actual.stderr
             assert actual.stderr.splitlines()[1:] == ["\tmissing()", "\t^"], actual.stderr
             evidence["cases"].append({"name": "check-scalar-source-location"})
-        llvm = Path(os.environ.get("LLVM_BIN", ROOT.parent / ".tools" / "linux-x86_64" / "llvm" / "bin"))
-        runtime = os.environ.get("METTLE_RUNTIME", str(Path(executable).parent / "libmettle_runtime.a"))
-        llvm_env = {**os.environ, "PATH": os.pathsep.join((str(llvm), os.environ.get("PATH", ""))),
-                    "METTLE_RUNTIME": runtime}
         if selected("build-scalar-llvm"):
             path = source("build-scalar-llvm", "fn twice(n: i32): i32 { n + n }\nfn main(): i32 { twice(21) }\n")
             output = directory / "scalar.ll"

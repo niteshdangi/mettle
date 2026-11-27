@@ -1,6 +1,6 @@
 import alloc.vec.{ List, with_capacity }
 import mettle_foundation.Span
-import mettle_frontend.{ Binding, CheckedModule, SourceModule }
+import mettle_frontend.{ Binding, CheckedModule, ModuleLink, SourceModule }
 import mettle_frontend as frontend
 import mettle_ir.{ Arithmetic, Block, Comparison, Edge, Function, FunctionId, Instruction, InvalidIr, Module, Operation, Program, Terminator, VerifiedProgram, verify }
 import mettle_syntax.{ NodeId, NodeKind, Parsed, SyntaxNode }
@@ -471,7 +471,7 @@ fn cross_module_scalar_call(): Unit throws LoweringError {
         let success(items) = capture frontend.active_items(bytes, syntax, List<alloc.string.String>()) else {
             core.panic.panic("could not select fixture declarations")
         }
-        sources.push(SourceModule(bytes.to_vec(), take syntax, alloc.hash_map.Map<List<u8>, usize>(), index, take items))
+        sources.push(SourceModule(bytes.to_vec(), take syntax, alloc.hash_map.Map<List<u8>, ModuleLink>(), index, none, take items))
     }
     let success(checked) = capture frontend.check_modules(sources, mounts, true) else {
         core.panic.panic("scalar fixture did not check")

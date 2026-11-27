@@ -3,7 +3,7 @@ import alloc.vec.List
 import mettle_ir.VerifiedProgram
 import mettle_middle.lower
 
-pub import mettle_frontend.{ CheckError, CheckPhase, SourceModule, active_items, check_modules, external_modules }
+pub import mettle_frontend.{ CheckError, CheckPhase, ModuleLink, SourceModule, active_items, check_modules, external_modules }
 pub import mettle_middle.LoweringError
 
 pub copy enum CompileError { Check(CheckError), Lower(LoweringError) }
