@@ -5,6 +5,9 @@ import mettle_foundation.Span
 import mettle_ir.{ Arithmetic, Function, FunctionId, Operation, Program, VerifiedProgram }
 import mettle_types.Scalar
 
+module link
+pub import link.{ LinkError, link_executable }
+
 pub copy enum OverflowChecks { On, Off }
 
 pub copy enum EmitError {
