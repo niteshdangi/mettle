@@ -1451,6 +1451,9 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                     run([str(output)], expected)
             evidence["cases"].append({"name": "build-native-unsigned-bits"})
         for name, text, phase in (
+            ("check-product-c-record", "@layout(C)\npub copy type Record { kind: u8; ptr_value: ptr<read u8>; len: u64 }\nfn main(): i32 { 0 }", None),
+            ("check-product-duplicate-field", "type Record { value: u8; value: bool }\nfn main(): i32 { 0 }", "name"),
+            ("check-product-duplicate-layout", "@layout(C)\n@layout(C)\ntype Record { value: u8 }\nfn main(): i32 { 0 }", "attribute"),
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
             ("check-scalar-explicit-return-mismatch", "fn main(): i32 { return true }", "type"),

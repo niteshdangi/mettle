@@ -285,6 +285,11 @@ collects signatures across all supplied units
 before checking bodies. Checked calls carry a module and function index, not a
 source spelling; initialized scalar locals carry function-local binding
 identities. Expression facts remain indexed by the owning syntax unit.
+Native checking retains nongeneric, field-only product declarations with
+distinct field names, scalar and thin raw-pointer fields, and default or
+`@layout(C)` representation. The types package computes hosted object size,
+alignment and field offsets; this does not establish product values, nominal
+type references or foreign-call ABI lowering.
 The native integer subset is `i32`, `u8`, `u32`, `u64`, and hosted 64-bit `usize`.
 Unsuffixed literals resolve against their integer constraints before falling
 back to `i32`. Checked literals carry their bits; arithmetic and explicit

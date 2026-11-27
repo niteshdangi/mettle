@@ -1,10 +1,10 @@
-import alloc.hash_map.Map
+import alloc.hash_map.{ Map, Set }
 import alloc.string.String
 import alloc.vec.List
 import core.text.Text
 import mettle_foundation.Span
 import mettle_syntax.{ Kind, NodeId, NodeKind, Parsed, SyntaxNode }
-import mettle_types.Scalar
+import mettle_types.{ FieldType, ObjectLayout, PointerAccess, ProductLayout, Scalar }
 
 module cfg;
 
@@ -35,8 +35,26 @@ pub copy type Expression {
     pub integer: u64?
 }
 
+pub type ProductField {
+    pub name: List<u8>
+    pub field_type: FieldType
+    pub offset: u64
+    pub exported: bool
+}
+
+pub type Product {
+    pub declaration: NodeId
+    pub name: List<u8>
+    pub fields: List<ProductField>
+    pub layout: ObjectLayout
+    pub c_layout: bool
+    pub copyable: bool
+    pub exported: bool
+}
+
 pub type CheckedModule {
     pub functions: List<Function>
+    pub products: List<Product>
     pub expressions: List<Expression?>
     pub entry: usize?
 }
@@ -90,6 +108,7 @@ copy type ImportItem { id: NodeId; offset: u32; exported: bool }
 
 type Declarations {
     functions: List<Function>
+    products: List<Product>
     names: Map<List<u8>, usize>
     parameters: List<Map<List<u8>, usize>>
     imports: Map<List<u8>, Imported>
@@ -267,6 +286,10 @@ pub fn active_items(read bytes: [u8], read parsed: Parsed, read features: List<S
                 offset += 1u32
                 continue
             }
+            if item.kind.is(NodeKind.Product) && spelling == b"layout" {
+                offset += 1u32
+                continue
+            }
             if spelling != b"cfg" {
                 throw unsupported(attribute.span)
             }
@@ -373,6 +396,92 @@ fn scalar_type(read bytes: [u8], annotation: SyntaxNode): Scalar throws CheckErr
     else if spelling == b"bool" { Scalar.Bool }
     else if spelling == b"Unit" { Scalar.Unit }
     else { throw unsupported(annotation.span) }
+}
+
+fn product_field_type(read bytes: [u8], read parsed: Parsed, annotation: SyntaxNode): FieldType throws CheckError {
+    if !annotation.kind.is(NodeKind.TypePointer) {
+        return FieldType.Scalar(try scalar_type(bytes, annotation))
+    }
+    let present(index) = annotation.operation else { throw unsupported(annotation.span) }
+    let operation = parsed.tokens[index as usize]
+    let access = if read bytes[operation.span.begin as usize..operation.span.end as usize] == b"mut" {
+        PointerAccess.Mut
+    } else { PointerAccess.Read }
+    FieldType.ThinPointer(access, try scalar_type(bytes, node(parsed, child(parsed, annotation, 0u32))))
+}
+
+fn c_product_layout(read bytes: [u8], read parsed: Parsed, item: SyntaxNode, end: u32): bool throws CheckError {
+    var c_layout = false
+    for index in 0u32..end {
+        let attribute = node(parsed, child(parsed, item, index))
+        let identifier = node(parsed, child(parsed, attribute, 0u32))
+        if read bytes[identifier.span.begin as usize..identifier.span.end as usize] != b"layout" { continue }
+        if c_layout { throw CheckError(CheckPhase.Attribute, attribute.span, "duplicate singleton attribute 'layout'") }
+        if attribute.children.end - attribute.children.begin != 2u32 {
+            throw CheckError(CheckPhase.Attribute, attribute.span, "layout requires comma-separated representations")
+        }
+        let arguments = node(parsed, child(parsed, attribute, 1u32))
+        var representation: Span? = none
+        for token_index in arguments.tokens.begin + 1u32..arguments.tokens.end - 1u32 {
+            let token = parsed.tokens[token_index as usize]
+            if token.kind.is(Kind.Space) || token.kind.is(Kind.Comment) || token.kind.is(Kind.Newline) { continue }
+            if representation.is_present() { throw unsupported(token.span) }
+            representation = present(token.span)
+        }
+        let present(span) = representation else {
+            throw CheckError(CheckPhase.Attribute, attribute.span, "layout requires comma-separated representations")
+        }
+        if read bytes[span.begin as usize..span.end as usize] != b"C" { throw unsupported(span) }
+        c_layout = true
+    }
+    c_layout
+}
+
+fn product(read bytes: [u8], read parsed: Parsed, declaration: ActiveItem): Product throws CheckError {
+    let item = node(parsed, declaration.id)
+    let c_layout = try c_product_layout(bytes, parsed, item, declaration.offset)
+    var offset = declaration.offset
+    let first = node(parsed, child(parsed, item, offset))
+    let exported = first.kind.is(NodeKind.Visibility)
+    if exported {
+        if read bytes[first.span.begin as usize..first.span.end as usize] != b"pub" { throw unsupported(first.span) }
+        offset += 1u32
+    }
+    let modifier = node(parsed, child(parsed, item, offset))
+    let copyable = modifier.kind.is(NodeKind.Modifier) &&
+        read bytes[modifier.span.begin as usize..modifier.span.end as usize] == b"copy"
+    if copyable { offset += 1u32 }
+    let identifier = node(parsed, child(parsed, item, offset))
+    if !identifier.kind.is(NodeKind.Name) || item.children.end - item.children.begin != offset + 2u32 {
+        throw unsupported(item.span)
+    }
+    let members = node(parsed, child(parsed, item, offset + 1u32))
+    if !members.kind.is(NodeKind.Members) { throw unsupported(members.span) }
+    var names = Set<List<u8>>()
+    var fields = List<ProductField>()
+    var layout = ProductLayout.new()
+    for index in members.children.begin..members.children.end {
+        let field = node(parsed, parsed.children[index as usize])
+        if !field.kind.is(NodeKind.FieldDeclaration) { throw unsupported(field.span) }
+        let first = node(parsed, child(parsed, field, 0u32))
+        let exported = first.kind.is(NodeKind.Visibility)
+        if exported && read bytes[first.span.begin as usize..first.span.end as usize] != b"pub" { throw unsupported(first.span) }
+        let name_index = if exported { 1u32 } else { 0u32 }
+        let identifier = node(parsed, child(parsed, field, name_index))
+        if !identifier.kind.is(NodeKind.Name) || field.children.end - field.children.begin != name_index + 2u32 {
+            throw unsupported(field.span)
+        }
+        let spelling = try name(bytes, parsed, identifier)
+        if !names.insert(spelling.as_slice().to_vec()) {
+            throw CheckError(CheckPhase.Name, field.span, "duplicate field")
+        }
+        let field_type = try product_field_type(bytes, parsed, node(parsed, child(parsed, field, name_index + 1u32)))
+        let present(field_offset) = layout.append(field_type) else {
+            throw CheckError(CheckPhase.Type, field.span, "product size exceeds target address space")
+        }
+        fields.push(ProductField(take spelling, field_type, field_offset, exported))
+    }
+    Product(declaration.id, try name(bytes, parsed, identifier), take fields, layout.finish(), c_layout, copyable, exported)
 }
 
 fn signature(read bytes: [u8], read parsed: Parsed, declaration: ActiveItem): (List<u8>, Function, Map<List<u8>, usize>) throws CheckError {
@@ -1034,6 +1143,8 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>,
     let bytes = source.bytes.as_slice()
     let parsed = read source.syntax
     var functions = List<Function>()
+    var products = List<Product>()
+    var product_names = Set<List<u8>>()
     var names = Map<List<u8>, usize>()
     var parameters = List<Map<List<u8>, usize>>()
     var imports = List<ImportItem>()
@@ -1069,6 +1180,14 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>,
             imports.push(ImportItem(declaration.id, offset, exported))
             continue
         }
+        if item.kind.is(NodeKind.Product) {
+            let checked = try product(bytes, parsed, declaration)
+            if !product_names.insert(checked.name.as_slice().to_vec()) {
+                throw CheckError(CheckPhase.Name, item.span, "duplicate type")
+            }
+            products.push(take checked)
+            continue
+        }
         let (identifier, function, scope) = try signature(bytes, parsed, declaration)
         let position = functions.len()
         if names.insert(take identifier, position).is_present() {
@@ -1077,7 +1196,7 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>,
         functions.push(take function)
         parameters.push(take scope)
     }
-    Declarations(take functions, take names, take parameters, Map<List<u8>, Imported>(), take imports)
+    Declarations(take functions, take products, take names, take parameters, Map<List<u8>, Imported>(), take imports)
 }
 
 fn import_scope(read sources: List<SourceModule>, read declarations: List<Declarations>,
@@ -1344,7 +1463,7 @@ pub fn check_modules(read sources: List<SourceModule>, read mounts: List<Map<Lis
         let (expressions, counts) = bodies.pop().or_panic()
         var functions = take scope.functions
         for index in 0usize..functions.len() { functions[index].local_count = counts[index] }
-        result.push(CheckedModule(take functions, take expressions, if result.is_empty() { entry } else { none }))
+        result.push(CheckedModule(take functions, take scope.products, take expressions, if result.is_empty() { entry } else { none }))
     }
     result
 }
@@ -1359,6 +1478,24 @@ fn check_test_source(read source: [u8]): (Parsed, CheckedModule) throws CheckErr
     var checked = try check_modules(sources, mounts, false)
     let input = sources.pop().or_panic()
     (take input.syntax, checked.pop().or_panic())
+}
+
+@test
+fn c_product_field_layout(): Unit {
+    let (_, checked) = (capture check_test_source(
+        b"@layout( C )\npub copy type Packet { pub tag: u8; payload: ptr<mut u8>; length: u32 }\ntype Empty {}"
+    )).or_panic()
+    let packet = read checked.products[0usize]
+    assert(packet.c_layout && packet.copyable && packet.exported && packet.fields[0usize].exported,
+        "product declaration lost its representation or modifiers")
+    let FieldType.ThinPointer(PointerAccess.Mut, Scalar.U8) = packet.fields[1usize].field_type else {
+        panic("pointer field lost its access or pointee type")
+    }
+    assert(packet.fields[0usize].offset == 0u64 && packet.fields[1usize].offset == 8u64 &&
+        packet.fields[2usize].offset == 16u64 && packet.layout.size == 24u64 && packet.layout.alignment == 8u64,
+        "product layout lost interior or trailing padding")
+    let empty = read checked.products[1usize]
+    assert(empty.layout.size == 0u64 && empty.layout.alignment == 1u64, "empty product has nonempty storage")
 }
 
 fn assert_local(read checked: CheckedModule, id: NodeId, expected: usize, scalar: Scalar): Unit {
