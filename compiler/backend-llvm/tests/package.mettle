@@ -1,0 +1,9 @@
+name: "mettle-backend-llvm-tests"
+version: "0.1.0"
+kind: "executable"
+dependencies {
+    "mettle-backend-llvm" { path: ".." }
+    "mettle-foundation": "../../foundation"
+    "mettle-ir": "../../ir"
+    "mettle-types": "../../types"
+}

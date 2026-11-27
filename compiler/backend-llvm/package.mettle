@@ -1,0 +1,8 @@
+name: "mettle-backend-llvm"
+version: "0.1.0"
+kind: "library"
+dependencies {
+    "mettle-foundation": "../foundation"
+    "mettle-ir": "../ir"
+    "mettle-types": "../types"
+}
