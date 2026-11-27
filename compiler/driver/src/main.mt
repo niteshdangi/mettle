@@ -3,11 +3,12 @@ import std.ffi.os_str_from_text
 import std.io.{ Reader, Writer }
 import alloc.vec.{ List, new }
 import alloc.hash_map.Map
+import alloc.string.from_text
 import core.text.Text
 import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
-import mettle_packages.{ PackageError, PackageGraph, PackagePhase, resolve_locked }
+import mettle_packages.{ PackageError, PackageGraph, PackagePhase, ResolveOptions, resolve_with }
 import mettle_pipeline.{ CheckError, CheckPhase, SourceModule, check_modules, external_modules }
 
 fn phase_name(phase: Phase): read Text from static {
@@ -273,13 +274,13 @@ fn check_graph(read graph: PackageGraph): i32 throws io.Error {
         }
         owner += 1usize
     }
-    match take capture check_modules(sources, mounts, !graph.is_library) {
+    match take capture check_modules(sources, mounts, !graph.packages[0].is_library) {
         failure(error) => { try report_check_error(paths[error.span.source as usize].source.as_path(), error) },
         success(_) => 0
     }
 }
 
-fn check_input(read source: path.Path, read entry: Text, locked: bool, package_options: bool): i32 throws io.Error {
+fn check_input(read source: path.Path, read entry: Text, read options: ResolveOptions, package_options: bool): i32 throws io.Error {
     if !package_input(source) {
         if package_options {
             io.eprint("mettle: error[package]: --entry, --no-default-features, --registry, --locked, --offline and --frozen need a package directory or package.mettle\n")
@@ -287,22 +288,22 @@ fn check_input(read source: path.Path, read entry: Text, locked: bool, package_o
         }
         return try check_source(source)
     }
-    if source.is_dir() { return try check_package(source, entry, locked) }
+    if source.is_dir() { return try check_package(source, entry, options) }
     if let present(parent) = source.parent() {
-        if !parent.as_os_str().is_empty() { return try check_package(parent, entry, locked) }
+        if !parent.as_os_str().is_empty() { return try check_package(parent, entry, options) }
     }
-    try check_package(path.path_from_text("."), entry, locked)
+    try check_package(path.path_from_text("."), entry, options)
 }
 
-fn check_package(read directory: path.Path, read entry: Text, locked: bool): i32 throws io.Error {
-    match take capture resolve_locked(directory, entry, locked) {
+fn check_package(read directory: path.Path, read entry: Text, read options: ResolveOptions): i32 throws io.Error {
+    match take capture resolve_with(directory, entry, options) {
         success(graph) => { try check_graph(graph) },
         failure(error) => { try report_package_error(error) }
     }
 }
 
 fn check_usage(): i32 {
-    io.eprint("usage: mettle-selfhost check INPUT [--entry NAME] [--locked|--offline|--frozen]\n")
+    io.eprint("usage: mettle-selfhost check INPUT [--entry NAME] [--features a,b] [--no-default-features] [--locked|--offline|--frozen]\n")
     2
 }
 
@@ -310,7 +311,7 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
     var position = 2usize
     var input: usize? = none
     var entry: usize? = none
-    var locked = false
+    var options = ResolveOptions()
     var package_options = false
     while position < args.len() {
         let arg = args[position].as_os_str()
@@ -319,8 +320,20 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
             if position == args.len() || entry.is_present() { return check_usage() }
             entry = present(position)
             package_options = true
+        } else if arg.same(os_str_from_text("--features")) {
+            position += 1usize
+            if position == args.len() { return check_usage() }
+            let present(value) = args[position].as_os_str().to_str() else { return check_usage() }
+            if !value.is_empty() && value.as_bytes()[0usize] == b'-' { return check_usage() }
+            for feature in value.split(",") {
+                if !feature.is_empty() { options.features.push(from_text(feature)) }
+            }
+            package_options = true
+        } else if arg.same(os_str_from_text("--no-default-features")) {
+            options.default_features = false
+            package_options = true
         } else if arg.same(os_str_from_text("--locked")) || arg.same(os_str_from_text("--frozen")) {
-            locked = true
+            options.locked = true
             package_options = true
         } else if arg.same(os_str_from_text("--offline")) {
             package_options = true
@@ -336,9 +349,9 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
     if let present(selected) = entry {
         let present(name) = args[selected].as_os_str().to_str() else { return check_usage() }
         if name.is_empty() || name.as_bytes()[0usize] == b'-' { return check_usage() }
-        return try check_input(source, name, locked, package_options)
+        return try check_input(source, name, options, package_options)
     }
-    try check_input(source, "main", locked, package_options)
+    try check_input(source, "main", options, package_options)
 }
 
 fn write_token_text(mut out: Writer, read bytes: [u8], format_piece: bool): Unit throws io.Error {

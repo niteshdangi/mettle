@@ -9,7 +9,7 @@ import std.macros.format
 import std.path.Path
 import super.checksum.hash_tree
 import super.data.{ Data, DataError, Kind, Range }
-import super.graph.{ PackageGraph, resolve_locked }
+import super.graph.{ PackageGraph, ResolveOptions, resolve_locked, resolve_with }
 import super.inputs.{ PackageError, PackagePhase, error_at, io_result, read_data }
 import super.sha256.hex_digit
 
@@ -129,13 +129,15 @@ fn fresh(read graph: PackageGraph): Lock throws PackageError {
     var packages = List<LockedPackage>()
     for package in graph.packages.as_slice() {
         let checksum = if package.source.as_text() == "root" { new() } else { try hash_tree(package.directory.as_path()) }
+        var features = List<String>()
+        for feature in package.features.as_slice() { features.push(from_text(feature.as_text())) }
         var dependencies = List<String>()
         for edge in package.dependencies.as_slice() {
             dependencies.push(from_text(graph.packages[edge.package].identity.as_text()))
         }
         packages.push(LockedPackage(from_text(package.name.as_text()), from_text(package.version.as_text()),
             from_text(package.identity.as_text()), from_text(package.source.as_text()), take checksum,
-            List<String>(), take dependencies, List<String>(), Range(0, 0)))
+            take features, take dependencies, List<String>(), Range(0, 0)))
     }
     {
         var entries = packages.as_mut_slice()
@@ -218,6 +220,18 @@ fn serialize(read lock: Lock): String {
     text
 }
 
+fn describe_list(read items: List<String>): String {
+    var text = from_text("[")
+    var first = true
+    for item in items.as_slice() {
+        if !first { text.push_str(", ") }
+        first = false
+        text.push_str(item.as_text())
+    }
+    text.push(']')
+    text
+}
+
 fn changes(read old: Lock, read current: Lock, read path: Path): PackageError {
     var detail = from_text("lock.mettle needs updating but --locked forbids changing it")
     var span: Range? = none
@@ -248,14 +262,25 @@ fn changes(read old: Lock, read current: Lock, read path: Path): PackageError {
             let after = now.checksum.as_text()
             detail.push_str(format(f"; package '{name}' content changed ({before} -> {after})").as_text())
         }
-        if !then.features.is_empty() { detail.push_str(format(f"; package '{name}' features changed").as_text()) }
-        if then.dependencies.as_slice() != now.dependencies.as_slice() {
-            detail.push_str(format(f"; package '{name}' dependencies changed").as_text())
+        let different_features = then.features.as_slice() != now.features.as_slice()
+        let different_dependencies = then.dependencies.as_slice() != now.dependencies.as_slice()
+        if different_features {
+            let before = describe_list(then.features)
+            let after = describe_list(now.features)
+            detail.push_str(format(f"; package '{name}' features change from {before} to {after}").as_text())
         }
-        if !then.git_selectors.is_empty() { detail.push_str(format(f"; package '{name}' Git selectors changed").as_text()) }
+        if different_dependencies {
+            let before = describe_list(then.dependencies)
+            let after = describe_list(now.dependencies)
+            detail.push_str(format(f"; package '{name}' dependencies change from {before} to {after}").as_text())
+        }
+        if !then.git_selectors.is_empty() {
+            let before = describe_list(then.git_selectors)
+            detail.push_str(format(f"; package '{name}' Git selectors change from {before} to []").as_text())
+        }
         if span.is_none() && (then.name.as_text() != name || then.version.as_text() != version ||
             then.source.as_text() != now.source.as_text() || then.checksum.as_text() != now.checksum.as_text() ||
-            !then.features.is_empty() || then.dependencies.as_slice() != now.dependencies.as_slice() || !then.git_selectors.is_empty()) {
+            different_features || different_dependencies || !then.git_selectors.is_empty()) {
             span = present(then.span)
         }
     }
@@ -343,18 +368,21 @@ fn require_lock_failure(read root: Path, read reason: Text): Unit {
     }
 }
 
+fn fixture_file(read root: Path, read fixture: Path, read relative: Text): Unit throws PackageError {
+    let start = Range(0, 0)
+    let original = fixture.join(relative)
+    let destination = root.join(relative)
+    let parent = destination.parent().or_panic()
+    try io_result(take capture fs.create_dir_all(parent), root, start, PackagePhase.Io)
+    let _ = try io_result(take capture fs.copy(original, destination), root, start, PackagePhase.Io)
+}
+
 fn migration_fixture(read root: Path): Unit throws PackageError {
     let start = Range(0, 0)
     let fixture = std.path.path_from_text("tests/packages/path-dependency")
     let inputs = ["app/package.mettle", "app/src/main.mt", "mathlib/package.mettle", "mathlib/src/main.mt",
         "mathlib/src/twice.mt", "units/package.mettle", "units/src/main.mt"]
-    for relative in inputs {
-        let original = fixture.join(relative)
-        let destination = root.join(relative)
-        let parent = destination.parent().or_panic()
-        try io_result(take capture fs.create_dir_all(parent), root, start, PackagePhase.Io)
-        let _ = try io_result(take capture fs.copy(original, destination), root, start, PackagePhase.Io)
-    }
+    for relative in inputs { try fixture_file(root, fixture, relative) }
     let app = root.join("app")
     let path = app.join("lock.mettle")
     require_lock_failure(app.as_path(), "lock.mettle is missing")
@@ -379,18 +407,80 @@ fn migration_fixture(read root: Path): Unit throws PackageError {
     let _ = try resolve_locked(app.as_path(), "main", true)
 }
 
-@test
-fn path_lock_migration_and_drift(): Unit throws PackageError {
+fn feature_fixture(read root: Path): Unit throws PackageError {
+    let start = Range(0, 0)
+    let fixture = std.path.path_from_text("tests/packages/features")
+    let inputs = ["app/package.mettle", "app/src/main.mt", "widget/package.mettle", "widget/src/main.mt",
+        "extra/package.mettle", "extra/src/main.mt"]
+    for relative in inputs { try fixture_file(root, fixture, relative) }
+    let app = root.join("app")
+    let path = app.join("lock.mettle")
+    let initial = try resolve_locked(app.as_path(), "main", false)
+    assert(initial.packages.len() == 2, "an inactive optional dependency was resolved")
+    assert(initial.packages[0].features[0].as_text() == "default" && initial.packages[1].features.is_empty(),
+        "root defaults or dependency default suppression were lost")
+    let original = try io_result(take capture fs.read_to_string(path), root, start, PackagePhase.Io)
+    var options = ResolveOptions()
+    options.default_features = false
+    options.features.push(from_text("fancy"))
+    options.locked = true
+    match take capture resolve_with(app.as_path(), "main", options) {
+        success(_) => assert(false, "a lock for a different feature context was accepted"),
+        failure(issue) => assert(issue.message.as_text().find("features change from [default] to [fancy]").is_present(),
+            "wrong feature context diagnostic")
+    }
+    let unchanged = try io_result(take capture fs.read_to_string(path), root, start, PackagePhase.Io)
+    assert(unchanged.as_text() == original.as_text(), "locked feature changes replaced the lock")
+    options.locked = false
+    let selected = try resolve_with(app.as_path(), "main", options)
+    assert(selected.packages.len() == 3 && selected.packages[0].features.len() == 1 &&
+        selected.packages[0].features[0].as_text() == "fancy", "root requested/no-default feature context is incorrect")
+    assert(selected.packages[1].features.len() == 1 && selected.packages[1].features[0].as_text() == "fancy" &&
+        selected.packages[2].name.as_text() == "extra", "forwarded feature did not activate the optional dependency")
+    options.locked = true
+    let _ = try resolve_with(app.as_path(), "main", options)
+
+    let bridge = root.join("bridge")
+    let bridge_src = bridge.join("src")
+    try io_result(take capture fs.create_dir_all(bridge_src), root, start, PackagePhase.Io)
+    try io_result(take capture fs.write(bridge_src.join("main.mt"), "pub fn value(): i32 { 0 }\n".as_bytes()), root, start, PackagePhase.Io)
+    try io_result(take capture fs.write(bridge.join("package.mettle"),
+        "name: \"bridge\"\nversion: \"0.1.0\"\nkind: \"library\"\ndependencies { widget { path: \"../widget\", features: [\"fancy\"] } }\n".as_bytes()),
+        root, start, PackagePhase.Io)
+    try io_result(take capture fs.write(app.join("package.mettle"),
+        "name: \"feature-app\"\nversion: \"0.1.0\"\ndependencies { widget { path: \"../widget\", default_features: false }, bridge: \"../bridge\" }\n".as_bytes()),
+        root, start, PackagePhase.Io)
+    let diamond = try resolve_locked(app.as_path(), "main", false)
+    let app_package = read diamond.packages[0]
+    let widget = app_package.dependencies[1].package
+    let via_bridge = read diamond.packages[app_package.dependencies[0].package]
+    assert(via_bridge.dependencies[0].package == widget && diamond.packages.len() == 4, "diamond did not reuse the package instance")
+    let features = read diamond.packages[widget].features
+    assert(features.len() == 3 && features[0].as_text() == "basic" && features[1].as_text() == "default" &&
+        features[2].as_text() == "fancy", "incoming default and explicit features did not unify")
+}
+
+fn with_fixture(read suffix: Text, run: fn(read Path): Unit throws PackageError): Unit throws PackageError {
     let pid = process.id()
-    let name = format(f"mettle-path-lock-{pid}")
+    let name = format(f"mettle-path-lock-{suffix}-{pid}")
     let root = env.temp_dir().join(name.as_text())
     let path = root.as_path()
     let start = Range(0, 0)
     try io_result(take capture fs.create_dir(path), path, start, PackagePhase.Io)
-    let tested = capture migration_fixture(path)
+    let tested = capture run(path)
     try io_result(take capture fs.remove_dir_all(path), path, start, PackagePhase.Io)
     match take tested {
         success(_) => (),
         failure(issue) => { throw issue }
     }
+}
+
+@test
+fn path_lock_migration_and_drift(): Unit throws PackageError {
+    try with_fixture("migration", migration_fixture)
+}
+
+@test
+fn path_feature_lock_context(): Unit throws PackageError {
+    try with_fixture("features", feature_fixture)
 }

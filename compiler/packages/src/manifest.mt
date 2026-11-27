@@ -1,4 +1,4 @@
-import alloc.hash_map.Set
+import alloc.hash_map.{ Map, Set }
 import alloc.string
 import alloc.string.{ String, from_text }
 import alloc.vec.List
@@ -9,7 +9,16 @@ import super.data.{ Data, DataError, Kind, Range }
 import super.version
 
 pub type Target { pub name: String; pub source: String; pub library: bool; pub span: Range }
-pub type Dependency { pub name: String; pub path: String; pub requirements: List<String>; pub span: Range }
+pub type Dependency {
+    pub name: String
+    pub path: String
+    pub requirements: List<String>
+    pub span: Range
+    pub features: List<String>
+    pub default_features: bool
+    pub optional: bool
+}
+pub enum FeatureAction { Local(String), Activate(usize), Forward(usize, String) }
 pub type Manifest {
     pub name: String
     pub version_text: String
@@ -17,6 +26,8 @@ pub type Manifest {
     pub span: Range
     pub targets: List<Target>
     pub dependencies: List<Dependency>
+    pub features: Map<String, List<FeatureAction>>
+    pub implicit_features: Map<String, usize>
 }
 
 fn valid_name(read text: Text): bool {
@@ -155,6 +166,9 @@ extend Data {
             }
             if !aliases.insert(take mount) { throw DataError(node.key_span, format(f"dependency '{name}' collides with another module root")) }
             var requirements = List<String>()
+            var features = List<String>()
+            var optional = false
+            var default_features = true
             let path = if node.kind.is(Kind.String) && (node.text.as_text().starts_with("./") ||
                 node.text.as_text().starts_with("../") || path_from_text(node.text.as_text()).is_absolute()) {
                 from_text(node.text.as_text())
@@ -164,8 +178,18 @@ extend Data {
                     let field = read self.nodes[f]
                     let key = field.key.as_text()
                     if key == "version" { requirements = try self.requirements(f, candidate) }
-                    else if key == "git" || key == "rev" || key == "tag" || key == "branch" || key == "features" ||
-                        key == "default_features" || key == "optional" {
+                    else if key == "features" {
+                        if !field.kind.is(Kind.Array) { throw DataError(field.span, from_text("'features' must be an array of strings")) }
+                        var member = f + 1
+                        while member < field.next {
+                            features.push(try self.string(member, "a feature name"))
+                            member = self.nodes[member].next
+                        }
+                    } else if key == "optional" || key == "default_features" {
+                        if !field.kind.is(Kind.Boolean) { throw DataError(field.span, format(f"'{key}' must be a boolean")) }
+                        let value = field.text.as_text() == "true"
+                        if key == "optional" { optional = value } else { default_features = value }
+                    } else if key == "git" || key == "rev" || key == "tag" || key == "branch" {
                         throw DataError(field.key_span, format(f"native package resolution does not yet support dependency '{key}'"))
                     } else if key != "path" { throw DataError(field.key_span, format(f"unknown key '{key}' in a dependency")) }
                     f = field.next
@@ -182,11 +206,94 @@ extend Data {
             if path.as_text().find_byte(0u8).is_present() {
                 throw DataError(node.span, from_text("dependency path contains a NUL byte"))
             }
-            result.push(Dependency(from_text(name), take path, take requirements, node.key_span))
+            result.push(Dependency(from_text(name), take path, take requirements, node.key_span, take features, default_features, optional))
             i = node.next
         }
         result
     }
+}
+
+fn feature_actions(read data: Data, read dependencies: List<Dependency>): (Map<String, List<FeatureAction>>, Map<String, usize>) throws DataError {
+    let table = data.field(0, "features").or(0usize)
+    var declared = Set<String>()
+    var suppressed = Set<String>()
+    if table != 0 {
+        if !data.nodes[table].kind.is(Kind.Object) {
+            throw DataError(data.nodes[table].span, from_text("[features] must be a table"))
+        }
+        var feature = table + 1
+        while feature < data.nodes[table].next {
+            let node = read data.nodes[feature]
+            let name = node.key.as_text()
+            if !node.kind.is(Kind.Array) {
+                throw DataError(node.span, format(f"feature '{name}' must list its enabled items"))
+            }
+            let _ = declared.insert(from_text(name))
+            var member = feature + 1
+            while member < node.next {
+                let item = read data.nodes[member]
+                if !item.kind.is(Kind.String) { throw DataError(item.span, from_text("a feature item must be a string")) }
+                if let present(name) = item.text.as_text().strip_prefix("dep:") {
+                    let _ = suppressed.insert(from_text(name))
+                }
+                member = item.next
+            }
+            feature = node.next
+        }
+    }
+    var indices = Map<String, usize>()
+    var implicit = Map<String, usize>()
+    var i = 0usize
+    while i < dependencies.len() {
+        let index = i
+        i += 1
+        let dep = read dependencies[index]
+        let name = dep.name.as_text()
+        if dep.optional && !suppressed.contains(name) {
+            let slot = index
+            let _ = implicit.insert(from_text(name), slot)
+        }
+        let _ = indices.insert(from_text(name), index)
+    }
+    var actions = Map<String, List<FeatureAction>>()
+    if table == 0 { return (take actions, take implicit) }
+    var feature = table + 1
+    while feature < data.nodes[table].next {
+        let node = read data.nodes[feature]
+        let name = node.key.as_text()
+        var enables = List<FeatureAction>()
+        var member = feature + 1
+        while member < node.next {
+            let item = read data.nodes[member]
+            let text = item.text.as_text()
+            if let present(target) = text.strip_prefix("dep:") {
+                let present(dep) = indices.get(target) else {
+                    throw DataError(node.key_span, format(f"feature '{name}': '{text}' must name an optional dependency"))
+                }
+                if !dependencies[*dep].optional {
+                    throw DataError(node.key_span, format(f"feature '{name}': '{text}' must name an optional dependency"))
+                }
+                enables.push(FeatureAction.Activate(*dep))
+            } else if let present((target, requested)) = text.split_once("/") {
+                let present(dep) = indices.get(target) else {
+                    throw DataError(node.key_span, format(f"feature '{name}': '{text}' names no dependency"))
+                }
+                enables.push(FeatureAction.Forward(*dep, from_text(requested)))
+            } else {
+                if text == name {
+                    throw DataError(node.key_span, format(f"feature '{name}': a feature cannot enable itself"))
+                }
+                if !declared.contains(text) && !implicit.contains_key(text) {
+                    throw DataError(node.key_span, format(f"feature '{name}': '{text}' is not a feature of this package"))
+                }
+                enables.push(FeatureAction.Local(from_text(text)))
+            }
+            member = item.next
+        }
+        let _ = actions.insert(from_text(name), take enables)
+        feature = node.next
+    }
+    (take actions, take implicit)
 }
 
 pub fn decode(read data: Data, default_entry: bool): Manifest throws DataError {
@@ -196,11 +303,11 @@ pub fn decode(read data: Data, default_entry: bool): Manifest throws DataError {
     while i < root.next {
         let node = read data.nodes[i]
         let key = node.key.as_text()
-        if key == "mettle-version" || key == "features" || key == "build-dependencies" || key == "build" || key == "macros" {
+        if key == "mettle-version" || key == "build-dependencies" || key == "build" || key == "macros" {
             throw DataError(node.key_span, format(f"native package resolution does not yet support '{key}'"))
         }
         if key != "name" && key != "version" && key != "description" && key != "kind" && key != "entry" &&
-            key != "emit" && key != "dependencies" && key != "dev-dependencies" && key != "registry" {
+            key != "emit" && key != "dependencies" && key != "dev-dependencies" && key != "registry" && key != "features" {
             throw DataError(node.key_span, format(f"unknown key '{key}' in package.mettle"))
         }
         i = node.next
@@ -219,5 +326,6 @@ pub fn decode(read data: Data, default_entry: bool): Manifest throws DataError {
     let present(parsed) = version.parse(text) else { throw DataError(data.nodes[index].span, format(f"invalid SemVer version '{text}'")) }
     let targets = try data.targets(default_entry)
     let dependencies = try data.dependencies(package_name, parsed)
-    Manifest(take name, take version_text, take parsed, span, take targets, take dependencies)
+    let (features, implicit) = try feature_actions(data, dependencies)
+    Manifest(take name, take version_text, take parsed, span, take targets, take dependencies, take features, take implicit)
 }

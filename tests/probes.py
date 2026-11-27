@@ -873,6 +873,23 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                     actual = run([tool, "check", str(app)], 1)
                     assert f"error[{phase}]" in actual.stderr and str(origin) in actual.stderr, actual.stderr
             evidence["cases"].append({"name": "package-scalar-check"})
+        if selected("package-feature-options"):
+            import shutil
+
+            fixture = directory / "feature-options"
+            shutil.copytree(ROOT / "packages" / "features", fixture, dirs_exist_ok=True)
+            widget = fixture / "widget"
+            (widget / "src" / "main.mt").write_text("pub fn base(): i32 { extra.value() }\n")
+            options = ["--no-default-features", "--features", "fancy,,basic"]
+            run([executable, "check", str(widget), *options])
+            lock = widget / "lock.mettle"
+            expected_lock = lock.read_bytes()
+            lock.unlink()
+            run([native, "check", str(widget), *options])
+            assert lock.read_bytes() == expected_lock, "feature activation produced a different lock"
+            actual = run([native, "check", str(widget), "--no-default-features", "--locked"], 1)
+            assert "error[lock]" in actual.stderr and lock.read_bytes() == expected_lock, actual.stderr
+            evidence["cases"].append({"name": "package-feature-options"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
