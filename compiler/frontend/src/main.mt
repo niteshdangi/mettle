@@ -308,6 +308,7 @@ fn integer_type(read spelling: [u8]): Scalar? {
     if read spelling == b"i32" { present(Scalar.I32) }
     else if read spelling == b"u8" { present(Scalar.U8) }
     else if read spelling == b"u32" { present(Scalar.U32) }
+    else if read spelling == b"u64" { present(Scalar.U64) }
     else if read spelling == b"usize" { present(Scalar.Usize) }
     else { none }
 }
@@ -358,7 +359,7 @@ fn integer(read bytes: [u8], span: Span): (Scalar?, u128) throws CheckError {
     let suffix = read bytes[position..bytes.len()]
     if let present(scalar) = integer_type(suffix) { return (present(scalar), magnitude) }
     if suffix == b"i8" || suffix == b"i16" || suffix == b"i64" || suffix == b"i128" ||
-        suffix == b"isize" || suffix == b"u16" || suffix == b"u64" || suffix == b"u128" {
+        suffix == b"isize" || suffix == b"u16" || suffix == b"u128" {
         throw unsupported(span)
     }
     throw CheckError(CheckPhase.Lex, span, "malformed integer literal")
@@ -691,16 +692,27 @@ fn binary_rhs<region r>(read context: Context<region r>, mut body: Body, item: S
         }
         none
     } else if spelling == b"+" || spelling == b"-" || spelling == b"*" ||
-              spelling == b"/" || spelling == b"%" {
+              spelling == b"/" || spelling == b"%" || spelling == b"&" ||
+              spelling == b"|" || spelling == b"^" || spelling == b"<<" || spelling == b">>" {
+        let shift = spelling == b"<<" || spelling == b">>"
+        let bitwise = spelling == b"&" || spelling == b"|" || spelling == b"^"
+        let message = if shift { "shift operands must both be integers" }
+            else if bitwise { "bitwise operands must be integers of the same type" }
+            else { "arithmetic operands must be integers of the same type" }
+        if bitwise, let present(left) = lhs, let present(right) = rhs,
+            let present(Scalar.Bool) = body.integers.known(left),
+            let present(Scalar.Bool) = body.integers.known(right) {
+            throw unsupported(operator)
+        }
         if let present(left) = lhs, let present(scalar) = body.integers.known(left), scalar.integer_width() == 0u32 {
-            throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
+            throw CheckError(CheckPhase.Type, operator, message)
         }
         if let present(right) = rhs, let present(scalar) = body.integers.known(right), scalar.integer_width() == 0u32 {
-            throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
+            throw CheckError(CheckPhase.Type, operator, message)
         }
         if let present(left) = lhs, let present(right) = rhs {
-            if !body.integers.unify(left, right) {
-                throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
+            if !shift && !body.integers.unify(left, right) {
+                throw CheckError(CheckPhase.Type, operator, message)
             }
             return lhs
         }
@@ -792,6 +804,7 @@ fn check_bodies(read source: SourceModule, module_index: usize,
                 Scalar.I32 => "integer literal is outside the i32 range",
                 Scalar.U8 => "integer literal is outside the u8 range",
                 Scalar.U32 => "integer literal is outside the u32 range",
+                Scalar.U64 => "integer literal is outside the u64 range",
                 Scalar.Usize => "integer literal is outside the usize range",
                 _ => panic("literal inferred as a non-integer")
             }

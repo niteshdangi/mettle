@@ -6,11 +6,15 @@ pub copy type FunctionId { pub module_index: usize; pub index: usize }
 
 pub copy enum Arithmetic { Add, Subtract, Multiply, Divide, Remainder }
 pub copy enum Comparison { Equal, NotEqual, Less, LessEqual, Greater, GreaterEqual }
+pub copy enum Bitwise { And, Or, Xor }
+pub copy enum Shift { Left, Right }
 
 pub enum Operation {
     Integer(Scalar, u64), Boolean(bool), Unit,
     Parameter(usize),
     Arithmetic(Arithmetic, Scalar, usize, usize),
+    Bitwise(Bitwise, Scalar, usize, usize),
+    Shift(Shift, Scalar, Scalar, usize, usize),
     Compare(Comparison, Scalar, usize, usize),
     Cast(Scalar, Scalar, usize),
     Call(FunctionId, List<usize>)
@@ -66,6 +70,16 @@ fn verify_edge(read function: Function, read values: List<Scalar>, read edge: Ed
     }
 }
 
+fn verify_integer_operands(read values: List<Scalar>, scalar: Scalar, count: Scalar,
+    left: usize, right: usize, span: Span): Scalar throws InvalidIr {
+    if left >= values.len() || right >= values.len() ||
+        scalar.integer_width() == 0u32 || count.integer_width() == 0u32 ||
+        !values[left].is(scalar) || !values[right].is(count) {
+        throw InvalidIr(Violation.Operand, span)
+    }
+    scalar
+}
+
 fn verify_block(read program: Program, read function: Function, read block: Block): Unit throws InvalidIr {
     var values = List<Scalar>()
     for parameter in block.parameters.as_slice() { values.push(parameter) }
@@ -85,13 +99,12 @@ fn verify_block(read program: Program, read function: Function, read block: Bloc
                 if index >= function.parameters.len() { throw InvalidIr(Violation.Parameter, span) }
                 function.parameters[index]
             },
-            Operation.Arithmetic(_, scalar, left, right) => {
-                if left >= values.len() || right >= values.len() ||
-                    scalar.integer_width() == 0u32 || !values[left].is(scalar) || !values[right].is(scalar) {
-                    throw InvalidIr(Violation.Operand, span)
-                }
-                scalar
-            },
+            Operation.Arithmetic(_, scalar, left, right) =>
+                try verify_integer_operands(values, scalar, scalar, left, right, span),
+            Operation.Bitwise(_, scalar, left, right) =>
+                try verify_integer_operands(values, scalar, scalar, left, right, span),
+            Operation.Shift(_, scalar, count, left, right) =>
+                try verify_integer_operands(values, scalar, count, left, right, span),
             Operation.Cast(source, target, operand) => {
                 if operand >= values.len() || !values[operand].is(source) ||
                     source.integer_width() == 0u32 || target.integer_width() == 0u32 {
@@ -231,6 +244,7 @@ fn reject_invalid_integer_representation(): Unit {
     for operation in alloc.vec.from_array([
         Operation.Integer(Scalar.U8, 256),
         Operation.Arithmetic(Arithmetic.Add, Scalar.U32, 0, 0),
+        Operation.Shift(Shift.Left, Scalar.U8, Scalar.U32, 0, 0),
         Operation.Cast(Scalar.I32, Scalar.U32, 0),
         Operation.Cast(Scalar.U8, Scalar.Bool, 0)
     ]) {

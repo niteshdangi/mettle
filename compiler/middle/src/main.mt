@@ -2,7 +2,8 @@ import alloc.vec.{ List, with_capacity }
 import mettle_foundation.Span
 import mettle_frontend.{ Binding, CheckedModule, SourceModule }
 import mettle_frontend as frontend
-import mettle_ir.{ Arithmetic, Block, Comparison, Edge, Function, FunctionId, Instruction, InvalidIr, Module, Operation, Program, Terminator, VerifiedProgram, verify }
+import mettle_ir.{ Arithmetic, Bitwise, Block, Comparison, Edge, Function, FunctionId, Instruction,
+    InvalidIr, Module, Operation, Program, Shift, Terminator, VerifiedProgram, verify }
 import mettle_syntax.{ NodeId, NodeKind, Parsed, SyntaxNode }
 import mettle_types.Scalar
 
@@ -136,6 +137,8 @@ fn binary(read spelling: [u8], left: Value, right: Value, span: Span): Operation
     let a = left.slot
     let b = right.slot
     let scalar = left.scalar
+    if read spelling == b"<<" { return Operation.Shift(Shift.Left, scalar, right.scalar, a, b) }
+    if read spelling == b">>" { return Operation.Shift(Shift.Right, scalar, right.scalar, a, b) }
     if spelling.len() == 2usize && spelling[1usize] == b'=' {
         let comparison = match spelling[0usize] {
             b'=' => Comparison.Equal, b'!' => Comparison.NotEqual,
@@ -147,6 +150,9 @@ fn binary(read spelling: [u8], left: Value, right: Value, span: Span): Operation
     if spelling.len() != 1usize { throw LoweringError.Unsupported(span) }
     if spelling[0usize] == b'<' { return Operation.Compare(Comparison.Less, scalar, a, b) }
     if spelling[0usize] == b'>' { return Operation.Compare(Comparison.Greater, scalar, a, b) }
+    if spelling[0usize] == b'&' { return Operation.Bitwise(Bitwise.And, scalar, a, b) }
+    if spelling[0usize] == b'|' { return Operation.Bitwise(Bitwise.Or, scalar, a, b) }
+    if spelling[0usize] == b'^' { return Operation.Bitwise(Bitwise.Xor, scalar, a, b) }
     let operation = match spelling[0usize] {
         b'+' => Arithmetic.Add, b'-' => Arithmetic.Subtract, b'*' => Arithmetic.Multiply,
         b'/' => Arithmetic.Divide, b'%' => Arithmetic.Remainder,

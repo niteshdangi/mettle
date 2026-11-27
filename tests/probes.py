@@ -1144,6 +1144,34 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                          "--overflow-checks", checks], env=llvm_env)
                     run([str(output)], expected)
             evidence["cases"].append({"name": "build-native-unsigned-checks"})
+        if selected("build-native-unsigned-bits"):
+            path = source("build-native-unsigned-bits",
+                          "fn word(hi: u8, lo: u8): u32 { (hi as u32 << 24) | lo as u32 }\n"
+                          "fn wide(flag: bool, n: u8): u64 {\n"
+                          "    let result = if flag { 1u64 << n } else { 0u64 }\n"
+                          "    result ^ 42\n"
+                          "}\n"
+                          "fn main(): i32 {\n"
+                          "    let bits = word(128, 42)\n"
+                          "    if (bits >> 24u64) == 128, (bits as i32 >> 24u8) as u32 == 4294967168u32,\n"
+                          "        (wide(true, 63) >> 63) == 1, wide(false, 63) as usize == 42 {\n"
+                          "        (bits & 255) as i32\n"
+                          "    } else { 0 }\n"
+                          "}\n")
+            output = directory / "unsigned-bits"
+            for compiler in (executable, native):
+                for profile in ("debug", "release"):
+                    run([compiler, "build", str(path), "-o", str(output), "--profile", profile], env=llvm_env)
+                    run([str(output)], 42)
+            for shift_case, count in (("too-wide", "4294967297u64"), ("negative", "4294967295u32 as i32")):
+                path = source("unsigned-shift-" + shift_case,
+                              f"fn main(): i32 {{ (84u8 >> ({count})) as i32 }}\n")
+                for profile, checks, expected in (("release", "on", "trap"),
+                                                   ("debug", "off", 42 if shift_case == "too-wide" else 0)):
+                    run([native, "build", str(path), "-o", str(output), "--profile", profile,
+                         "--overflow-checks", checks], env=llvm_env)
+                    run([str(output)], expected)
+            evidence["cases"].append({"name": "build-native-unsigned-bits"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
@@ -1156,6 +1184,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-usize-suffix-overflow", "fn main(): i32 { 18446744073709551616usize as i32 }", "type"),
             ("check-scalar-cast-literal-default", "fn main(): i32 { (4294967295 as u32) as i32 }", "type"),
             ("check-scalar-unsigned-mixed", "fn main(): i32 { (1u8 + 2u32) as i32 }", "type"),
+            ("check-scalar-unsigned-bitwise-mixed", "fn main(): i32 { (1u64 ^ 2usize) as i32 }", "type"),
+            ("check-scalar-unsigned-shift-count", "fn main(): i32 { (1u32 << false) as i32 }", "type"),
             ("check-scalar-parameter", "fn main(): i32 { double(21) - 42 }\nfn double(value: i32): i32 { value * 2 }", None),
             ("check-scalar-argument-type", "fn main(): i32 { double(true) }\nfn double(value: i32): i32 { value * 2 }", "type"),
             ("check-scalar-conditional", "fn main(): i32 { if 1 < 2, false != true && true { 0 } else if true { 1 } else { 2 } }", None),
