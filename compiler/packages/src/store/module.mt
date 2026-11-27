@@ -15,10 +15,63 @@ pub enum BlobError {
     Cleanup(io.Error, io.Error)
 }
 
+pub type ReaderLease { root: PathBuf; lock_file: fs.File }
+pub type MaintenanceLease { root: PathBuf; lock_file: fs.File }
+
 fn io_result<T>(take result: Outcome<T, io.Error>): T throws BlobError {
     match take result {
         success(value) => value,
         failure(error) => throw BlobError.Io(error)
+    }
+}
+
+fn open_lease_file(read root: Path): fs.File throws io.Error {
+    var options = fs.open_options()
+    options.set_read(true)
+    options.set_write(true)
+    options.set_create(true)
+    options.set_mode(384u32)
+    let file = try options.open(root.join("native-store.lock"))
+    if !(try file.metadata()).is_file() { throw io.from_kind(ErrorKind.InvalidData) }
+    file
+}
+
+pub fn acquire_reader(read root: Path): ReaderLease throws BlobError {
+    try io_result(capture fs.create_dir_all(root))
+    let canonical = try io_result(capture fs.canonicalize(root))
+    let file = try io_result(capture open_lease_file(canonical.as_path()))
+    try io_result(capture file.lock_shared())
+    ReaderLease(canonical, file)
+}
+
+pub fn try_acquire_maintenance(read root: Path): MaintenanceLease? throws BlobError {
+    try io_result(capture fs.create_dir_all(root))
+    let canonical = try io_result(capture fs.canonicalize(root))
+    let file = try io_result(capture open_lease_file(canonical.as_path()))
+    match take capture file.try_lock() {
+        success(_) => present(MaintenanceLease(canonical, file)),
+        failure(fs.TryLockError.WouldBlock) => none,
+        failure(fs.TryLockError.Error(error)) => throw BlobError.Io(error)
+    }
+}
+
+extend ReaderLease {
+    pub fn read_blob(read digest: Text, maximum_bytes: usize): List<u8>? throws BlobError {
+        try read_leased(self.root.as_path(), digest, maximum_bytes)
+    }
+}
+
+extend MaintenanceLease {
+    pub fn remove_blob(read digest: Text): bool throws BlobError {
+        if !valid_digest(digest) { throw BlobError.InvalidDigest }
+        let path = blob_directory(self.root.as_path(), digest).join(digest)
+        match take capture fs.remove_file(path) {
+            success(_) => true,
+            failure(error) => {
+                if error.kind().is(ErrorKind.NotFound) { return false }
+                throw BlobError.Io(error)
+            }
+        }
     }
 }
 
@@ -42,6 +95,11 @@ fn valid_digest(read digest: Text): bool {
 }
 
 pub fn read_blob(read root: Path, read digest: Text, maximum_bytes: usize): List<u8>? throws BlobError {
+    let lease = try acquire_reader(root)
+    try lease.read_blob(digest, maximum_bytes)
+}
+
+fn read_leased(read root: Path, read digest: Text, maximum_bytes: usize): List<u8>? throws BlobError {
     if !valid_digest(digest) { throw BlobError.InvalidDigest }
     let path = blob_directory(root, digest).join(digest)
     match take capture fs.symlink_metadata(path) {
@@ -86,7 +144,8 @@ fn publish(read temporary: Path, read destination: Path, take file: fs.File, rea
 
 pub fn write_blob(read root: Path, read bytes: [u8]): String throws BlobError {
     let digest = blob_digest(bytes)
-    let directory = blob_directory(root, digest.as_text())
+    let lease = try acquire_reader(root)
+    let directory = blob_directory(lease.root.as_path(), digest.as_text())
     let destination = directory.join(digest.as_text())
     try io_result(capture fs.create_dir_all(directory))
     let pid = process.id()
@@ -171,6 +230,39 @@ fn blob_publication_failure(): Unit throws BlobError {
     assert(untouched.as_slice() == [17u8], "writer touched another staging file")
     let leaked = try io_result(capture fs.try_exists(directory.join(format(f".{digest}.{pid}.1.tmp"))))
     assert(!leaked, "failed publication left its staging file")
+    {
+        let maintenance = try try_acquire_maintenance(root)
+        assert(!maintenance.is_none(), "failed publication retained its lease")
+    }
+    try io_result(capture fs.remove_dir_all(root))
+}
+
+@test
+fn lease_lifecycle(): Unit throws BlobError {
+    let pid = process.id()
+    let root = std.env.temp_dir().join(format(f"mettle-blob-leases-{pid}"))
+    try io_result(capture fs.create_dir(root))
+    let digest = try write_blob(root, [42u8])
+    let first = try acquire_reader(root)
+    {
+        let second = try acquire_reader(root)
+        assert((try try_acquire_maintenance(root)).is_none(), "maintenance acquired with two readers")
+        let contents = try second.read_blob(digest.as_text(), 1usize)
+        assert(contents.or_panic().as_slice() == [42u8], "leased blob changed")
+    }
+    assert((try try_acquire_maintenance(root)).is_none(), "maintenance acquired with one reader")
+    core.mem.drop(take first)
+    match take capture read_blob(root, digest.as_text(), 0usize) {
+        failure(BlobError.TooLarge) => (),
+        _ => assert(false, "expected a read failure while holding a lease")
+    }
+    {
+        let maintenance = (try try_acquire_maintenance(root)).or_panic()
+        assert((try try_acquire_maintenance(root)).is_none(), "two maintenance leases overlapped")
+        assert(try maintenance.remove_blob(digest.as_text()), "maintenance did not remove blob")
+        assert(!(try maintenance.remove_blob(digest.as_text())), "missing blob reported as removed")
+    }
+    assert((try read_blob(root, digest.as_text(), 1usize)).is_none(), "reader did not resume after maintenance")
     try io_result(capture fs.remove_dir_all(root))
 }
 
