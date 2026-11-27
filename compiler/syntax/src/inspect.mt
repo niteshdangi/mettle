@@ -1,6 +1,6 @@
 import alloc.hash_map.{ Map, new as map_new }
 import alloc.vec.{ List, new }
-import mettle_foundation.Span
+import mettle_foundation.{ Phase, Span }
 import super.parser.parse
 import super.token.{ Kind, reference_kind }
 import super.tree.{ NodeKind, Parsed, SyntaxNode }
@@ -236,7 +236,9 @@ extend<region r> Projector<region r> {
         while index > first {
             index -= 1
             let child = self.child(node, index)
-            if node.kind.is(NodeKind.Conditions) {
+            if node.kind.is(NodeKind.Block) && child.kind.is(NodeKind.Error) {
+                continue
+            } else if node.kind.is(NodeKind.Conditions) {
                 work.push(ExpressionWork.ConditionClause(child))
             } else if child.kind.is(NodeKind.Arguments) {
                 var argument_index = count(child)
@@ -348,7 +350,7 @@ extend<region r> Projector<region r> {
                     let last = self.child(item, count(item) - 1usize)
                     if last.kind.is(NodeKind.ModuleBody) { try self.items(last) }
                 },
-                NodeKind.Import | NodeKind.Constant | NodeKind.Static => {},
+                NodeKind.Error | NodeKind.Import | NodeKind.Constant | NodeKind.Static => {},
                 NodeKind.Function => {
                     var index = 0usize
                     var asynchronous = false
@@ -377,9 +379,14 @@ extend<region r> Projector<region r> {
                     self.result.aliases.push(InspectionAlias(take name, take target))
                 },
                 NodeKind.Product | NodeKind.Union => {
+                    let members = self.child(item, count(item) - 1usize)
+                    var malformed = false
+                    for child in 0usize..count(members) {
+                        if self.child(members, child).kind.is(NodeKind.Error) { malformed = true; break }
+                    }
+                    if malformed { continue }
                     let name = self.item_name(item)
                     var copy_requested = false
-                    let members = self.child(item, count(item) - 1usize)
                     for child in 0usize..count(item) - 1usize {
                         let prefix = self.child(item, child)
                         if prefix.kind.is(NodeKind.Modifier) && self.spelling(self.operation(prefix)) == "copy".as_bytes() { copy_requested = true }
@@ -430,9 +437,26 @@ fn is_type(kind: NodeKind): bool {
 
 pub fn project(read tree: Parsed, read bytes: [u8]): Inspection throws InspectionError {
     if tree.diagnostics.error_count != 0usize { throw InspectionError.InvalidTree }
-    let present(root_id) = tree.root else { throw InspectionError.InvalidTree }
-    let root = tree.nodes[root_id.index as usize]
-    if !root.kind.is(NodeKind.Module) || root.span.end as usize != bytes.len() { throw InspectionError.InvalidTree }
+    try project_recovered(tree, bytes)
+}
+
+pub fn project_recovered(read tree: Parsed, read bytes: [u8]): Inspection throws InspectionError {
+    let root = match tree.root {
+        present(id) => {
+            let syntax_root = tree.nodes[id.index as usize]
+            if !syntax_root.kind.is(NodeKind.Module) || syntax_root.span.end as usize != bytes.len() { throw InspectionError.InvalidTree }
+            present(syntax_root)
+        },
+        none => {
+            if !tree.nodes.is_empty() { throw InspectionError.InvalidTree }
+            var lexical_failure = false
+            for issue in tree.diagnostics.issues.as_slice() {
+                if (issue.phase as u32) == (Phase.Lex as u32) { lexical_failure = true; break }
+            }
+            if !lexical_failure { throw InspectionError.InvalidTree }
+            none
+        }
+    }
     var await_ids = map_new<u32, u32>()
     for node in tree.nodes.as_slice() {
         if node.kind.is(NodeKind.Await) {
@@ -442,11 +466,12 @@ pub fn project(read tree: Parsed, read bytes: [u8]): Inspection throws Inspectio
     }
     var projector = Projector(read bytes, read tree, Inspection(new<InspectionToken>(), new<InspectionNode>(), new<InspectionFunction>(), new<InspectionAlias>(), new<InspectionProduct>()), take await_ids)
     for token in tree.tokens.as_slice() {
+        if token.span.begin > token.span.end || token.span.end as usize > bytes.len() { throw InspectionError.InvalidTree }
         if token.kind.is(Kind.FormatPiece) { throw InspectionError.Unsupported(NodeKind.Interpolation, token.span) }
         let text = projector.spelling(token.span)
         projector.result.tokens.push(InspectionToken(reference_kind(token.kind), take text, token.span))
     }
-    try projector.items(root)
+    if let present(syntax_root) = root { try projector.items(syntax_root) }
     projector.result
 }
 
@@ -577,6 +602,49 @@ fn bootstrap_inspection_closures(): Unit {
         wrapper.span.begin == 84u32 && wrapper.span.end == 97u32 &&
         callee.text == "core::future::throwing_coroutine".as_bytes() &&
         callee.span.begin == 59u32 && callee.span.end == 64u32, "async closure lost its outer closure or throwing body wrapper")
+}
+
+@test
+fn bootstrap_inspection_recovered_statements(): Unit {
+    let bytes = "fn main() {\nlet a =\n;\nlet b =\n;\n42\n}\nfn after() { 7 }".as_bytes()
+    let tree = parse(bytes, 0u32)
+    assert(tree.diagnostics.error_count == 2usize, "parser did not recover from both malformed statements")
+    let success(view) = capture project_recovered(read tree, bytes) else { core.panic.panic("recovered statements prevented inspection") }
+    let main_body = read view.nodes[view.functions[0usize].body]
+    let tail = read view.nodes[main_body.children[0usize]]
+    assert(main_body.children.len() == 1usize && tail.text == "42".as_bytes() &&
+        tail.span.begin == 32u32 && tail.span.end == 34u32 && !tail.semicolon,
+        "failed statements entered the projection or changed the surviving statement")
+    assert(view.functions.len() == 2usize && view.functions[1usize].name == "after".as_bytes(),
+        "statement recovery lost a later function")
+}
+
+@test
+fn bootstrap_inspection_recovered_declarations(): Unit {
+    let bytes = "type Broken { one: i32; two: }\nmodule broken { import dep as; import missing fn inside() { 42 } }\ncopy type Good { x: i32 }\nfn after() { 7 }".as_bytes()
+    let tree = parse(bytes, 0u32)
+    assert(tree.diagnostics.error_count == 3usize, "parser did not recover from the malformed field and imports")
+    let success(view) = capture project_recovered(read tree, bytes) else { core.panic.panic("recovered declarations prevented inspection") }
+    assert(view.products.len() == 1usize && view.products[0usize].name == "Good".as_bytes() &&
+        view.products[0usize].fields[0usize].name == "x".as_bytes(), "inspection published an incomplete product or lost its successor")
+    assert(view.functions.len() == 2usize && view.functions[0usize].name == "inside".as_bytes() &&
+        view.functions[1usize].name == "after".as_bytes(), "declaration recovery lost a nested or later function")
+}
+
+@test
+fn bootstrap_inspection_lexical_failure_tokens(): Unit {
+    let bytes = "fn f() { ~ }\nfn after() {}".as_bytes()
+    let tree = parse(bytes, 0u32)
+    assert(tree.root.is_none() && tree.diagnostics.error_count != 0usize, "invalid token did not prevent declaration parsing")
+    let success(view) = capture project_recovered(read tree, bytes) else { core.panic.panic("invalid token prevented token inspection") }
+    assert(view.functions.is_empty() && view.nodes.is_empty() && view.tokens.len() == tree.tokens.len() &&
+        view.tokens[8usize].kind == 2u32 && view.tokens[8usize].text == "~".as_bytes(), "lexical failure did not preserve the token stream only")
+    let invalid_utf8 = [b'a', 255u8]
+    let invalid = parse(invalid_utf8, 0u32)
+    let success(truncated) = capture project_recovered(read invalid, invalid_utf8) else { core.panic.panic("invalid UTF-8 prevented EOF inspection") }
+    assert(truncated.tokens.len() == 1usize && truncated.tokens[0usize].kind == 6u32 &&
+        truncated.tokens[0usize].span.begin == 1u32 && truncated.tokens[0usize].span.end == 1u32 &&
+        truncated.tokens[0usize].text.is_empty(), "invalid UTF-8 EOF token lost the invalid byte offset")
 }
 
 @test
