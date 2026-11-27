@@ -1490,7 +1490,8 @@ extend<region r> Parser<region r> {
     }
     mut fn function(start: Anchor, mark: usize, context: BodyContext): Unit throws Failure {
         if self.at("unsafe") { try self.declaration_modifier() }
-        if self.at("const") { try self.declaration_modifier() }
+        let constant = self.at("const")
+        if constant { try self.declaration_modifier() }
         let asynchronous = self.at("async")
         if asynchronous {
             let modifier = self.anchor()
@@ -1500,8 +1501,10 @@ extend<region r> Parser<region r> {
             if self.consume("(") { try self.expect("heap", "expected 'heap'"); try self.expect(")", "expected ')'") }
             try self.finish(NodeKind.Modifier, modifier, modifier_mark, present(operation))
         }
-        if self.at("mut") || self.at("take") || self.at("static") { try self.declaration_modifier() }
+        let receiver_mode = self.at("mut") || self.at("take") || self.at("static")
+        if receiver_mode { try self.declaration_modifier() }
         if self.at("unsafe") { try self.declaration_modifier() }
+        if receiver_mode && !constant && self.at("const") { try self.declaration_modifier() }
         let constructor = self.at("init")
         if constructor && !context.is(BodyContext.Product) && !context.is(BodyContext.Extension) { try self.fail("constructors belong to product or extension bodies", Phase.Parse) }
         if constructor { try self.leaf(NodeKind.Name) } else { try self.expect("fn", "expected a declaration"); try self.name(false) }
@@ -1872,6 +1875,7 @@ extend<region r> Parser<region r> {
     mut fn extension(start: Anchor, mark: usize): Unit throws Failure {
         try self.expect("extend", "expected 'extend'")
         if self.at("<") { try self.generic_parameters() }
+        self.newlines()
         try self.type_name(false)
         let negative = self.consume("not")
         if negative { try self.type_name(false) }
@@ -1971,7 +1975,7 @@ extend<region r> Parser<region r> {
         } else if self.at("const") && !self.followed_by("fn") {
             if context.is(BodyContext.Interface) || context.is(BodyContext.Extension) || context.is(BodyContext.Product) { try self.associated(start, mark) }
             else { try self.value_declaration(start, mark, context.is(BodyContext.Foreign)) }
-        } else if self.at("static") && !self.followed_by("fn") && !self.followed_by("unsafe") { try self.value_declaration(start, mark, context.is(BodyContext.Foreign)) }
+        } else if self.at("static") && !self.followed_by("fn") && !self.followed_by("unsafe") && !self.followed_by("const") { try self.value_declaration(start, mark, context.is(BodyContext.Foreign)) }
         else if self.at("fn") || self.at("unsafe") || self.at("const") || self.at("async") || self.at("mut") || self.at("take") || self.at("static") || self.at("init") { try self.function(start, mark, context) }
         else if context.is(BodyContext.Product) {
             try self.name(false)

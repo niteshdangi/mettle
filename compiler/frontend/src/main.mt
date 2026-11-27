@@ -81,14 +81,19 @@ copy type Imported {
     function: FunctionId?
     namespace_origin: u32
     function_origin: u32
+    namespace_exported: bool
+    function_exported: bool
+    namespace_public_target: bool
 }
+
+copy type ImportItem { id: NodeId; offset: u32; exported: bool }
 
 type Declarations {
     functions: List<Function>
     names: Map<List<u8>, usize>
     parameters: List<Map<List<u8>, usize>>
     imports: Map<List<u8>, Imported>
-    import_items: List<ActiveItem>
+    import_items: List<ImportItem>
 }
 
 copy enum ValueType { Concrete(Scalar), Integer(usize) }
@@ -316,7 +321,9 @@ pub fn library_references(read source: SourceModule): List<(LibraryRoot, Span)> 
     for declaration in source.items.as_slice() {
         let item = node(parsed, declaration.id)
         if item.kind.is(NodeKind.Import) {
-            let path = node(parsed, child(parsed, item, declaration.offset))
+            let first = node(parsed, child(parsed, item, declaration.offset))
+            let offset = declaration.offset + if first.kind.is(NodeKind.Visibility) { 1u32 } else { 0u32 }
+            let path = node(parsed, child(parsed, item, offset))
             if !path.kind.is(NodeKind.ImportPath) { continue }
             let head = node(parsed, child(parsed, path, 0))
             let token = parsed.tokens[head.tokens.begin as usize]
@@ -503,7 +510,7 @@ fn parent_scope(read sources: List<SourceModule>, scope: usize, span: Span): usi
 fn imported_module(read declarations: List<Declarations>, scope: usize, read spelling: List<u8>): ModuleLink? {
     let present(imported) = declarations[scope].imports.get(spelling) else { return none }
     let present(index) = imported.namespace else { return none }
-    present(ModuleLink(index, false))
+    present(ModuleLink(index, imported.namespace_exported))
 }
 
 fn mounted_module(read source: SourceModule, read mounts: Map<List<u8>, usize>,
@@ -570,7 +577,7 @@ fn function_target<region r>(read context: Context<region r>, scope: usize,
     }
     if let present(imported) = declarations.imports.get(spelling) {
         if let present(target) = imported.function {
-            if !inside_module(context.sources, from, scope) {
+            if !imported.function_exported && !inside_module(context.sources, from, scope) {
                 throw CheckError(CheckPhase.Name, span, "import is private")
             }
             return FunctionId(target.module_index, target.index)
@@ -1029,7 +1036,7 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>,
     var functions = List<Function>()
     var names = Map<List<u8>, usize>()
     var parameters = List<Map<List<u8>, usize>>()
-    var imports = List<ActiveItem>()
+    var imports = List<ImportItem>()
     for declaration in source.items.as_slice() {
         let item = node(parsed, declaration.id)
         if item.kind.is(NodeKind.ModuleDeclaration) {
@@ -1038,10 +1045,16 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>,
             continue
         }
         if item.kind.is(NodeKind.Import) {
-            let path = node(parsed, child(parsed, item, declaration.offset))
+            let first = node(parsed, child(parsed, item, declaration.offset))
+            let exported = first.kind.is(NodeKind.Visibility)
+            if exported && read bytes[first.span.begin as usize..first.span.end as usize] != b"pub" {
+                throw unsupported(item.span)
+            }
+            let offset = declaration.offset + if exported { 1u32 } else { 0u32 }
+            let path = node(parsed, child(parsed, item, offset))
             if !path.kind.is(NodeKind.ImportPath) { throw unsupported(item.span) }
-            if item.children.end - item.children.begin > declaration.offset + 1u32 {
-                let selection = node(parsed, child(parsed, item, declaration.offset + 1u32))
+            if item.children.end - item.children.begin > offset + 1u32 {
+                let selection = node(parsed, child(parsed, item, offset + 1u32))
                 if !selection.kind.is(NodeKind.ImportAlias) &&
                     (!selection.kind.is(NodeKind.ImportGroup) || selection.children.begin == selection.children.end) {
                     throw unsupported(item.span)
@@ -1053,7 +1066,7 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>,
                 mounted_module(source, mounts, libraries, spelling).is_none() {
                 throw CheckError(CheckPhase.Feature, head.span, "native semantic checking has not mounted this standard library namespace")
             }
-            imports.push(declaration)
+            imports.push(ImportItem(declaration.id, offset, exported))
             continue
         }
         let (identifier, function, scope) = try signature(bytes, parsed, declaration)
@@ -1067,9 +1080,10 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>,
     Declarations(take functions, take names, take parameters, Map<List<u8>, Imported>(), take imports)
 }
 
-fn import_scope(read sources: List<SourceModule>, read mounts: Map<List<u8>, usize>,
+fn import_scope(read sources: List<SourceModule>, read declarations: List<Declarations>,
+    read mounts: Map<List<u8>, usize>,
     read libraries: Map<List<u8>, usize>, from: usize,
-    path: SyntaxNode, end: u32): usize throws CheckError {
+    path: SyntaxNode, end: u32): usize? throws CheckError {
     let source = read sources[from]
     let parsed = read source.syntax
     let bytes = source.bytes.as_slice()
@@ -1092,90 +1106,138 @@ fn import_scope(read sources: List<SourceModule>, read mounts: Map<List<u8>, usi
             continue
         }
         relative = false
-        scope = try module_step(sources, scope, from, declared_module(sources, scope, spelling), path.span)
+        let link = if let present(link) = declared_module(sources, scope, spelling) {
+            present(link)
+        } else { imported_module(declarations, scope, spelling) }
+        let present(link) = link else { return none }
+        if !visible_module(sources, scope, from, link) { return none }
+        scope = link.index
     }
-    scope
+    present(scope)
 }
 
-fn import_binding(read sources: List<SourceModule>, read declarations: List<Declarations>,
+fn import_binding(read sources: List<SourceModule>, mut declarations: List<Declarations>,
     read mounts: Map<List<u8>, usize>, read libraries: Map<List<u8>, usize>, from: usize, scope: usize, bare: bool,
-    mut imports: Map<List<u8>, Imported>, selector: SyntaxNode, renamed: SyntaxNode?,
-    origin: u32, span: Span): Unit throws CheckError {
+    selector: SyntaxNode, renamed: SyntaxNode?, exported: bool,
+    origin: u32, span: Span): (bool, bool) throws CheckError {
     let source = read sources[from]
     let spelling = try name(source.bytes.as_slice(), source.syntax, selector)
     var namespace: usize? = none
     var function: FunctionId? = none
+    var namespace_public = true
+    var function_public = true
+    let accessible = inside_module(sources, from, scope)
     if bare {
         namespace = mounted_module(source, mounts, libraries, spelling)
     }
     if namespace.is_none() {
         if let present(link) = declared_module(sources, scope, spelling) {
-            if visible_module(sources, scope, from, link) { namespace = present(link.index) }
+            if link.exported || accessible {
+                namespace = present(link.index)
+                namespace_public = link.exported
+            }
+        } else if let present(imported) = declarations[scope].imports.get(spelling) {
+            if imported.namespace_exported || accessible {
+                namespace = imported.namespace
+                namespace_public = imported.namespace_public_target
+            }
         }
     }
-    let accessible = inside_module(sources, from, scope)
     if let present(index) = declarations[scope].names.get(spelling) {
-        if accessible || declarations[scope].functions[*index].exported {
+        function_public = declarations[scope].functions[*index].exported
+        if accessible || function_public {
             function = present(FunctionId(scope, *index))
+        }
+    } else if let present(imported) = declarations[scope].imports.get(spelling) {
+        let imported = *imported
+        if accessible || imported.function_exported {
+            if let present(target) = imported.function {
+                function = present(FunctionId(target.module_index, target.index))
+                function_public = declarations[target.module_index].functions[target.index].exported
+            }
         }
     }
     if namespace.is_none() && function.is_none() {
-        throw CheckError(CheckPhase.Name, span, "unresolved or inaccessible import")
+        return (false, false)
+    }
+    if exported && ((namespace.is_present() && !namespace_public) || (function.is_present() && !function_public)) {
+        throw CheckError(CheckPhase.Name, span, "cannot reexport private or restricted item")
     }
     let bound = if let present(renaming) = renamed {
         try name(source.bytes.as_slice(), source.syntax, node(source.syntax, child(source.syntax, renaming, 0)))
     } else { take spelling }
-    var binding = if let present(previous) = imports.get(bound) { *previous } else { Imported(none, none, 0u32, 0u32) }
+    var binding = if let present(previous) = declarations[from].imports.get(bound) {
+        *previous
+    } else { Imported(none, none, 0u32, 0u32, false, false, false) }
+    var changed = false
     if let present(target) = namespace {
         let conflict = if let present(prior) = binding.namespace {
             binding.namespace_origin != origin || prior != target
         } else { source.modules.contains_key(bound) }
         if conflict { throw CheckError(CheckPhase.Name, span, "duplicate explicit import binding") }
+        changed = binding.namespace.is_none()
         binding.namespace = present(target)
         binding.namespace_origin = origin
+        binding.namespace_exported = exported
+        binding.namespace_public_target = namespace_public
     }
     if let present(target) = function {
         let conflict = if let present(prior) = binding.function {
             binding.function_origin != origin || prior.module_index != target.module_index || prior.index != target.index
         } else { declarations[from].names.contains_key(bound) }
         if conflict { throw CheckError(CheckPhase.Name, span, "duplicate explicit import binding") }
+        changed = changed || binding.function.is_none()
         binding.function = present(FunctionId(target.module_index, target.index))
         binding.function_origin = origin
+        binding.function_exported = exported
     }
-    let _ = imports.insert(take bound, take binding)
+    if changed { let _ = declarations[from].imports.insert(take bound, take binding) }
+    (true, changed)
 }
 
-fn resolve_imports(read sources: List<SourceModule>, read declarations: List<Declarations>,
-    read mounts: Map<List<u8>, usize>, read libraries: Map<List<u8>, usize>, from: usize): Map<List<u8>, Imported> throws CheckError {
+fn resolve_imports(read sources: List<SourceModule>, mut declarations: List<Declarations>,
+    read mounts: Map<List<u8>, usize>, read libraries: Map<List<u8>, usize>, from: usize): (bool, Span?) throws CheckError {
     let parsed = read sources[from].syntax
-    var imports = Map<List<u8>, Imported>()
-    for declaration in declarations[from].import_items.as_slice() {
+    var changed = false
+    var unresolved: Span? = none
+    for index in 0usize..declarations[from].import_items.len() {
+        let declaration = declarations[from].import_items[index]
         let item = node(parsed, declaration.id)
         let path = node(parsed, child(parsed, item, declaration.offset))
         if item.children.end - item.children.begin > declaration.offset + 1u32 {
             let selection = node(parsed, child(parsed, item, declaration.offset + 1u32))
             if selection.kind.is(NodeKind.ImportGroup) {
-                let scope = try import_scope(sources, mounts, libraries, from, path, path.children.end)
+                let present(scope) = try import_scope(sources, declarations, mounts, libraries, from, path, path.children.end) else {
+                    if unresolved.is_none() { unresolved = present(item.span) }
+                    continue
+                }
                 for index in selection.children.begin..selection.children.end {
                     let entry = node(parsed, parsed.children[index as usize])
                     let renamed = if entry.children.end - entry.children.begin == 2u32 {
                         present(node(parsed, child(parsed, entry, 1)))
                     } else { none }
-                    try import_binding(sources, declarations, mounts, libraries, from, scope, false, mut imports,
-                        node(parsed, child(parsed, entry, 0)), renamed, item.span.begin, entry.span)
+                    let (found, added) = try import_binding(sources, mut declarations, mounts, libraries, from, scope, false,
+                        node(parsed, child(parsed, entry, 0)), renamed, declaration.exported, item.span.begin, entry.span)
+                    changed = changed || added
+                    if !found && unresolved.is_none() { unresolved = present(entry.span) }
                 }
                 continue
             }
         }
         let end = path.children.end - 1u32
-        let scope = try import_scope(sources, mounts, libraries, from, path, end)
+        let present(scope) = try import_scope(sources, declarations, mounts, libraries, from, path, end) else {
+            if unresolved.is_none() { unresolved = present(item.span) }
+            continue
+        }
         let renamed = if item.children.end - item.children.begin > declaration.offset + 1u32 {
             present(node(parsed, child(parsed, item, declaration.offset + 1u32)))
         } else { none }
-        try import_binding(sources, declarations, mounts, libraries, from, scope, end == path.children.begin, mut imports,
-            node(parsed, parsed.children[end as usize]), renamed, item.span.begin, item.span)
+        let (found, added) = try import_binding(sources, mut declarations, mounts, libraries, from, scope, end == path.children.begin,
+            node(parsed, parsed.children[end as usize]), renamed, declaration.exported, item.span.begin, item.span)
+        changed = changed || added
+        if !found && unresolved.is_none() { unresolved = present(item.span) }
     }
-    imports
+    (changed, unresolved)
 }
 
 fn check_bodies(read sources: List<SourceModule>, module_index: usize,
@@ -1243,9 +1305,20 @@ pub fn check_modules(read sources: List<SourceModule>, read mounts: List<Map<Lis
     if sources.is_empty() { throw unsupported(Span(0, 0, 0)) }
     var declarations = List<Declarations>()
     for source in sources.as_slice() { declarations.push(try collect(source, mounts[source.package_index], libraries)) }
-    for index in 0usize..sources.len() {
-        let imports = try resolve_imports(sources, declarations, mounts[sources[index].package_index], libraries, index)
-        declarations[index].imports = take imports
+    while true {
+        var changed = false
+        var unresolved: Span? = none
+        for index in 0usize..sources.len() {
+            let (added, missing) = try resolve_imports(sources, mut declarations, mounts[sources[index].package_index], libraries, index)
+            changed = changed || added
+            if unresolved.is_none() { unresolved = missing }
+        }
+        if !changed {
+            if let present(span) = unresolved {
+                throw CheckError(CheckPhase.Name, span, "unresolved or inaccessible import")
+            }
+            break
+        }
     }
     var entry: usize? = none
     if executable {
