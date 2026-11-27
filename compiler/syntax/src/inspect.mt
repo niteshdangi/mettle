@@ -26,6 +26,12 @@ pub type Inspection {
 }
 pub copy enum InspectionError { InvalidTree, Unsupported(NodeKind, Span) }
 
+enum ExpressionWork {
+    Visit(SyntaxNode),
+    Finish(SyntaxNode, InspectionNode, usize),
+    GenericSpan(SyntaxNode)
+}
+
 type Projector<region r> {
     bytes: read [u8] from r
     tree: read Parsed from r
@@ -68,8 +74,32 @@ extend<region r> Projector<region r> {
             _ => throw InspectionError.Unsupported(node.kind, node.span)
         }
     }
-    mut fn expression(node: SyntaxNode, depth: usize): usize throws InspectionError {
-        if depth > 256usize { throw InspectionError.Unsupported(node.kind, node.span) }
+    mut fn expression(node: SyntaxNode): usize throws InspectionError {
+        var work = new<ExpressionWork>()
+        var completed = new<usize>()
+        work.push(ExpressionWork.Visit(node))
+        loop {
+            let popped = work.pop()
+            let present(step) = take popped else { break }
+            match take step {
+                ExpressionWork.Visit(next) => { try self.schedule_expression(next, completed.len(), mut work) },
+                ExpressionWork.Finish(native, view, mark) => {
+                    var finished = take view
+                    finished.children.extend_from_slice(read completed.as_slice()[mark..completed.len()])
+                    completed.truncate(mark)
+                    let id = self.finish_expression(native, take finished)
+                    completed.push(take id)
+                },
+                ExpressionWork.GenericSpan(generic) => {
+                    let id = completed[completed.len() - 1usize]
+                    self.result.nodes[id].span.end = generic.span.end
+                    self.result.nodes[id].semicolon = generic.semicolon
+                }
+            }
+        }
+        completed[0usize]
+    }
+    fn schedule_expression(node: SyntaxNode, mark: usize, mut work: List<ExpressionWork>): Unit throws InspectionError {
         let kind = match node.kind {
             NodeKind.Integer => 0u32, NodeKind.Boolean => 1u32, NodeKind.Unit => 2u32,
             NodeKind.Name | NodeKind.Projection | NodeKind.TypeProjection => 3u32,
@@ -86,11 +116,9 @@ extend<region r> Projector<region r> {
             NodeKind.Text => 32u32, NodeKind.Floating => 34u32, NodeKind.Cast => 35u32,
             NodeKind.Unsafe => 36u32,
             NodeKind.GenericApply => {
-                let base = self.child(node, 0usize)
-                let id = try self.expression(base, depth)
-                self.result.nodes[id].span.end = node.span.end
-                self.result.nodes[id].semicolon = node.semicolon
-                return id
+                work.push(ExpressionWork.GenericSpan(node))
+                work.push(ExpressionWork.Visit(self.child(node, 0usize)))
+                return
             },
             _ => throw InspectionError.Unsupported(node.kind, node.span)
         }
@@ -156,27 +184,32 @@ extend<region r> Projector<region r> {
             },
             _ => {}
         }
-        for index in first..last {
+        work.push(ExpressionWork.Finish(node, take view, mark))
+        var index = last
+        while index > first {
+            index -= 1
             let child = self.child(node, index)
             if child.kind.is(NodeKind.Arguments) {
-                for argument_index in 0usize..count(child) {
+                var argument_index = count(child)
+                while argument_index != 0usize {
+                    argument_index -= 1
                     let argument = self.child(child, argument_index)
                     let value = if argument.kind.is(NodeKind.NamedArgument) { self.child(argument, 1usize) } else { argument }
-                    let id = try self.expression(value, depth + 1)
-                    view.children.push(take id)
+                    work.push(ExpressionWork.Visit(value))
                 }
             } else if child.kind.is(NodeKind.LetElse) {
-                let id = try self.expression(self.child(child, 0usize), depth + 1)
-                view.children.push(take id)
+                work.push(ExpressionWork.Visit(self.child(child, 0usize)))
             } else {
                 let value = if child.kind.is(NodeKind.Conditions) && count(child) == 1usize {
                     let condition = self.child(child, 0usize)
                     self.child(condition, count(condition) - 1usize)
                 } else { child }
-                let id = try self.expression(value, depth + 1)
-                view.children.push(take id)
+                work.push(ExpressionWork.Visit(value))
             }
         }
+    }
+    mut fn finish_expression(node: SyntaxNode, take view: InspectionNode): usize {
+        var view = take view
         if node.kind.is(NodeKind.Cast) || (node.kind.is(NodeKind.Block) && node.operation.is_present()) {
             let child = view.children[0usize]
             view.span = self.result.nodes[child].span
@@ -211,7 +244,7 @@ extend<region r> Projector<region r> {
                         index += 1
                     }
                     let name = self.name(self.child(item, index))
-                    let body = try self.expression(self.child(item, count(item) - 1usize), 1usize)
+                    let body = try self.expression(self.child(item, count(item) - 1usize))
                     self.result.functions.push(InspectionFunction(take name, new<u8>(), body))
                 },
                 NodeKind.Alias => {
@@ -308,4 +341,29 @@ fn bootstrap_inspection_refuses_incompatible_trees(): Unit {
     let failure(InspectionError.InvalidTree) = capture project(read recovered, broken) else {
         core.panic.panic("recovered syntax was silently projected")
     }
+}
+
+@test
+fn bootstrap_inspection_long_flat_binary_chain(): Unit {
+    var source = new<u8>()
+    source.extend_from_slice("fn f() { 0".as_bytes())
+    for _ in 0usize..300usize { source.extend_from_slice(" + 1".as_bytes()) }
+    source.extend_from_slice(" }".as_bytes())
+    let bytes = source.as_slice()
+    let tree = parse(bytes, 0u32)
+    assert(tree.diagnostics.error_count == 0usize, "native parser rejected a flat binary chain")
+    let projected = capture project(read tree, bytes)
+    let success(view) = take projected else { core.panic.panic("inspection rejected a flat binary chain") }
+    let body = read view.nodes[view.functions[0usize].body]
+    var left = body.children[0usize]
+    let outer = read view.nodes[left]
+    assert(outer.span.begin == 9u32 && outer.span.end as usize == bytes.len() - 2usize, "flat chain lost its source span")
+    for _ in 0usize..300usize {
+        let binary = read view.nodes[left]
+        let right = read view.nodes[binary.children[1usize]]
+        assert(binary.kind == 6u32 && binary.text == "+".as_bytes() && right.kind == 0u32 &&
+            right.text == "1".as_bytes(), "flat chain lost its left association or operands")
+        left = binary.children[0usize]
+    }
+    assert(view.nodes[left].text == "0".as_bytes(), "flat chain lost its first operand")
 }
