@@ -104,6 +104,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "format-brace": b'f"text } tail"',
             "format-hole-eof": b'f"{value',
             "format-newline": b'f"{value\nnext',
+            "diagnostic-column": '// previous line\n\t"\u00e9" ~'.encode(),
             "diagnostic-budget": b"~" * 140,
         }
         bad_characters = (b"''", b"'ab'", b"'\\q'", b"'\\u{}'", b"'\\u{gg}'",
@@ -135,23 +136,14 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                                 min(len(found), len(wanted)))
                 raise AssertionError(f"{name}: token {mismatch}: {found[mismatch:mismatch + 1]} != {wanted[mismatch:mismatch + 1]}")
             assert actual.stdout == reference.stdout, f"{name}: token JSON output differs"
-            native_diagnostics = re.findall(r"error\[(\w+)\] (\d+):(\d+) ([^\n]*)", actual.stderr)
-            diagnostics = []
-            for phase, begin, end, message in native_diagnostics:
-                begin, end = int(begin), int(end)
-                if not 0 <= begin <= end <= len(data):
-                    raise AssertionError(f"{name}: invalid diagnostic span {begin}:{end}")
-                line = data[:begin].count(b"\n") + 1
-                start = data.rfind(b"\n", 0, begin) + 1
-                column = sum(byte & 0xc0 != 0x80 for byte in data[start:begin]) + 1
-                diagnostics.append((str(line), str(column), phase, message))
+            assert actual.stderr == reference.stderr, f"{name}: diagnostics differ\n{actual.stderr}\n{reference.stderr}"
             reference_diagnostics = re.findall(r":(\d+):(\d+): error\[(\w+)\]: ([^\n]*)", reference.stderr)
-            if diagnostics != reference_diagnostics:
-                raise AssertionError(f"{name}: diagnostics differ\n{diagnostics}\n{reference_diagnostics}")
-            if name.startswith("character-") and any(int(end) != len(data.rstrip(b"\n")) for _, _, end, _ in native_diagnostics):
-                raise AssertionError(f"{name}: character diagnostic lost its full token span")
+            if name.startswith("character-"):
+                raw = run([native, str(path)], expected)
+                spans = re.findall(r"error\[\w+\] (\d+):(\d+) ", raw.stderr)
+                assert spans and all(int(begin) == 0 and int(end) == len(data.rstrip(b"\n")) for begin, end in spans), raw.stderr
             evidence["cases"].append({"name": name, "source_sha256": digest(path),
-                                      "tokens": len(found), "diagnostics": len(diagnostics)})
+                                      "tokens": len(found), "diagnostics": len(reference_diagnostics)})
 
         unicode_words = {
             "unicode-scripts": ["αβ", "cafe\u0301", "_नमस्ते", "变量", "𐐀𐐨", "𮯰"],

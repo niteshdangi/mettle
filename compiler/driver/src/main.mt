@@ -1,19 +1,74 @@
 import std.{ env, fs, io, path }
 import std.io.{ Reader, Writer }
 import alloc.vec.{ List, new }
+import core.text.Text
 import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
-import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES }
+import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
+
+fn phase_name(phase: Phase): read Text from static {
+    match phase { Phase.Lex => "lex", Phase.Parse => "parse", Phase.Feature => "feature", Phase.Limit => "limit" }
+}
 
 fn report(read diagnostics: Diagnostics): i32 {
     for issue in diagnostics.issues.as_slice() {
-        let phase = match issue.phase { Phase.Lex => "lex", Phase.Parse => "parse", Phase.Feature => "feature", Phase.Limit => "limit" }
+        let phase = phase_name(issue.phase)
         let begin = issue.span.begin
         let end = issue.span.end
         let message = issue.message
         io.eprint(f"error[{phase}] {begin}:{end} {message}\n")
     }
     if diagnostics.error_count == 0 { 0 } else { 1 }
+}
+
+fn write_printable(mut out: Writer, read bytes: [u8]): Unit throws io.Error {
+    var start = 0usize
+    while let present(invalid) = invalid_utf8(read bytes[start..]) {
+        let end = start + invalid
+        try out.write_all(read bytes[start..end])
+        try out.write("?")
+        start = end + 1usize
+    }
+    try out.write_all(read bytes[start..])
+}
+
+fn report_tokens(read source: path.PathInput, read bytes: [u8], read diagnostics: Diagnostics): i32 throws io.Error {
+    if diagnostics.error_count == 0usize { return 0 }
+    let canonical = capture fs.canonicalize(source)
+    let display = match read canonical {
+        success(resolved) => resolved.as_path(),
+        failure(_) => source.as_path()
+    }
+    var starts = new<usize>()
+    starts.push(0usize)
+    for index in 0usize..bytes.len() {
+        if bytes[index] == b'\n' { starts.push(index + 1usize) }
+    }
+    var out = io.buf_writer(io.stderr())
+    for issue in diagnostics.issues.as_slice() {
+        let offset = issue.span.begin as usize
+        let line = starts.as_slice().partition_point(fn(read start: usize): bool { start <= offset })
+        let start = starts[line - 1usize]
+        let end = if line < starts.len() { starts[line] - 1usize } else { bytes.len() }
+        var column = 1usize
+        for byte in bytes[start..offset] {
+            if (byte & 192u8) != 128u8 { column += 1usize }
+        }
+        try out.write_path(display)
+        let phase = phase_name(issue.phase)
+        let message = issue.message
+        try out.write_line(f":{line}:{column}: error[{phase}]: {message}")
+        try write_printable(mut out, read bytes[start..end])
+        try out.write("\n")
+        for byte in bytes[start..offset] {
+            if (byte & 192u8) != 128u8 {
+                try out.write_all([if byte == b'\t' { b'\t' } else { b' ' }])
+            }
+        }
+        try out.write_line("^")
+    }
+    try out.flush()
+    1
 }
 
 fn read_source(mut input: Reader, limit: usize): List<u8>? throws io.Error {
@@ -158,7 +213,7 @@ fn run(): i32 throws io.Error {
     if tokens {
         try write_tokens(mut out, bytes.as_slice(), result.tokens.as_slice())
         try out.flush()
-        return report(result.diagnostics)
+        return try report_tokens(args[2], bytes.as_slice(), result.diagnostics)
     }
     for token in result.tokens.as_slice() {
         let kind = reference_kind(token.kind)
