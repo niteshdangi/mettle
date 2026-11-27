@@ -2,8 +2,8 @@ import alloc.string.{ String, new }
 import alloc.vec.{ List, with_capacity }
 import core.fmt.Message
 import mettle_foundation.Span
-import mettle_ir.{ Arithmetic, Block, Comparison, Function, FunctionId, Operation, Program,
-    Terminator, VerifiedProgram }
+import mettle_ir.{ Arithmetic, Bitwise, Block, Comparison, Function, FunctionId, Operation, Program,
+    Shift, Terminator, VerifiedProgram }
 import mettle_types.Scalar
 
 module link
@@ -28,7 +28,7 @@ fn llvm_type(scalar: Scalar): read Text from static {
     match scalar {
         Scalar.I32 | Scalar.U32 => "i32",
         Scalar.U8 => "i8",
-        Scalar.Usize => "i64",
+        Scalar.U64 | Scalar.Usize => "i64",
         Scalar.Bool => "i1",
         Scalar.Unit => "void"
     }
@@ -117,6 +117,45 @@ fn append_arithmetic(mut out: String, index: usize, operation: Arithmetic, scala
     out.push_str("\n")
 }
 
+fn append_shift(mut out: String, index: usize, shift: Shift, scalar: Scalar, count: Scalar,
+    left: Value, right: Value, checks: OverflowChecks): Unit {
+    let ty = llvm_type(scalar)
+    let count_ty = llvm_type(count)
+    let width = scalar.integer_width()
+    let count_width = count.integer_width()
+    var masked = false
+    if let OverflowChecks.On = checks {
+        append_format(mut out, f"  %bad{index} = icmp uge {count_ty} ")
+        append_value(mut out, right)
+        append_format(mut out, f", {width}\n")
+        append_guard(mut out, index)
+    } else {
+        let mask = width - 1u32
+        append_format(mut out, f"  %mask{index} = and {count_ty} ")
+        append_value(mut out, right)
+        append_format(mut out, f", {mask}\n")
+        masked = true
+    }
+    if width != count_width {
+        let convert = if width > count_width { "zext" } else { "trunc" }
+        append_format(mut out, f"  %count{index} = {convert} {count_ty} ")
+        if masked { append_format(mut out, f"%mask{index}") }
+        else { append_value(mut out, right) }
+        append_format(mut out, f" to {ty}\n")
+    }
+    let opcode = match shift {
+        Shift.Left => "shl",
+        Shift.Right => if scalar.is(Scalar.I32) { "ashr" } else { "lshr" }
+    }
+    append_format(mut out, f"  %v{index} = {opcode} {ty} ")
+    append_value(mut out, left)
+    out.push_str(", ")
+    if width != count_width { append_format(mut out, f"%count{index}") }
+    else if masked { append_format(mut out, f"%mask{index}") }
+    else { append_value(mut out, right) }
+    out.push_str("\n")
+}
+
 fn unit_comparison(comparison: Comparison): bool {
     match comparison {
         Comparison.Equal | Comparison.LessEqual | Comparison.GreaterEqual => true,
@@ -154,6 +193,8 @@ fn value_at(read block: Block, block_id: usize, base: usize, index: usize): Valu
             else { Value.Register(base + instruction) }
         },
         Operation.Arithmetic(_, _, _, _) | Operation.Cast(_, _, _) | Operation.Call(_, _) =>
+            Value.Register(base + instruction),
+        Operation.Bitwise(_, _, _, _) | Operation.Shift(_, _, _, _, _) =>
             Value.Register(base + instruction)
     }
 }
@@ -169,6 +210,9 @@ fn plan_blocks(read function: Function, checks: OverflowChecks): List<BlockInfo>
                     (Arithmetic.Divide, _) | (Arithmetic.Remainder, _) | (_, OverflowChecks.On) =>
                         { last_guard = present(base + index) },
                     _ => {}
+                },
+                Operation.Shift(_, _, _, _, _) => {
+                    if let OverflowChecks.On = checks { last_guard = present(base + index) }
                 },
                 _ => {}
             }
@@ -268,6 +312,19 @@ fn append_block(mut out: String, read program: Program, read block: Block, block
             Operation.Integer(_, _) | Operation.Boolean(_) | Operation.Unit | Operation.Parameter(_) => {},
             Operation.Arithmetic(operation, scalar, left, right) => {
                 append_arithmetic(mut out, index, operation, scalar,
+                    value_at(block, block_id, base, left), value_at(block, block_id, base, right), checks)
+            },
+            Operation.Bitwise(operation, scalar, left, right) => {
+                let opcode = match operation {
+                    Bitwise.And => "and", Bitwise.Or => "or", Bitwise.Xor => "xor"
+                }
+                let ty = llvm_type(scalar)
+                append_format(mut out, f"  %v{index} = {opcode} {ty} ")
+                append_operands(mut out, value_at(block, block_id, base, left), value_at(block, block_id, base, right))
+                out.push_str("\n")
+            },
+            Operation.Shift(shift, scalar, count, left, right) => {
+                append_shift(mut out, index, shift, scalar, count,
                     value_at(block, block_id, base, left), value_at(block, block_id, base, right), checks)
             },
             Operation.Cast(source, target, operand) => {

@@ -1061,6 +1061,34 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([tool, "check", str(entry), "--library-dir", str(library)])
 
             evidence["cases"].append({"name": "native-library-source-mounts"})
+        if selected("native-target-profile-cfg"):
+            library = directory / "target-cfg-library"
+            std = library / "std"
+            std.mkdir(parents=True, exist_ok=True)
+            (std / "module.mt").write_text(
+                '@cfg(all(target_os = "linux", target_family = "unix", target_arch = "x86_64", '
+                'target_endian = "little", target_pointer_width = "64", target_feature = "sse", '
+                'target_feature = "sse2", not(target_feature = "avx")))\n'
+                'pub fn value(): i32 { select() }\n'
+                '@cfg(debug_assertions)\nfn select(): i32 { 41 }\n'
+                '@cfg(not(debug_assertions))\nfn select(): i32 { 42 }\n'
+                '@cfg(any(target_os = "windows", target_arch = "aarch64"))\npub module nonexistent;\n')
+            entry = source("native-target-profile-cfg", "fn main(): i32 { std.value() }\n")
+            options = ["--library-dir", str(library), "--target", "x86_64-unknown-linux-gnu"]
+            output = directory / "target-cfg-program"
+            for tool in (executable, native):
+                for profile, status in (("debug", 41), ("release", 42)):
+                    args = [*options, "--profile", profile]
+                    run([tool, "check", str(entry), *args])
+                    run([tool, "build", str(entry), "-o", str(output), *args, "--overflow-checks", "off"], env=llvm_env)
+                    run([str(output)], status)
+            entry.write_text("@cfg(any(true, target_os = 1))\nfn main(): i32 { 0 }\n")
+            for tool in (executable, native):
+                rejected = run([tool, "check", str(entry), *options], 1)
+                assert f"{entry}:1:28: error[attribute]" in rejected.stderr and "constant text value" in rejected.stderr, rejected.stderr
+            rejected = run([native, "check", str(entry), "--target", "aarch64-unknown-linux-gnu"], 1)
+            assert "error[feature]" in rejected.stderr and "supports only the hosted x86_64-unknown-linux-gnu target" in rejected.stderr, rejected.stderr
+            evidence["cases"].append({"name": "native-target-profile-cfg"})
         if selected("package-feature-options"):
             import shutil
 
@@ -1145,7 +1173,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             result = run(command, 1, env={**llvm_env, "PATH": ""})
             assert "cannot verify or publish build output" in result.stderr, result.stderr
             assert output.read_text() == checked and not list(directory.glob(".mettle-llvm-*.tmp"))
-            path.write_text("fn main(): i32 { for item in 0..1 { let _ = item }; 0 }\n")
+            path.write_text("fn main(): i32 { match 1 { _ => 0 } }\n")
             result = run(command, 1, env=llvm_env)
             assert "error[feature]" in result.stderr and output.read_text() == checked, result.stderr
             evidence["cases"].append({"name": "build-scalar-llvm"})
@@ -1272,6 +1300,31 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
                 run([str(output)], 42)
             evidence["cases"].append({"name": "build-native-loop-transfer"})
+        if selected("build-native-counted-range"):
+            path = source("build-native-counted-range",
+                          "fn add(a: i32, b: i32): i32 { a + b }\n"
+                          "fn main(): i32 {\n"
+                          "    var sum = 0\n"
+                          "    var bounds = 0\n"
+                          "    let _ = add(10, {\n"
+                          "        label count: for item in ({ bounds += 1; 1 })..({ bounds += 1; 4 }) {\n"
+                          "            while true {\n"
+                          "                if item == 2 { continue label count }\n"
+                          "                sum += item\n"
+                          "                break\n"
+                          "            }\n"
+                          "        }\n"
+                          "        0\n"
+                          "    })\n"
+                          "    for _ in 254u8..=255 { sum += 1; continue }\n"
+                          "    for _ in 4..2 { return 1 }\n"
+                          "    sum + bounds + 34\n"
+                          "}\n")
+            output = directory / "counted-range"
+            for compiler in (executable, native):
+                run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
+                run([str(output)], 42)
+            evidence["cases"].append({"name": "build-native-counted-range"})
         if selected("build-native-unsigned"):
             path = source("build-native-unsigned",
                           "fn adjust(n: u8, flag: bool): u8 {\n"
@@ -1316,6 +1369,34 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                          "--overflow-checks", checks], env=llvm_env)
                     run([str(output)], expected)
             evidence["cases"].append({"name": "build-native-unsigned-checks"})
+        if selected("build-native-unsigned-bits"):
+            path = source("build-native-unsigned-bits",
+                          "fn word(hi: u8, lo: u8): u32 { (hi as u32 << 24) | lo as u32 }\n"
+                          "fn wide(flag: bool, n: u8): u64 {\n"
+                          "    let result = if flag { 1u64 << n } else { 0u64 }\n"
+                          "    result ^ 42\n"
+                          "}\n"
+                          "fn main(): i32 {\n"
+                          "    let bits = word(128, 42)\n"
+                          "    if (bits >> 24u64) == 128, (bits as i32 >> 24u8) as u32 == 4294967168u32,\n"
+                          "        (wide(true, 63) >> 63) == 1, wide(false, 63) as usize == 42 {\n"
+                          "        (bits & 255) as i32\n"
+                          "    } else { 0 }\n"
+                          "}\n")
+            output = directory / "unsigned-bits"
+            for compiler in (executable, native):
+                for profile in ("debug", "release"):
+                    run([compiler, "build", str(path), "-o", str(output), "--profile", profile], env=llvm_env)
+                    run([str(output)], 42)
+            for shift_case, count in (("too-wide", "4294967297u64"), ("negative", "4294967295u32 as i32")):
+                path = source("unsigned-shift-" + shift_case,
+                              f"fn main(): i32 {{ (84u8 >> ({count})) as i32 }}\n")
+                for profile, checks, expected in (("release", "on", "trap"),
+                                                   ("debug", "off", 42 if shift_case == "too-wide" else 0)):
+                    run([native, "build", str(path), "-o", str(output), "--profile", profile,
+                         "--overflow-checks", checks], env=llvm_env)
+                    run([str(output)], expected)
+            evidence["cases"].append({"name": "build-native-unsigned-bits"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
@@ -1328,6 +1409,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-usize-suffix-overflow", "fn main(): i32 { 18446744073709551616usize as i32 }", "type"),
             ("check-scalar-cast-literal-default", "fn main(): i32 { (4294967295 as u32) as i32 }", "type"),
             ("check-scalar-unsigned-mixed", "fn main(): i32 { (1u8 + 2u32) as i32 }", "type"),
+            ("check-scalar-unsigned-bitwise-mixed", "fn main(): i32 { (1u64 ^ 2usize) as i32 }", "type"),
+            ("check-scalar-unsigned-shift-count", "fn main(): i32 { (1u32 << false) as i32 }", "type"),
             ("check-scalar-parameter", "fn main(): i32 { double(21) - 42 }\nfn double(value: i32): i32 { value * 2 }", None),
             ("check-scalar-argument-type", "fn main(): i32 { double(true) }\nfn double(value: i32): i32 { value * 2 }", "type"),
             ("check-scalar-conditional", "fn main(): i32 { if 1 < 2, false != true && true { 0 } else if true { 1 } else { 2 } }", None),
@@ -1339,6 +1422,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-loop-control-outside", "fn main(): i32 { break; 0 }", "type"),
             ("check-scalar-loop-unknown-label", "fn main(): i32 { loop { continue label other } }", "name"),
             ("check-scalar-while-break-value", "fn main(): i32 { while true { break 42 }; 0 }", "type"),
+            ("check-scalar-range-mixed", "fn main(): i32 { for _ in 1u8..2u32 {}; 0 }", "type"),
             ("check-scalar-loop-dead-branch-type", "fn main(): i32 { if false { loop { break true } } else { 42 } }", "type"),
             ("check-scalar-test-attribute", '@test\n@ignore("reason")\nfn fixture(): Unit { () }\nfn main(): i32 { 0 }', None),
             ("check-scalar-test-body-error", "@test\nfn fixture(): Unit { missing() }\nfn main(): i32 { 0 }", "name"),

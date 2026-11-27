@@ -2,7 +2,8 @@ import alloc.vec.{ List, with_capacity }
 import mettle_foundation.Span
 import mettle_frontend.{ Binding, CheckedModule, ModuleLink, SourceModule }
 import mettle_frontend as frontend
-import mettle_ir.{ Arithmetic, Block, Comparison, Edge, Function, FunctionId, Instruction, InvalidIr, Module, Operation, Program, Terminator, VerifiedProgram, verify }
+import mettle_ir.{ Arithmetic, Bitwise, Block, Comparison, Edge, Function, FunctionId, Instruction,
+    InvalidIr, Module, Operation, Program, Shift, Terminator, VerifiedProgram, verify }
 import mettle_syntax.{ NodeId, NodeKind, Parsed, SyntaxNode }
 import mettle_types.Scalar
 
@@ -21,6 +22,8 @@ copy type LoopFrame {
     locals: usize
     pending: usize
     value_exit: bool
+    counted: bool
+    advance: usize?
 }
 type PendingBlock {
     parameters: List<Scalar>
@@ -33,6 +36,7 @@ copy enum Work {
     Evaluate(NodeId), Binary(NodeId), Cast(NodeId), Call(NodeId, usize), Chain(NodeId, u32),
     SelectIf(NodeId), SelectShort(NodeId, bool), SelectChain(NodeId, u32),
     LoopBody(NodeId, NodeId?), LoopEnd(Span), Transfer(NodeId),
+    ForStart(NodeId, NodeId), ForStep(Span, bool), ContinueLoop(Span),
     Bind(NodeId), Assign(NodeId), Return(Span), LeaveScope(usize),
     Unit(Span), Boolean(bool, Span), Discard(Span), Enter(usize), Jump(usize)
 }
@@ -113,14 +117,14 @@ extend Builder {
         Edge(index, take arguments)
     }
 
-    fn loop_edge(index: usize, frame: LoopFrame, result: usize?, span: Span): Edge throws LoweringError {
-        if self.locals.len() < frame.locals || self.values.len() < frame.pending {
+    fn loop_edge(index: usize, frame: LoopFrame, pending: usize, result: usize?, span: Span): Edge throws LoweringError {
+        if self.locals.len() < frame.locals || self.values.len() < pending {
             throw LoweringError.Inconsistent(span)
         }
-        var arguments = with_capacity<usize>(frame.locals + frame.pending +
+        var arguments = with_capacity<usize>(frame.locals + pending +
             (if result.is_present() { 1usize } else { 0usize }))
         for position in 0usize..frame.locals { arguments.push(self.locals[position].value.slot) }
-        for position in 0usize..frame.pending { arguments.push(self.values[position].slot) }
+        for position in 0usize..pending { arguments.push(self.values[position].slot) }
         if let present(slot) = result { arguments.push(slot) }
         Edge(index, take arguments)
     }
@@ -133,6 +137,50 @@ extend Builder {
         let true_edge = self.edge(yes)
         let false_edge = self.edge(no)
         self.close(Terminator.Branch(condition, take true_edge, take false_edge))
+    }
+
+    mut fn continue_loop(index: usize, span: Span): Unit throws LoweringError {
+        let frame = self.loops[index]
+        var target = frame.header
+        var pending = frame.pending
+        if frame.counted {
+            pending += 2usize
+            if let present(step) = frame.advance { target = step }
+            else {
+                let source = read self.blocks[frame.header].parameters
+                var parameters = with_capacity<Scalar>(source.len())
+                for scalar in source.as_slice() { parameters.push(scalar) }
+                target = self.add_block(take parameters, span)
+                self.loops[index].advance = present(target)
+            }
+        }
+        let edge = try self.loop_edge(target, frame, pending, none, span)
+        self.close(Terminator.Jump(take edge))
+    }
+
+    mut fn advance_range(span: Span, inclusive: bool): Unit throws LoweringError {
+        let frame = self.loops[self.loops.len() - 1usize]
+        let present(step) = frame.advance else { return }
+        self.enter(step)
+        let current = self.values[frame.pending]
+        let end = self.values[frame.pending + 1usize]
+        if inclusive {
+            let present(exit) = frame.exit else { throw LoweringError.Inconsistent(span) }
+            self.emit(Operation.Compare(Comparison.Equal, current.scalar, current.slot, end.slot), Scalar.Bool, span)
+            let done = try self.pop_value(span)
+            let increment = self.continuation(none, span)
+            let exit_edge = try self.loop_edge(exit, frame, frame.pending, none, span)
+            let next_edge = self.edge(increment)
+            self.close(Terminator.Branch(done.slot, take exit_edge, take next_edge))
+            self.enter(increment)
+        }
+        let value = self.values[frame.pending]
+        self.emit(Operation.Integer(value.scalar, 1u64), value.scalar, span)
+        let one = try self.pop_value(span)
+        self.emit(Operation.Arithmetic(Arithmetic.Add, value.scalar, value.slot, one.slot), value.scalar, span)
+        self.values[frame.pending] = try self.pop_value(span)
+        let back = self.edge(frame.header)
+        self.close(Terminator.Jump(take back))
     }
 
     mut fn select(yes: Work, no: Work, result: Scalar?, span: Span): Unit throws LoweringError {
@@ -158,6 +206,8 @@ fn binary(read spelling: [u8], left: Value, right: Value, span: Span): Operation
     let a = left.slot
     let b = right.slot
     let scalar = left.scalar
+    if read spelling == b"<<" { return Operation.Shift(Shift.Left, scalar, right.scalar, a, b) }
+    if read spelling == b">>" { return Operation.Shift(Shift.Right, scalar, right.scalar, a, b) }
     if spelling.len() == 2usize && spelling[1usize] == b'=' {
         let comparison = match spelling[0usize] {
             b'=' => Comparison.Equal, b'!' => Comparison.NotEqual,
@@ -169,6 +219,9 @@ fn binary(read spelling: [u8], left: Value, right: Value, span: Span): Operation
     if spelling.len() != 1usize { throw LoweringError.Unsupported(span) }
     if spelling[0usize] == b'<' { return Operation.Compare(Comparison.Less, scalar, a, b) }
     if spelling[0usize] == b'>' { return Operation.Compare(Comparison.Greater, scalar, a, b) }
+    if spelling[0usize] == b'&' { return Operation.Bitwise(Bitwise.And, scalar, a, b) }
+    if spelling[0usize] == b'|' { return Operation.Bitwise(Bitwise.Or, scalar, a, b) }
+    if spelling[0usize] == b'^' { return Operation.Bitwise(Bitwise.Xor, scalar, a, b) }
     let operation = match spelling[0usize] {
         b'+' => Arithmetic.Add, b'-' => Arithmetic.Subtract, b'*' => Arithmetic.Multiply,
         b'/' => Arithmetic.Divide, b'%' => Arithmetic.Remainder,
@@ -218,7 +271,7 @@ fn evaluate(mut builder: Builder, read source: SourceModule, read checked: Check
             let exit = if fact.scalar.is_present() {
                 present(builder.continuation(if conditional { none } else { fact.scalar }, span))
             } else { none }
-            builder.loops.push(LoopFrame(id.index, header, exit, builder.locals.len(), builder.values.len(), !conditional))
+            builder.loops.push(LoopFrame(id.index, header, exit, builder.locals.len(), builder.values.len(), !conditional, false, none))
             let edge = builder.edge(header)
             builder.close(Terminator.Jump(take edge))
             builder.enter(header)
@@ -227,6 +280,14 @@ fn evaluate(mut builder: Builder, read source: SourceModule, read checked: Check
             builder.work.push(Work.LoopEnd(span))
             builder.work.push(Work.LoopBody(id, condition))
             if let present(condition_id) = condition { builder.work.push(Work.Evaluate(condition_id)) }
+        },
+        NodeKind.For => {
+            let offset = if frontend.loop_label(parsed, item).is_present() { 1usize } else { 0usize }
+            let range_id = child(parsed, item, offset + 1usize)
+            let range = parsed.nodes[range_id.index as usize]
+            builder.work.push(Work.ForStart(id, range_id))
+            builder.work.push(Work.Evaluate(child(parsed, range, 1)))
+            builder.work.push(Work.Evaluate(child(parsed, range, 0)))
         },
         NodeKind.Break | NodeKind.Continue => {
             builder.work.push(Work.Transfer(id))
@@ -317,6 +378,7 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
             match task {
                 Work.Enter(block) => builder.enter(block),
                 Work.LeaveScope(size) => builder.leave_scope(size),
+                Work.ForStep(at, inclusive) => { try builder.advance_range(at, inclusive) },
                 Work.LoopEnd(at) => {
                     let present(frame) = builder.loops.pop() else { throw LoweringError.Inconsistent(at) }
                     if let present(exit) = frame.exit {
@@ -422,6 +484,8 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
                 } else { try builder.select(yes, no, fact.scalar, item.span) }
             },
             Work.LoopEnd(at) => { throw LoweringError.Inconsistent(at) },
+            Work.ForStep(at, _) => { throw LoweringError.Inconsistent(at) },
+            Work.ContinueLoop(at) => { try builder.continue_loop(builder.loops.len() - 1usize, at) },
             Work.Transfer(id) => {
                 let item = parsed.nodes[id.index as usize]
                 let at = item.span
@@ -431,12 +495,53 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
                 while index > 0usize && builder.loops[index - 1usize].id != target.index { index -= 1usize }
                 if index == 0usize { throw LoweringError.Inconsistent(at) }
                 let frame = builder.loops[index - 1usize]
-                let edge = if item.kind.is(NodeKind.Break) {
+                if item.kind.is(NodeKind.Break) {
                     let value = try builder.pop_value(at)
                     let present(exit) = frame.exit else { throw LoweringError.Inconsistent(at) }
-                    try builder.loop_edge(exit, frame, if frame.value_exit { present(value.slot) } else { none }, at)
-                } else { try builder.loop_edge(frame.header, frame, none, at) }
-                builder.close(Terminator.Jump(take edge))
+                    let edge = try builder.loop_edge(exit, frame, frame.pending,
+                        if frame.value_exit { present(value.slot) } else { none }, at)
+                    builder.close(Terminator.Jump(take edge))
+                } else { try builder.continue_loop(index - 1usize, at) }
+            },
+            Work.ForStart(id, range_id) => {
+                let item = parsed.nodes[id.index as usize]
+                let range = parsed.nodes[range_id.index as usize]
+                let at = item.span
+                let inclusive = try operator(source, range) == b"..="
+                let upper = try builder.pop_value(at)
+                let lower = try builder.pop_value(at)
+                let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(at) }
+                let locals = builder.locals.len()
+                let pending = builder.values.len()
+                let exit = builder.continuation(none, at)
+                builder.values.push(lower)
+                builder.values.push(upper)
+                let header = builder.continuation(none, at)
+                let frame = LoopFrame(id.index, header, present(exit), locals, pending, false, true, none)
+                let entry = builder.edge(header)
+                builder.close(Terminator.Jump(take entry))
+                builder.enter(header)
+                let current = builder.values[pending]
+                let end = builder.values[pending + 1usize]
+                let comparison = if inclusive { Comparison.LessEqual } else { Comparison.Less }
+                builder.emit(Operation.Compare(comparison, current.scalar, current.slot, end.slot), Scalar.Bool, at)
+                let condition = try builder.pop_value(at)
+                let run_body = builder.continuation(none, at)
+                let body_edge = builder.edge(run_body)
+                let exit_edge = try builder.loop_edge(exit, frame, pending, none, at)
+                builder.loops.push(frame)
+                builder.close(Terminator.Branch(condition.slot, take body_edge, take exit_edge))
+                builder.enter(run_body)
+                if let present(Binding.Local(slot)) = fact.binding {
+                    let value = builder.values[pending]
+                    try builder.bind(slot, value, at)
+                }
+                builder.work.push(Work.LoopEnd(at))
+                builder.work.push(Work.ForStep(at, inclusive))
+                builder.work.push(Work.ContinueLoop(at))
+                builder.work.push(Work.Discard(at))
+                builder.work.push(Work.LeaveScope(locals))
+                builder.work.push(Work.Evaluate(parsed.children[(item.children.end - 1u32) as usize]))
             },
             Work.LoopBody(id, condition_id) => {
                 let item = parsed.nodes[id.index as usize]

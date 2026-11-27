@@ -274,7 +274,10 @@ native checking. With `--library-dir PATH`, native `check` and `build` mount
 qualified reference requests one. Declared modules and package dependency
 aliases shadow these mounts. Library sources use the same canonical identities
 and file-module discovery as package sources, with no package features.
-This does not install a prelude or extend native cfg and declaration checking.
+Native cfg uses the hosted `x86_64-unknown-linux-gnu` target and the requested
+debug or release profile across program, dependency, and library sources;
+other targets are rejected. Mounting does not install a prelude or extend
+native declaration checking.
 Feature predicates select active declarations using each
 unit's package features before external modules are loaded. Ordinary builds
 ignore test and benchmark annotations, not the annotated bodies. The frontend
@@ -282,10 +285,12 @@ collects signatures across all supplied units
 before checking bodies. Checked calls carry a module and function index, not a
 source spelling; initialized scalar locals carry function-local binding
 identities. Expression facts remain indexed by the owning syntax unit.
-The native integer subset is `i32`, `u8`, `u32`, and hosted 64-bit `usize`.
+The native integer subset is `i32`, `u8`, `u32`, `u64`, and hosted 64-bit `usize`.
 Unsuffixed literals resolve against their integer constraints before falling
 back to `i32`. Checked literals carry their bits; arithmetic and explicit
 integer casts preserve logical scalar types in IR, including at equal widths.
+Bitwise operations require matching integer types. Shifts preserve the left
+operand's type and check or mask the independently typed count.
 Public syntax inspection projects the native tree into the reference JSON
 shape; the frontend continues to consume the original lossless tree.
 Native scalar lowering emits blocks with ordered local value definitions and
@@ -294,8 +299,10 @@ value of a scalar local; joins merge live local values and pending expression
 operands independently, including on scalar `while` backedges. Explicit returns
 terminate their path without forwarding values to a join. Scalar loop transfers
 forward only the target's live locals and pending operands, plus the break
-value when exiting a value-producing `loop`. Condition chains and short-circuit
-operators branch before evaluating the next operand.
+value when exiting a value-producing `loop`. Bounded integer `for` ranges
+evaluate their bounds once and advance before re-entering the body; an inclusive
+range exits after its last value without incrementing it. Condition chains and
+short-circuit operators branch before evaluating the next operand.
 The IR verifier checks
 operands, edge arguments, reachability, call signatures and returns before
 exposing an immutable verified program. Owned values are not admitted yet.

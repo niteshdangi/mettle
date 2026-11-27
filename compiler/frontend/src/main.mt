@@ -112,6 +112,7 @@ copy type LoopScope {
     label_node: NodeId?
     result: ValueType?
     exits: bool
+    in_range: bool
 }
 
 type Body {
@@ -241,7 +242,8 @@ fn root_node(read parsed: Parsed): SyntaxNode throws CheckError {
     root
 }
 
-pub fn active_items(read bytes: [u8], read parsed: Parsed, read features: List<String>): List<ActiveItem> throws CheckError {
+pub fn active_items(read bytes: [u8], read parsed: Parsed, read features: List<String>,
+    debug_assertions: bool = true): List<ActiveItem> throws CheckError {
     let root = try root_node(parsed)
     var items = List<ActiveItem>()
     for index in root.children.begin..root.children.end {
@@ -271,7 +273,7 @@ pub fn active_items(read bytes: [u8], read parsed: Parsed, read features: List<S
                 throw CheckError(CheckPhase.Attribute, attribute.span, "cfg requires one predicate")
             }
             let tokens = read parsed.tokens.as_slice()[arguments.tokens.begin as usize..arguments.tokens.end as usize]
-            let included = try cfg.included(bytes, tokens, features, attribute.span)
+            let included = try cfg.included(bytes, tokens, features, debug_assertions, attribute.span)
             active = active && included
             offset += 1u32
         }
@@ -407,6 +409,7 @@ fn integer_type(read spelling: [u8]): Scalar? {
     if read spelling == b"i32" { present(Scalar.I32) }
     else if read spelling == b"u8" { present(Scalar.U8) }
     else if read spelling == b"u32" { present(Scalar.U32) }
+    else if read spelling == b"u64" { present(Scalar.U64) }
     else if read spelling == b"usize" { present(Scalar.Usize) }
     else { none }
 }
@@ -457,7 +460,7 @@ fn integer(read bytes: [u8], span: Span): (Scalar?, u128) throws CheckError {
     let suffix = read bytes[position..bytes.len()]
     if let present(scalar) = integer_type(suffix) { return (present(scalar), magnitude) }
     if suffix == b"i8" || suffix == b"i16" || suffix == b"i64" || suffix == b"i128" ||
-        suffix == b"isize" || suffix == b"u16" || suffix == b"u64" || suffix == b"u128" {
+        suffix == b"isize" || suffix == b"u16" || suffix == b"u128" {
         throw unsupported(span)
     }
     throw CheckError(CheckPhase.Lex, span, "malformed integer literal")
@@ -598,6 +601,26 @@ fn require_type(mut body: Body, value: ValueType?, expected: ValueType, span: Sp
     throw CheckError(CheckPhase.Type, span, message)
 }
 
+extend Body {
+    mut fn restore_scope(mark: usize): Unit {
+        while self.shadows.len() > mark {
+            let shadow = self.shadows.pop().or_panic()
+            self.visible[shadow.symbol] = shadow.previous
+        }
+    }
+
+    mut fn bind_local(take identifier: List<u8>, entry: Local): Unit {
+        let symbol = if let present(slot) = self.symbols.get(identifier) { *slot } else {
+            let _ = self.symbols.insert(take identifier, self.visible.len())
+            self.visible.push(0usize)
+            self.visible.len() - 1usize
+        }
+        self.shadows.push(Shadow(symbol, self.visible[symbol]))
+        self.bindings.push(entry)
+        self.visible[symbol] = self.bindings.len()
+    }
+}
+
 pub fn loop_label(read parsed: Parsed, item: SyntaxNode): NodeId? {
     if item.children.begin == item.children.end { return none }
     let first = child(parsed, item, 0)
@@ -689,10 +712,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                     result = if scalar.is_present() && node(parsed, id).semicolon { present(ValueType.Concrete(Scalar.Unit)) } else { scalar }
                 }
             }
-            while body.shadows.len() > mark {
-                let shadow = body.shadows.pop().or_panic()
-                body.visible[shadow.symbol] = shadow.previous
-            }
+            body.restore_scope(mark)
             result
         },
         NodeKind.Binding => {
@@ -718,14 +738,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             } else { actual }
             if !wildcard {
                 let identifier = try name(bytes, parsed, pattern)
-                let symbol = if let present(slot) = body.symbols.get(identifier) { *slot } else {
-                    let _ = body.symbols.insert(take identifier, body.visible.len())
-                    body.visible.push(0usize)
-                    body.visible.len() - 1usize
-                }
-                body.shadows.push(Shadow(symbol, body.visible[symbol]))
-                body.bindings.push(Local(scalar, Binding.Local(index), writable))
-                body.visible[symbol] = body.bindings.len()
+                body.bind_local(take identifier, Local(scalar, Binding.Local(index), writable))
                 binding = present(Binding.Local(index))
             }
             if actual.is_present() { present(ValueType.Concrete(Scalar.Unit)) } else { none }
@@ -803,7 +816,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             let isolation = body.loop_isolation
             if !reachable { body.loop_isolation = present(body.loops.len()) }
             let result = if conditional { present(ValueType.Concrete(Scalar.Unit)) } else { none }
-            body.loops.push(LoopScope(id, label_node, result, false))
+            body.loops.push(LoopScope(id, label_node, result, false, false))
             let (condition_completes, literal) = if conditional {
                 let condition = child(parsed, item, offset)
                 let scalar = try expression(context, mut body, condition, true)
@@ -816,9 +829,46 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             body.loop_isolation = isolation
             if scope.exits || (condition_completes && literal != present(true)) { scope.result } else { none }
         },
+        NodeKind.For => {
+            let label_node = loop_label(parsed, item)
+            let offset = if label_node.is_present() { 1u32 } else { 0u32 }
+            let pattern = node(parsed, child(parsed, item, offset))
+            let wildcard = pattern.kind.is(NodeKind.PatternWildcard)
+            if !wildcard && !pattern.kind.is(NodeKind.Name) { throw unsupported(pattern.span) }
+            let range = node(parsed, child(parsed, item, offset + 1u32))
+            if !range.kind.is(NodeKind.Range) || range.children.end - range.children.begin != 2u32 {
+                throw unsupported(range.span)
+            }
+            let unit = present(ValueType.Concrete(Scalar.Unit))
+            body.loops.push(LoopScope(id, label_node, unit, false, true))
+            let lower = try expression(context, mut body, child(parsed, range, 0), reachable)
+            let upper = try expression(context, mut body, child(parsed, range, 1), reachable && lower.is_present())
+            let element = if let present(first) = lower, let present(last) = upper {
+                try require_type(mut body, upper, first, range.span)
+                if let present(scalar) = body.integers.known(last), scalar.integer_width() == 0u32 {
+                    throw CheckError(CheckPhase.Type, range.span, "range bounds must be integers")
+                }
+                lower
+            } else { none }
+            body.loops[body.loops.len() - 1usize].in_range = false
+            let mark = body.shadows.len()
+            if !wildcard {
+                let identifier = try name(bytes, parsed, pattern)
+                let index = body.local_count
+                body.local_count += 1usize
+                body.bind_local(take identifier, Local(element, Binding.Local(index), false))
+                binding = present(Binding.Local(index))
+            }
+            let _ = try expression(context, mut body, child(parsed, item, offset + 2u32),
+                reachable && element.is_present())
+            body.restore_scope(mark)
+            let _ = body.loops.pop().or_panic()
+            if element.is_present() { unit } else { none }
+        },
         NodeKind.Break | NodeKind.Continue => {
             let label_node = loop_label(parsed, item)
             let target = try loop_target(context.source, body.loops, item, label_node)
+            if body.loops[target].in_range { throw unsupported(item.span) }
             binding = present(Binding.Loop(body.loops[target].id))
             if item.kind.is(NodeKind.Break) {
                 let offset = if label_node.is_present() { 1u32 } else { 0u32 }
@@ -942,16 +992,27 @@ fn binary_rhs<region r>(read context: Context<region r>, mut body: Body, item: S
         }
         none
     } else if spelling == b"+" || spelling == b"-" || spelling == b"*" ||
-              spelling == b"/" || spelling == b"%" {
+              spelling == b"/" || spelling == b"%" || spelling == b"&" ||
+              spelling == b"|" || spelling == b"^" || spelling == b"<<" || spelling == b">>" {
+        let shift = spelling == b"<<" || spelling == b">>"
+        let bitwise = spelling == b"&" || spelling == b"|" || spelling == b"^"
+        let message = if shift { "shift operands must both be integers" }
+            else if bitwise { "bitwise operands must be integers of the same type" }
+            else { "arithmetic operands must be integers of the same type" }
+        if bitwise, let present(left) = lhs, let present(right) = rhs,
+            let present(Scalar.Bool) = body.integers.known(left),
+            let present(Scalar.Bool) = body.integers.known(right) {
+            throw unsupported(operator)
+        }
         if let present(left) = lhs, let present(scalar) = body.integers.known(left), scalar.integer_width() == 0u32 {
-            throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
+            throw CheckError(CheckPhase.Type, operator, message)
         }
         if let present(right) = rhs, let present(scalar) = body.integers.known(right), scalar.integer_width() == 0u32 {
-            throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
+            throw CheckError(CheckPhase.Type, operator, message)
         }
         if let present(left) = lhs, let present(right) = rhs {
-            if !body.integers.unify(left, right) {
-                throw CheckError(CheckPhase.Type, operator, "arithmetic operands must be integers of the same type")
+            if !shift && !body.integers.unify(left, right) {
+                throw CheckError(CheckPhase.Type, operator, message)
             }
             return lhs
         }
@@ -1166,6 +1227,7 @@ fn check_bodies(read sources: List<SourceModule>, module_index: usize,
                 Scalar.I32 => "integer literal is outside the i32 range",
                 Scalar.U8 => "integer literal is outside the u8 range",
                 Scalar.U32 => "integer literal is outside the u32 range",
+                Scalar.U64 => "integer literal is outside the u64 range",
                 Scalar.Usize => "integer literal is outside the usize range",
                 _ => panic("literal inferred as a non-integer")
             }

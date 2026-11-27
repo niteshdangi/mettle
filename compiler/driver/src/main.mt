@@ -1,5 +1,5 @@
 import std.{ env, fs, io, path, process }
-import std.ffi.os_str_from_text
+import std.ffi.{ OsStr, os_str_from_text }
 import std.io.{ Reader, Writer }
 import std.macros.format
 import alloc.vec.{ List, new }
@@ -158,7 +158,7 @@ fn report_check_error(read source: path.PathInput, read bytes: [u8], error: Chec
 }
 
 fn load_module(read source: path.Path, index: usize, package_index: usize, parent: usize?,
-    read features: List<String>): SourceModule? throws io.Error {
+    read features: List<String>, debug_assertions: bool): SourceModule? throws io.Error {
     if index > 4294967295usize {
         io.eprint("error[limit]: source indices exceed the 32-bit span representation\n")
         return none
@@ -176,7 +176,7 @@ fn load_module(read source: path.Path, index: usize, package_index: usize, paren
     }
     let parsed = parse(bytes.as_slice(), index as u32)
     if try report_source(source, bytes.as_slice(), parsed.diagnostics) != 0 { return none }
-    let items = match take capture active_items(bytes.as_slice(), parsed, features) {
+    let items = match take capture active_items(bytes.as_slice(), parsed, features, debug_assertions) {
         success(items) => take items,
         failure(error) => {
             let _ = try report_check_error(source, bytes.as_slice(), error)
@@ -186,8 +186,9 @@ fn load_module(read source: path.Path, index: usize, package_index: usize, paren
     present(SourceModule(take bytes, take parsed, Map<List<u8>, ModuleLink>(), package_index, parent, take items))
 }
 
-fn check_source(read source: path.Path, read features: List<String>, read library_dir: path.Path): i32 throws io.Error {
-    let present(loaded) = try load_single_graph(source, features, library_dir) else { return 1 }
+fn check_source(read source: path.Path, read features: List<String>, read library_dir: path.Path,
+    debug_assertions: bool): i32 throws io.Error {
+    let present(loaded) = try load_single_graph(source, features, library_dir, debug_assertions) else { return 1 }
     try check_loaded(loaded, true)
 }
 
@@ -256,7 +257,7 @@ type PackageSources {
     libraries: Map<List<u8>, usize>
 }
 
-fn load_graph(read graph: PackageGraph, read library_dir: path.Path): PackageSources? throws io.Error {
+fn load_graph(read graph: PackageGraph, read library_dir: path.Path, debug_assertions: bool): PackageSources? throws io.Error {
     if !graph.build_scripts.is_empty() || !graph.macros.is_empty() {
         io.eprint("mettle: error[feature]: native compilation does not execute build scripts or procedural macros yet\n")
         return none
@@ -283,19 +284,19 @@ fn load_graph(read graph: PackageGraph, read library_dir: path.Path): PackageSou
             return none
         }
         let index = sources.len()
-        let present(module_source) = try load_module(source, index, package_index, none, package.features) else { return none }
+        let present(module_source) = try load_module(source, index, package_index, none, package.features, debug_assertions) else { return none }
         paths.push(ModulePath(source.to_path_buf(), source.parent().or_panic().to_path_buf()))
         sources.push(take module_source)
         source_indices.push(present(index))
     }
     var loaded = PackageSources(take sources, take paths, package_mounts(graph, source_indices), Map<List<u8>, usize>())
-    if !try discover_modules(mut loaded, mut seen, graph.packages.as_slice(), List<String>(), library_dir) { return none }
+    if !try discover_modules(mut loaded, mut seen, graph.packages.as_slice(), List<String>(), library_dir, debug_assertions) { return none }
     present(take loaded)
 }
 
 fn discover_modules(mut loaded: PackageSources, mut seen: Map<path.PathBuf, Unit>,
     read packages: [ResolvedPackage], read standalone_features: List<String>,
-    read library_dir: path.Path): bool throws io.Error {
+    read library_dir: path.Path, debug_assertions: bool): bool throws io.Error {
     let first_library = loaded.mounts.len()
     let mount_libraries = !library_dir.as_os_str().is_empty()
     if mount_libraries {
@@ -343,7 +344,7 @@ fn discover_modules(mut loaded: PackageSources, mut seen: Map<path.PathBuf, Unit
                 return false
             }
             let index = loaded.sources.len()
-            let present(module_source) = try load_module(source.as_path(), index, package_index, present(owner), features) else { return false }
+            let present(module_source) = try load_module(source.as_path(), index, package_index, present(owner), features, debug_assertions) else { return false }
             let _ = loaded.sources[owner].modules.insert(take declaration.name, ModuleLink(index, declaration.exported))
             loaded.paths.push(ModulePath(take source, take directory))
             loaded.sources.push(take module_source)
@@ -377,7 +378,7 @@ fn discover_modules(mut loaded: PackageSources, mut seen: Map<path.PathBuf, Unit
                     return false
                 }
                 let index = loaded.sources.len()
-                let present(module_source) = try load_module(canonical.as_path(), index, library_package, none, no_features) else { return false }
+                let present(module_source) = try load_module(canonical.as_path(), index, library_package, none, no_features, debug_assertions) else { return false }
                 let _ = loaded.libraries.insert(take spelling, index)
                 loaded.paths.push(ModulePath(take canonical, take directory))
                 loaded.sources.push(take module_source)
@@ -388,8 +389,9 @@ fn discover_modules(mut loaded: PackageSources, mut seen: Map<path.PathBuf, Unit
     true
 }
 
-fn load_single_graph(read source: path.Path, read features: List<String>, read library_dir: path.Path): PackageSources? throws io.Error {
-    let present(module_source) = try load_module(source, 0, 0, none, features) else { return none }
+fn load_single_graph(read source: path.Path, read features: List<String>, read library_dir: path.Path,
+    debug_assertions: bool): PackageSources? throws io.Error {
+    let present(module_source) = try load_module(source, 0, 0, none, features, debug_assertions) else { return none }
     let canonical = try fs.canonicalize(source)
     var sources = List<SourceModule>()
     sources.push(take module_source)
@@ -401,7 +403,7 @@ fn load_single_graph(read source: path.Path, read features: List<String>, read l
     var mounts = List<Map<List<u8>, usize>>()
     mounts.push(Map<List<u8>, usize>())
     var loaded = PackageSources(take sources, take paths, take mounts, Map<List<u8>, usize>())
-    if !try discover_modules(mut loaded, mut seen, List<ResolvedPackage>().as_slice(), features, library_dir) { return none }
+    if !try discover_modules(mut loaded, mut seen, List<ResolvedPackage>().as_slice(), features, library_dir, debug_assertions) { return none }
     present(take loaded)
 }
 
@@ -415,38 +417,44 @@ fn check_loaded(read loaded: PackageSources, executable: bool): i32 throws io.Er
     }
 }
 
-fn check_graph(read graph: PackageGraph, read library_dir: path.Path): i32 throws io.Error {
-    let present(loaded) = try load_graph(graph, library_dir) else { return 1 }
+fn check_graph(read graph: PackageGraph, read library_dir: path.Path, debug_assertions: bool): i32 throws io.Error {
+    let present(loaded) = try load_graph(graph, library_dir, debug_assertions) else { return 1 }
     try check_loaded(loaded, !graph.packages[0].is_library)
 }
 
 fn check_input(read source: path.Path, read entry: Text, read options: ResolveOptions, package_options: bool,
-    read library_dir: path.Path): i32 throws io.Error {
+    read library_dir: path.Path, debug_assertions: bool): i32 throws io.Error {
     if !package_input(source) {
         if package_options {
             io.eprint("mettle: error[package]: --entry, --no-default-features, --registry, --locked, --offline and --frozen need a package directory or package.mettle\n")
             return 2
         }
-        return try check_source(source, options.features, library_dir)
+        return try check_source(source, options.features, library_dir, debug_assertions)
     }
-    if source.is_dir() { return try check_package(source, entry, options, library_dir) }
+    if source.is_dir() { return try check_package(source, entry, options, library_dir, debug_assertions) }
     if let present(parent) = source.parent() {
-        if !parent.as_os_str().is_empty() { return try check_package(parent, entry, options, library_dir) }
+        if !parent.as_os_str().is_empty() { return try check_package(parent, entry, options, library_dir, debug_assertions) }
     }
-    try check_package(path.path_from_text("."), entry, options, library_dir)
+    try check_package(path.path_from_text("."), entry, options, library_dir, debug_assertions)
 }
 
 fn check_package(read directory: path.Path, read entry: Text, read options: ResolveOptions,
-    read library_dir: path.Path): i32 throws io.Error {
+    read library_dir: path.Path, debug_assertions: bool): i32 throws io.Error {
     match take capture resolve_with(directory, entry, options) {
-        success(graph) => { try check_graph(graph, library_dir) },
+        success(graph) => { try check_graph(graph, library_dir, debug_assertions) },
         failure(error) => { try report_package_error(error) }
     }
 }
 
 fn check_usage(): i32 {
-    io.eprint("usage: mettle-selfhost check INPUT [--library-dir PATH] [--entry NAME] [--features a,b] [--no-default-features] [--registry PATH] [--locked|--offline|--frozen]\n")
+    io.eprint("usage: mettle-selfhost check INPUT [--target TRIPLE] [--profile debug|release] [--library-dir PATH] [--entry NAME] [--features a,b] [--no-default-features] [--registry PATH] [--locked|--offline|--frozen]\n")
     2
+}
+
+fn supported_target(read value: OsStr): bool {
+    if value.same(os_str_from_text("x86_64-unknown-linux-gnu")) { return true }
+    io.eprint("mettle: error[feature]: native compilation supports only the hosted x86_64-unknown-linux-gnu target\n")
+    false
 }
 
 fn run_check(read args: env.ArgsOs): i32 throws io.Error {
@@ -454,6 +462,8 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
     var input: usize? = none
     var entry: usize? = none
     var libraries: usize? = none
+    var debug: bool? = none
+    var target_selected = false
     var options = ResolveOptions()
     var package_options = false
     while position < args.len() {
@@ -469,6 +479,18 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
             let bytes = args[position].as_os_str().as_bytes()
             if !bytes.is_empty() && bytes[0usize] == b'-' { return check_usage() }
             libraries = present(position)
+        } else if arg.same(os_str_from_text("--target")) {
+            position += 1usize
+            if position == args.len() || target_selected { return check_usage() }
+            if !supported_target(args[position].as_os_str()) { return 1 }
+            target_selected = true
+        } else if arg.same(os_str_from_text("--profile")) {
+            position += 1usize
+            if position == args.len() || debug.is_present() { return check_usage() }
+            let profile = args[position].as_os_str()
+            if profile.same(os_str_from_text("debug")) { debug = present(true) }
+            else if profile.same(os_str_from_text("release")) { debug = present(false) }
+            else { return check_usage() }
         } else if arg.same(os_str_from_text("--features")) {
             position += 1usize
             if position == args.len() { return check_usage() }
@@ -507,9 +529,9 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
     if let present(selected) = entry {
         let present(name) = args[selected].as_os_str().to_str() else { return check_usage() }
         if name.is_empty() || name.as_bytes()[0usize] == b'-' { return check_usage() }
-        return try check_input(source, name, options, package_options, library_dir)
+        return try check_input(source, name, options, package_options, library_dir, debug.or(true))
     }
-    try check_input(source, "main", options, package_options, library_dir)
+    try check_input(source, "main", options, package_options, library_dir, debug.or(true))
 }
 
 enum BuildArtifact { Llvm, Executable }
@@ -661,7 +683,7 @@ fn build_llvm(read loaded: PackageSources, read output: path.Path, checks: Overf
     try publish_artifact(output, ir.as_bytes(), artifact, clang)
 }
 
-fn load_build_input(read source: path.Path, read library_dir: path.Path): PackageSources? throws io.Error {
+fn load_build_input(read source: path.Path, read library_dir: path.Path, debug_assertions: bool): PackageSources? throws io.Error {
     if package_input(source) {
         let directory = if source.is_dir() { source.to_path_buf() }
             else if let present(parent) = source.parent() {
@@ -675,13 +697,13 @@ fn load_build_input(read source: path.Path, read library_dir: path.Path): Packag
             io.eprint("mettle: error[feature]: native build currently requires an executable entry\n")
             return none
         }
-        return try load_graph(graph, library_dir)
+        return try load_graph(graph, library_dir, debug_assertions)
     }
-    try load_single_graph(source, List<String>(), library_dir)
+    try load_single_graph(source, List<String>(), library_dir, debug_assertions)
 }
 
 fn build_usage(): i32 {
-    io.eprint("usage: mettle-selfhost build INPUT -o OUTPUT [--library-dir PATH] [--emit executable|llvm] [--cc CXX] [--profile debug|release] [--overflow-checks on|off]\n")
+    io.eprint("usage: mettle-selfhost build INPUT -o OUTPUT [--target TRIPLE] [--library-dir PATH] [--emit executable|llvm] [--cc CXX] [--profile debug|release] [--overflow-checks on|off]\n")
     2
 }
 
@@ -692,6 +714,7 @@ fn run_build(read args: env.ArgsOs): i32 throws io.Error {
     var cc: usize? = none
     var libraries: usize? = none
     var debug: bool? = none
+    var target_selected = false
     var override_checks: bool? = none
     var index = 2usize
     while index < args.len() {
@@ -722,6 +745,11 @@ fn run_build(read args: env.ArgsOs): i32 throws io.Error {
             let tool = args[index].as_os_str().as_bytes()
             if tool.is_empty() || tool[0usize] == b'-' { return build_usage() }
             cc = present(index)
+        } else if option.same(os_str_from_text("--target")) {
+            index += 1usize
+            if index == args.len() || target_selected { return build_usage() }
+            if !supported_target(args[index].as_os_str()) { return 1 }
+            target_selected = true
         } else if option.same(os_str_from_text("--profile")) {
             index += 1usize
             if index == args.len() || debug.is_present() { return build_usage() }
@@ -748,8 +776,9 @@ fn run_build(read args: env.ArgsOs): i32 throws io.Error {
     let source = path.path_from_os_str(args[input_index].as_os_str())
     let library_dir = if let present(index) = libraries { path.path_from_os_str(args[index].as_os_str()) }
         else { path.path_from_text("") }
-    let present(loaded) = try load_build_input(source, library_dir) else { return 1 }
-    let checks = if override_checks.or(debug.or(true)) { OverflowChecks.On } else { OverflowChecks.Off }
+    let debug_assertions = debug.or(true)
+    let present(loaded) = try load_build_input(source, library_dir, debug_assertions) else { return 1 }
+    let checks = if override_checks.or(debug_assertions) { OverflowChecks.On } else { OverflowChecks.Off }
     let clang = if let present(tool) = cc { path.path_from_os_str(args[tool].as_os_str()) }
         else { path.path_from_text("clang++") }
     try build_llvm(loaded, path.path_from_os_str(args[output_index].as_os_str()), checks,
