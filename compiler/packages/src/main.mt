@@ -7,5 +7,5 @@ module inputs;
 module checksum;
 module lock;
 
-pub import graph.{ resolve, resolve_locked, PackageGraph, ResolvedPackage, DependencyEdge }
+pub import graph.{ resolve, resolve_locked, resolve_with, ResolveOptions, PackageGraph, ResolvedPackage, DependencyEdge }
 pub import inputs.{ PackageError, PackagePhase }
