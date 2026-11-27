@@ -8,6 +8,7 @@ type Predicate<region r> {
     bytes: read [u8] from r
     tokens: read [Token] from r
     features: read List<String> from r
+    debug_assertions: bool
     position: usize
     attribute: Span
 }
@@ -47,9 +48,10 @@ extend<region r> Predicate<region r> {
         self.position += 1usize
         if name == b"true" { return true }
         if name == b"false" { return false }
-        if name == b"all" || name == b"any" || name == b"not" {
-            if !self.consume(b"(") {
-                throw CheckError(CheckPhase.Attribute, token.span, "cfg combinator requires parentheses")
+        if name == b"debug_assertions" { return self.debug_assertions }
+        if self.consume(b"(") {
+            if name != b"all" && name != b"any" && name != b"not" {
+                throw CheckError(CheckPhase.Attribute, token.span, "unknown cfg predicate")
             }
             let all = name == b"all"
             let negate = name == b"not"
@@ -71,25 +73,28 @@ extend<region r> Predicate<region r> {
             }
             return value
         }
-        if name == b"debug_assertions" || name == b"target_os" || name == b"target_arch" ||
-            name == b"target_family" || name == b"target_endian" || name == b"target_pointer_width" ||
-            name == b"target_feature" {
-            throw CheckError(CheckPhase.Feature, token.span, "native checking does not support target or profile cfg predicates yet")
-        }
-        if name != b"feature" {
+        if name != b"feature" && name != b"target_os" && name != b"target_arch" &&
+            name != b"target_family" && name != b"target_endian" && name != b"target_pointer_width" &&
+            name != b"target_feature" {
             throw CheckError(CheckPhase.Attribute, token.span, "unknown cfg predicate")
         }
         if !self.consume(b"=") {
-            throw CheckError(CheckPhase.Attribute, token.span, "cfg predicate 'feature' requires = \"value\"")
+            throw CheckError(CheckPhase.Attribute, token.span, "cfg predicate requires = \"value\"")
         }
         let present(text) = self.peek() else {
-            throw CheckError(CheckPhase.Attribute, self.attribute, "cfg predicate 'feature' requires a constant text value")
+            throw CheckError(CheckPhase.Attribute, self.attribute, "cfg predicate requires a constant text value")
         }
         if !text.kind.is(Kind.Text) {
-            throw CheckError(CheckPhase.Attribute, text.span, "cfg predicate 'feature' requires a constant text value")
+            throw CheckError(CheckPhase.Attribute, text.span, "cfg predicate requires a constant text value")
         }
         self.position += 1usize
         let value = read self.bytes[text.span.begin as usize + 1usize..text.span.end as usize - 1usize]
+        if name == b"target_os" { return value == b"linux" }
+        if name == b"target_arch" { return value == b"x86_64" }
+        if name == b"target_family" { return value == b"unix" }
+        if name == b"target_endian" { return value == b"little" }
+        if name == b"target_pointer_width" { return value == b"64" }
+        if name == b"target_feature" { return value == b"sse" || value == b"sse2" }
         for feature in self.features.as_slice() {
             if feature.as_text().as_bytes() == value { return true }
         }
@@ -97,8 +102,9 @@ extend<region r> Predicate<region r> {
     }
 }
 
-pub parent fn included(read bytes: [u8], read tokens: [Token], read features: List<String>, span: Span): bool throws CheckError {
-    var predicate = Predicate(read bytes, read tokens, read features, 0usize, span)
+pub parent fn included(read bytes: [u8], read tokens: [Token], read features: List<String>,
+    debug_assertions: bool, span: Span): bool throws CheckError {
+    var predicate = Predicate(read bytes, read tokens, read features, debug_assertions, 0usize, span)
     if !predicate.consume(b"(") {
         throw CheckError(CheckPhase.Attribute, span, "cfg requires one predicate")
     }

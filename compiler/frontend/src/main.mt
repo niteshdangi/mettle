@@ -159,7 +159,8 @@ fn root_node(read parsed: Parsed): SyntaxNode throws CheckError {
     root
 }
 
-pub fn active_items(read bytes: [u8], read parsed: Parsed, read features: List<String>): List<ActiveItem> throws CheckError {
+pub fn active_items(read bytes: [u8], read parsed: Parsed, read features: List<String>,
+    debug_assertions: bool = true): List<ActiveItem> throws CheckError {
     let root = try root_node(parsed)
     var items = List<ActiveItem>()
     for index in root.children.begin..root.children.end {
@@ -189,7 +190,7 @@ pub fn active_items(read bytes: [u8], read parsed: Parsed, read features: List<S
                 throw CheckError(CheckPhase.Attribute, attribute.span, "cfg requires one predicate")
             }
             let tokens = read parsed.tokens.as_slice()[arguments.tokens.begin as usize..arguments.tokens.end as usize]
-            let included = try cfg.included(bytes, tokens, features, attribute.span)
+            let included = try cfg.included(bytes, tokens, features, debug_assertions, attribute.span)
             active = active && included
             offset += 1u32
         }

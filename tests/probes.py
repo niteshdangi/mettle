@@ -1058,6 +1058,34 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([tool, "check", str(entry), "--library-dir", str(library)])
 
             evidence["cases"].append({"name": "native-library-source-mounts"})
+        if selected("native-target-profile-cfg"):
+            library = directory / "target-cfg-library"
+            std = library / "std"
+            std.mkdir(parents=True, exist_ok=True)
+            (std / "module.mt").write_text(
+                '@cfg(all(target_os = "linux", target_family = "unix", target_arch = "x86_64", '
+                'target_endian = "little", target_pointer_width = "64", target_feature = "sse", '
+                'target_feature = "sse2", not(target_feature = "avx")))\n'
+                'pub fn value(): i32 { select() }\n'
+                '@cfg(debug_assertions)\nfn select(): i32 { 41 }\n'
+                '@cfg(not(debug_assertions))\nfn select(): i32 { 42 }\n'
+                '@cfg(any(target_os = "windows", target_arch = "aarch64"))\npub module nonexistent;\n')
+            entry = source("native-target-profile-cfg", "fn main(): i32 { std.value() }\n")
+            options = ["--library-dir", str(library), "--target", "x86_64-unknown-linux-gnu"]
+            output = directory / "target-cfg-program"
+            for tool in (executable, native):
+                for profile, status in (("debug", 41), ("release", 42)):
+                    args = [*options, "--profile", profile]
+                    run([tool, "check", str(entry), *args])
+                    run([tool, "build", str(entry), "-o", str(output), *args, "--overflow-checks", "off"], env=llvm_env)
+                    run([str(output)], status)
+            entry.write_text("@cfg(any(true, target_os = 1))\nfn main(): i32 { 0 }\n")
+            for tool in (executable, native):
+                rejected = run([tool, "check", str(entry), *options], 1)
+                assert f"{entry}:1:28: error[attribute]" in rejected.stderr and "constant text value" in rejected.stderr, rejected.stderr
+            rejected = run([native, "check", str(entry), "--target", "aarch64-unknown-linux-gnu"], 1)
+            assert "error[feature]" in rejected.stderr and "supports only the hosted x86_64-unknown-linux-gnu target" in rejected.stderr, rejected.stderr
+            evidence["cases"].append({"name": "native-target-profile-cfg"})
         if selected("package-feature-options"):
             import shutil
 
