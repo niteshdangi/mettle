@@ -265,6 +265,8 @@ package mounts; it discovers declared external files and keeps their canonical
 source identities. The frontend collects signatures across all supplied units
 before checking bodies. Checked calls carry a module and function index, not a
 source spelling, and expression facts remain indexed by the owning syntax unit.
+Public syntax inspection projects the native tree into the reference JSON
+shape; the frontend continues to consume the original lossless tree.
 The C++ component table above describes the bootstrap implementation; it does
 not prescribe one Mettle package per C++ component.
 

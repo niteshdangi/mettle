@@ -10,6 +10,9 @@ import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
 import mettle_packages.{ PackageError, PackageGraph, PackagePhase, ResolveOptions, resolve_with }
 import mettle_pipeline.{ CheckError, CheckPhase, SourceModule, check_modules, external_modules }
+import mettle_syntax.inspect.{ InspectionError, project }
+
+module inspection;
 
 fn phase_name(phase: Phase): read Text from static {
     match phase { Phase.Lex => "lex", Phase.Parse => "parse", Phase.Feature => "feature", Phase.Limit => "limit" }
@@ -354,44 +357,6 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
     try check_input(source, "main", options, package_options)
 }
 
-fn write_token_text(mut out: Writer, read bytes: [u8], format_piece: bool): Unit throws io.Error {
-    let hex = b"0123456789abcdef"
-    var start = 0usize
-    var index = 0usize
-    var escaped = false
-    while index < bytes.len() {
-        let byte = bytes[index]
-        if format_piece && !escaped && (byte == b'{' || byte == b'}') {
-            let paired = index + 1usize < bytes.len() && bytes[index + 1usize] == byte
-            if paired || byte == b'}' {
-                let end = if paired { index + 1usize } else { index }
-                try out.write_all(read bytes[start..end])
-                index += if paired { 2usize } else { 1usize }
-                start = index
-                continue
-            }
-        }
-        escaped = byte == b'\\' && !escaped
-        if byte == b'"' || byte == b'\\' || byte < 32u8 {
-            try out.write_all(read bytes[start..index])
-            let spelling = match byte {
-                b'"' => present(b'"'), b'\\' => present(b'\\'),
-                b'\n' => present(b'n'), b'\r' => present(b'r'), b'\t' => present(b't'),
-                _ => none
-            }
-            if let present(code) = spelling {
-                try out.write_all([b'\\', code])
-            } else {
-                try out.write_all([b'\\', b'u', b'0', b'0',
-                    hex[(byte >> 4u8) as usize], hex[(byte & 15u8) as usize]])
-            }
-            start = index + 1usize
-        }
-        index += 1usize
-    }
-    try out.write_all(read bytes[start..])
-}
-
 fn write_tokens(mut out: Writer, read bytes: [u8], read tokens: [Token]): Unit throws io.Error {
     try out.write("{\n  \"aliases\": [],\n  \"functions\": [],\n  \"products\": [],\n  \"tokens\": [")
     var separator = false
@@ -402,7 +367,7 @@ fn write_tokens(mut out: Writer, read bytes: [u8], read tokens: [Token]): Unit t
         let begin = token.span.begin
         let end = token.span.end
         try out.write(f"\n    {{\n      \"begin\": {begin},\n      \"end\": {end},\n      \"kind\": {kind},\n      \"text\": \"")
-        try write_token_text(mut out, read bytes[begin as usize..end as usize], token.kind.is(Kind.FormatPiece))
+        try inspection.write_json_text(mut out, read bytes[begin as usize..end as usize], token.kind.is(Kind.FormatPiece))
         try out.write("\"\n    }")
     }
     try out.write("\n  ]\n}\n")
@@ -442,25 +407,48 @@ fn run(): i32 throws io.Error {
         return try run_check(args)
     }
     let syntax = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("syntax"))
+    let syntax_tree = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("syntax-tree"))
     let tokens = args.len() == 3 && args[1].as_os_str().same(std.ffi.os_str_from_text("tokens"))
-    if args.len() != 2 && !syntax && !tokens {
+    if args.len() != 2 && !syntax && !syntax_tree && !tokens {
         io.eprint("usage: mettle-selfhost [tokens|syntax|check] INPUT\n")
         return 2
     }
     let source = path.path_from_os_str(args[if args.len() == 3 { 2usize } else { 1usize }].as_os_str())
-    if tokens && package_input(source) {
+    if (tokens || syntax) && package_input(source) {
         io.eprint("mettle: error[package]: only 'check', 'lint' and 'build' accept a package\n")
         return 2
     }
     let loaded = match take capture load_source(source) {
         success(content) => take content,
         failure(error) => {
-            if tokens { return try report_read_error(source, error) }
+            if tokens || syntax { return try report_read_error(source, error) }
             throw error
         }
     }
     let present(bytes) = loaded else { io.eprint("error[limit] 0:0 source file must be smaller than 4 GiB\n"); return 1 }
     if syntax {
+        let parsed = parse(bytes.as_slice(), 0u32)
+        if parsed.diagnostics.error_count != 0usize {
+            return try report_source(source, bytes.as_slice(), parsed.diagnostics)
+        }
+        let view = match take capture project(parsed, bytes.as_slice()) {
+            success(view) => take view,
+            failure(InspectionError.Unsupported(_, span)) => {
+                var diagnostics = Diagnostics()
+                diagnostics.report(Phase.Feature, span, "native inspection does not support this syntax yet")
+                return try report_source(source, bytes.as_slice(), diagnostics)
+            },
+            failure(InspectionError.InvalidTree) => {
+                io.eprint("mettle: error[internal]: cannot inspect a valid native syntax tree\n")
+                return 1
+            }
+        }
+        var out = io.buf_writer(io.stdout())
+        try inspection.write_inspection(mut out, view)
+        try out.flush()
+        return 0
+    }
+    if syntax_tree {
         let result = parse(bytes.as_slice(), 0u32)
         var out = io.buf_writer(io.stdout())
         var index = 0usize

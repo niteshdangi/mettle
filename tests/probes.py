@@ -375,7 +375,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 continue
             path = source("parser-" + name, body if name == "declarations" or name.startswith("declaration-") else "fn main() {\n" + body + "\n}\n")
             reference = run([executable, "syntax", str(path)])
-            actual = run([native, "syntax", str(path)])
+            actual = run([native, "syntax-tree", str(path)])
             data = path.read_bytes()
             nodes, edges, tokens = inspect_native(actual, data)
             wanted = json.loads(reference.stdout)
@@ -466,7 +466,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 continue
             path = source("parser-" + name, text)
             reference = run([executable, "syntax", str(path)], 1)
-            actual = run([native, "syntax", str(path)], 1)
+            actual = run([native, "syntax-tree", str(path)], 1)
             inspect_native(actual, path.read_bytes())
             wanted = re.search(r":(\d+):(\d+): error\[(\w+)\]: ([^\n]*)", reference.stderr)
             found = re.search(r"error\[(\w+)\] (\d+):(\d+) ([^\n]*)", actual.stderr)
@@ -492,7 +492,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             if not selected(name):
                 continue
             path = source("parser-" + name, text)
-            actual = run([native, "syntax", str(path)], 1)
+            actual = run([native, "syntax-tree", str(path)], 1)
             nodes, edges, tokens = inspect_native(actual, path.read_bytes())
             assert sum(node[0] == "function" for node in nodes) >= 1, actual.stdout
             assert sum(node[0] == "error" for node in nodes) >= (2 if name.startswith("recovery") else 1), actual.stdout
@@ -517,7 +517,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             if not selected(f"text-{i}"):
                 continue
             path = source(f"parser-text-{i}", "fn main() { " + literal + " }\n")
-            actual = run([native, "syntax", str(path)], 1)
+            actual = run([native, "syntax-tree", str(path)], 1)
             found = re.search(r"error\[lex\] (\d+):(\d+) ([^\n]*)", actual.stderr)
             assert found and message == found[3], (message, actual.stderr)
             assert path.read_bytes()[int(found[1]):int(found[2])].decode() == literal
@@ -556,7 +556,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             if not selected("grammar-" + name):
                 continue
             path = source("parser-grammar-" + name, text)
-            actual = run([native, "syntax", str(path)])
+            actual = run([native, "syntax-tree", str(path)])
             if name == "pointer-projection":
                 run([executable, "syntax", str(path)])
             data = path.read_bytes()
@@ -604,7 +604,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             if not selected("grammar-invalid-" + name):
                 continue
             path = source("parser-grammar-invalid-" + name, text)
-            actual = run([native, "syntax", str(path)], 1)
+            actual = run([native, "syntax-tree", str(path)], 1)
             inspect_native(actual, path.read_bytes())
             phase = "limit" if name.startswith("depth-") else "lex" if name in {"interpolation-escape", "pattern-escape"} else "parse"
             assert "error[" + phase + "]" in actual.stderr, (name, actual.stderr)
@@ -612,7 +612,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
 
         if selected("import-dotted-group"):
             path = source("parser-import-dotted-group", "import dep.{nested.Name}")
-            actual = run([native, "syntax", str(path)], 1)
+            actual = run([native, "syntax-tree", str(path)], 1)
             assert "error[parse]" in actual.stderr, actual.stderr
             evidence["cases"].append({"name": "import-dotted-group", "source_sha256": digest(path)})
 
@@ -623,7 +623,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 continue
             path = source("parser-" + name, text)
             reference = run([executable, "syntax", str(path)], expected)
-            actual = run([native, "syntax", str(path)], expected)
+            actual = run([native, "syntax-tree", str(path)], expected)
             inspect_native(actual, path.read_bytes())
             if expected:
                 assert actual.stderr.count("error[parse]") == reference.stderr.count("error[parse]") == 140
@@ -717,7 +717,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             if name != "generic-explicit-const":
                 run([executable, "syntax", str(path)])
             reference = run([executable, "tokens", str(path)])
-            actual = run([native, "syntax", str(path)])
+            actual = run([native, "syntax-tree", str(path)])
             data = path.read_bytes()
             nodes, edges, tokens = inspect_native(actual, data)
             assert tokens == [(token["kind"], token["begin"], token["end"]) for token in json.loads(reference.stdout)["tokens"]], name
@@ -758,7 +758,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 continue
             path = source("parser-signature-" + name, text)
             run([executable, "syntax", str(path)])
-            actual = run([native, "syntax", str(path)])
+            actual = run([native, "syntax-tree", str(path)])
             data = path.read_bytes()
             nodes, edges, tokens = inspect_native(actual, data)
             function = nodes[-2]
@@ -770,7 +770,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
         if selected("application-structure"):
             path = source("parser-generic-application-structure", "fn main() { factory<[u8], region r, const N = 4>(value) }")
             run([executable, "syntax", str(path)])
-            actual = run([native, "syntax", str(path)])
+            actual = run([native, "syntax-tree", str(path)])
             data = path.read_bytes()
             nodes, edges, tokens = inspect_native(actual, data)
             applications = [index for index, node in enumerate(nodes) if node[0] == "generic-apply"]
@@ -807,7 +807,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             path = source("parser-module-" + name, text)
             run([executable, "syntax", str(path)])
             reference = run([executable, "tokens", str(path)])
-            actual = run([native, "syntax", str(path)])
+            actual = run([native, "syntax-tree", str(path)])
             data = path.read_bytes()
             nodes, edges, tokens = inspect_native(actual, data)
             assert tokens == [(token["kind"], token["begin"], token["end"]) for token in json.loads(reference.stdout)["tokens"]], name
@@ -818,6 +818,18 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             if name == "comment-lookahead":
                 assert any(node[0] == "module-declaration" and data[node[1]:node[2]] == b"module remote" for node in nodes)
             evidence["cases"].append({"name": "module-" + name, "source_sha256": digest(path)})
+        if selected("syntax-inspection-json"):
+            for name, text in (
+                ("empty", ""),
+                ("mixed", 'copy type P { value: ptr<read i32> }\nalias A = x.Y<i32>\n'
+                 'fn f() { var x: i32; x += 1 as i32; thing<T>.member<U>(arg: x); x .. }\n'
+                 'fn text() { "escape: \\\\ \\" \\t"; "é" }\n'),
+            ):
+                path = source("syntax-inspection-" + name, text)
+                reference = run([executable, "syntax", str(path)])
+                actual = run([native, "syntax", str(path)])
+                assert actual.stdout == reference.stdout and not actual.stderr, name
+            evidence["cases"].append({"name": "syntax-inspection-json"})
         if selected("package-entry-syntax"):
             import shutil
 
