@@ -1,21 +1,23 @@
 import alloc.hash_map.Map
 import alloc.string.{ String, from_text }
 import alloc.vec.List
-import core.text.{ Text, from_utf8 }
-import mettle_foundation.SOURCE_BYTES
+import core.cmp.Ordering
+import core.text.Text
 import std.{ fs, io }
-import std.io.Reader
 import std.macros.format
 import std.path.{ Path, PathBuf }
-import super.data.{ Range, parse }
+import super.data.Range
+import super.inputs.{ PackageError, PackagePhase, error_at, io_result, read_data, relative_to }
+import super.lock
 import super.manifest.{ Manifest, Dependency, decode }
 import super.version
 
-pub type PackageError { pub path: PathBuf; pub begin: u32; pub end: u32; pub message: String }
 pub type DependencyEdge { pub name: String; pub package: usize }
 pub type ResolvedPackage {
     pub name: String
     pub version: String
+    pub identity: String
+    pub source: String
     pub directory: PathBuf
     pub entry: PathBuf
     pub dependencies: List<DependencyEdge>
@@ -26,50 +28,14 @@ type Frame { index: usize; next: usize; dependencies: List<Dependency> }
 type Visit { index: usize; version: version.Version }
 
 fn error(read path: Path, span: Range, take message: String): PackageError {
-    PackageError(path.to_path_buf(), span.begin, span.end, take message)
-}
-
-fn io_result<T>(take result: Outcome<T, io.Error>, read path: Path, span: Range): T throws PackageError {
-    match take result {
-        success(value) => take value,
-        failure(issue) => { throw error(path, span, issue.message()) }
-    }
-}
-
-fn read_manifest(mut file: fs.File): List<u8>? throws io.Error {
-    let metadata = try file.metadata()
-    if !metadata.is_file() || metadata.len() > SOURCE_BYTES as u64 { return none }
-    var bytes = List<u8>()
-    var chunk = [0u8; 4096]
-    loop {
-        let remaining = SOURCE_BYTES - bytes.len()
-        let capacity = if remaining < 4096usize { remaining + 1 } else { 4096usize }
-        let count = try file.read_some(chunk.split_at_mut(capacity).0)
-        if count > remaining { return none }
-        if count == 0 { return present(bytes) }
-        bytes.extend_from_slice(chunk.split_at(count).0)
-    }
+    error_at(path, span, take message, PackagePhase.Package)
 }
 
 fn load(read directory: Path): Manifest throws PackageError {
     let manifest_path = directory.join("package.mettle")
     let path = manifest_path.as_path()
     let start = Range(0, 0)
-    var file = try io_result(take capture fs.open(path), path, start)
-    let present(bytes) = try io_result(take capture read_manifest(mut file), path, start) else {
-        throw error(path, start, from_text("package.mettle must be a regular file smaller than 4 GiB"))
-    }
-    let input = match from_utf8(bytes.as_slice()) {
-        success(text) => text,
-        failure(issue) => {
-            let offset = issue.valid_up_to() as u32
-            throw error(path, Range(offset, offset + 1), from_text("invalid UTF-8 in package.mettle"))
-        }
-    }
-    let data = match take capture parse(input) {
-        success(tree) => take tree,
-        failure(issue) => { throw error(path, issue.span, take issue.message) }
-    }
+    let data = (try read_data(path, PackagePhase.Manifest, false)).or_panic()
     let default_entry = if data.field(0, "entry").is_present() || data.field(0, "kind").is_present() ||
         data.field(0, "emit").is_present() { false } else {
         let source = directory.join("src/main.mt")
@@ -93,12 +59,12 @@ fn entry_path(read manifest: Manifest, read directory: Path, read entry: Text, r
         if (root && target.name.as_text() == entry) || (!root && target.library) {
             let source = directory.join(target.source.as_text())
             let source_path = source.as_path()
-            let properties = try io_result(take capture fs.metadata(source_path), manifest_path.as_path(), target.span)
+            let properties = try io_result(take capture fs.metadata(source_path), manifest_path.as_path(), target.span, PackagePhase.Package)
             if !properties.is_file() {
                 let name = target.source.as_text()
                 throw error(manifest_path.as_path(), target.span, format(f"source entry '{name}' is not a regular file"))
             }
-            return try io_result(take capture fs.canonicalize(source_path), manifest_path.as_path(), target.span)
+            return try io_result(take capture fs.canonicalize(source_path), manifest_path.as_path(), target.span, PackagePhase.Package)
         }
     }
     let name = manifest.name.as_text()
@@ -119,13 +85,35 @@ fn check_requirement(read dependency: Dependency, read candidate: version.Versio
 
 pub fn resolve(read root: Path, read entry: Text): PackageGraph throws PackageError {
     let start = Range(0, 0)
-    let root_directory = try io_result(take capture fs.canonicalize(root), root, start)
-    let manifest = try load(root_directory.as_path())
-    let source = try entry_path(manifest, root_directory.as_path(), entry, true)
+    let root_directory = try io_result(take capture fs.canonicalize(root), root, start, PackagePhase.Package)
+    let directory = root_directory.as_path()
+    let manifest = try load(directory)
+    let source = try entry_path(manifest, directory, entry, true)
+    try build_graph(directory, take manifest, take source)
+}
+
+pub fn resolve_locked(read root: Path, read entry: Text, locked: bool): PackageGraph throws PackageError {
+    let start = Range(0, 0)
+    let root_directory = try io_result(take capture fs.canonicalize(root), root, start, PackagePhase.Package)
+    let directory = root_directory.as_path()
+    let manifest = try load(directory)
+    let source = try entry_path(manifest, directory, entry, true)
+    let path = directory.join("lock.mettle")
+    let recorded = try lock.load(path.as_path(), locked)
+    let graph = try build_graph(directory, take manifest, take source)
+    try lock.reconcile(graph, directory, path.as_path(), take recorded, locked)
+    graph
+}
+
+fn build_graph(read root_directory: Path, take manifest: Manifest, take source: PathBuf): PackageGraph throws PackageError {
     var visits = Map<PathBuf, Visit>()
     let _ = visits.insert(root_directory.to_path_buf(), Visit(0, take manifest.version))
     var packages = List<ResolvedPackage>()
-    packages.push(ResolvedPackage(take manifest.name, take manifest.version_text, take root_directory, take source, List<DependencyEdge>()))
+    let root_name = manifest.name.as_text()
+    let root_version = manifest.version_text.as_text()
+    let root_id = format(f"{root_name}@{root_version}|root|target")
+    packages.push(ResolvedPackage(take manifest.name, take manifest.version_text, take root_id, from_text("root"),
+        root_directory.to_path_buf(), take source, List<DependencyEdge>()))
     var active = List<bool>()
     active.push(true)
     var work = List<Frame>()
@@ -136,6 +124,9 @@ pub fn resolve(read root: Path, read entry: Text): PackageGraph throws PackageEr
         let next = work[frame].next
         if next == work[frame].dependencies.len() {
             active[owner] = false
+            packages[owner].dependencies.as_mut_slice().sort_unstable_by(fn(read a: DependencyEdge, read b: DependencyEdge): Ordering {
+                a.name.as_text().cmp(b.name.as_text())
+            })
             let _ = work.pop()
             continue
         }
@@ -145,7 +136,7 @@ pub fn resolve(read root: Path, read entry: Text): PackageGraph throws PackageEr
         let owner_path = packages[owner].directory.join("package.mettle")
         let declared_by = owner_path.as_path()
         let path = packages[owner].directory.join(dependency.path.as_text())
-        let directory = try io_result(take capture fs.canonicalize(path), declared_by, dependency.span)
+        let directory = try io_result(take capture fs.canonicalize(path), declared_by, dependency.span, PackagePhase.Package)
         if let present(visit) = visits.get(directory) {
             if active[visit.index] { throw error(declared_by, dependency.span, format(f"dependency cycle involving '{name}'")) }
             let actual = packages[visit.index].name.as_text()
@@ -159,11 +150,18 @@ pub fn resolve(read root: Path, read entry: Text): PackageGraph throws PackageEr
         if actual != name { throw error(declared_by, dependency.span, format(f"path dependency '{name}' is the package '{actual}'")) }
         try check_requirement(dependency, child.version, declared_by)
         let source = try entry_path(child, directory.as_path(), "main", false)
+        let relative = relative_to(root_directory, directory.as_path())
+        let present(relative_text) = relative.to_str() else {
+            throw error(declared_by, dependency.span, from_text("package path is not valid UTF-8"))
+        }
+        let version_text = child.version_text.as_text()
+        let identity = format(f"{name}@{version_text}|path+{relative_text}|target")
+        let lock_source = format(f"path+{relative_text}")
         let index = packages.len()
         let _ = visits.insert(directory.to_path_buf(), Visit(index, take child.version))
         active.push(true)
         packages[owner].dependencies.push(DependencyEdge(from_text(name), index))
-        packages.push(ResolvedPackage(take child.name, take child.version_text, take directory, take source, List<DependencyEdge>()))
+        packages.push(ResolvedPackage(take child.name, take child.version_text, take identity, take lock_source, take directory, take source, List<DependencyEdge>()))
         work.push(Frame(index, 0, take child.dependencies))
     }
     PackageGraph(take packages)
