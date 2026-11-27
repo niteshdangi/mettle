@@ -1,11 +1,14 @@
 import alloc.hash_map.Map
+import alloc.string.String
 import alloc.vec.List
 import core.text.Text
 import mettle_foundation.Span
 import mettle_syntax.{ NodeId, NodeKind, Parsed, SyntaxNode }
 import mettle_types.Scalar
 
-pub copy enum CheckPhase { Feature, Lex, Name, Type }
+module cfg;
+
+pub copy enum CheckPhase { Feature, Lex, Name, Type, Attribute }
 
 pub copy type CheckError {
     pub phase: CheckPhase
@@ -41,7 +44,10 @@ pub type SourceModule {
     pub syntax: Parsed
     pub modules: Map<List<u8>, usize>
     pub package_index: usize
+    pub items: List<ActiveItem>
 }
+
+pub copy type ActiveItem { id: NodeId; offset: u32 }
 
 pub type ExternalModule {
     pub name: List<u8>
@@ -80,14 +86,48 @@ fn root_node(read parsed: Parsed): SyntaxNode throws CheckError {
     root
 }
 
-pub fn external_modules(read bytes: [u8], read parsed: Parsed): List<ExternalModule> throws CheckError {
+pub fn active_items(read bytes: [u8], read parsed: Parsed, read features: List<String>): List<ActiveItem> throws CheckError {
     let root = try root_node(parsed)
-    var result = List<ExternalModule>()
+    var items = List<ActiveItem>()
     for index in root.children.begin..root.children.end {
-        let item = node(parsed, parsed.children[index as usize])
+        let id = parsed.children[index as usize]
+        let item = node(parsed, id)
+        let count = item.children.end - item.children.begin
+        var offset = 0u32
+        var active = true
+        while offset < count {
+            let attribute = node(parsed, child(parsed, item, offset))
+            if !attribute.kind.is(NodeKind.Attribute) { break }
+            let identifier = node(parsed, child(parsed, attribute, 0))
+            if read bytes[identifier.span.begin as usize..identifier.span.end as usize] != b"cfg" {
+                throw unsupported(attribute.span)
+            }
+            if attribute.children.end - attribute.children.begin != 2u32 {
+                throw CheckError(CheckPhase.Attribute, attribute.span, "cfg requires one predicate")
+            }
+            let arguments = node(parsed, child(parsed, attribute, 1))
+            if !arguments.kind.is(NodeKind.TokenTree) {
+                throw CheckError(CheckPhase.Attribute, attribute.span, "cfg requires one predicate")
+            }
+            let tokens = read parsed.tokens.as_slice()[arguments.tokens.begin as usize..arguments.tokens.end as usize]
+            let included = try cfg.included(bytes, tokens, features, attribute.span)
+            active = active && included
+            offset += 1u32
+        }
+        if active { items.push(ActiveItem(id, offset)) }
+    }
+    items
+}
+
+pub fn external_modules(read source: SourceModule): List<ExternalModule> throws CheckError {
+    let bytes = source.bytes.as_slice()
+    let parsed = read source.syntax
+    var result = List<ExternalModule>()
+    for declaration in source.items.as_slice() {
+        let item = node(parsed, declaration.id)
         if !item.kind.is(NodeKind.ModuleDeclaration) { continue }
-        let identifier = node(parsed, child(parsed, item, 0))
-        if item.children.end - item.children.begin != 1u32 || !identifier.kind.is(NodeKind.Name) {
+        let identifier = node(parsed, child(parsed, item, declaration.offset))
+        if item.children.end - item.children.begin != declaration.offset + 1u32 || !identifier.kind.is(NodeKind.Name) {
             throw unsupported(item.span)
         }
         result.push(ExternalModule(try name(bytes, parsed, identifier), item.span))
@@ -106,12 +146,13 @@ fn scalar_type(read bytes: [u8], annotation: SyntaxNode): Scalar throws CheckErr
     else { throw unsupported(annotation.span) }
 }
 
-fn signature(read bytes: [u8], read parsed: Parsed, id: NodeId): (List<u8>, Function, Map<List<u8>, usize>) throws CheckError {
-    let item = node(parsed, id)
+fn signature(read bytes: [u8], read parsed: Parsed, declaration: ActiveItem): (List<u8>, Function, Map<List<u8>, usize>) throws CheckError {
+    let item = node(parsed, declaration.id)
     if !item.kind.is(NodeKind.Function) { throw unsupported(item.span) }
-    let first = node(parsed, child(parsed, item, 0))
-    let offset = if first.kind.is(NodeKind.Visibility) { 1u32 } else { 0u32 }
-    if offset != 0u32 && read bytes[first.span.begin as usize..first.span.end as usize] != b"pub" {
+    let first = node(parsed, child(parsed, item, declaration.offset))
+    let exported = first.kind.is(NodeKind.Visibility)
+    let offset = declaration.offset + if exported { 1u32 } else { 0u32 }
+    if exported && read bytes[first.span.begin as usize..first.span.end as usize] != b"pub" {
         throw unsupported(first.span)
     }
     if item.children.end - item.children.begin != offset + 4u32 { throw unsupported(item.span) }
@@ -139,7 +180,7 @@ fn signature(read bytes: [u8], read parsed: Parsed, id: NodeId): (List<u8>, Func
         types.push(try scalar_type(bytes, node(parsed, child(parsed, parameter, 1))))
     }
     let result = try scalar_type(bytes, annotation)
-    (try name(bytes, parsed, identifier), Function(id, body, result, take types, offset != 0u32), take locals)
+    (try name(bytes, parsed, identifier), Function(declaration.id, body, result, take types, exported), take locals)
 }
 
 fn integer(read bytes: [u8], span: Span): Scalar throws CheckError {
@@ -304,17 +345,15 @@ fn expression(read source: SourceModule, item: SyntaxNode, owner: FunctionId,
 fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declarations throws CheckError {
     let bytes = source.bytes.as_slice()
     let parsed = read source.syntax
-    let root = try root_node(parsed)
     var functions = List<Function>()
     var names = Map<List<u8>, usize>()
     var locals = List<Map<List<u8>, usize>>()
     var imports = Map<List<u8>, Unit>()
-    for index in root.children.begin..root.children.end {
-        let id = parsed.children[index as usize]
-        let item = node(parsed, id)
+    for declaration in source.items.as_slice() {
+        let item = node(parsed, declaration.id)
         if item.kind.is(NodeKind.ModuleDeclaration) || item.kind.is(NodeKind.Import) {
-            if item.children.end - item.children.begin != 1u32 { throw unsupported(item.span) }
-            var identifier = node(parsed, child(parsed, item, 0))
+            if item.children.end - item.children.begin != declaration.offset + 1u32 { throw unsupported(item.span) }
+            var identifier = node(parsed, child(parsed, item, declaration.offset))
             if item.kind.is(NodeKind.Import) {
                 if !identifier.kind.is(NodeKind.ImportPath) || identifier.children.end - identifier.children.begin != 1u32 {
                     throw unsupported(item.span)
@@ -328,7 +367,7 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declar
             }
             continue
         }
-        let (identifier, function, scope) = try signature(bytes, parsed, id)
+        let (identifier, function, scope) = try signature(bytes, parsed, declaration)
         let position = functions.len()
         if names.insert(take identifier, position).is_present() {
             throw CheckError(CheckPhase.Name, item.span, "duplicate function")

@@ -3,13 +3,13 @@ import std.ffi.os_str_from_text
 import std.io.{ Reader, Writer }
 import alloc.vec.{ List, new }
 import alloc.hash_map.Map
-import alloc.string.from_text
+import alloc.string.{ String, from_text }
 import core.text.Text
 import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
 import mettle_packages.{ PackageError, PackageGraph, PackagePhase, ResolveOptions, resolve_with }
-import mettle_pipeline.{ CheckError, CheckPhase, SourceModule, check_modules, external_modules }
+import mettle_pipeline.{ CheckError, CheckPhase, SourceModule, active_items, check_modules, external_modules }
 import mettle_syntax.inspect.{ InspectionError, project }
 
 module inspection;
@@ -137,7 +137,8 @@ fn report_check_error(read source: path.Path, error: CheckError): i32 throws io.
     let end = error.span.end
     let message = error.message
     let phase = match error.phase {
-        CheckPhase.Feature => "feature", CheckPhase.Lex => "lex", CheckPhase.Name => "name", CheckPhase.Type => "type"
+        CheckPhase.Feature => "feature", CheckPhase.Lex => "lex", CheckPhase.Name => "name",
+        CheckPhase.Type => "type", CheckPhase.Attribute => "attribute"
     }
     try out.write_path(source)
     try out.write_line(f":{begin}:{end}: error[{phase}]: {message}")
@@ -145,7 +146,7 @@ fn report_check_error(read source: path.Path, error: CheckError): i32 throws io.
     1
 }
 
-fn load_module(read source: path.Path, index: usize, package_index: usize): SourceModule? throws io.Error {
+fn load_module(read source: path.Path, index: usize, package_index: usize, read features: List<String>): SourceModule? throws io.Error {
     if index > 4294967295usize {
         io.eprint("error[limit]: source indices exceed the 32-bit span representation\n")
         return none
@@ -163,11 +164,18 @@ fn load_module(read source: path.Path, index: usize, package_index: usize): Sour
     }
     let parsed = parse(bytes.as_slice(), index as u32)
     if try report_source(source, bytes.as_slice(), parsed.diagnostics) != 0 { return none }
-    present(SourceModule(take bytes, take parsed, Map<List<u8>, usize>(), package_index))
+    let items = match take capture active_items(bytes.as_slice(), parsed, features) {
+        success(items) => take items,
+        failure(error) => {
+            let _ = try report_check_error(source, error)
+            return none
+        }
+    }
+    present(SourceModule(take bytes, take parsed, Map<List<u8>, usize>(), package_index, take items))
 }
 
-fn check_source(read source: path.Path): i32 throws io.Error {
-    let present(module_source) = try load_module(source, 0, 0) else { return 1 }
+fn check_source(read source: path.Path, read features: List<String>): i32 throws io.Error {
+    let present(module_source) = try load_module(source, 0, 0, features) else { return 1 }
     var modules = List<SourceModule>()
     modules.push(take module_source)
     var mounts = List<Map<List<u8>, usize>>()
@@ -238,13 +246,13 @@ fn check_graph(read graph: PackageGraph): i32 throws io.Error {
             return 1
         }
         let index = sources.len()
-        let present(module_source) = try load_module(source, index, index) else { return 1 }
+        let present(module_source) = try load_module(source, index, index, package.features) else { return 1 }
         paths.push(ModulePath(source.to_path_buf(), source.parent().or_panic().to_path_buf()))
         sources.push(take module_source)
     }
     var owner = 0usize
     while owner < sources.len() {
-        let declarations = match take capture external_modules(sources[owner].bytes.as_slice(), sources[owner].syntax) {
+        let declarations = match take capture external_modules(sources[owner]) {
             success(declarations) => take declarations,
             failure(error) => { return try report_check_error(paths[owner].source.as_path(), error) }
         }
@@ -270,7 +278,9 @@ fn check_graph(read graph: PackageGraph): i32 throws io.Error {
                 return try report_check_error(owner_path, CheckError(CheckPhase.Name, declaration.span, "source file has more than one module identity"))
             }
             let index = sources.len()
-            let present(module_source) = try load_module(source.as_path(), index, sources[owner].package_index) else { return 1 }
+            let package_index = sources[owner].package_index
+            let present(module_source) = try load_module(source.as_path(), index, package_index,
+                graph.packages[package_index].features) else { return 1 }
             let _ = sources[owner].modules.insert(take declaration.name, take index)
             paths.push(ModulePath(take source, take directory))
             sources.push(take module_source)
@@ -289,7 +299,7 @@ fn check_input(read source: path.Path, read entry: Text, read options: ResolveOp
             io.eprint("mettle: error[package]: --entry, --no-default-features, --registry, --locked, --offline and --frozen need a package directory or package.mettle\n")
             return 2
         }
-        return try check_source(source)
+        return try check_source(source, options.features)
     }
     if source.is_dir() { return try check_package(source, entry, options) }
     if let present(parent) = source.parent() {
@@ -331,7 +341,6 @@ fn run_check(read args: env.ArgsOs): i32 throws io.Error {
             for feature in value.split(",") {
                 if !feature.is_empty() { options.features.push(from_text(feature)) }
             }
-            package_options = true
         } else if arg.same(os_str_from_text("--no-default-features")) {
             options.default_features = false
             package_options = true

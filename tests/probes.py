@@ -890,17 +890,18 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
 
             fixture = directory / "feature-options"
             shutil.copytree(ROOT / "packages" / "features", fixture, dirs_exist_ok=True)
-            widget = fixture / "widget"
-            (widget / "src" / "main.mt").write_text("pub fn base(): i32 { extra.value() }\n")
-            options = ["--no-default-features", "--features", "fancy,,basic"]
-            run([executable, "check", str(widget), *options])
-            lock = widget / "lock.mettle"
+            app = fixture / "app"
+            options = ["--no-default-features", "--features", "fancy,,"]
+            run([executable, "check", str(app), *options])
+            lock = app / "lock.mettle"
             expected_lock = lock.read_bytes()
             lock.unlink()
-            run([native, "check", str(widget), *options])
+            run([native, "check", str(app), *options])
             assert lock.read_bytes() == expected_lock, "feature activation produced a different lock"
-            actual = run([native, "check", str(widget), "--no-default-features", "--locked"], 1)
+            actual = run([native, "check", str(app), "--no-default-features", "--locked"], 1)
             assert "error[lock]" in actual.stderr and lock.read_bytes() == expected_lock, actual.stderr
+            run([native, "check", str(app), "--no-default-features"])
+            assert lock.read_bytes() != expected_lock, "suppressed features did not change the lock"
             evidence["cases"].append({"name": "package-feature-options"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
@@ -914,6 +915,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-condition-type", "fn main(): i32 { if 1 { 0 } else { 1 } }", "type"),
             ("check-scalar-branch-type", "fn main(): i32 { if true { 1 }; 0 }", "type"),
             ("check-scalar-logical-type", "fn main(): i32 { if true || 1 { 0 } else { 1 } }", "type"),
+            ("check-scalar-cfg-filter", '@cfg(any(feature = "disabled", false))\nmodule nonexistent\n@cfg(all(true, not(feature = "disabled")))\nfn main(): i32 { 0 }', None),
+            ("check-scalar-cfg-invalid", "@cfg(any(true, invalid))\nfn unused(): i32 { 0 }\nfn main(): i32 { 0 }", "attribute"),
         ):
             if not selected(name):
                 continue

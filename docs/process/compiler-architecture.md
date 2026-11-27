@@ -262,7 +262,9 @@ control rebuild work. A package is not an indivisible recompilation unit.
 
 For native scalar checking, the driver supplies parsed source units and their
 package mounts; it discovers declared external files and keeps their canonical
-source identities. The frontend collects signatures across all supplied units
+source identities. Feature predicates select active declarations using each
+unit's package features before external modules are loaded. The frontend
+collects signatures across all supplied units
 before checking bodies. Checked calls carry a module and function index, not a
 source spelling, and expression facts remain indexed by the owning syntax unit.
 Public syntax inspection projects the native tree into the reference JSON
