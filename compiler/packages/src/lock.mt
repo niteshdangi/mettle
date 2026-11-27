@@ -529,6 +529,65 @@ fn path_feature_lock_context(): Unit throws PackageError {
     try with_fixture("features", feature_fixture)
 }
 
+fn development_fixture(read root: Path): Unit throws PackageError {
+    let start = Range(0, 0)
+    let fixture = std.path.path_from_text("tests/packages")
+    for relative in ["path-dependency/app/package.mettle", "path-dependency/app/src/main.mt",
+            "path-dependency/mathlib/package.mettle", "path-dependency/mathlib/src/main.mt",
+            "path-dependency/mathlib/src/twice.mt", "path-dependency/units/package.mettle",
+            "path-dependency/units/src/main.mt", "features/extra/package.mettle", "features/extra/src/main.mt"] {
+        try fixture_file(root, fixture, relative)
+    }
+    let app = root.join("path-dependency/app")
+    let manifest = app.join("package.mettle")
+    let lockfile = app.join("lock.mettle")
+    let extra = root.join("features/extra/package.mettle")
+    var child = try io_result(take capture fs.read_to_string(extra), root, start, PackagePhase.Io)
+    child.push_str("\ndev-dependencies { missing: \"../missing\" }\n")
+    try io_result(take capture fs.write(extra, child.as_bytes()), root, start, PackagePhase.Io)
+    var source = try io_result(take capture fs.read_to_string(manifest), root, start, PackagePhase.Io)
+    source.push_str("\ndev-dependencies { extra: \"../../features/extra\", mathlib: \"../mathlib\" }\n")
+    try io_result(take capture fs.write(manifest, source.as_bytes()), root, start, PackagePhase.Io)
+
+    let normal = try resolve_locked(app.as_path(), "main", false)
+    assert(normal.packages.len() == 3 && normal.packages[0].dependencies.len() == 1, "normal resolution activated a development dependency")
+    let initial = try io_result(take capture fs.read_to_string(lockfile), root, start, PackagePhase.Io)
+    var options = ResolveOptions()
+    options.include_dev = true
+    options.locked = true
+    match take capture resolve_with(app.as_path(), "main", options) {
+        success(_) => assert(false, "a normal lock was accepted in the development context"),
+        failure(issue) => assert(issue.message.as_text().find("package 'extra' 0.1.0 is not in the lock").is_present(),
+            "wrong development lock difference")
+    }
+    let unchanged = try io_result(take capture fs.read_to_string(lockfile), root, start, PackagePhase.Io)
+    assert(unchanged.as_text() == initial.as_text(), "locked development resolution rewrote the lock")
+
+    options.locked = false
+    let development = try resolve_with(app.as_path(), "main", options)
+    let edges = read development.packages[0].dependencies
+    assert(development.packages.len() == 4 && edges.len() == 2 && edges[1].name.as_text() == "mathlib",
+        "development resolution duplicated an alias or expanded a dependency's own development dependencies")
+    let selected = read development.packages[edges[0].package]
+    assert(edges[0].name.as_text() == "extra" && selected.dependencies.is_empty(), "wrong root development edge")
+    options.locked = true
+    let _ = try resolve_with(app.as_path(), "main", options)
+    require_lock_failure(app.as_path(), "package 'extra' is no longer used")
+
+    var invalid = from_text(source.as_text().split_once("\ndev-dependencies").or_panic().0)
+    invalid.push_str("\ndev-dependencies { extra { path: \"../../features/extra\", optional: true } }\n")
+    try io_result(take capture fs.write(manifest, invalid.as_bytes()), root, start, PackagePhase.Io)
+    match take capture resolve_locked(app.as_path(), "main", false) {
+        success(_) => assert(false, "normal resolution accepted an optional development dependency"),
+        failure(issue) => assert(issue.message.as_text() == "development dependencies cannot be optional", "wrong development manifest error")
+    }
+}
+
+@test
+fn root_development_dependencies_change_lock_reachability(): Unit throws PackageError {
+    try with_fixture("development", development_fixture)
+}
+
 fn registry_fixture(read root: Path): Unit throws PackageError {
     let start = Range(0, 0)
     let fixture = std.path.path_from_text("tests/packages")

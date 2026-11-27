@@ -26,6 +26,7 @@ pub type Manifest {
     pub span: Range
     pub targets: List<Target>
     pub dependencies: List<Dependency>
+    pub dev_dependencies: List<Dependency>
     pub features: Map<String, List<FeatureAction>>
     pub implicit_features: Map<String, usize>
     pub registry: String?
@@ -148,11 +149,11 @@ extend Data {
         result
     }
 
-    fn dependencies(read owner: Text, read candidate: version.Version): List<Dependency> throws DataError {
+    fn dependencies(read section: Text, read owner: Text, read candidate: version.Version): List<Dependency> throws DataError {
         var result = List<Dependency>()
-        let present(table) = self.field(0, "dependencies") else { return result }
+        let present(table) = self.field(0, section) else { return result }
         if !self.nodes[table].kind.is(Kind.Object) {
-            throw DataError(self.nodes[table].span, from_text("[dependencies] must be a table"))
+            throw DataError(self.nodes[table].span, format(f"[{section}] must be a table"))
         }
         let normalized_owner = module_name(owner)
         var aliases = Set<String>()
@@ -349,7 +350,12 @@ pub fn decode(read data: Data, default_entry: bool): Manifest throws DataError {
     let text = version_text.as_text()
     let present(parsed) = version.parse(text) else { throw DataError(data.nodes[index].span, format(f"invalid SemVer version '{text}'")) }
     let targets = try data.targets(default_entry)
-    let dependencies = try data.dependencies(package_name, parsed)
+    let dependencies = try data.dependencies("dependencies", package_name, parsed)
+    let dev_dependencies = try data.dependencies("dev-dependencies", package_name, parsed)
+    for dependency in dev_dependencies.as_slice() {
+        if dependency.optional { throw DataError(dependency.span, from_text("development dependencies cannot be optional")) }
+    }
     let (features, implicit) = try feature_actions(data, dependencies)
-    Manifest(take name, take version_text, take parsed, span, take targets, take dependencies, take features, take implicit, try data.registry())
+    Manifest(take name, take version_text, take parsed, span, take targets, take dependencies, take dev_dependencies,
+        take features, take implicit, try data.registry())
 }
