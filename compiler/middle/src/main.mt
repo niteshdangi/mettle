@@ -24,7 +24,7 @@ type PendingBlock {
 copy enum Work {
     Evaluate(NodeId), Binary(NodeId), Call(NodeId, usize), Chain(NodeId, u32),
     SelectIf(NodeId), SelectShort(NodeId, bool), SelectChain(NodeId, u32), WhileBody(NodeId, usize),
-    Bind(NodeId), Assign(NodeId), LeaveScope(usize),
+    Bind(NodeId), Assign(NodeId), Return(Span), LeaveScope(usize),
     Unit(Span), Boolean(bool, Span), Discard(Span), Enter(usize), Jump(usize)
 }
 
@@ -113,17 +113,20 @@ extend Builder {
         self.close(Terminator.Branch(condition, take true_edge, take false_edge))
     }
 
-    mut fn select(yes: Work, no: Work, result: Scalar, span: Span): Unit throws LoweringError {
+    mut fn select(yes: Work, no: Work, result: Scalar?, span: Span): Unit throws LoweringError {
         let condition = try self.pop_value(span)
         let consequent = self.continuation(none, span)
         let alternative = self.continuation(none, span)
-        let joined = self.continuation(present(result), span)
         self.branch(condition.slot, consequent, alternative)
-        self.work.push(Work.Enter(joined))
-        self.work.push(Work.Jump(joined))
+        let joined = if result.is_present() {
+            let block = self.continuation(result, span)
+            self.work.push(Work.Enter(block))
+            self.work.push(Work.Jump(block))
+            present(block)
+        } else { none }
         self.work.push(no)
         self.work.push(Work.Enter(alternative))
-        self.work.push(Work.Jump(joined))
+        if let present(block) = joined { self.work.push(Work.Jump(block)) }
         self.work.push(yes)
         self.work.push(Work.Enter(consequent))
     }
@@ -200,7 +203,7 @@ fn evaluate(mut builder: Builder, read source: SourceModule, read checked: Check
             let spelling = try operator(source, item)
             let right = child(parsed, item, 1)
             if spelling == b"&&" || spelling == b"||" {
-                builder.work.push(Work.SelectShort(right, spelling == b"&&"))
+                builder.work.push(Work.SelectShort(id, spelling == b"&&"))
             } else {
                 builder.work.push(Work.Binary(id))
                 builder.work.push(Work.Evaluate(right))
@@ -233,9 +236,20 @@ fn evaluate(mut builder: Builder, read source: SourceModule, read checked: Check
             builder.work.push(Work.Assign(id))
             builder.work.push(Work.Evaluate(child(parsed, item, 1)))
         },
+        NodeKind.Return => {
+            builder.work.push(Work.Return(span))
+            if item.children.begin == item.children.end {
+                builder.work.push(Work.Unit(span))
+            } else {
+                builder.work.push(Work.Evaluate(child(parsed, item, 0)))
+            }
+        },
         NodeKind.Name => {
             match fact.binding {
-                present(Binding.Parameter(parameter)) => builder.emit(Operation.Parameter(parameter), fact.scalar, span),
+                present(Binding.Parameter(parameter)) => {
+                    let present(scalar) = fact.scalar else { throw LoweringError.Inconsistent(span) }
+                    builder.emit(Operation.Parameter(parameter), scalar, span)
+                },
                 present(Binding.Local(id)) => {
                     let position = try builder.local_position(id, span)
                     let value = builder.locals[position].value
@@ -257,12 +271,24 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
     let _ = builder.add_block(List<Scalar>(), span)
     builder.work.push(Work.Evaluate(signature.body))
     while let present(task) = builder.work.pop() {
+        if builder.blocks[builder.current].terminator.is_present() {
+            match task {
+                Work.Enter(block) => builder.enter(block),
+                Work.LeaveScope(size) => builder.leave_scope(size),
+                _ => {}
+            }
+            continue
+        }
         match task {
             Work.Evaluate(id) => { try evaluate(mut builder, source, checked, id) },
             Work.Unit(at) => builder.emit(Operation.Unit, Scalar.Unit, at),
             Work.Boolean(value, at) => builder.emit(Operation.Boolean(value), Scalar.Bool, at),
             Work.Discard(at) => { let _ = try builder.pop_value(at) },
             Work.LeaveScope(size) => builder.leave_scope(size),
+            Work.Return(at) => {
+                let returned = try builder.pop_value(at)
+                builder.close(Terminator.Return(returned.slot))
+            },
             Work.Bind(id) => {
                 let at = parsed.nodes[id.index as usize].span
                 let value = try builder.pop_value(at)
@@ -301,12 +327,14 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
                 let right = try builder.pop_value(item.span)
                 let left = try builder.pop_value(item.span)
                 let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(item.span) }
+                let present(scalar) = fact.scalar else { throw LoweringError.Inconsistent(item.span) }
                 let operation = try binary(try operator(source, item), left, right, item.span)
-                builder.emit(take operation, fact.scalar, item.span)
+                builder.emit(take operation, scalar, item.span)
             },
             Work.Call(id, count) => {
                 let item = parsed.nodes[id.index as usize]
                 let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(item.span) }
+                let present(scalar) = fact.scalar else { throw LoweringError.Inconsistent(item.span) }
                 let present(Binding.Function(target)) = fact.binding else { throw LoweringError.Inconsistent(item.span) }
                 var arguments = List<usize>()
                 arguments.resize(count, 0usize)
@@ -315,7 +343,7 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
                     index -= 1usize
                     arguments[index] = (try builder.pop_value(item.span)).slot
                 }
-                builder.emit(Operation.Call(FunctionId(target.module_index, target.index), take arguments), fact.scalar, item.span)
+                builder.emit(Operation.Call(FunctionId(target.module_index, target.index), take arguments), scalar, item.span)
             },
             Work.Chain(id, position) => {
                 let item = parsed.nodes[id.index as usize]
@@ -332,35 +360,60 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
                 let no = if item.children.end - item.children.begin == 3u32 {
                     Work.Evaluate(child(parsed, item, 2))
                 } else { Work.Unit(item.span) }
-                try builder.select(yes, no, fact.scalar, item.span)
+                if let present(literal) = frontend.literal_condition(source, child(parsed, item, 0)) {
+                    let _ = try builder.pop_value(item.span)
+                    builder.work.push(if literal { yes } else { no })
+                } else { try builder.select(yes, no, fact.scalar, item.span) }
             },
             Work.WhileBody(id, header) => {
                 let item = parsed.nodes[id.index as usize]
                 let condition = try builder.pop_value(item.span)
-                let body_block = builder.continuation(none, item.span)
-                let exit_block = builder.continuation(none, item.span)
-                builder.branch(condition.slot, body_block, exit_block)
-                builder.work.push(Work.Unit(item.span))
-                builder.work.push(Work.Enter(exit_block))
+                if let present(literal) = frontend.literal_condition(source, child(parsed, item, 0)) {
+                    if !literal {
+                        builder.emit(Operation.Unit, Scalar.Unit, item.span)
+                        continue
+                    }
+                } else {
+                    let body_block = builder.continuation(none, item.span)
+                    let exit_block = builder.continuation(none, item.span)
+                    builder.branch(condition.slot, body_block, exit_block)
+                    builder.work.push(Work.Unit(item.span))
+                    builder.work.push(Work.Enter(exit_block))
+                    builder.enter(body_block)
+                }
                 builder.work.push(Work.Jump(header))
                 builder.work.push(Work.Discard(item.span))
                 builder.work.push(Work.Evaluate(child(parsed, item, 1)))
-                builder.enter(body_block)
             },
-            Work.SelectShort(right, and) => {
-                let at = parsed.nodes[right.index as usize].span
-                if and { try builder.select(Work.Evaluate(right), Work.Boolean(false, at), Scalar.Bool, at) }
-                else { try builder.select(Work.Boolean(true, at), Work.Evaluate(right), Scalar.Bool, at) }
+            Work.SelectShort(id, and) => {
+                let item = parsed.nodes[id.index as usize]
+                let right = child(parsed, item, 1)
+                let at = item.span
+                if let present(literal) = frontend.literal_condition(source, child(parsed, item, 0)) {
+                    if literal == and {
+                        let _ = try builder.pop_value(at)
+                        builder.work.push(Work.Evaluate(right))
+                    }
+                } else if and { try builder.select(Work.Evaluate(right), Work.Boolean(false, at), present(Scalar.Bool), at) }
+                else { try builder.select(Work.Boolean(true, at), Work.Evaluate(right), present(Scalar.Bool), at) }
             },
             Work.SelectChain(id, position) => {
                 let at = parsed.nodes[id.index as usize].span
-                try builder.select(Work.Chain(id, position), Work.Boolean(false, at), Scalar.Bool, at)
+                if let present(literal) = frontend.literal_condition(source, parsed.children[(position - 1u32) as usize]) {
+                    if literal {
+                        let _ = try builder.pop_value(at)
+                        builder.work.push(Work.Chain(id, position))
+                    }
+                } else { try builder.select(Work.Chain(id, position), Work.Boolean(false, at), present(Scalar.Bool), at) }
             },
         }
     }
-    let returned = try builder.pop_value(span)
-    if !builder.values.is_empty() || !builder.locals.is_empty() { throw LoweringError.Inconsistent(span) }
-    builder.close(Terminator.Return(returned.slot))
+    if !builder.blocks[builder.current].terminator.is_present() {
+        let returned = try builder.pop_value(span)
+        if !builder.values.is_empty() { throw LoweringError.Inconsistent(span) }
+        builder.close(Terminator.Return(returned.slot))
+    }
+    if !builder.locals.is_empty() { throw LoweringError.Inconsistent(span) }
     var blocks = List<Block>()
     for pending in take builder.blocks {
         let present(terminator) = take pending.terminator else { throw LoweringError.Inconsistent(pending.span) }

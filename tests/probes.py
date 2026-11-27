@@ -1070,9 +1070,40 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
                 run([str(output)], 42)
             evidence["cases"].append({"name": "build-native-while"})
+        if selected("build-native-return"):
+            path = source("build-native-return",
+                          "fn add(a: i32, b: i32): i32 { a + b }\n"
+                          "fn choose(flag: bool): i32 {\n"
+                          "    add(20, if flag { return 7 } else { 22 })\n"
+                          "}\n"
+                          "fn both(flag: bool): i32 {\n"
+                          "    if flag { return 14 } else { return 21 }\n"
+                          "    return false\n"
+                          "}\n"
+                          "fn unit(): Unit { return }\n"
+                          "fn from_loop(): i32 {\n"
+                          "    while true { return 14 }\n"
+                          "}\n"
+                          "fn from_chain(flag: bool): i32 {\n"
+                          "    if flag, true, { return 14 } { 0 } else { 7 }\n"
+                          "}\n"
+                          "fn main(): i32 {\n"
+                          "    unit()\n"
+                          "    while false { return true }\n"
+                          "    let _ = false && { return true }\n"
+                          "    if choose(false) != 42 || choose(true) != 7 { return 0 }\n"
+                          "    if both(false) != 21 || from_chain(false) != 7 { return 1 }\n"
+                          "    both(true) + from_loop() + from_chain(true)\n"
+                          "}\n")
+            output = directory / "early-return"
+            for compiler in (executable, native):
+                run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
+                run([str(output)], 42)
+            evidence["cases"].append({"name": "build-native-return"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
+            ("check-scalar-explicit-return-mismatch", "fn main(): i32 { return true }", "type"),
             ("check-scalar-unresolved-call", "fn main(): i32 { missing() }", "name"),
             ("check-scalar-overflow", "fn main(): i32 { 2147483648 }", "type"),
             ("check-scalar-separator", "fn main(): i32 { 1__0 }", "lex"),
