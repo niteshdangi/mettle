@@ -40,6 +40,36 @@ fn write_printable(mut out: Writer, read bytes: [u8]): Unit throws io.Error {
     try out.write_all(read bytes[start..])
 }
 
+fn line_starts(read bytes: [u8]): List<usize> {
+    var starts = new<usize>()
+    starts.push(0usize)
+    for index in 0usize..bytes.len() {
+        if bytes[index] == b'\n' { starts.push(index + 1usize) }
+    }
+    starts
+}
+
+fn write_source_issue(mut out: Writer, read source: path.Path, read bytes: [u8],
+    read starts: List<usize>, offset: usize, read phase: Text, read message: Text): Unit throws io.Error {
+    let line = starts.as_slice().partition_point(fn(read start: usize): bool { start <= offset })
+    let start = starts[line - 1usize]
+    let end = if line < starts.len() { starts[line] - 1usize } else { bytes.len() }
+    var column = 1usize
+    for byte in bytes[start..offset] {
+        if (byte & 192u8) != 128u8 { column += 1usize }
+    }
+    try out.write_path(source)
+    try out.write_line(f":{line}:{column}: error[{phase}]: {message}")
+    try write_printable(mut out, read bytes[start..end])
+    try out.write("\n")
+    for byte in bytes[start..offset] {
+        if (byte & 192u8) != 128u8 {
+            try out.write_all([if byte == b'\t' { b'\t' } else { b' ' }])
+        }
+    }
+    try out.write_line("^")
+}
+
 fn report_source(read source: path.PathInput, read bytes: [u8], read diagnostics: Diagnostics): i32 throws io.Error {
     if diagnostics.error_count == 0usize { return 0 }
     let canonical = capture fs.canonicalize(source)
@@ -47,33 +77,11 @@ fn report_source(read source: path.PathInput, read bytes: [u8], read diagnostics
         success(resolved) => resolved.as_path(),
         failure(_) => source.as_path()
     }
-    var starts = new<usize>()
-    starts.push(0usize)
-    for index in 0usize..bytes.len() {
-        if bytes[index] == b'\n' { starts.push(index + 1usize) }
-    }
+    let starts = line_starts(bytes)
     var out = io.buf_writer(io.stderr())
     for issue in diagnostics.issues.as_slice() {
-        let offset = issue.span.begin as usize
-        let line = starts.as_slice().partition_point(fn(read start: usize): bool { start <= offset })
-        let start = starts[line - 1usize]
-        let end = if line < starts.len() { starts[line] - 1usize } else { bytes.len() }
-        var column = 1usize
-        for byte in bytes[start..offset] {
-            if (byte & 192u8) != 128u8 { column += 1usize }
-        }
-        try out.write_path(display)
-        let phase = phase_name(issue.phase)
-        let message = issue.message
-        try out.write_line(f":{line}:{column}: error[{phase}]: {message}")
-        try write_printable(mut out, read bytes[start..end])
-        try out.write("\n")
-        for byte in bytes[start..offset] {
-            if (byte & 192u8) != 128u8 {
-                try out.write_all([if byte == b'\t' { b'\t' } else { b' ' }])
-            }
-        }
-        try out.write_line("^")
+        try write_source_issue(mut out, display, bytes, starts, issue.span.begin as usize,
+            phase_name(issue.phase), issue.message)
     }
     try out.flush()
     1
@@ -131,17 +139,18 @@ fn report_package_error(read error: PackageError): i32 throws io.Error {
     1
 }
 
-fn report_check_error(read source: path.Path, error: CheckError): i32 throws io.Error {
+fn report_check_error(read source: path.PathInput, read bytes: [u8], error: CheckError): i32 throws io.Error {
     var out = io.buf_writer(io.stderr())
-    let begin = error.span.begin
-    let end = error.span.end
-    let message = error.message
     let phase = match error.phase {
         CheckPhase.Feature => "feature", CheckPhase.Lex => "lex", CheckPhase.Name => "name",
         CheckPhase.Type => "type", CheckPhase.Attribute => "attribute"
     }
-    try out.write_path(source)
-    try out.write_line(f":{begin}:{end}: error[{phase}]: {message}")
+    let canonical = capture fs.canonicalize(source)
+    let display = match read canonical {
+        success(resolved) => resolved.as_path(),
+        failure(_) => source.as_path()
+    }
+    try write_source_issue(mut out, display, bytes, line_starts(bytes), error.span.begin as usize, phase, error.message)
     try out.flush()
     1
 }
@@ -167,7 +176,7 @@ fn load_module(read source: path.Path, index: usize, package_index: usize, read 
     let items = match take capture active_items(bytes.as_slice(), parsed, features) {
         success(items) => take items,
         failure(error) => {
-            let _ = try report_check_error(source, error)
+            let _ = try report_check_error(source, bytes.as_slice(), error)
             return none
         }
     }
@@ -181,7 +190,7 @@ fn check_source(read source: path.Path, read features: List<String>): i32 throws
     var mounts = List<Map<List<u8>, usize>>()
     mounts.push(Map<List<u8>, usize>())
     match take capture check_modules(modules, mounts, true) {
-        failure(error) => { try report_check_error(source, error) },
+        failure(error) => { try report_check_error(source, modules[0].bytes.as_slice(), error) },
         success(_) => 0
     }
 }
@@ -254,12 +263,13 @@ fn check_graph(read graph: PackageGraph): i32 throws io.Error {
     while owner < sources.len() {
         let declarations = match take capture external_modules(sources[owner]) {
             success(declarations) => take declarations,
-            failure(error) => { return try report_check_error(paths[owner].source.as_path(), error) }
+            failure(error) => { return try report_check_error(paths[owner].source.as_path(), sources[owner].bytes.as_slice(), error) }
         }
         for declaration in take declarations {
             let owner_path = paths[owner].source.as_path()
             if sources[owner].modules.contains_key(declaration.name) {
-                return try report_check_error(owner_path, CheckError(CheckPhase.Name, declaration.span, "duplicate module"))
+                return try report_check_error(owner_path, sources[owner].bytes.as_slice(),
+                    CheckError(CheckPhase.Name, declaration.span, "duplicate module"))
             }
             let directory = paths[owner].children.join(path.path_buf_from_bytes(declaration.name.as_slice()))
             var filename = declaration.name.as_slice().to_vec()
@@ -271,11 +281,12 @@ fn check_graph(read graph: PackageGraph): i32 throws io.Error {
             if flat_exists == nested_exists {
                 let reason = if flat_exists { "external module matches both source paths" }
                     else { "external module source file does not exist" }
-                return try report_check_error(owner_path, CheckError(CheckPhase.Name, declaration.span, reason))
+                return try report_check_error(owner_path, sources[owner].bytes.as_slice(), CheckError(CheckPhase.Name, declaration.span, reason))
             }
             let source = try fs.canonicalize(if flat_exists { flat.as_path() } else { nested.as_path() })
             if seen.insert(source.to_path_buf(), ()).is_present() {
-                return try report_check_error(owner_path, CheckError(CheckPhase.Name, declaration.span, "source file has more than one module identity"))
+                return try report_check_error(owner_path, sources[owner].bytes.as_slice(),
+                    CheckError(CheckPhase.Name, declaration.span, "source file has more than one module identity"))
             }
             let index = sources.len()
             let package_index = sources[owner].package_index
@@ -288,7 +299,10 @@ fn check_graph(read graph: PackageGraph): i32 throws io.Error {
         owner += 1usize
     }
     match take capture check_modules(sources, mounts, !graph.packages[0].is_library) {
-        failure(error) => { try report_check_error(paths[error.span.source as usize].source.as_path(), error) },
+        failure(error) => {
+            let index = error.span.source as usize
+            try report_check_error(paths[index].source.as_path(), sources[index].bytes.as_slice(), error)
+        },
         success(_) => 0
     }
 }

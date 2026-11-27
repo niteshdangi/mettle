@@ -108,6 +108,7 @@ bool Parser::genericApplication(std::vector<GenericArgument> &arguments) {
   const auto savedSpeculating = speculating;
   const auto savedAsync = inAsyncBody;
   const auto savedPending = pendingAsync;
+  const auto savedAwaitTemporaries = awaitTemporaries;
   speculating = true;
   bool applied = false;
   try {
@@ -132,6 +133,7 @@ bool Parser::genericApplication(std::vector<GenericArgument> &arguments) {
   textSpans.resize(savedText);
   inAsyncBody = savedAsync;
   pendingAsync = savedPending;
+  awaitTemporaries = savedAwaitTemporaries;
   position = start;
   rejectedApplications.insert(key);
   return false;

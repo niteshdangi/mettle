@@ -929,6 +929,13 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             assert "checksum mismatch for immutable package 'util' 1.3.0" in actual.stderr, actual.stderr
             assert lock.read_bytes() == expected_lock, "immutable source drift rewrote the lock"
             evidence["cases"].append({"name": "package-registry-check"})
+        if selected("check-scalar-source-location"):
+            path = source("check-scalar-source-location", "fn main(): i32 {\n\tmissing()\n}\n")
+            reference = run([executable, "check", str(path)], 1)
+            actual = run([native, "check", str(path)], 1)
+            assert actual.stderr.split(": error[", 1)[0] == reference.stderr.split(": error[", 1)[0], actual.stderr
+            assert actual.stderr.splitlines()[1:] == ["\tmissing()", "\t^"], actual.stderr
+            evidence["cases"].append({"name": "check-scalar-source-location"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
@@ -1141,6 +1148,9 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
         elif mode == "sanitizers":
             sanitizer_probes()
         elif mode == "syntax":
+            await_comparison = source("await-comparison", "async fn f() { a < { await work() } + c }\n")
+            projected = run([executable, "syntax", str(await_comparison)]).stdout
+            assert "<await-0>" in projected and "<await-1>" not in projected, projected
             for name in ("syntax-composition-values", "syntax-composition-conditions",
                          "syntax-composition-cleanup"):
                 formatted = source(name, (ROOT / "source" / "run" / (name + ".mt")).read_text())
