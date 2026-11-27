@@ -442,6 +442,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "generic-suppressed-newline": "fn main() { (factory<T>\n + other) }",
             "generic-empty-application": "fn main() { factory<>(value) }",
             "generic-after-call": "fn main() { factory<T>() < U > (value) }",
+            "pointer-expression-missing-projection": "fn main() { ptr<read i32> }",
             "import-path-missing": "import",
             "import-alias-missing": "import dep as",
             "import-empty-group": "import dep.{}",
@@ -473,6 +474,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             assert found[1] == wanted[3], (name, found[0], wanted[0])
             if not name.startswith("depth"):
                 assert (str(line), str(column)) == wanted.group(1, 2), (name, found[0], wanted[0])
+            if name == "pointer-expression-missing-projection":
+                assert found[4] == wanted[4], (found[0], wanted[0])
             evidence["cases"].append({"name": name, "phase": found[1], "source_sha256": digest(path)})
 
         for name, text in {"recovery": "fn main() {\nlet a =\n;\nlet b =\n;\n42\n}\nfn after() { 7 }",
@@ -535,6 +538,7 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             "nested-items": ("fn inspect() { type Local {} fn inner() {} const VALUE: i32 = 2; inner() }", {"product": 1, "function": 2, "constant": 1}),
             "signature-newline": ("interface Source { fn first(): i32\nfn second():\n i32\n}\nfn inspect():\nmut [i32; 4] from values {}", {"interface": 1, "function": 3}),
             "grouped-projection": ("fn inspect() { (read T from r).(Trait).member; ([T; N]).(Trait).member }", {"type-projection": 2, "type-group": 2, "type-borrow": 1}),
+            "pointer-projection": ("fn inspect() { ptr<read i32>.(Trait).member(); ptr<mut ptr<read i32>>.(Trait).member; ptr < other }", {"type-projection": 2, "type-pointer": 3, "call": 1, "binary": 1}),
             "header-range": ("fn inspect() { match 1.. { _ => 0 }; for x in 1.. {} }", {"match": 1, "for": 1, "range": 2}),
             "nested-async": ("fn inspect() { async fn inner() { await work() }; async fn(x) => x }", {"function": 2, "closure": 1}),
             "sources-path": ("fn inspect(value: read T from package.region_name) {}", {"type-sources": 1}),
@@ -545,6 +549,8 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 continue
             path = source("parser-grammar-" + name, text)
             actual = run([native, "syntax", str(path)])
+            if name == "pointer-projection":
+                run([executable, "syntax", str(path)])
             data = path.read_bytes()
             nodes, edges, tokens = inspect_native(actual, data)
             lexical = json.loads(run([executable, "tokens", str(path)]).stdout)
