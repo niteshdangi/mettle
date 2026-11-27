@@ -7,7 +7,7 @@ packages: [
         id: "mettle-driver@0.1.0|root|target"
         source: "root"
         features: []
-        dependencies: ["mettle-foundation@0.1.0|path+../foundation|target", "mettle-packages@0.1.0|path+../packages|target", "mettle-syntax@0.1.0|path+../syntax|target"]
+        dependencies: ["mettle-foundation@0.1.0|path+../foundation|target", "mettle-packages@0.1.0|path+../packages|target", "mettle-pipeline@0.1.0|path+../pipeline|target", "mettle-syntax@0.1.0|path+../syntax|target"]
     }
     {
         name: "mettle-foundation"
@@ -19,6 +19,15 @@ packages: [
         dependencies: []
     }
     {
+        name: "mettle-frontend"
+        version: "0.1.0"
+        id: "mettle-frontend@0.1.0|path+../frontend|target"
+        source: "path+../frontend"
+        checksum: "sha256-tree-2:ba981fa8e5707c7bbc43798c70c367c3c1a90d7724aa29476a87d49c0001b5a6"
+        features: []
+        dependencies: ["mettle-foundation@0.1.0|path+../foundation|target", "mettle-syntax@0.1.0|path+../syntax|target", "mettle-types@0.1.0|path+../types|target"]
+    }
+    {
         name: "mettle-packages"
         version: "0.1.0"
         id: "mettle-packages@0.1.0|path+../packages|target"
@@ -28,6 +37,15 @@ packages: [
         dependencies: ["mettle-foundation@0.1.0|path+../foundation|target"]
     }
     {
+        name: "mettle-pipeline"
+        version: "0.1.0"
+        id: "mettle-pipeline@0.1.0|path+../pipeline|target"
+        source: "path+../pipeline"
+        checksum: "sha256-tree-2:252f73e9761b977527cd09b1ee13f6f189330a2f80ad7bb3b2d3a689530372f3"
+        features: []
+        dependencies: ["mettle-foundation@0.1.0|path+../foundation|target", "mettle-frontend@0.1.0|path+../frontend|target", "mettle-syntax@0.1.0|path+../syntax|target"]
+    }
+    {
         name: "mettle-syntax"
         version: "0.1.0"
         id: "mettle-syntax@0.1.0|path+../syntax|target"
@@ -35,5 +53,14 @@ packages: [
         checksum: "sha256-tree-2:13692471bdd7d35de9c06ce43dc9abd836ac588b9ca0367dccf61c5a4a3b05e3"
         features: []
         dependencies: ["mettle-foundation@0.1.0|path+../foundation|target"]
+    }
+    {
+        name: "mettle-types"
+        version: "0.1.0"
+        id: "mettle-types@0.1.0|path+../types|target"
+        source: "path+../types"
+        checksum: "sha256-tree-2:e33039bfac2034f7695b6fd7ce75fdc070e11e2af5df7583d7958ecfbfbfbf02"
+        features: []
+        dependencies: []
     }
 ]

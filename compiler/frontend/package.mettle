@@ -1,0 +1,8 @@
+name: "mettle-frontend"
+version: "0.1.0"
+kind: "library"
+dependencies {
+    "mettle-foundation": "../foundation"
+    "mettle-syntax": "../syntax"
+    "mettle-types": "../types"
+}

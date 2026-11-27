@@ -6,6 +6,7 @@ import mettle_syntax.{ Kind, Token, tokenize, parse, node_name }
 import mettle_syntax.reference_kind
 import mettle_foundation.{ Phase, Diagnostics, SOURCE_BYTES, invalid_utf8 }
 import mettle_packages.{ PackageError, resolve }
+import mettle_pipeline.{ Analysis, CheckError, CheckPhase, analyze_source }
 
 fn phase_name(phase: Phase): read Text from static {
     match phase { Phase.Lex => "lex", Phase.Parse => "parse", Phase.Feature => "feature", Phase.Limit => "limit" }
@@ -120,7 +121,21 @@ fn report_package_error(read error: PackageError): i32 throws io.Error {
     1
 }
 
-fn check_source(read source: path.Path): i32 throws io.Error {
+fn report_check_error(read source: path.Path, error: CheckError): i32 throws io.Error {
+    var out = io.buf_writer(io.stderr())
+    let begin = error.span.begin
+    let end = error.span.end
+    let message = error.message
+    let phase = match error.phase {
+        CheckPhase.Feature => "feature", CheckPhase.Lex => "lex", CheckPhase.Name => "name", CheckPhase.Type => "type"
+    }
+    try out.write_path(source)
+    try out.write_line(f":{begin}:{end}: error[{phase}]: {message}")
+    try out.flush()
+    1
+}
+
+fn check_source(read source: path.Path, package: bool): i32 throws io.Error {
     let loaded = match take capture load_source(source) {
         success(content) => take content,
         failure(error) => { return try report_read_error(source, error) }
@@ -129,15 +144,22 @@ fn check_source(read source: path.Path): i32 throws io.Error {
         io.eprint("error[limit] 0:0 source file must be smaller than 4 GiB\n")
         return 1
     }
-    let parsed = parse(bytes.as_slice(), 0u32)
-    let status = try report_source(source, bytes.as_slice(), parsed.diagnostics)
-    if status != 0 { return status }
-    io.eprint("mettle: error[feature]: native semantic checking is not implemented\n")
-    1
+    if package {
+        let parsed = parse(bytes.as_slice(), 0u32)
+        let status = try report_source(source, bytes.as_slice(), parsed.diagnostics)
+        if status != 0 { return status }
+        io.eprint("mettle: error[feature]: native package semantic checking is not implemented\n")
+        return 1
+    }
+    match take analyze_source(bytes.as_slice(), 0u32) {
+        Analysis.SyntaxErrors(diagnostics) => { try report_source(source, bytes.as_slice(), diagnostics) },
+        Analysis.SemanticError(error) => { try report_check_error(source, error) },
+        Analysis.Checked(_) => 0
+    }
 }
 
 fn check_input(read source: path.Path): i32 throws io.Error {
-    if !package_input(source) { return try check_source(source) }
+    if !package_input(source) { return try check_source(source, false) }
     if source.is_dir() { return try check_package(source) }
     if let present(parent) = source.parent() {
         if !parent.as_os_str().is_empty() { return try check_package(parent) }
@@ -147,7 +169,7 @@ fn check_input(read source: path.Path): i32 throws io.Error {
 
 fn check_package(read directory: path.Path): i32 throws io.Error {
     match take capture resolve(directory, "main") {
-        success(graph) => { try check_source(graph.packages[0].entry.as_path()) },
+        success(graph) => { try check_source(graph.packages[0].entry.as_path(), true) },
         failure(error) => { try report_package_error(error) }
     }
 }

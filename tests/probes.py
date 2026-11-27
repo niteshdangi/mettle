@@ -835,6 +835,24 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             actual = run([native, "check", str(package)], 1)
             assert "units/package.mettle" in actual.stderr and "error[package]" in actual.stderr, actual.stderr
             evidence["cases"].append({"name": "package-entry-syntax"})
+        for name, text, phase in (
+            ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
+            ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
+            ("check-scalar-unresolved-call", "fn main(): i32 { missing() }", "name"),
+            ("check-scalar-overflow", "fn main(): i32 { 2147483648 }", "type"),
+            ("check-scalar-separator", "fn main(): i32 { 1__0 }", "lex"),
+        ):
+            if not selected(name):
+                continue
+            path = source(name, text)
+            expected = 1 if phase else 0
+            reference = run([executable, "check", str(path)], expected)
+            actual = run([native, "check", str(path)], expected)
+            if phase:
+                assert f"error[{phase}]" in reference.stderr and f"error[{phase}]" in actual.stderr, actual.stderr
+            else:
+                assert not actual.stdout and not actual.stderr, actual.stderr
+            evidence["cases"].append({"name": name, "source_sha256": digest(path)})
         if not evidence["cases"]:
             raise ValueError("no parser cases match --filter")
 
