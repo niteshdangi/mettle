@@ -27,7 +27,7 @@ pub type Function {
 
 pub copy type FunctionId { pub module_index: usize; pub index: usize }
 
-pub copy enum Binding { Function(FunctionId), Parameter(usize), Local(usize) }
+pub copy enum Binding { Function(FunctionId), Parameter(usize), Local(usize), Loop(NodeId) }
 
 pub copy type Expression {
     pub scalar: Scalar?
@@ -76,6 +76,13 @@ copy type Shadow {
     previous: usize
 }
 
+copy type LoopScope {
+    id: NodeId
+    label_node: NodeId?
+    result: Scalar?
+    exits: bool
+}
+
 type Body {
     expressions: List<Expression?>
     symbols: Map<List<u8>, usize>
@@ -83,6 +90,8 @@ type Body {
     bindings: List<Local>
     shadows: List<Shadow>
     binary: List<NodeId>
+    loops: List<LoopScope>
+    loop_isolation: usize?
     local_count: usize
 }
 
@@ -345,6 +354,33 @@ fn require_type(value: Scalar?, expected: Scalar, span: Span): Unit throws Check
     throw CheckError(CheckPhase.Type, span, message)
 }
 
+pub fn loop_label(read parsed: Parsed, item: SyntaxNode): NodeId? {
+    if item.children.begin == item.children.end { return none }
+    let first = child(parsed, item, 0)
+    if node(parsed, first).kind.is(NodeKind.Label) { present(first) } else { none }
+}
+
+fn loop_target(read source: SourceModule, read loops: List<LoopScope>, item: SyntaxNode,
+    label_node: NodeId?): usize throws CheckError {
+    if let present(label_id) = label_node {
+        let parsed = read source.syntax
+        let bytes = source.bytes.as_slice()
+        let spelling = try name(bytes, parsed, node(parsed, child(parsed, node(parsed, label_id), 0)))
+        var index = loops.len()
+        while index > 0usize {
+            index -= 1usize
+            if let present(candidate) = loops[index].label_node {
+                let identifier = node(parsed, child(parsed, node(parsed, candidate), 0))
+                let target = try name(bytes, parsed, identifier)
+                if target.as_slice() == spelling.as_slice() { return index }
+            }
+        }
+        throw CheckError(CheckPhase.Name, item.span, "unknown loop label")
+    }
+    if loops.is_empty() { throw CheckError(CheckPhase.Type, item.span, "loop control outside a loop") }
+    loops.len() - 1usize
+}
+
 pub fn literal_condition(read source: SourceModule, id: NodeId): bool? {
     let parsed = read source.syntax
     var item = node(parsed, id)
@@ -476,7 +512,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                 present(Scalar.Unit)
             } else { try expression(context, mut body, child(parsed, item, 0), reachable) }
             let expected = context.declarations[context.owner.module_index].functions[context.owner.index].result
-            if reachable { try require_type(actual, expected, item.span) }
+            if reachable && body.loop_isolation.is_none() { try require_type(actual, expected, item.span) }
             none
         },
         NodeKind.Conditions => {
@@ -499,15 +535,43 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             }
             if completes { present(Scalar.Bool) } else { none }
         },
-        NodeKind.While => {
-            if item.children.end - item.children.begin != 2u32 { throw unsupported(item.span) }
-            let condition = child(parsed, item, 0)
-            let scalar = try expression(context, mut body, condition, reachable)
-            try require_type(scalar, Scalar.Bool, item.span)
-            let literal = literal_condition(context.source, condition)
-            let _ = try expression(context, mut body, child(parsed, item, 1),
-                reachable && scalar.is_present() && literal != present(false))
-            if scalar.is_present() && literal != present(true) { present(Scalar.Unit) } else { none }
+        NodeKind.While | NodeKind.Loop => {
+            let label_node = loop_label(parsed, item)
+            let offset = if label_node.is_present() { 1u32 } else { 0u32 }
+            let conditional = item.kind.is(NodeKind.While)
+            let isolation = body.loop_isolation
+            if !reachable { body.loop_isolation = present(body.loops.len()) }
+            body.loops.push(LoopScope(id, label_node, if conditional { present(Scalar.Unit) } else { none }, false))
+            let (condition_completes, literal) = if conditional {
+                let condition = child(parsed, item, offset)
+                let scalar = try expression(context, mut body, condition, true)
+                try require_type(scalar, Scalar.Bool, item.span)
+                (scalar.is_present(), literal_condition(context.source, condition))
+            } else { (true, present(true)) }
+            let _ = try expression(context, mut body, parsed.children[(item.children.end - 1u32) as usize],
+                condition_completes && literal != present(false))
+            let scope = body.loops.pop().or_panic()
+            body.loop_isolation = isolation
+            if scope.exits || (condition_completes && literal != present(true)) { scope.result } else { none }
+        },
+        NodeKind.Break | NodeKind.Continue => {
+            let label_node = loop_label(parsed, item)
+            let target = try loop_target(context.source, body.loops, item, label_node)
+            binding = present(Binding.Loop(body.loops[target].id))
+            if item.kind.is(NodeKind.Break) {
+                let offset = if label_node.is_present() { 1u32 } else { 0u32 }
+                let actual = if item.children.begin + offset == item.children.end {
+                    present(Scalar.Unit)
+                } else { try expression(context, mut body, child(parsed, item, offset), reachable) }
+                if let present(expected) = body.loops[target].result {
+                    try require_type(actual, expected, item.span)
+                } else { body.loops[target].result = actual }
+                let isolation = body.loop_isolation
+                if reachable && actual.is_present() && target >= isolation.or(0usize) {
+                    body.loops[target].exits = true
+                }
+            }
+            none
         },
         NodeKind.If => {
             let condition = child(parsed, item, 0)
@@ -675,7 +739,8 @@ fn check_bodies(read sources: List<SourceModule>, module_index: usize,
     let source = read sources[module_index]
     let parsed = read source.syntax
     let functions = read declarations[module_index].functions
-    var body = Body(List<Expression?>(), Map<List<u8>, usize>(), List<usize>(), List<Local>(), List<Shadow>(), List<NodeId>(), 0usize)
+    var body = Body(List<Expression?>(), Map<List<u8>, usize>(), List<usize>(), List<Local>(), List<Shadow>(),
+        List<NodeId>(), List<LoopScope>(), none, 0usize)
     body.expressions.reserve_exact(parsed.nodes.len())
     for _ in 0usize..parsed.nodes.len() { body.expressions.push(none) }
     var counts = List<usize>()

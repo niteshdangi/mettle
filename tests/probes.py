@@ -1159,6 +1159,28 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
                 run([str(output)], 42)
             evidence["cases"].append({"name": "build-native-return"})
+        if selected("build-native-loop-transfer"):
+            path = source("build-native-loop-transfer",
+                          "fn add(a: i32, b: i32): i32 { a + b }\n"
+                          "fn main(): i32 {\n"
+                          "    var i = 0\n"
+                          "    let result = add(10, label outer: loop {\n"
+                          "        i += 1\n"
+                          "        let saved = i\n"
+                          "        while true {\n"
+                          "            let i = saved + 30\n"
+                          "            if saved < 2 { continue label outer }\n"
+                          "            break label outer i\n"
+                          "        }\n"
+                          "    })\n"
+                          "    while { break } { i = 100 }\n"
+                          "    result + i - 2\n"
+                          "}\n")
+            output = directory / "loop-transfer"
+            for compiler in (executable, native):
+                run([compiler, "build", str(path), "-o", str(output)], env=llvm_env)
+                run([str(output)], 42)
+            evidence["cases"].append({"name": "build-native-loop-transfer"})
         for name, text, phase in (
             ("check-scalar-forward-call", "fn main(): i32 { (answer() * 2) - 42 }\nfn answer(): i32 { 21 }", None),
             ("check-scalar-return-mismatch", "fn main(): i32 { answer() }\nfn answer(): bool { true }", "type"),
@@ -1174,6 +1196,10 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             ("check-scalar-branch-type", "fn main(): i32 { if true { 1 }; 0 }", "type"),
             ("check-scalar-logical-type", "fn main(): i32 { if true || 1 { 0 } else { 1 } }", "type"),
             ("check-scalar-while-condition", "fn main(): i32 { while 1 {}; 0 }", "type"),
+            ("check-scalar-loop-control-outside", "fn main(): i32 { break; 0 }", "type"),
+            ("check-scalar-loop-unknown-label", "fn main(): i32 { loop { continue label other } }", "name"),
+            ("check-scalar-while-break-value", "fn main(): i32 { while true { break 42 }; 0 }", "type"),
+            ("check-scalar-loop-dead-branch-type", "fn main(): i32 { if false { loop { break true } } else { 42 } }", "type"),
             ("check-scalar-test-attribute", '@test\n@ignore("reason")\nfn fixture(): Unit { () }\nfn main(): i32 { 0 }', None),
             ("check-scalar-test-body-error", "@test\nfn fixture(): Unit { missing() }\nfn main(): i32 { 0 }", "name"),
             ("check-scalar-cfg-filter", '@cfg(any(feature = "disabled", false))\nmodule nonexistent\n@cfg(all(true, not(feature = "disabled")))\nfn main(): i32 { 0 }', None),

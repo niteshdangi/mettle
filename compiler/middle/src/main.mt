@@ -14,6 +14,14 @@ fn child(read parsed: Parsed, parent: SyntaxNode, index: usize): NodeId {
 
 copy type Value { slot: usize; scalar: Scalar }
 copy type LocalValue { id: usize; value: Value }
+copy type LoopFrame {
+    id: u32
+    header: usize
+    exit: usize?
+    locals: usize
+    pending: usize
+    value_exit: bool
+}
 type PendingBlock {
     parameters: List<Scalar>
     instructions: List<Instruction>
@@ -23,7 +31,8 @@ type PendingBlock {
 
 copy enum Work {
     Evaluate(NodeId), Binary(NodeId), Call(NodeId, usize), Chain(NodeId, u32),
-    SelectIf(NodeId), SelectShort(NodeId, bool), SelectChain(NodeId, u32), WhileBody(NodeId, usize),
+    SelectIf(NodeId), SelectShort(NodeId, bool), SelectChain(NodeId, u32),
+    LoopBody(NodeId, NodeId?), LoopEnd(Span), Transfer(NodeId),
     Bind(NodeId), Assign(NodeId), Return(Span), LeaveScope(usize),
     Unit(Span), Boolean(bool, Span), Discard(Span), Enter(usize), Jump(usize)
 }
@@ -35,6 +44,7 @@ type Builder {
     locals: List<LocalValue>
     local_indices: List<usize?>
     work: List<Work>
+    loops: List<LoopFrame>
 }
 
 extend Builder {
@@ -100,6 +110,18 @@ extend Builder {
         var arguments = with_capacity<usize>(self.locals.len() + self.values.len())
         for binding in self.locals.as_slice() { arguments.push(binding.value.slot) }
         for value in self.values.as_slice() { arguments.push(value.slot) }
+        Edge(index, take arguments)
+    }
+
+    fn loop_edge(index: usize, frame: LoopFrame, result: usize?, span: Span): Edge throws LoweringError {
+        if self.locals.len() < frame.locals || self.values.len() < frame.pending {
+            throw LoweringError.Inconsistent(span)
+        }
+        var arguments = with_capacity<usize>(frame.locals + frame.pending +
+            (if result.is_present() { 1usize } else { 0usize }))
+        for position in 0usize..frame.locals { arguments.push(self.locals[position].value.slot) }
+        for position in 0usize..frame.pending { arguments.push(self.values[position].slot) }
+        if let present(slot) = result { arguments.push(slot) }
         Edge(index, take arguments)
     }
 
@@ -190,13 +212,30 @@ fn evaluate(mut builder: Builder, read source: SourceModule, read checked: Check
             builder.work.push(Work.SelectIf(id))
             builder.work.push(Work.Evaluate(child(parsed, item, 0)))
         },
-        NodeKind.While => {
+        NodeKind.While | NodeKind.Loop => {
+            let conditional = item.kind.is(NodeKind.While)
             let header = builder.continuation(none, span)
+            let exit = if fact.scalar.is_present() {
+                present(builder.continuation(if conditional { none } else { fact.scalar }, span))
+            } else { none }
+            builder.loops.push(LoopFrame(id.index, header, exit, builder.locals.len(), builder.values.len(), !conditional))
             let edge = builder.edge(header)
             builder.close(Terminator.Jump(take edge))
             builder.enter(header)
-            builder.work.push(Work.WhileBody(id, header))
-            builder.work.push(Work.Evaluate(child(parsed, item, 0)))
+            let offset = if frontend.loop_label(parsed, item).is_present() { 1usize } else { 0usize }
+            let condition = if conditional { present(child(parsed, item, offset)) } else { none }
+            builder.work.push(Work.LoopEnd(span))
+            builder.work.push(Work.LoopBody(id, condition))
+            if let present(condition_id) = condition { builder.work.push(Work.Evaluate(condition_id)) }
+        },
+        NodeKind.Break | NodeKind.Continue => {
+            builder.work.push(Work.Transfer(id))
+            if item.kind.is(NodeKind.Break) {
+                let offset = if frontend.loop_label(parsed, item).is_present() { 1usize } else { 0usize }
+                if item.children.begin as usize + offset == item.children.end as usize {
+                    builder.work.push(Work.Unit(span))
+                } else { builder.work.push(Work.Evaluate(child(parsed, item, offset))) }
+            }
         },
         NodeKind.Conditions => builder.work.push(Work.Chain(id, item.children.begin)),
         NodeKind.Binary => {
@@ -267,7 +306,8 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
     let span = parsed.nodes[signature.body.index as usize].span
     var local_indices = List<usize?>()
     local_indices.resize(signature.local_count, none)
-    var builder = Builder(List<PendingBlock>(), 0usize, List<Value>(), List<LocalValue>(), take local_indices, List<Work>())
+    var builder = Builder(List<PendingBlock>(), 0usize, List<Value>(), List<LocalValue>(), take local_indices,
+        List<Work>(), List<LoopFrame>())
     let _ = builder.add_block(List<Scalar>(), span)
     builder.work.push(Work.Evaluate(signature.body))
     while let present(task) = builder.work.pop() {
@@ -275,6 +315,13 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
             match task {
                 Work.Enter(block) => builder.enter(block),
                 Work.LeaveScope(size) => builder.leave_scope(size),
+                Work.LoopEnd(at) => {
+                    let present(frame) = builder.loops.pop() else { throw LoweringError.Inconsistent(at) }
+                    if let present(exit) = frame.exit {
+                        builder.enter(exit)
+                        if !frame.value_exit { builder.emit(Operation.Unit, Scalar.Unit, at) }
+                    }
+                },
                 _ => {}
             }
             continue
@@ -365,25 +412,46 @@ fn lower_function(read source: SourceModule, read checked: CheckedModule, read s
                     builder.work.push(if literal { yes } else { no })
                 } else { try builder.select(yes, no, fact.scalar, item.span) }
             },
-            Work.WhileBody(id, header) => {
+            Work.LoopEnd(at) => { throw LoweringError.Inconsistent(at) },
+            Work.Transfer(id) => {
                 let item = parsed.nodes[id.index as usize]
-                let condition = try builder.pop_value(item.span)
-                if let present(literal) = frontend.literal_condition(source, child(parsed, item, 0)) {
-                    if !literal {
-                        builder.emit(Operation.Unit, Scalar.Unit, item.span)
-                        continue
+                let at = item.span
+                let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(at) }
+                let present(Binding.Loop(target)) = fact.binding else { throw LoweringError.Inconsistent(at) }
+                var index = builder.loops.len()
+                while index > 0usize && builder.loops[index - 1usize].id != target.index { index -= 1usize }
+                if index == 0usize { throw LoweringError.Inconsistent(at) }
+                let frame = builder.loops[index - 1usize]
+                let edge = if item.kind.is(NodeKind.Break) {
+                    let value = try builder.pop_value(at)
+                    let present(exit) = frame.exit else { throw LoweringError.Inconsistent(at) }
+                    try builder.loop_edge(exit, frame, if frame.value_exit { present(value.slot) } else { none }, at)
+                } else { try builder.loop_edge(frame.header, frame, none, at) }
+                builder.close(Terminator.Jump(take edge))
+            },
+            Work.LoopBody(id, condition_id) => {
+                let item = parsed.nodes[id.index as usize]
+                let at = item.span
+                if builder.loops.is_empty() { throw LoweringError.Inconsistent(at) }
+                let frame = builder.loops[builder.loops.len() - 1usize]
+                if let present(condition_node) = condition_id {
+                    let condition = try builder.pop_value(at)
+                    let literal = frontend.literal_condition(source, condition_node)
+                    if literal != present(true) {
+                        let present(exit) = frame.exit else { throw LoweringError.Inconsistent(at) }
+                        if literal == present(false) {
+                            let edge = builder.edge(exit)
+                            builder.close(Terminator.Jump(take edge))
+                            continue
+                        }
+                        let body_block = builder.continuation(none, at)
+                        builder.branch(condition.slot, body_block, exit)
+                        builder.enter(body_block)
                     }
-                } else {
-                    let body_block = builder.continuation(none, item.span)
-                    let exit_block = builder.continuation(none, item.span)
-                    builder.branch(condition.slot, body_block, exit_block)
-                    builder.work.push(Work.Unit(item.span))
-                    builder.work.push(Work.Enter(exit_block))
-                    builder.enter(body_block)
                 }
-                builder.work.push(Work.Jump(header))
-                builder.work.push(Work.Discard(item.span))
-                builder.work.push(Work.Evaluate(child(parsed, item, 1)))
+                builder.work.push(Work.Jump(frame.header))
+                builder.work.push(Work.Discard(at))
+                builder.work.push(Work.Evaluate(parsed.children[(item.children.end - 1u32) as usize]))
             },
             Work.SelectShort(id, and) => {
                 let item = parsed.nodes[id.index as usize]

@@ -279,8 +279,10 @@ Native scalar lowering emits blocks with ordered local value definitions and
 explicit arguments on control-flow edges. Assignments replace the current SSA
 value of a scalar local; joins merge live local values and pending expression
 operands independently, including on scalar `while` backedges. Explicit returns
-terminate their path without forwarding values to a join. Condition chains and
-short-circuit operators branch before evaluating the next operand.
+terminate their path without forwarding values to a join. Scalar loop transfers
+forward only the target's live locals and pending operands, plus the break
+value when exiting a value-producing `loop`. Condition chains and short-circuit
+operators branch before evaluating the next operand.
 The IR verifier checks
 operands, edge arguments, reachability, call signatures and returns before
 exposing an immutable verified program. Owned values are not admitted yet.
