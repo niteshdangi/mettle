@@ -826,6 +826,9 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                  'fn text() { "escape: \\\\ \\" \\t"; "é" }\n'),
                 ("branches", "fn f() { if a, b { match x { -3..=0 | 2 if ready => y as i32, _ => 0 } } "
                  "else { label outer: while check(), y as bool { break label outer } } }\n"),
+                ("closures", "fn f() { take fn(x: i32) => x as i64; async { await a() }; "
+                 "async take fn() throws E { await b() } }\n"),
+                ("async-comparison", "async fn f() { a < { await work() } + c }\n"),
             ):
                 path = source("syntax-inspection-" + name, text)
                 reference = run([executable, "syntax", str(path)])

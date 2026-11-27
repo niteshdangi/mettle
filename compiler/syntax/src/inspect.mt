@@ -1,3 +1,4 @@
+import alloc.hash_map.{ Map, new as map_new }
 import alloc.vec.{ List, new }
 import mettle_foundation.Span
 import super.parser.parse
@@ -29,6 +30,7 @@ pub copy enum InspectionError { InvalidTree, Unsupported(NodeKind, Span) }
 enum ExpressionWork {
     Visit(SyntaxNode),
     ConditionClause(SyntaxNode),
+    FinishAwait(SyntaxNode),
     Finish(SyntaxNode, InspectionNode, usize),
     GenericSpan(SyntaxNode)
 }
@@ -37,6 +39,7 @@ type Projector<region r> {
     bytes: read [u8] from r
     tree: read Parsed from r
     result: Inspection
+    await_ids: Map<u32, u32>
 }
 
 extend<region r> Projector<region r> {
@@ -52,6 +55,20 @@ extend<region r> Projector<region r> {
     fn operation(node: SyntaxNode): Span {
         let index = match node.operation { present(index) => index, none => node.tokens.begin }
         self.tree.tokens[index as usize].span
+    }
+    fn throws_body(node: SyntaxNode): bool {
+        for index in 0usize..count(node) - 1usize {
+            if self.child(node, index).kind.is(NodeKind.TypeEffect) { return true }
+        }
+        false
+    }
+    fn function_keyword(name: SyntaxNode): Span {
+        var index = name.tokens.begin as usize
+        loop {
+            index -= 1usize
+            let token = self.tree.tokens[index]
+            if token.kind.is(Kind.Word) { return token.span }
+        }
     }
     fn type_name(node: SyntaxNode): List<u8> throws InspectionError {
         match node.kind {
@@ -91,6 +108,11 @@ extend<region r> Projector<region r> {
                     let value = if clause.kind.is(NodeKind.Condition) { self.child(clause, 1usize) } else { clause }
                     work.push(ExpressionWork.Visit(value))
                 },
+                ExpressionWork.FinishAwait(awaited) => {
+                    let operand = completed.pop().or_panic()
+                    let id = self.await_view(awaited, operand)
+                    completed.push(take id)
+                },
                 ExpressionWork.Finish(native, view, mark) => {
                     var finished = take view
                     finished.children.extend_from_slice(read completed.as_slice()[mark..completed.len()])
@@ -122,8 +144,13 @@ extend<region r> Projector<region r> {
             NodeKind.Tuple => 25u32, NodeKind.Array | NodeKind.Repeat => 26u32,
             NodeKind.Index => 27u32, NodeKind.Range => 28u32, NodeKind.For => 29u32,
             NodeKind.Coalesce => 30u32, NodeKind.Character | NodeKind.Byte => 31u32,
-            NodeKind.Text => 32u32, NodeKind.Floating => 34u32, NodeKind.Cast => 35u32,
+            NodeKind.Text => 32u32, NodeKind.Closure => 33u32, NodeKind.Floating => 34u32, NodeKind.Cast => 35u32,
             NodeKind.Unsafe => 36u32, NodeKind.Conditions => 40u32,
+            NodeKind.Await => {
+                work.push(ExpressionWork.FinishAwait(node))
+                work.push(ExpressionWork.Visit(self.child(node, 0usize)))
+                return
+            },
             NodeKind.GenericApply => {
                 work.push(ExpressionWork.GenericSpan(node))
                 work.push(ExpressionWork.Visit(self.child(node, 0usize)))
@@ -144,6 +171,10 @@ extend<region r> Projector<region r> {
             NodeKind.Arm | NodeKind.Conditions => {
                 view.span = self.tree.tokens[node.tokens.begin as usize].span
                 if node.kind.is(NodeKind.Arm) { first = 1usize }
+            },
+            NodeKind.Closure => {
+                view.span = self.tree.tokens[node.tokens.begin as usize].span
+                first = last - 1usize
             },
             NodeKind.Range => {
                 let operation = self.operation(node)
@@ -228,7 +259,7 @@ extend<region r> Projector<region r> {
     }
     mut fn finish_expression(node: SyntaxNode, take view: InspectionNode): usize {
         var view = take view
-        if view.kind == 21u32 || view.kind == 39u32 || view.kind == 40u32 {
+        if view.kind == 21u32 || view.kind == 39u32 || view.kind == 40u32 || node.kind.is(NodeKind.Closure) {
             for child in view.children.as_slice() {
                 let end = self.result.nodes[child].span.end
                 if view.span.end < end { view.span.end = end }
@@ -243,9 +274,71 @@ extend<region r> Projector<region r> {
             let last_child = view.children[view.children.len() - 1usize]
             view.span.end = self.result.nodes[last_child].span.end
         }
+        if node.kind.is(NodeKind.Closure) && self.child(node, 0usize).kind.is(NodeKind.Modifier) {
+            let prefix = self.child(node, 0usize)
+            if self.spelling(self.operation(prefix)) == "async".as_bytes() {
+                let body = view.children[0usize]
+                if node.operation.is_none() {
+                    let call = self.coroutine(self.operation(prefix), body, false)
+                    self.result.nodes[call].semicolon = view.semicolon
+                    return call
+                }
+                let wrapped = self.coroutine_block(self.operation(prefix), body, self.throws_body(node))
+                view.children[0usize] = wrapped
+            }
+        }
         let id = self.result.nodes.len()
         self.result.nodes.push(take view)
         id
+    }
+    mut fn synthetic(kind: u32, span: Span, read text: [u8], read children: [usize]): usize {
+        let id = self.result.nodes.len()
+        self.result.nodes.push(InspectionNode(kind, text.to_vec(), new<u8>(), span, false, children.to_vec()))
+        id
+    }
+    mut fn coroutine(span: Span, body: usize, throwing: bool): usize {
+        let full_span = Span(span.source, span.begin, self.result.nodes[body].span.end)
+        let callee = if throwing { "core::future::throwing_coroutine" } else { "core::future::coroutine" }
+        let name = self.synthetic(3u32, span, callee.as_bytes(), [0usize; 0])
+        let closure = self.synthetic(33u32, full_span, "coroutine".as_bytes(), [body])
+        self.synthetic(7u32, full_span, "".as_bytes(), [name, closure])
+    }
+    mut fn coroutine_block(span: Span, body: usize, throwing: bool): usize {
+        let body_span = self.result.nodes[body].span
+        let call = self.coroutine(span, body, throwing)
+        self.synthetic(8u32, body_span, "".as_bytes(), [call])
+    }
+    mut fn await_view(node: SyntaxNode, operand: usize): usize {
+        let span = self.operation(node)
+        let empty = "".as_bytes()
+        let no_children = [0usize; 0]
+        let id = self.await_ids[span.begin]
+        let pending = await_name("<await-".as_bytes(), id)
+        let ready = await_name("<ready-".as_bytes(), id)
+        var full_span = span
+        let operand_end = self.result.nodes[operand].span.end
+        if full_span.end < operand_end { full_span.end = operand_end }
+        let binding = self.synthetic(10u32, full_span, pending.as_slice(), [operand])
+        let poll_name = self.synthetic(3u32, span, "core::future::poll_await".as_bytes(), no_children)
+        let place_name = self.synthetic(3u32, span, pending.as_slice(), no_children)
+        let place = self.synthetic(5u32, span, "mut".as_bytes(), [place_name])
+        let context_name = self.synthetic(3u32, span, "core::intrinsics::coroutine_context".as_bytes(), no_children)
+        let context = self.synthetic(7u32, span, empty, [context_name])
+        let call = self.synthetic(7u32, span, empty, [poll_name, place, context])
+        let guarded = self.synthetic(36u32, span, empty, [call])
+        let ready_name = self.synthetic(3u32, span, ready.as_slice(), no_children)
+        let leave = self.synthetic(15u32, span, empty, [ready_name])
+        let ready_body = self.synthetic(8u32, span, empty, [leave])
+        let present_arm = self.synthetic(21u32, span, empty, [ready_body])
+        let suspend_name = self.synthetic(3u32, span, "core::intrinsics::coroutine_suspend".as_bytes(), no_children)
+        let suspend = self.synthetic(7u32, span, empty, [suspend_name])
+        let absent_arm = self.synthetic(21u32, span, empty, [suspend])
+        let poll = self.synthetic(20u32, span, "take".as_bytes(), [guarded, present_arm, absent_arm])
+        let iteration = self.synthetic(8u32, span, empty, [poll])
+        let repeat = self.synthetic(14u32, span, empty, [iteration])
+        let result = self.synthetic(8u32, full_span, empty, [binding, repeat])
+        self.result.nodes[result].semicolon = node.semicolon
+        result
     }
     mut fn items(node: SyntaxNode): Unit throws InspectionError {
         for index in 0usize..count(node) {
@@ -258,16 +351,24 @@ extend<region r> Projector<region r> {
                 NodeKind.Import | NodeKind.Constant | NodeKind.Static => {},
                 NodeKind.Function => {
                     var index = 0usize
+                    var asynchronous = false
                     while !self.child(item, index).kind.is(NodeKind.Name) {
                         let prefix = self.child(item, index)
                         if prefix.kind.is(NodeKind.Modifier) {
                             let mode = self.spelling(self.operation(prefix))
-                            if mode != "unsafe".as_bytes() && mode != "const".as_bytes() { throw InspectionError.Unsupported(item.kind, item.span) }
+                            if mode == "async".as_bytes() && prefix.span.end == self.operation(prefix).end { asynchronous = true }
+                            else if mode != "unsafe".as_bytes() && mode != "const".as_bytes() { throw InspectionError.Unsupported(item.kind, item.span) }
                         }
                         index += 1
                     }
-                    let name = self.name(self.child(item, index))
-                    let body = try self.expression(self.child(item, count(item) - 1usize))
+                    let name_node = self.child(item, index)
+                    let name = self.name(name_node)
+                    var body = try self.expression(self.child(item, count(item) - 1usize))
+                    if asynchronous {
+                        var span = self.function_keyword(name_node)
+                        span.end = self.result.nodes[body].span.end
+                        body = self.coroutine_block(span, body, self.throws_body(item))
+                    }
                     self.result.functions.push(InspectionFunction(take name, new<u8>(), body))
                 },
                 NodeKind.Alias => {
@@ -306,6 +407,22 @@ extend<region r> Projector<region r> {
 
 fn count(node: SyntaxNode): usize { (node.children.end - node.children.begin) as usize }
 
+fn await_name(read prefix: [u8], id: u32): List<u8> {
+    var digits = [0u8; 10]
+    var index = digits.len()
+    var remaining = id
+    loop {
+        index -= 1usize
+        digits[index] = b'0' + (remaining % 10u32) as u8
+        remaining /= 10u32
+        if remaining == 0u32 { break }
+    }
+    var name = prefix.to_vec()
+    name.extend_from_slice(digits[index..digits.len()])
+    name.push(b'>')
+    name
+}
+
 fn is_type(kind: NodeKind): bool {
     let ordinal = kind as u32
     kind.is(NodeKind.TypeName) || (ordinal >= (NodeKind.TypeGroup as u32) && ordinal <= (NodeKind.TypeEffect as u32))
@@ -316,7 +433,14 @@ pub fn project(read tree: Parsed, read bytes: [u8]): Inspection throws Inspectio
     let present(root_id) = tree.root else { throw InspectionError.InvalidTree }
     let root = tree.nodes[root_id.index as usize]
     if !root.kind.is(NodeKind.Module) || root.span.end as usize != bytes.len() { throw InspectionError.InvalidTree }
-    var projector = Projector(read bytes, read tree, Inspection(new<InspectionToken>(), new<InspectionNode>(), new<InspectionFunction>(), new<InspectionAlias>(), new<InspectionProduct>()))
+    var await_ids = map_new<u32, u32>()
+    for node in tree.nodes.as_slice() {
+        if node.kind.is(NodeKind.Await) {
+            let id = await_ids.len() as u32
+            let _ = await_ids.insert(node.span.begin, id)
+        }
+    }
+    var projector = Projector(read bytes, read tree, Inspection(new<InspectionToken>(), new<InspectionNode>(), new<InspectionFunction>(), new<InspectionAlias>(), new<InspectionProduct>()), take await_ids)
     for token in tree.tokens.as_slice() {
         if token.kind.is(Kind.FormatPiece) { throw InspectionError.Unsupported(NodeKind.Interpolation, token.span) }
         let text = projector.spelling(token.span)
@@ -403,13 +527,66 @@ fn bootstrap_inspection_condition_chains(): Unit {
 }
 
 @test
+fn bootstrap_inspection_async_await(): Unit {
+    let bytes = "const skip: T = async { await a() }\nasync fn f(x: T = async { await b() }) throws E => await await c()".as_bytes()
+    let tree = parse(bytes, 0u32)
+    let success(view) = capture project(read tree, bytes) else { core.panic.panic("async projection failed") }
+    let body = read view.nodes[view.functions[0usize].body]
+    let call = read view.nodes[body.children[0usize]]
+    let callee = read view.nodes[call.children[0usize]]
+    let closure = read view.nodes[call.children[1usize]]
+    assert(body.kind == 8u32 && body.span.begin == 87u32 && body.span.end == 102u32 &&
+        call.kind == 7u32 && callee.text == "core::future::throwing_coroutine".as_bytes() &&
+        callee.span.begin == 42u32 && callee.span.end == 102u32 &&
+        closure.kind == 33u32 && closure.text == "coroutine".as_bytes(), "throwing async function lost its coroutine shape or spans")
+    let original = read view.nodes[closure.children[0usize]]
+    let waiting = read view.nodes[original.children[0usize]]
+    let outer = read view.nodes[waiting.children[0usize]]
+    let inner = read view.nodes[view.nodes[outer.children[0usize]].children[0usize]]
+    assert(outer.text == "<await-3>".as_bytes() && inner.text == "<await-2>".as_bytes(),
+        "nested awaits did not follow parsed order after the omitted constant and default")
+    let repeat = read view.nodes[waiting.children[1usize]]
+    let poll = read view.nodes[view.nodes[repeat.children[0usize]].children[0usize]]
+    let guarded = read view.nodes[poll.children[0usize]]
+    assert(repeat.kind == 14u32 && repeat.span.begin == 87u32 && repeat.span.end == 92u32 &&
+        poll.kind == 20u32 && poll.text == "take".as_bytes() && poll.children.len() == 3usize &&
+        guarded.kind == 36u32, "await polling tree lost its keyword span or ordered branches")
+}
+
+@test
+fn bootstrap_inspection_closures(): Unit {
+    let bytes = "fn f() { take fn(x: i32) => x as i64; async { await a() }; async take fn() throws E { await b() } }".as_bytes()
+    let tree = parse(bytes, 0u32)
+    let success(view) = capture project(read tree, bytes) else { core.panic.panic("closure projection failed") }
+    let body = read view.nodes[view.functions[0usize].body]
+    let plain = read view.nodes[body.children[0usize]]
+    let arrow = read view.nodes[plain.children[0usize]]
+    assert(plain.kind == 33u32 && plain.text.is_empty() && plain.semicolon &&
+        plain.span.begin == 9u32 && plain.span.end == 29u32 &&
+        arrow.kind == 8u32 && arrow.span.begin == 28u32 && arrow.span.end == 29u32, "closure arrow body includes syntax-only metadata or cast type")
+    let bare = read view.nodes[body.children[1usize]]
+    let bare_callee = read view.nodes[bare.children[0usize]]
+    assert(bare.kind == 7u32 && bare.semicolon && bare.span.end == 57u32 &&
+        bare_callee.text == "core::future::coroutine".as_bytes() &&
+        bare_callee.span.begin == 38u32 && bare_callee.span.end == 43u32, "async block did not project directly to its coroutine call")
+    let asynchronous = read view.nodes[body.children[2usize]]
+    let wrapper = read view.nodes[asynchronous.children[0usize]]
+    let call = read view.nodes[wrapper.children[0usize]]
+    let callee = read view.nodes[call.children[0usize]]
+    assert(asynchronous.kind == 33u32 && asynchronous.text.is_empty() &&
+        wrapper.span.begin == 84u32 && wrapper.span.end == 97u32 &&
+        callee.text == "core::future::throwing_coroutine".as_bytes() &&
+        callee.span.begin == 59u32 && callee.span.end == 64u32, "async closure lost its outer closure or throwing body wrapper")
+}
+
+@test
 fn bootstrap_inspection_refuses_incompatible_trees(): Unit {
-    let source = "async fn f() { await g() }".as_bytes()
+    let source = "fn f() { item!() }".as_bytes()
     let valid = parse(source, 0u32)
     let failure(InspectionError.Unsupported(kind, span)) = capture project(read valid, source) else {
-        core.panic.panic("async function was silently projected")
+        core.panic.panic("macro invocation was silently projected")
     }
-    assert(kind.is(NodeKind.Function) && span.begin == 0u32 && span.end == source.len() as u32, "unsupported function lost its location")
+    assert(kind.is(NodeKind.MacroInvocation) && span.begin == 9u32 && span.end == 16u32, "unsupported macro invocation lost its location")
     let broken = "fn f() { 1 + }".as_bytes()
     let recovered = parse(broken, 0u32)
     let failure(InspectionError.InvalidTree) = capture project(read recovered, broken) else {
