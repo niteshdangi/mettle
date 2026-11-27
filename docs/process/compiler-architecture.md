@@ -269,10 +269,11 @@ before checking bodies. Checked calls carry a module and function index, not a
 source spelling, and expression facts remain indexed by the owning syntax unit.
 Public syntax inspection projects the native tree into the reference JSON
 shape; the frontend continues to consume the original lossless tree.
-Native scalar lowering emits straight-line functions with ordered value
-definitions and resolved calls. The IR verifier checks operand availability,
-call signatures and returns before exposing an immutable verified program.
-Branching and owned values are not admitted by this straight-line lowering.
+Native scalar lowering emits blocks with ordered local value definitions and
+explicit arguments on control-flow edges. Condition chains and short-circuit
+operators branch before evaluating the next operand. The IR verifier checks
+operands, edge arguments, reachability, call signatures and returns before
+exposing an immutable verified program. Owned values are not admitted yet.
 `mettle-selfhost build INPUT -o OUTPUT` compiles scalar standalone files and
 packages with executable entries for hosted Linux x86-64. It verifies emitted
 LLVM with the pinned `llvm-as` from `PATH`, then links with pinned Clang and

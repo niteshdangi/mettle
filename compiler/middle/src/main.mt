@@ -1,9 +1,10 @@
-import alloc.vec.List
+import alloc.vec.{ List, with_capacity }
 import mettle_foundation.Span
 import mettle_frontend.{ Binding, CheckedModule, SourceModule }
 import mettle_frontend as frontend
-import mettle_ir.{ Arithmetic, Function, FunctionId, Instruction, InvalidIr, Module, Operation, Program, VerifiedProgram, verify }
+import mettle_ir.{ Arithmetic, Block, Comparison, Edge, Function, FunctionId, Instruction, InvalidIr, Module, Operation, Program, Terminator, VerifiedProgram, verify }
 import mettle_syntax.{ NodeId, NodeKind, Parsed, SyntaxNode }
+import mettle_types.Scalar
 
 pub copy enum LoweringError { Inconsistent(Span), Unsupported(Span), Invalid(InvalidIr) }
 
@@ -11,89 +12,262 @@ fn child(read parsed: Parsed, parent: SyntaxNode, index: usize): NodeId {
     parsed.children[parent.children.begin as usize + index]
 }
 
-fn operand(read values: List<usize?>, first: usize, id: NodeId, span: Span): usize throws LoweringError {
-    let index = id.index as usize
-    if index < first || index - first >= values.len() {
-        throw LoweringError.Inconsistent(span)
+copy type Value { slot: usize; scalar: Scalar }
+type PendingBlock {
+    parameters: List<Scalar>
+    instructions: List<Instruction>
+    terminator: Terminator?
+    span: Span
+}
+
+copy enum Work {
+    Evaluate(NodeId), Binary(NodeId), Call(NodeId, usize), Chain(NodeId, u32),
+    SelectIf(NodeId), SelectShort(NodeId, bool), SelectChain(NodeId, u32),
+    Unit(Span), Boolean(bool, Span), Discard(Span), Enter(usize), Jump(usize)
+}
+
+type Builder {
+    blocks: List<PendingBlock>
+    current: usize
+    values: List<Value>
+    work: List<Work>
+}
+
+extend Builder {
+    mut fn add_block(take parameters: List<Scalar>, span: Span): usize {
+        let index = self.blocks.len()
+        self.blocks.push(PendingBlock(take parameters, List<Instruction>(), none, span))
+        index
     }
-    let present(value) = values[index - first] else { throw LoweringError.Inconsistent(span) }
-    value
+
+    mut fn continuation(tail: Scalar?, span: Span): usize {
+        var parameters = with_capacity<Scalar>(self.values.len() + (if tail.is_present() { 1usize } else { 0usize }))
+        for value in self.values.as_slice() { parameters.push(value.scalar) }
+        if let present(scalar) = tail { parameters.push(scalar) }
+        self.add_block(take parameters, span)
+    }
+
+    mut fn enter(index: usize): Unit {
+        self.current = index
+        self.values.clear()
+        let parameters = read self.blocks[index].parameters
+        for position in 0usize..parameters.len() {
+            self.values.push(Value(position, parameters[position]))
+        }
+    }
+
+    mut fn emit(take operation: Operation, scalar: Scalar, span: Span): Unit {
+        let block = mut self.blocks[self.current]
+        let slot = block.parameters.len() + block.instructions.len()
+        block.instructions.push(Instruction(take operation, span))
+        self.values.push(Value(slot, scalar))
+    }
+
+    mut fn pop_value(span: Span): Value throws LoweringError {
+        let present(value) = self.values.pop() else { throw LoweringError.Inconsistent(span) }
+        value
+    }
+
+    fn edge(index: usize): Edge {
+        var arguments = List<usize>()
+        for value in self.values.as_slice() { arguments.push(value.slot) }
+        Edge(index, take arguments)
+    }
+
+    mut fn close(take terminator: Terminator): Unit {
+        self.blocks[self.current].terminator = present(take terminator)
+    }
+
+    mut fn select(yes: Work, no: Work, result: Scalar, span: Span): Unit throws LoweringError {
+        let condition = try self.pop_value(span)
+        let consequent = self.continuation(none, span)
+        let alternative = self.continuation(none, span)
+        let joined = self.continuation(present(result), span)
+        let true_edge = self.edge(consequent)
+        let false_edge = self.edge(alternative)
+        self.close(Terminator.Branch(condition.slot, take true_edge, take false_edge))
+        self.work.push(Work.Enter(joined))
+        self.work.push(Work.Jump(joined))
+        self.work.push(no)
+        self.work.push(Work.Enter(alternative))
+        self.work.push(Work.Jump(joined))
+        self.work.push(yes)
+        self.work.push(Work.Enter(consequent))
+    }
 }
 
-fn emit(mut output: List<Instruction>, take operation: Operation, span: Span): usize {
-    let index = output.len()
-    output.push(Instruction(take operation, span))
-    index
-}
-
-fn arithmetic(read spelling: [u8], span: Span): Arithmetic throws LoweringError {
+fn binary(read spelling: [u8], left: Value, right: Value, span: Span): Operation throws LoweringError {
+    let a = left.slot
+    let b = right.slot
+    let scalar = left.scalar
+    if spelling.len() == 2usize && spelling[1usize] == b'=' {
+        let comparison = match spelling[0usize] {
+            b'=' => Comparison.Equal, b'!' => Comparison.NotEqual,
+            b'<' => Comparison.LessEqual, b'>' => Comparison.GreaterEqual,
+            _ => { throw LoweringError.Unsupported(span) }
+        }
+        return Operation.Compare(comparison, scalar, a, b)
+    }
     if spelling.len() != 1usize { throw LoweringError.Unsupported(span) }
-    match spelling[0] {
+    if spelling[0usize] == b'<' { return Operation.Compare(Comparison.Less, scalar, a, b) }
+    if spelling[0usize] == b'>' { return Operation.Compare(Comparison.Greater, scalar, a, b) }
+    let operation = match spelling[0usize] {
         b'+' => Arithmetic.Add, b'-' => Arithmetic.Subtract, b'*' => Arithmetic.Multiply,
         b'/' => Arithmetic.Divide, b'%' => Arithmetic.Remainder,
-        _ => throw LoweringError.Unsupported(span)
+        _ => { throw LoweringError.Unsupported(span) }
+    }
+    Operation.Arithmetic(operation, a, b)
+}
+
+fn operator(read source: SourceModule, item: SyntaxNode): read [u8] from source throws LoweringError {
+    let present(token) = item.operation else { throw LoweringError.Inconsistent(item.span) }
+    let span = source.syntax.tokens[token as usize].span
+    read source.bytes.as_slice()[span.begin as usize..span.end as usize]
+}
+
+fn evaluate(mut builder: Builder, read source: SourceModule, read checked: CheckedModule,
+    id: NodeId): Unit throws LoweringError {
+    let parsed = read source.syntax
+    let item = parsed.nodes[id.index as usize]
+    let span = item.span
+    let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(span) }
+    match item.kind {
+        NodeKind.Group => builder.work.push(Work.Evaluate(child(parsed, item, 0))),
+        NodeKind.Block => {
+            let first = item.children.begin
+            let last = item.children.end
+            var position = last
+            if first == last || parsed.nodes[parsed.children[(last - 1u32) as usize].index as usize].semicolon {
+                builder.work.push(Work.Unit(span))
+            }
+            while position > first {
+                position -= 1u32
+                let statement = parsed.children[position as usize]
+                if position + 1u32 != last || parsed.nodes[statement.index as usize].semicolon {
+                    builder.work.push(Work.Discard(span))
+                }
+                builder.work.push(Work.Evaluate(statement))
+            }
+        },
+        NodeKind.If => {
+            builder.work.push(Work.SelectIf(id))
+            builder.work.push(Work.Evaluate(child(parsed, item, 0)))
+        },
+        NodeKind.Conditions => builder.work.push(Work.Chain(id, item.children.begin)),
+        NodeKind.Binary => {
+            let spelling = try operator(source, item)
+            let right = child(parsed, item, 1)
+            if spelling == b"&&" || spelling == b"||" {
+                builder.work.push(Work.SelectShort(right, spelling == b"&&"))
+            } else {
+                builder.work.push(Work.Binary(id))
+                builder.work.push(Work.Evaluate(right))
+            }
+            builder.work.push(Work.Evaluate(child(parsed, item, 0)))
+        },
+        NodeKind.Call => {
+            let arguments = parsed.nodes[child(parsed, item, 1).index as usize]
+            var position = arguments.children.end
+            builder.work.push(Work.Call(id, (position - arguments.children.begin) as usize))
+            while position > arguments.children.begin {
+                position -= 1u32
+                builder.work.push(Work.Evaluate(parsed.children[position as usize]))
+            }
+        },
+        NodeKind.Integer => {
+            var integer = 0i32
+            for digit in source.bytes.as_slice()[span.begin as usize..span.end as usize] {
+                if digit != b'_' { integer = integer * 10i32 + (digit - b'0') as i32 }
+            }
+            builder.emit(Operation.Integer(integer), Scalar.I32, span)
+        },
+        NodeKind.Boolean => builder.emit(Operation.Boolean(source.bytes[span.begin as usize] == b't'), Scalar.Bool, span),
+        NodeKind.Unit => builder.emit(Operation.Unit, Scalar.Unit, span),
+        NodeKind.Name => {
+            let present(Binding.Parameter(parameter)) = fact.binding else { throw LoweringError.Inconsistent(span) }
+            builder.emit(Operation.Parameter(parameter), fact.scalar, span)
+        },
+        _ => { throw LoweringError.Unsupported(span) }
     }
 }
 
-fn lower_function(read source: SourceModule, read checked: CheckedModule, read signature: frontend.Function, first: usize): Function throws LoweringError {
+fn lower_function(read source: SourceModule, read checked: CheckedModule, read signature: frontend.Function): Function throws LoweringError {
     let parsed = read source.syntax
-    let body_index = signature.body.index as usize
-    let body = parsed.nodes[body_index]
-    var instructions = List<Instruction>()
-    var values = List<usize?>()
-    for index in first..body_index + 1usize {
-        let item = parsed.nodes[index]
-        let span = item.span
-        let present(fact) = checked.expressions[index] else { values.push(none); continue }
-        if item.kind.is(NodeKind.Group) {
-            values.push(present(try operand(values, first, child(parsed, item, 0), span)))
-            continue
-        }
-        if item.kind.is(NodeKind.Block) && item.children.begin != item.children.end {
-            let tail = parsed.children[item.children.end as usize - 1usize]
-            if !parsed.nodes[tail.index as usize].semicolon {
-                values.push(present(try operand(values, first, tail, span)))
-                continue
-            }
-        }
-        let operation = match item.kind {
-            NodeKind.Integer => {
-                var integer = 0i32
-                for digit in source.bytes.as_slice()[span.begin as usize..span.end as usize] {
-                    if digit != b'_' { integer = integer * 10i32 + (digit - b'0') as i32 }
+    let span = parsed.nodes[signature.body.index as usize].span
+    var builder = Builder(List<PendingBlock>(), 0usize, List<Value>(), List<Work>())
+    let _ = builder.add_block(List<Scalar>(), span)
+    builder.work.push(Work.Evaluate(signature.body))
+    while let present(task) = builder.work.pop() {
+        match task {
+            Work.Evaluate(id) => { try evaluate(mut builder, source, checked, id) },
+            Work.Unit(at) => builder.emit(Operation.Unit, Scalar.Unit, at),
+            Work.Boolean(value, at) => builder.emit(Operation.Boolean(value), Scalar.Bool, at),
+            Work.Discard(at) => { let _ = try builder.pop_value(at) },
+            Work.Enter(block) => builder.enter(block),
+            Work.Jump(block) => {
+                let edge = builder.edge(block)
+                builder.close(Terminator.Jump(take edge))
+            },
+            Work.Binary(id) => {
+                let item = parsed.nodes[id.index as usize]
+                let right = try builder.pop_value(item.span)
+                let left = try builder.pop_value(item.span)
+                let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(item.span) }
+                let operation = try binary(try operator(source, item), left, right, item.span)
+                builder.emit(take operation, fact.scalar, item.span)
+            },
+            Work.Call(id, count) => {
+                let item = parsed.nodes[id.index as usize]
+                let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(item.span) }
+                let present(Binding.Function(target)) = fact.binding else { throw LoweringError.Inconsistent(item.span) }
+                var arguments = List<usize>()
+                arguments.resize(count, 0usize)
+                var index = count
+                while index > 0usize {
+                    index -= 1usize
+                    arguments[index] = (try builder.pop_value(item.span)).slot
                 }
-                Operation.Integer(integer)
+                builder.emit(Operation.Call(FunctionId(target.module_index, target.index), take arguments), fact.scalar, item.span)
             },
-            NodeKind.Boolean => Operation.Boolean(source.bytes[span.begin as usize] == b't'),
-            NodeKind.Unit | NodeKind.Block => Operation.Unit,
-            NodeKind.Name => {
-                let present(Binding.Parameter(parameter)) = fact.binding else { throw LoweringError.Inconsistent(span) }
-                Operation.Parameter(parameter)
-            },
-            NodeKind.Binary => {
-                let present(token) = item.operation else { throw LoweringError.Inconsistent(span) }
-                let spelling = parsed.tokens[token as usize].span
-                let operator = try arithmetic(read source.bytes.as_slice()[spelling.begin as usize..spelling.end as usize], spelling)
-                Operation.Arithmetic(operator, try operand(values, first, child(parsed, item, 0), span),
-                    try operand(values, first, child(parsed, item, 1), span))
-            },
-            NodeKind.Call => {
-                let present(Binding.Function(target)) = fact.binding else { throw LoweringError.Inconsistent(span) }
-                let arguments = parsed.nodes[child(parsed, item, 1).index as usize]
-                var operands = List<usize>()
-                for position in arguments.children.begin..arguments.children.end {
-                    operands.push(try operand(values, first, parsed.children[position as usize], span))
+            Work.Chain(id, position) => {
+                let item = parsed.nodes[id.index as usize]
+                if position >= item.children.end { throw LoweringError.Inconsistent(item.span) }
+                if position + 1u32 < item.children.end {
+                    builder.work.push(Work.SelectChain(id, position + 1u32))
                 }
-                Operation.Call(FunctionId(target.module_index, target.index), take operands)
+                builder.work.push(Work.Evaluate(parsed.children[position as usize]))
             },
-            _ => throw LoweringError.Unsupported(span)
+            Work.SelectIf(id) => {
+                let item = parsed.nodes[id.index as usize]
+                let present(fact) = checked.expressions[id.index as usize] else { throw LoweringError.Inconsistent(item.span) }
+                let yes = Work.Evaluate(child(parsed, item, 1))
+                let no = if item.children.end - item.children.begin == 3u32 {
+                    Work.Evaluate(child(parsed, item, 2))
+                } else { Work.Unit(item.span) }
+                try builder.select(yes, no, fact.scalar, item.span)
+            },
+            Work.SelectShort(right, and) => {
+                let at = parsed.nodes[right.index as usize].span
+                if and { try builder.select(Work.Evaluate(right), Work.Boolean(false, at), Scalar.Bool, at) }
+                else { try builder.select(Work.Boolean(true, at), Work.Evaluate(right), Scalar.Bool, at) }
+            },
+            Work.SelectChain(id, position) => {
+                let at = parsed.nodes[id.index as usize].span
+                try builder.select(Work.Chain(id, position), Work.Boolean(false, at), Scalar.Bool, at)
+            },
         }
-        values.push(present(emit(mut instructions, take operation, span)))
     }
-    let returned = try operand(values, first, signature.body, body.span)
-    var parameters = alloc.vec.new<mettle_types.Scalar>()
-    for ty in signature.parameters.as_slice() { parameters.push(ty) }
-    Function(take parameters, signature.result, take instructions, returned, body.span)
+    let returned = try builder.pop_value(span)
+    if !builder.values.is_empty() { throw LoweringError.Inconsistent(span) }
+    builder.close(Terminator.Return(returned.slot))
+    var blocks = List<Block>()
+    for pending in take builder.blocks {
+        let present(terminator) = take pending.terminator else { throw LoweringError.Inconsistent(pending.span) }
+        blocks.push(Block(take pending.parameters, take pending.instructions, take terminator, pending.span))
+    }
+    var parameters = List<Scalar>()
+    for scalar in signature.parameters.as_slice() { parameters.push(scalar) }
+    Function(take parameters, signature.result, take blocks, span)
 }
 
 pub fn lower(read sources: List<SourceModule>, read checked: List<CheckedModule>): VerifiedProgram throws LoweringError {
@@ -112,14 +286,12 @@ pub fn lower(read sources: List<SourceModule>, read checked: List<CheckedModule>
             entry = present(FunctionId(index, selected))
         }
         var functions = List<Function>()
-        var first = 0usize
         for signature in facts.functions.as_slice() {
             let body_index = signature.body.index as usize
-            if body_index >= facts.expressions.len() || body_index < first {
+            if body_index >= facts.expressions.len() {
                 throw LoweringError.Inconsistent(Span(0, 0, 0))
             }
-            functions.push(try lower_function(source, facts, signature, first))
-            first = body_index + 1usize
+            functions.push(try lower_function(source, facts, signature))
         }
         modules.push(Module(take functions))
     }
@@ -152,8 +324,12 @@ fn cross_module_scalar_call(): Unit throws LoweringError {
     }
     let verified = try lower(sources, checked)
     let program = verified.program()
-    let main = read program.modules[0].functions[0]
-    let (call, right) = match read main.instructions[main.returned].operation {
+    let main = read program.modules[0].functions[0].blocks[0]
+    let returned = match read main.terminator {
+        Terminator.Return(value) => value,
+        _ => core.panic.panic("expected a direct return")
+    }
+    let (call, right) = match read main.instructions[returned].operation {
         Operation.Arithmetic(Arithmetic.Subtract, call, right) => (call, right),
         _ => core.panic.panic("expected subtraction at the return")
     }
