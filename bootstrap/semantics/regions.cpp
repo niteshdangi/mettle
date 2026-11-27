@@ -1665,7 +1665,7 @@ void RegionPass::pattern(const Pattern &syntax, Type type, RegionId region) {
       static_cast<std::size_t>(found->second.slot) < locals.size()) {
     auto slot = static_cast<std::size_t>(found->second.slot);
     locals[slot] = type;
-    if (types.isView(currentFacts->locals[slot].type) && !types.isView(type))
+    if (currentFacts->locals[slot].patternView)
       locals[slot] = types.viewType(
           type, types.view(currentFacts->locals[slot].type).mode, region);
     storage[slot] = region;
@@ -3208,12 +3208,15 @@ Type RegionPass::expression(const Node &node) {
     break;
   case Kind::Name:
     if (facts(node).slot >= 0 &&
-        static_cast<std::size_t>(facts(node).slot) < locals.size())
-      type = locals[facts(node).slot];
-    else if (facts(node).callee >= 0 &&
-             static_cast<std::size_t>(facts(node).callee) <
-                 module.functions.size() &&
-             types.isFunctionPointer(type)) {
+        static_cast<std::size_t>(facts(node).slot) < locals.size()) {
+      auto slot = static_cast<std::size_t>(facts(node).slot);
+      type = locals[slot];
+      if (currentFacts->locals[slot].patternView && types.isView(type))
+        type = types.view(type).payload;
+    } else if (facts(node).callee >= 0 &&
+               static_cast<std::size_t>(facts(node).callee) <
+                   module.functions.size() &&
+               types.isFunctionPointer(type)) {
       auto callee = static_cast<std::size_t>(facts(node).callee);
       type = signatureType(callee);
       std::vector<TypeBinding> bindings;
