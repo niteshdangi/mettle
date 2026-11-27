@@ -50,7 +50,7 @@ packages: [
         version: "0.1.0"
         id: "mettle-packages@0.1.0|path+../packages|target"
         source: "path+../packages"
-        checksum: "sha256-tree-2:d520b53a8eb13ce102ce400381a0adb56571b3c1c570bbcbe5f3f84916817b6c"
+        checksum: "sha256-tree-2:4da400e99185706d35fd8ef862d6fe407011ab2dfaf65f91bd4fe2620b4c88c5"
         features: []
         dependencies: ["mettle-foundation@0.1.0|path+../foundation|target"]
     }

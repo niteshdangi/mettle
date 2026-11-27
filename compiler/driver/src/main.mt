@@ -203,18 +203,28 @@ fn mount_name(read name: Text): List<u8> {
     bytes
 }
 
-fn package_mounts(read graph: PackageGraph): List<Map<List<u8>, usize>> {
+fn package_mounts(read graph: PackageGraph, read source_indices: List<usize?>): List<Map<List<u8>, usize>> {
     var mounts = List<Map<List<u8>, usize>>()
     var roots = Map<List<u8>, usize?>()
     for index in 0usize..graph.packages.len() {
+        var aliases = Map<List<u8>, usize>()
+        let present(source_index) = source_indices[index] else {
+            mounts.push(take aliases)
+            continue
+        }
         let package = read graph.packages[index]
         let name = mount_name(package.name.as_text())
-        if roots.contains_key(name) { let _ = roots.insert(take name, none) }
-        else { let _ = roots.insert(take name, present(index)) }
-        var aliases = Map<List<u8>, usize>()
-        let _ = aliases.insert(mount_name(package.name.as_text()), index)
+        if package.is_library {
+            if roots.contains_key(name) { let _ = roots.insert(take name, none) }
+            else { let _ = roots.insert(take name, present(source_index)) }
+        }
+        let _ = aliases.insert(mount_name(package.name.as_text()), source_index)
         for edge in package.dependencies.as_slice() {
-            let _ = aliases.insert(mount_name(edge.name.as_text()), edge.package)
+            if !edge.is_host && graph.packages[edge.package].is_library {
+                if let present(dependency) = source_indices[edge.package] {
+                    let _ = aliases.insert(mount_name(edge.name.as_text()), dependency)
+                }
+            }
         }
         mounts.push(take aliases)
     }
@@ -244,21 +254,38 @@ type ModulePath {
 }
 
 fn check_graph(read graph: PackageGraph): i32 throws io.Error {
+    if !graph.build_scripts.is_empty() || !graph.macros.is_empty() {
+        io.eprint("mettle: error[feature]: native checking does not execute build scripts or procedural macros yet\n")
+        return 1
+    }
     var sources = List<SourceModule>()
     var paths = List<ModulePath>()
     var seen = Map<path.PathBuf, Unit>()
-    let mounts = package_mounts(graph)
-    for package in graph.packages.as_slice() {
-        let source = package.entry.as_path()
+    var source_indices = List<usize?>()
+    for package_index in 0usize..graph.packages.len() {
+        let package = read graph.packages[package_index]
+        if package.is_host || (package_index != 0usize && !package.is_library) {
+            source_indices.push(none)
+            continue
+        }
+        let source = match read package.entry {
+            present(entry) => entry.as_path(),
+            none => {
+                io.eprint("mettle: error[internal]: selected target package has no source entry\n")
+                return 1
+            }
+        }
         if seen.insert(source.to_path_buf(), ()).is_present() {
             io.eprint("error[name]: source file has more than one module identity\n")
             return 1
         }
         let index = sources.len()
-        let present(module_source) = try load_module(source, index, index, package.features) else { return 1 }
+        let present(module_source) = try load_module(source, index, package_index, package.features) else { return 1 }
         paths.push(ModulePath(source.to_path_buf(), source.parent().or_panic().to_path_buf()))
         sources.push(take module_source)
+        source_indices.push(present(index))
     }
+    let mounts = package_mounts(graph, source_indices)
     var owner = 0usize
     while owner < sources.len() {
         let declarations = match take capture external_modules(sources[owner]) {

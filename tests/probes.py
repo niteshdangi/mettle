@@ -949,6 +949,27 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
             assert "checksum mismatch for immutable package 'util' 1.3.0" in actual.stderr, actual.stderr
             assert lock.read_bytes() == expected_lock, "immutable source drift rewrote the lock"
             evidence["cases"].append({"name": "package-registry-check"})
+        if selected("package-host-target-check"):
+            import shutil
+
+            fixture = directory / "host-target-separation"
+            shutil.copytree(ROOT / "packages" / "host-target-separation", fixture, dirs_exist_ok=True)
+            app = fixture / "app"
+            rejected = run([native, "check", str(app)], 1)
+            assert "error[feature]" in rejected.stderr and "build scripts" in rejected.stderr, rejected.stderr
+            manifest = app / "package.mettle"
+            manifest.write_text(manifest.read_text().split("\nbuild {", 1)[0] + "\n")
+            helper = fixture / "helper" / "src" / "main.mt"
+            helper.write_text('@cfg(feature = "target")\npub fn target_value(): i32 { 42 }\n')
+            (app / "src" / "main.mt").write_text("fn main(): i32 { helper.target_value() - 42 }\n")
+            run([executable, "check", str(app)])
+            expected_lock = (app / "lock.mettle").read_bytes()
+            (app / "lock.mettle").unlink()
+            actual = run([native, "check", str(app)])
+            assert not actual.stdout and not actual.stderr, actual.stderr
+            assert (app / "lock.mettle").read_bytes() == expected_lock, "host/target locks differ"
+            run([native, "check", str(app), "--locked"])
+            evidence["cases"].append({"name": "package-host-target-check"})
         if selected("check-scalar-source-location"):
             path = source("check-scalar-source-location", "fn main(): i32 {\n\tmissing()\n}\n")
             reference = run([executable, "check", str(path)], 1)

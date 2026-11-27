@@ -640,3 +640,88 @@ fn registry_fixture(read root: Path): Unit throws PackageError {
 fn registry_lock_preserves_release_and_rejects_tampering(): Unit throws PackageError {
     try with_fixture("registry", registry_fixture)
 }
+
+fn host_fixture(read root: Path): Unit throws PackageError {
+    let start = Range(0, 0)
+    let fixture = std.path.path_from_text("tests/packages/host-target-separation")
+    for relative in ["app/package.mettle", "app/src/main.mt", "app/build.mt", "helper/package.mettle", "helper/src/main.mt"] {
+        try fixture_file(root, fixture, relative)
+    }
+    let app = root.join("app")
+    let lockfile = app.join("lock.mettle")
+    let graph = try resolve_locked(app.as_path(), "main", false)
+    let edges = read graph.packages[0].dependencies
+    let target = read graph.packages[edges[0].package]
+    let host = read graph.packages[edges[1].package]
+    assert(edges.len() == 2 && !edges[0].is_host && edges[1].is_host && !target.is_host && host.is_host,
+        "build-script mounting context was not separated")
+    assert(target.identity.as_text() == "helper@0.1.0|path+../helper|target" &&
+        host.identity.as_text() == "helper@0.1.0|path+../helper|host", "host and target identities differ from bootstrap")
+    assert(target.features.len() == 1 && target.features[0].as_text() == "target" &&
+        host.features.len() == 1 && host.features[0].as_text() == "host", "features leaked between host and target")
+    assert(graph.build_scripts.len() == 1 && graph.build_scripts[0].package == 0, "wrong build script owner")
+    let current = try io_result(take capture fs.read_to_string(lockfile), root, start, PackagePhase.Io)
+    assert(current.as_text().find("dependencies: [\"helper@0.1.0|path+../helper|target\", \"helper@0.1.0|path+../helper|host\"]").is_present(),
+        "host and target edges were not locked in bootstrap order")
+    let _ = try resolve_locked(app.as_path(), "main", true)
+    let manifest = app.join("package.mettle")
+    let input = try io_result(take capture fs.read_to_string(manifest), root, start, PackagePhase.Io)
+    let (target_only, _) = input.as_text().split_once("\"build-dependencies\"").or_panic()
+    try io_result(take capture fs.write(manifest, target_only.as_bytes()), root, start, PackagePhase.Io)
+    require_lock_failure(app.as_path(), "dependencies change from")
+    let unchanged = try io_result(take capture fs.read_to_string(lockfile), root, start, PackagePhase.Io)
+    assert(unchanged.as_text() == current.as_text(), "locked host drift rewrote the lock")
+}
+
+@test
+fn host_instances_keep_separate_features_and_lock_edges(): Unit throws PackageError {
+    try with_fixture("host", host_fixture)
+}
+
+fn macro_fixture(read root: Path): Unit throws PackageError {
+    let start = Range(0, 0)
+    let fixture = std.path.path_from_text("tests/packages")
+    for relative in ["proc-macro/app/package.mettle", "proc-macro/app/src/main.mt", "proc-macro/genfn/package.mettle",
+            "proc-macro/genfn/macros/make_fn.mt", "host-target-separation/helper/package.mettle",
+            "host-target-separation/helper/src/main.mt"] {
+        try fixture_file(root, fixture, relative)
+    }
+    let manifest = root.join("proc-macro/genfn/package.mettle")
+    var source = try io_result(take capture fs.read_to_string(manifest), root, start, PackagePhase.Io)
+    source.push_str("\ndependencies { helper { path: \"../../host-target-separation/helper\", optional: true, default_features: false } }\n")
+    source.push_str("features { default: [\"helper/host\"] }\n")
+    try io_result(take capture fs.write(manifest, source.as_bytes()), root, start, PackagePhase.Io)
+    let app = root.join("proc-macro/app")
+    let graph = try super.graph.resolve(app.as_path(), "main")
+    let planned = read graph.macros[0]
+    let package = read graph.packages[planned.package]
+    assert(graph.macros.len() == 1 && package.entry.is_none() && !package.is_library && !package.is_host &&
+        planned.name.as_text() == "make_fn" && planned.api == 1u32, "wrong procedural macro owner or API")
+    assert(planned.source.is_absolute() && planned.source.file_name().or_panic().same(std.ffi.os_str_from_text("make_fn.mt")),
+        "macro program path was not resolved")
+    assert(package.dependencies.len() == 2 && !package.dependencies[0].is_host && package.dependencies[1].is_host,
+        "macro feature forwarding did not mirror dependency activation")
+    for edge in package.dependencies.as_slice() {
+        let features = read graph.packages[edge.package].features
+        assert(features.len() == 1 && features[0].as_text() == "host", "forwarded macro feature was lost")
+    }
+    let program = root.join("proc-macro/genfn/macros/make_fn.mt")
+    try io_result(take capture fs.remove_file(program), root, start, PackagePhase.Io)
+    match take capture resolve_locked(app.as_path(), "main", false) {
+        success(_) => assert(false, "a missing macro source was accepted"),
+        failure(issue) => assert(issue.message.as_text() == "macro source 'macros/make_fn.mt' does not exist", "wrong missing macro diagnostic")
+    }
+}
+
+@test
+fn procedural_macro_plans_host_feature_edges_without_a_library(): Unit throws PackageError {
+    try with_fixture("macros", macro_fixture)
+}
+
+@test
+fn host_script_plan_is_dependency_first(): Unit throws PackageError {
+    let graph = try super.graph.resolve(std.path.path_from_text("tests/packages/driver-contracts/host-script-order/app"), "main")
+    let scripts = read graph.build_scripts
+    assert(scripts.len() == 2 && scripts[1].package == 0 && graph.packages[scripts[0].package].is_host,
+        "host dependency script must precede the root script")
+}
