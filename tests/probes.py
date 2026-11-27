@@ -966,10 +966,61 @@ def run_suite(mode, executable, directory, seed=None, case_filter=None, ucd_dir=
                 run([tool, "build", str(standalone), "-o", str(output)], env=llvm_env)
                 run([str(output)], 42)
             for declaration in ("pub module inline_module {}", "pub import mathlib.twice",
-                                "import mathlib.twice", "type Product {}"):
+                                "import mathlib.twice.*", "type Product {}"):
                 entry.write_text(f"{declaration}\nfn main(): i32 {{ 0 }}\n")
                 reject(entry, "1:1", "does not support", (native,), "feature")
             evidence["cases"].append({"name": "package-file-module-visibility"})
+        if selected("package-scalar-imports"):
+            import shutil
+
+            fixture = directory / "scalar-imports"
+            shutil.copytree(ROOT / "packages" / "path-dependency", fixture, dirs_exist_ok=True)
+            app = fixture / "app"
+            entry = app / "src" / "main.mt"
+            math = fixture / "mathlib" / "src"
+            (math / "main.mt").write_text(
+                "import units;\npub module twice;\n"
+                "import twice.double as private_alias;\n"
+                "pub fn answer(): i32 { private_alias(units.base()) }\n")
+            (math / "twice.mt").write_text(
+                "pub fn double(x: i32): i32 { x * 2 }\nfn hidden(): i32 { 0 }\n")
+            imports = ("import mathlib as numbers;\n"
+                       "import mathlib.{twice as metric, answer as metric, answer as metric};\n"
+                       "import mathlib.twice.double as direct;\n")
+            entry.write_text(imports + "fn main(): i32 { numbers.answer() + metric() + metric.double(7) + direct(14) - 84 }\n")
+            output = directory / "scalar-import-program"
+            for tool in (executable, native):
+                run([tool, "check", str(app)])
+                run([tool, "build", str(app), "-o", str(output)], env=llvm_env)
+                run([str(output)], 42)
+
+            for text, location, phase, message in (
+                ("import mathlib.answer as choose;\nimport mathlib.twice.double as choose;\nfn main(): i32 { 0 }",
+                 "2:1", "name", r"duplicate explicit (import )?binding"),
+                ("import mathlib.answer as choose;\nfn choose(): i32 { 0 }\nfn main(): i32 { choose() }",
+                 "1:1", "name", r"duplicate explicit (import )?binding"),
+                ("import mathlib.twice.hidden as steal;\nfn main(): i32 { 0 }",
+                 "1:1", "name", r"unresolved.*import"),
+                ("fn main(): i32 { mathlib.private_alias(21) }",
+                 "1:18", "name", r"inaccessible function|import is private"),
+                (imports + "fn main(): i32 { let metric = 0; metric() }",
+                 "4:34", "type", "expression is not callable"),
+            ):
+                entry.write_text(text + "\n")
+                for tool in (executable, native):
+                    result = run([tool, "check", str(app)], 1)
+                    line = next((line for line in result.stderr.splitlines()
+                                 if f"{entry}:{location}: error[{phase}]" in line), "")
+                    assert re.search(message, line), result.stderr
+            entry.write_text("import std.{fs};\nfn main(): i32 { 0 }\n")
+            actual = run([native, "check", str(app)], 1)
+            assert f"{entry}:1:8: error[feature]" in actual.stderr and "has not mounted" in actual.stderr, actual.stderr
+            entry.write_text("import mathlib.{Widget as make};\nfn main(): i32 { 0 }\n")
+            (math / "main.mt").write_text("pub type Widget {}\n")
+            run([executable, "check", str(app)])
+            actual = run([native, "check", str(app)], 1)
+            assert f"{math / 'main.mt'}:1:1: error[feature]" in actual.stderr and "does not support" in actual.stderr, actual.stderr
+            evidence["cases"].append({"name": "package-scalar-imports"})
         if selected("package-feature-options"):
             import shutil
 

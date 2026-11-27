@@ -59,10 +59,19 @@ pub type ExternalModule {
     pub exported: bool
 }
 
+copy type Imported {
+    namespace: usize?
+    function: FunctionId?
+    namespace_origin: u32
+    function_origin: u32
+}
+
 type Declarations {
     functions: List<Function>
     names: Map<List<u8>, usize>
     parameters: List<Map<List<u8>, usize>>
+    imports: Map<List<u8>, Imported>
+    import_items: List<ActiveItem>
 }
 
 copy type Local {
@@ -282,6 +291,37 @@ fn inside_module(read sources: List<SourceModule>, from: usize, boundary: usize)
     true
 }
 
+fn declared_module(read sources: List<SourceModule>, scope: usize, read spelling: List<u8>): ModuleLink? {
+    let present(link) = sources[scope].modules.get(spelling) else { return none }
+    present(*link)
+}
+
+fn visible_module(read sources: List<SourceModule>, scope: usize, from: usize, link: ModuleLink): bool {
+    link.exported || inside_module(sources, from, scope)
+}
+
+fn module_step(read sources: List<SourceModule>, scope: usize, from: usize,
+    link: ModuleLink?, span: Span): usize throws CheckError {
+    let present(link) = link else { throw CheckError(CheckPhase.Name, span, "unresolved module") }
+    if !visible_module(sources, scope, from, link) {
+        throw CheckError(CheckPhase.Name, span, "module is private")
+    }
+    link.index
+}
+
+fn parent_scope(read sources: List<SourceModule>, scope: usize, span: Span): usize throws CheckError {
+    let present(parent) = sources[scope].parent else {
+        throw CheckError(CheckPhase.Name, span, "'super' escapes the package root")
+    }
+    parent
+}
+
+fn imported_module(read declarations: List<Declarations>, scope: usize, read spelling: List<u8>): ModuleLink? {
+    let present(imported) = declarations[scope].imports.get(spelling) else { return none }
+    let present(index) = imported.namespace else { return none }
+    present(ModuleLink(index, false))
+}
+
 fn module_target<region r>(read context: Context<region r>, read body: Body, base: SyntaxNode, span: Span): usize throws CheckError {
     let parsed = read context.source.syntax
     let bytes = context.source.bytes.as_slice()
@@ -310,23 +350,40 @@ fn module_target<region r>(read context: Context<region r>, read body: Body, bas
     }
     while let present(component) = components.pop() {
         if relative && read bytes[component.span.begin as usize..component.span.end as usize] == b"super" {
-            let present(parent) = context.sources[scope].parent else {
-                throw CheckError(CheckPhase.Name, span, "'super' escapes the package root")
-            }
-            scope = parent
+            scope = try parent_scope(context.sources, scope, span)
             continue
         }
         relative = false
         let name = try name(bytes, parsed, component)
-        let present(link) = context.sources[scope].modules.get(name) else {
-            throw CheckError(CheckPhase.Name, span, "unresolved module")
+        let link = if let present(link) = declared_module(context.sources, scope, name) {
+            present(link)
+        } else {
+            imported_module(context.declarations, scope, name)
         }
-        if !link.exported && !inside_module(context.sources, from, scope) {
-            throw CheckError(CheckPhase.Name, span, "module is private")
-        }
-        scope = link.index
+        scope = try module_step(context.sources, scope, from, link, span)
     }
     scope
+}
+
+fn function_target<region r>(read context: Context<region r>, scope: usize,
+    read spelling: List<u8>, span: Span): FunctionId throws CheckError {
+    let declarations = read context.declarations[scope]
+    let from = context.owner.module_index
+    if let present(index) = declarations.names.get(spelling) {
+        if !declarations.functions[*index].exported && !inside_module(context.sources, from, scope) {
+            throw CheckError(CheckPhase.Name, span, "function is private")
+        }
+        return FunctionId(scope, *index)
+    }
+    if let present(imported) = declarations.imports.get(spelling) {
+        if let present(target) = imported.function {
+            if !inside_module(context.sources, from, scope) {
+                throw CheckError(CheckPhase.Name, span, "import is private")
+            }
+            return FunctionId(target.module_index, target.index)
+        }
+    }
+    throw CheckError(CheckPhase.Name, span, "unresolved function")
 }
 
 fn operator_span(read parsed: Parsed, item: SyntaxNode): Span throws CheckError {
@@ -496,15 +553,8 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
             if callee.kind.is(NodeKind.Name) && context.resolve(body, identifier).is_present() {
                 throw CheckError(CheckPhase.Type, callee.span, "expression is not callable")
             }
-            let target = read context.declarations[module_index]
-            let present(id) = target.names.get(identifier) else {
-                throw CheckError(CheckPhase.Name, callee.span, "unresolved function")
-            }
-            let id = *id
-            let signature = read target.functions[id]
-            if !signature.exported && !inside_module(context.sources, context.owner.module_index, module_index) {
-                throw CheckError(CheckPhase.Name, callee.span, "function is private")
-            }
+            let target = try function_target(context, module_index, identifier, callee.span)
+            let signature = read context.declarations[target.module_index].functions[target.index]
             if arguments.children.end - arguments.children.begin != signature.parameters.len() as u32 {
                 throw CheckError(CheckPhase.Type, item.span, "function argument count does not match its parameters")
             }
@@ -516,7 +566,7 @@ fn expression<region r>(read context: Context<region r>, mut body: Body, id: Nod
                     throw CheckError(CheckPhase.Type, span, "argument does not match the parameter type")
                 }
             }
-            binding = present(Binding.Function(FunctionId(module_index, id)))
+            binding = present(Binding.Function(target))
             signature.result
         },
         NodeKind.Binary => {
@@ -574,7 +624,7 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declar
     var functions = List<Function>()
     var names = Map<List<u8>, usize>()
     var parameters = List<Map<List<u8>, usize>>()
-    var imports = Map<List<u8>, Unit>()
+    var imports = List<ActiveItem>()
     for declaration in source.items.as_slice() {
         let item = node(parsed, declaration.id)
         if item.kind.is(NodeKind.ModuleDeclaration) {
@@ -583,17 +633,22 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declar
             continue
         }
         if item.kind.is(NodeKind.Import) {
-            if item.children.end - item.children.begin != declaration.offset + 1u32 { throw unsupported(item.span) }
             let path = node(parsed, child(parsed, item, declaration.offset))
-            if !path.kind.is(NodeKind.ImportPath) || path.children.end - path.children.begin != 1u32 {
-                throw unsupported(item.span)
+            if !path.kind.is(NodeKind.ImportPath) { throw unsupported(item.span) }
+            if item.children.end - item.children.begin > declaration.offset + 1u32 {
+                let selection = node(parsed, child(parsed, item, declaration.offset + 1u32))
+                if !selection.kind.is(NodeKind.ImportAlias) &&
+                    (!selection.kind.is(NodeKind.ImportGroup) || selection.children.begin == selection.children.end) {
+                    throw unsupported(item.span)
+                }
             }
-            let identifier = node(parsed, child(parsed, path, 0))
-            let spelling = try name(bytes, parsed, identifier)
-            if !source.modules.contains_key(spelling) && !mounts.contains_key(spelling) { throw unsupported(item.span) }
-            if imports.insert(take spelling, ()).is_present() {
-                throw CheckError(CheckPhase.Name, identifier.span, "duplicate import")
+            let head = node(parsed, child(parsed, path, 0))
+            let spelling = try name(bytes, parsed, head)
+            if (spelling.as_slice() == b"std" || spelling.as_slice() == b"alloc" || spelling.as_slice() == b"core") &&
+                !source.modules.contains_key(spelling) && !mounts.contains_key(spelling) {
+                throw CheckError(CheckPhase.Feature, head.span, "native semantic checking has not mounted this standard library namespace")
             }
+            imports.push(declaration)
             continue
         }
         let (identifier, function, scope) = try signature(bytes, parsed, declaration)
@@ -604,7 +659,117 @@ fn collect(read source: SourceModule, read mounts: Map<List<u8>, usize>): Declar
         functions.push(take function)
         parameters.push(take scope)
     }
-    Declarations(take functions, take names, take parameters)
+    Declarations(take functions, take names, take parameters, Map<List<u8>, Imported>(), take imports)
+}
+
+fn import_scope(read sources: List<SourceModule>, read mounts: Map<List<u8>, usize>, from: usize,
+    path: SyntaxNode, end: u32): usize throws CheckError {
+    let source = read sources[from]
+    let parsed = read source.syntax
+    let bytes = source.bytes.as_slice()
+    var scope = from
+    var relative = true
+    for index in path.children.begin..end {
+        let component = node(parsed, parsed.children[index as usize])
+        let spelling = try name(bytes, parsed, component)
+        let raw = read bytes[component.span.begin as usize..component.span.end as usize]
+        if index == path.children.begin {
+            if let present(mount) = mounts.get(spelling) {
+                scope = *mount
+                relative = false
+                continue
+            }
+            if raw == b"self" { continue }
+        }
+        if relative && raw == b"super" {
+            scope = try parent_scope(sources, scope, path.span)
+            continue
+        }
+        relative = false
+        scope = try module_step(sources, scope, from, declared_module(sources, scope, spelling), path.span)
+    }
+    scope
+}
+
+fn import_binding(read sources: List<SourceModule>, read declarations: List<Declarations>,
+    read mounts: Map<List<u8>, usize>, from: usize, scope: usize, bare: bool,
+    mut imports: Map<List<u8>, Imported>, selector: SyntaxNode, renamed: SyntaxNode?,
+    origin: u32, span: Span): Unit throws CheckError {
+    let source = read sources[from]
+    let spelling = try name(source.bytes.as_slice(), source.syntax, selector)
+    var namespace: usize? = none
+    var function: FunctionId? = none
+    if bare {
+        if let present(mount) = mounts.get(spelling) { namespace = present(*mount) }
+    }
+    if namespace.is_none() {
+        if let present(link) = declared_module(sources, scope, spelling) {
+            if visible_module(sources, scope, from, link) { namespace = present(link.index) }
+        }
+    }
+    let accessible = inside_module(sources, from, scope)
+    if let present(index) = declarations[scope].names.get(spelling) {
+        if accessible || declarations[scope].functions[*index].exported {
+            function = present(FunctionId(scope, *index))
+        }
+    }
+    if namespace.is_none() && function.is_none() {
+        throw CheckError(CheckPhase.Name, span, "unresolved or inaccessible import")
+    }
+    let bound = if let present(renaming) = renamed {
+        try name(source.bytes.as_slice(), source.syntax, node(source.syntax, child(source.syntax, renaming, 0)))
+    } else { take spelling }
+    var binding = if let present(previous) = imports.get(bound) { *previous } else { Imported(none, none, 0u32, 0u32) }
+    if let present(target) = namespace {
+        let conflict = if let present(prior) = binding.namespace {
+            binding.namespace_origin != origin || prior != target
+        } else { source.modules.contains_key(bound) }
+        if conflict { throw CheckError(CheckPhase.Name, span, "duplicate explicit import binding") }
+        binding.namespace = present(target)
+        binding.namespace_origin = origin
+    }
+    if let present(target) = function {
+        let conflict = if let present(prior) = binding.function {
+            binding.function_origin != origin || prior.module_index != target.module_index || prior.index != target.index
+        } else { declarations[from].names.contains_key(bound) }
+        if conflict { throw CheckError(CheckPhase.Name, span, "duplicate explicit import binding") }
+        binding.function = present(FunctionId(target.module_index, target.index))
+        binding.function_origin = origin
+    }
+    let _ = imports.insert(take bound, take binding)
+}
+
+fn resolve_imports(read sources: List<SourceModule>, read declarations: List<Declarations>,
+    read mounts: Map<List<u8>, usize>, from: usize): Map<List<u8>, Imported> throws CheckError {
+    let parsed = read sources[from].syntax
+    var imports = Map<List<u8>, Imported>()
+    for declaration in declarations[from].import_items.as_slice() {
+        let item = node(parsed, declaration.id)
+        let path = node(parsed, child(parsed, item, declaration.offset))
+        if item.children.end - item.children.begin > declaration.offset + 1u32 {
+            let selection = node(parsed, child(parsed, item, declaration.offset + 1u32))
+            if selection.kind.is(NodeKind.ImportGroup) {
+                let scope = try import_scope(sources, mounts, from, path, path.children.end)
+                for index in selection.children.begin..selection.children.end {
+                    let entry = node(parsed, parsed.children[index as usize])
+                    let renamed = if entry.children.end - entry.children.begin == 2u32 {
+                        present(node(parsed, child(parsed, entry, 1)))
+                    } else { none }
+                    try import_binding(sources, declarations, mounts, from, scope, false, mut imports,
+                        node(parsed, child(parsed, entry, 0)), renamed, item.span.begin, entry.span)
+                }
+                continue
+            }
+        }
+        let end = path.children.end - 1u32
+        let scope = try import_scope(sources, mounts, from, path, end)
+        let renamed = if item.children.end - item.children.begin > declaration.offset + 1u32 {
+            present(node(parsed, child(parsed, item, declaration.offset + 1u32)))
+        } else { none }
+        try import_binding(sources, declarations, mounts, from, scope, end == path.children.begin, mut imports,
+            node(parsed, parsed.children[end as usize]), renamed, item.span.begin, item.span)
+    }
+    imports
 }
 
 fn check_bodies(read sources: List<SourceModule>, module_index: usize,
@@ -637,6 +802,10 @@ pub fn check_modules(read sources: List<SourceModule>, read mounts: List<Map<Lis
     if sources.is_empty() { throw unsupported(Span(0, 0, 0)) }
     var declarations = List<Declarations>()
     for source in sources.as_slice() { declarations.push(try collect(source, mounts[source.package_index])) }
+    for index in 0usize..sources.len() {
+        let imports = try resolve_imports(sources, declarations, mounts[sources[index].package_index], index)
+        declarations[index].imports = take imports
+    }
     var entry: usize? = none
     if executable {
         let parsed = read sources[0].syntax
