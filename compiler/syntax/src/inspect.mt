@@ -28,6 +28,7 @@ pub copy enum InspectionError { InvalidTree, Unsupported(NodeKind, Span) }
 
 enum ExpressionWork {
     Visit(SyntaxNode),
+    ConditionClause(SyntaxNode),
     Finish(SyntaxNode, InspectionNode, usize),
     GenericSpan(SyntaxNode)
 }
@@ -83,6 +84,13 @@ extend<region r> Projector<region r> {
             let present(step) = take popped else { break }
             match take step {
                 ExpressionWork.Visit(next) => { try self.schedule_expression(next, completed.len(), mut work) },
+                ExpressionWork.ConditionClause(clause) => {
+                    let span = self.tree.tokens[clause.tokens.begin as usize].span
+                    let view = InspectionNode(39u32, new<u8>(), new<u8>(), span, false, new<usize>())
+                    work.push(ExpressionWork.Finish(clause, take view, completed.len()))
+                    let value = if clause.kind.is(NodeKind.Condition) { self.child(clause, 1usize) } else { clause }
+                    work.push(ExpressionWork.Visit(value))
+                },
                 ExpressionWork.Finish(native, view, mark) => {
                     var finished = take view
                     finished.children.extend_from_slice(read completed.as_slice()[mark..completed.len()])
@@ -109,12 +117,13 @@ extend<region r> Projector<region r> {
             NodeKind.While => 13u32, NodeKind.Loop => 14u32, NodeKind.Break => 15u32,
             NodeKind.Continue => 16u32, NodeKind.Field | NodeKind.OptionalField => 17u32,
             NodeKind.None => 18u32, NodeKind.Present | NodeKind.Success | NodeKind.Failure => 19u32,
+            NodeKind.Match => 20u32, NodeKind.Arm => 21u32,
             NodeKind.Throw => 22u32, NodeKind.Try => 23u32, NodeKind.Capture => 24u32,
             NodeKind.Tuple => 25u32, NodeKind.Array | NodeKind.Repeat => 26u32,
             NodeKind.Index => 27u32, NodeKind.Range => 28u32, NodeKind.For => 29u32,
             NodeKind.Coalesce => 30u32, NodeKind.Character | NodeKind.Byte => 31u32,
             NodeKind.Text => 32u32, NodeKind.Floating => 34u32, NodeKind.Cast => 35u32,
-            NodeKind.Unsafe => 36u32,
+            NodeKind.Unsafe => 36u32, NodeKind.Conditions => 40u32,
             NodeKind.GenericApply => {
                 work.push(ExpressionWork.GenericSpan(node))
                 work.push(ExpressionWork.Visit(self.child(node, 0usize)))
@@ -129,6 +138,13 @@ extend<region r> Projector<region r> {
             NodeKind.Name => { view.text = self.name(node) },
             NodeKind.Integer | NodeKind.Floating | NodeKind.Boolean | NodeKind.Character | NodeKind.Byte | NodeKind.Text => { view.text = self.spelling(node.span) },
             NodeKind.Unary | NodeKind.Binary | NodeKind.Coalesce | NodeKind.Assign | NodeKind.Present | NodeKind.Success | NodeKind.Failure => { view.text = self.spelling(self.operation(node)) },
+            NodeKind.Match => {
+                view.text = if node.operation.is_present() { self.spelling(self.operation(node)) } else { "read".as_bytes().to_vec() }
+            },
+            NodeKind.Arm | NodeKind.Conditions => {
+                view.span = self.tree.tokens[node.tokens.begin as usize].span
+                if node.kind.is(NodeKind.Arm) { first = 1usize }
+            },
             NodeKind.Range => {
                 let operation = self.operation(node)
                 view.text = self.spelling(operation)
@@ -189,7 +205,9 @@ extend<region r> Projector<region r> {
         while index > first {
             index -= 1
             let child = self.child(node, index)
-            if child.kind.is(NodeKind.Arguments) {
+            if node.kind.is(NodeKind.Conditions) {
+                work.push(ExpressionWork.ConditionClause(child))
+            } else if child.kind.is(NodeKind.Arguments) {
                 var argument_index = count(child)
                 while argument_index != 0usize {
                     argument_index -= 1
@@ -197,7 +215,7 @@ extend<region r> Projector<region r> {
                     let value = if argument.kind.is(NodeKind.NamedArgument) { self.child(argument, 1usize) } else { argument }
                     work.push(ExpressionWork.Visit(value))
                 }
-            } else if child.kind.is(NodeKind.LetElse) {
+            } else if child.kind.is(NodeKind.LetElse) || child.kind.is(NodeKind.Guard) {
                 work.push(ExpressionWork.Visit(self.child(child, 0usize)))
             } else {
                 let value = if child.kind.is(NodeKind.Conditions) && count(child) == 1usize {
@@ -210,7 +228,12 @@ extend<region r> Projector<region r> {
     }
     mut fn finish_expression(node: SyntaxNode, take view: InspectionNode): usize {
         var view = take view
-        if node.kind.is(NodeKind.Cast) || (node.kind.is(NodeKind.Block) && node.operation.is_present()) {
+        if view.kind == 21u32 || view.kind == 39u32 || view.kind == 40u32 {
+            for child in view.children.as_slice() {
+                let end = self.result.nodes[child].span.end
+                if view.span.end < end { view.span.end = end }
+            }
+        } else if node.kind.is(NodeKind.Cast) || (node.kind.is(NodeKind.Block) && node.operation.is_present()) {
             let child = view.children[0usize]
             view.span = self.result.nodes[child].span
         } else if !view.children.is_empty() && (node.kind.is(NodeKind.Unary) || node.kind.is(NodeKind.Binary) ||
@@ -326,6 +349,57 @@ fn bootstrap_inspection_shapes(): Unit {
     assert(call.kind == 7u32 && call.children.len() == 2usize && callee.kind == 3u32 &&
         callee.text == "thing::member".as_bytes() && callee.children.is_empty(), "qualified generic callee or named argument inspection changed")
     assert(range.kind == 28u32 && range.text == "..".as_bytes() && range.span.end - range.span.begin == 1u32 && !range.semicolon, "open-ended range span includes its operator")
+}
+
+@test
+fn bootstrap_inspection_match(): Unit {
+    let bytes = "fn f() { match x { -3..=0 | 2 if ready => y as i32, _ => 0 }; match mut x { _ => 1 }; match take x {} }".as_bytes()
+    let tree = parse(bytes, 0u32)
+    let success(view) = capture project(read tree, bytes) else { core.panic.panic("match projection failed") }
+    let body = read view.nodes[view.functions[0usize].body]
+    let first = read view.nodes[body.children[0usize]]
+    let guarded = read view.nodes[first.children[1usize]]
+    let unguarded = read view.nodes[first.children[2usize]]
+    assert(first.kind == 20u32 && first.text == "read".as_bytes() && first.semicolon &&
+        first.span.begin == 9u32 && first.span.end == 60u32 && first.children.len() == 3usize &&
+        view.nodes[first.children[0usize]].text == "x".as_bytes(), "default match mode, span, or scrutinee changed")
+    assert(guarded.kind == 21u32 && guarded.span.begin == 19u32 && guarded.span.end == 43u32 &&
+        guarded.children.len() == 2usize && view.nodes[guarded.children[0usize]].text == "ready".as_bytes() &&
+        view.nodes[guarded.children[1usize]].kind == 35u32, "guarded arm did not omit its pattern or preserve guard/value order")
+    assert(unguarded.kind == 21u32 && unguarded.children.len() == 1usize &&
+        view.nodes[unguarded.children[0usize]].text == "0".as_bytes(), "unguarded arm lost its value")
+    let mutable = read view.nodes[body.children[1usize]]
+    let owned = read view.nodes[body.children[2usize]]
+    assert(mutable.text == "mut".as_bytes() && owned.text == "take".as_bytes() &&
+        owned.children.len() == 1usize, "explicit match modes or empty arms changed")
+}
+
+@test
+fn bootstrap_inspection_condition_chains(): Unit {
+    let bytes = "fn f() { if a, b, c { 1 } else if d { 2 }; label outer: while check(), y as bool { break label outer } }".as_bytes()
+    let tree = parse(bytes, 0u32)
+    let success(view) = capture project(read tree, bytes) else { core.panic.panic("condition chain projection failed") }
+    let body = read view.nodes[view.functions[0usize].body]
+    let branch = read view.nodes[body.children[0usize]]
+    let chain = read view.nodes[branch.children[0usize]]
+    assert(branch.kind == 9u32 && branch.children.len() == 3usize && chain.kind == 40u32 &&
+        chain.span.begin == 12u32 && chain.span.end == 19u32 && chain.children.len() == 3usize, "if chain lost its structure or span")
+    let expected = "abc".as_bytes()
+    for index in 0usize..3usize {
+        let clause = read view.nodes[chain.children[index]]
+        assert(clause.kind == 39u32 && clause.children.len() == 1usize &&
+            view.nodes[clause.children[0usize]].text == expected[index..index + 1usize], "if clauses lost their wrapper or order")
+    }
+    let alternative = read view.nodes[branch.children[2usize]]
+    assert(alternative.kind == 9u32 && view.nodes[alternative.children[0usize]].text == "d".as_bytes(),
+        "single condition was incorrectly wrapped")
+    let repeat = read view.nodes[body.children[1usize]]
+    let loop_chain = read view.nodes[repeat.children[0usize]]
+    let call = read view.nodes[loop_chain.children[0usize]]
+    let cast = read view.nodes[loop_chain.children[1usize]]
+    assert(repeat.kind == 13u32 && repeat.loop_label == "outer".as_bytes() && loop_chain.kind == 40u32 &&
+        loop_chain.span.begin == 62u32 && loop_chain.span.end == 72u32 && loop_chain.children.len() == 2usize &&
+        call.span.end == 69u32 && cast.span.begin == 71u32 && cast.span.end == 72u32, "while chain lost its label or bootstrap clause spans")
 }
 
 @test
