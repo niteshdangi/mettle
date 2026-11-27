@@ -1,5 +1,3 @@
-module sha256
-
 import alloc.string.String
 import alloc.vec.{ List, new }
 import core.text.Text
@@ -7,6 +5,7 @@ import std.{ fs, io, process }
 import std.io.{ ErrorKind, Reader, Writer }
 import std.macros.format
 import std.path.{ Path, PathBuf }
+import super.sha256.Sha256
 
 pub enum BlobError {
     InvalidDigest;
@@ -23,7 +22,11 @@ fn io_result<T>(take result: Outcome<T, io.Error>): T throws BlobError {
     }
 }
 
-pub fn blob_digest(read bytes: [u8]): String { sha256.hex(bytes) }
+pub fn blob_digest(read bytes: [u8]): String {
+    var hash = Sha256()
+    hash.update(bytes)
+    hash.finish()
+}
 
 fn blob_directory(read root: Path, read digest: Text): PathBuf {
     root.join("blobs").join(digest.split_at(2usize).0)
@@ -169,4 +172,23 @@ fn blob_publication_failure(): Unit throws BlobError {
     let leaked = try io_result(capture fs.try_exists(directory.join(format(f".{digest}.{pid}.1.tmp"))))
     assert(!leaked, "failed publication left its staging file")
     try io_result(capture fs.remove_dir_all(root))
+}
+
+@test
+fn known_sha256_vectors(): Unit {
+    let empty = blob_digest("".as_bytes())
+    assert(empty.as_text() == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "wrong empty digest")
+    let two_padding_blocks = blob_digest("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".as_bytes())
+    assert(two_padding_blocks.as_text() == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+        "wrong 56-byte digest")
+    let bytes = [0u8; 64]
+    let aligned = blob_digest(bytes)
+    assert(aligned.as_text() == "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b",
+        "wrong 64-byte digest")
+    var stream = Sha256()
+    stream.update(bytes[..1])
+    stream.update(bytes[1..])
+    let split = stream.finish()
+    assert(split.as_text() == aligned.as_text(), "splitting an update changed the digest")
 }
